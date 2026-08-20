@@ -41,6 +41,17 @@ def server_args(endpoint: AdbServerEndpoint) -> list[str]:
     return ["-H", endpoint.host, "-P", str(endpoint.port)]
 
 
+def server_listen_socket(endpoint: AdbServerEndpoint) -> str:
+    """Build the ADB ``-L`` TCP socket spec used for an owned launch."""
+
+    if not isinstance(endpoint, AdbServerEndpoint):
+        raise TypeError("endpoint must be AdbServerEndpoint")
+    host = endpoint.host
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        host = f"[{host}]"
+    return f"tcp:{host}:{endpoint.port}"
+
+
 def run_adb(
     executable: str,
     timeout_seconds: float,
@@ -106,4 +117,5 @@ __all__ = [
     "run_adb",
     "selector_args",
     "server_args",
+    "server_listen_socket",
 ]
