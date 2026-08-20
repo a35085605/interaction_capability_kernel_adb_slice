@@ -1,8 +1,9 @@
 """Host-side ADB native nouns and atomic read capabilities.
 
-Canonical ownership is noun-first around the ADB server, pairing relationship, and transports.
-Pairing commands live under ``adb.pairing``; transport inventory and tracking are owned by
-``adb.transport``; Android framework queries reached through ADB live under ``android.adb``.
+Canonical ownership is noun-first around the process-owned ADB server, pairing
+relationship, and transports. Pairing commands live under ``adb.pairing``;
+transport inventory and tracking are owned by ``adb.transport``; Android
+framework queries reached through ADB live under ``android.adb``.
 """
 
 from adb.errors import (
@@ -18,7 +19,14 @@ from adb.errors import (
     AdbTransportUnavailableError,
 )
 from adb.managed import AdbManagedRuntime, RegisteredTransport
-from adb.server import AdbServerStatusReader
+from adb.server import (
+    AdbServerAcquisitionPolicy,
+    AdbServerConfigurationConflictError,
+    AdbServerOwnershipLostError,
+    AdbServerRef,
+    AdbServerStatusReader,
+    acquire_process_adb_server,
+)
 from adb.transport import (
     AdbConnectionState,
     AdbConnectionType,
@@ -45,7 +53,11 @@ __all__ = [
     "AdbManagedRuntime",
     "AdbProtocolError",
     "AdbRemoteCommandError",
+    "AdbServerAcquisitionPolicy",
+    "AdbServerConfigurationConflictError",
     "AdbServerConnectionError",
+    "AdbServerOwnershipLostError",
+    "AdbServerRef",
     "AdbServerStatusReader",
     "AdbServiceError",
     "AdbTimeoutError",
@@ -62,4 +74,5 @@ __all__ = [
     "AdbTransportSelector",
     "AdbTransportUnavailableError",
     "RegisteredTransport",
+    "acquire_process_adb_server",
 ]
