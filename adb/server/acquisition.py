@@ -29,13 +29,6 @@ from adb.server.lifecycle.creation import (
 from adb.server.status.model import AdbServerStatus
 
 
-class AdbServerAcquisitionMode(str, Enum):
-    """Whether acquisition may adopt a compatible server it did not create."""
-
-    ALLOW_ADOPT = "allow_adopt"
-    REQUIRE_OWNED = "require_owned"
-
-
 def _positive_int(value: object, *, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, Integral):
         raise TypeError(f"{field_name} must be an integer")
@@ -65,17 +58,19 @@ def _positive_seconds(value: object, *, field_name: str) -> float:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerAcquisitionPolicy:
-    """Bounded candidate and verification policy for one acquisition."""
+    """Bounded candidate and verification policy for one session-created acquisition.
 
-    mode: AdbServerAcquisitionMode
+    Acquisition never adopts an existing listener. Existing listeners are candidate
+    conflicts, and only positive ``CREATED_BY_ATTEMPT`` evidence may enter protocol
+    verification for promotion.
+    """
+
     max_candidates: int = 32
     indeterminate_retries: int = 0
     verification_timeout_seconds: float = 5.0
     probe_interval_seconds: float = 0.05
 
     def __post_init__(self) -> None:
-        if not isinstance(self.mode, AdbServerAcquisitionMode):
-            raise TypeError("mode must be AdbServerAcquisitionMode")
         object.__setattr__(
             self,
             "max_candidates",
@@ -107,15 +102,7 @@ class AdbServerAcquisitionPolicy:
         )
 
 
-class AdbServerLeaseProvenance(str, Enum):
-    """How the server associated with an acquisition lease was established."""
-
-    ADOPTED_EXISTING = "adopted_existing"
-    CREATED_BY_ACQUISITION = "created_by_acquisition"
-
-
 class AdbServerCandidateOutcome(str, Enum):
-    ADOPTED_EXISTING = "adopted_existing"
     CREATED_BY_ACQUISITION = "created_by_acquisition"
     OCCUPIED = "occupied"
     INDETERMINATE = "indeterminate"
@@ -155,7 +142,7 @@ class AdbServerCandidateAttempt:
 
 
 class AdbServerAcquisitionError(RuntimeError):
-    """No candidate satisfied the requested acquisition policy."""
+    """No candidate satisfied session-created acquisition requirements."""
 
     def __init__(self, attempts: tuple[AdbServerCandidateAttempt, ...]) -> None:
         if not isinstance(attempts, tuple) or not all(
@@ -174,16 +161,19 @@ class AdbServerAcquisitionError(RuntimeError):
 
 
 class AdbServerLease:
-    """A verified ADB server plus its process-local endpoint reservation.
+    """Verified session-created server evidence plus an endpoint reservation.
 
-    Releasing this lease releases only the process-local endpoint reservation. It
-    deliberately does not issue ``kill-server``: protocol verification cannot prove
-    that the same native process still owns the endpoint at release time.
+    A successful lease proves that this acquisition obtained positive native creation
+    evidence and then verified a compatible ADB listener at the same endpoint. It does
+    not prove that a later listener at that endpoint is still the same native process.
+
+    Releasing the lease releases only the process-local endpoint reservation and never
+    issues ``kill-server``. Process-level managed ownership is provided separately by
+    :mod:`adb.server.ownership` and intentionally keeps its lease for process lifetime.
     """
 
     __slots__ = (
         "endpoint",
-        "provenance",
         "server_status",
         "attempts",
         "_endpoint_lease",
@@ -192,7 +182,6 @@ class AdbServerLease:
     def __init__(
         self,
         endpoint_lease: AdbServerEndpointLease,
-        provenance: AdbServerLeaseProvenance,
         server_status: AdbServerStatus,
         attempts: tuple[AdbServerCandidateAttempt, ...],
     ) -> None:
@@ -200,8 +189,6 @@ class AdbServerLease:
             raise TypeError("endpoint_lease must be AdbServerEndpointLease")
         if not endpoint_lease.active:
             raise ValueError("endpoint_lease must be active")
-        if not isinstance(provenance, AdbServerLeaseProvenance):
-            raise TypeError("provenance must be AdbServerLeaseProvenance")
         if not isinstance(server_status, AdbServerStatus):
             raise TypeError("server_status must be AdbServerStatus")
         if not isinstance(attempts, tuple) or not attempts:
@@ -210,15 +197,11 @@ class AdbServerLease:
             raise TypeError("attempts must contain AdbServerCandidateAttempt values")
         if attempts[-1].endpoint != endpoint_lease.endpoint:
             raise ValueError("terminal acquisition attempt must match the leased endpoint")
-        expected_outcome = (
-            AdbServerCandidateOutcome.CREATED_BY_ACQUISITION
-            if provenance is AdbServerLeaseProvenance.CREATED_BY_ACQUISITION
-            else AdbServerCandidateOutcome.ADOPTED_EXISTING
-        )
-        if attempts[-1].outcome is not expected_outcome:
-            raise ValueError("terminal acquisition outcome must match lease provenance")
+        if attempts[-1].outcome is not AdbServerCandidateOutcome.CREATED_BY_ACQUISITION:
+            raise ValueError(
+                "server lease requires terminal CREATED_BY_ACQUISITION evidence"
+            )
         self.endpoint = endpoint_lease.endpoint
-        self.provenance = provenance
         self.server_status = server_status
         self.attempts = attempts
         self._endpoint_lease = endpoint_lease
@@ -227,13 +210,9 @@ class AdbServerLease:
     def active(self) -> bool:
         return self._endpoint_lease.active
 
-    @property
-    def owns_server(self) -> bool:
-        """Return acquisition provenance, not a claim of current process identity."""
-
-        return self.provenance is AdbServerLeaseProvenance.CREATED_BY_ACQUISITION
-
     def release(self) -> None:
+        """Release only the process-local reservation, not the native server."""
+
         self._endpoint_lease.release()
 
     close = release
@@ -252,7 +231,13 @@ _Sleeper = Callable[[float], None]
 
 
 class AdbServerAcquirer:
-    """Reserve, observe, create or adopt, verify, and promote ADB endpoints."""
+    """Reserve, observe, create, verify, and promote session-created ADB servers.
+
+    This is the low-level acquisition primitive. It never adopts an already-running
+    listener. Canonical managed callers should acquire through
+    :func:`adb.server.acquire_process_adb_server`, which serializes acquisition into the
+    process-level server slot.
+    """
 
     def __init__(
         self,
@@ -320,18 +305,6 @@ class AdbServerAcquirer:
                 initial = precheck[-1]
 
                 if initial.status is EndpointObservationStatus.ADB_SERVER_VERIFIED:
-                    if policy.mode is AdbServerAcquisitionMode.ALLOW_ADOPT:
-                        record = AdbServerCandidateAttempt(
-                            candidate,
-                            precheck,
-                            AdbServerCandidateOutcome.ADOPTED_EXISTING,
-                        )
-                        return self._promote(
-                            reservation,
-                            AdbServerLeaseProvenance.ADOPTED_EXISTING,
-                            initial,
-                            tuple([*attempts, record]),
-                        )
                     attempts.append(
                         AdbServerCandidateAttempt(
                             candidate,
@@ -369,17 +342,12 @@ class AdbServerAcquirer:
 
                 verification = (
                     self._verify(candidate, policy)
-                    if (
-                        creation.evidence
-                        is AdbServerCreationEvidence.CREATED_BY_ATTEMPT
-                        or policy.mode is AdbServerAcquisitionMode.ALLOW_ADOPT
-                    )
+                    if creation.evidence is AdbServerCreationEvidence.CREATED_BY_ATTEMPT
                     else ()
                 )
                 verified = self._last_verified(verification)
                 if (
-                    creation.evidence
-                    is AdbServerCreationEvidence.CREATED_BY_ATTEMPT
+                    creation.evidence is AdbServerCreationEvidence.CREATED_BY_ATTEMPT
                     and verified is not None
                 ):
                     record = AdbServerCandidateAttempt(
@@ -391,33 +359,13 @@ class AdbServerAcquirer:
                     )
                     return self._promote(
                         reservation,
-                        AdbServerLeaseProvenance.CREATED_BY_ACQUISITION,
-                        verified,
-                        tuple([*attempts, record]),
-                    )
-
-                if (
-                    policy.mode is AdbServerAcquisitionMode.ALLOW_ADOPT
-                    and verified is not None
-                ):
-                    record = AdbServerCandidateAttempt(
-                        candidate,
-                        precheck,
-                        AdbServerCandidateOutcome.ADOPTED_EXISTING,
-                        creation,
-                        verification,
-                    )
-                    return self._promote(
-                        reservation,
-                        AdbServerLeaseProvenance.ADOPTED_EXISTING,
                         verified,
                         tuple([*attempts, record]),
                     )
 
                 outcome = (
                     AdbServerCandidateOutcome.VERIFICATION_FAILED
-                    if creation.evidence
-                    is AdbServerCreationEvidence.CREATED_BY_ATTEMPT
+                    if creation.evidence is AdbServerCreationEvidence.CREATED_BY_ATTEMPT
                     else AdbServerCandidateOutcome.CREATION_NOT_CONFIRMED
                 )
                 attempts.append(
@@ -495,7 +443,6 @@ class AdbServerAcquirer:
     @staticmethod
     def _promote(
         reservation: AdbServerEndpointReservation,
-        provenance: AdbServerLeaseProvenance,
         verified: EndpointObservation,
         attempts: tuple[AdbServerCandidateAttempt, ...],
     ) -> AdbServerLease:
@@ -505,7 +452,6 @@ class AdbServerAcquirer:
         try:
             return AdbServerLease(
                 endpoint_lease,
-                provenance,
                 verified.server_status,
                 attempts,
             )
@@ -517,10 +463,8 @@ class AdbServerAcquirer:
 __all__ = [
     "AdbServerAcquirer",
     "AdbServerAcquisitionError",
-    "AdbServerAcquisitionMode",
     "AdbServerAcquisitionPolicy",
     "AdbServerCandidateAttempt",
     "AdbServerCandidateOutcome",
     "AdbServerLease",
-    "AdbServerLeaseProvenance",
 ]

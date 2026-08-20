@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.ownership import AdbServerRef
 from adb.transport.configuration import AdbConfiguredTransport
 
 
@@ -15,12 +15,20 @@ class RegisteredTransport(Protocol):
 
 
 class AdbManagedRuntime:
-    """Managed lifecycle for one ADB server endpoint and its registered transports."""
+    """Managed lifecycle bound to the process-owned ADB server reference.
 
-    def __init__(self, endpoint: AdbServerEndpoint) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-        self.endpoint = endpoint
+    Managed composition deliberately does not accept a bare ``AdbServerEndpoint``.
+    The server reference must originate from the process-level ownership slot, so
+    endpoint observations alone cannot bootstrap managed ownership.
+    """
+
+    def __init__(self, server: AdbServerRef) -> None:
+        if not isinstance(server, AdbServerRef):
+            raise TypeError("server must be AdbServerRef")
+        if not server.active:
+            raise ValueError("server reference must be active")
+        self.server = server
+        self.endpoint = server.endpoint
 
     # ------------------------------------------------------------------
     # Runtime lifecycle
@@ -31,7 +39,7 @@ class AdbManagedRuntime:
         raise NotImplementedError
 
     def close(self) -> None:
-        """Stop managing runtime state and release runtime resources."""
+        """Stop managing runtime resources without terminating the process ADB server."""
         raise NotImplementedError
 
     # ------------------------------------------------------------------
