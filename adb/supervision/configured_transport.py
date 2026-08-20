@@ -11,7 +11,6 @@ from adb.supervision.signal import (
     AdbConfiguredTransportResolutionChanged,
 )
 from adb.transport.configuration import AdbConfiguredTransport
-from adb.transport.inventory.model import AdbDevicesTrackingSessionId
 from adb.transport.inventory.resolution import (
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
@@ -47,26 +46,21 @@ class _ConfiguredTransportRegistration:
     configuration: AdbConfiguredTransport
     policy: AdbConfiguredTransportSupervisionPolicy
     resolution: AdbConfiguredTransportResolution | None = None
-    session_id: AdbDevicesTrackingSessionId | None = None
     disappearance_recovery_pending: bool = False
     active_recovery_thread: Thread | None = None
     active_recovery_token: object | None = None
 
 
 class AdbConfiguredTransportSupervisor:
-    """Long-lived projection and disappearance recovery for configured transports.
+    """Long-lived configured-transport projection across disposable tracker scopes.
 
-    The transport-inventory tracker remains server-wide and configuration-agnostic. Tracking
-    observations are this supervisor's sole projection authority: the latest complete observation
-    is cached atomically with its session identity and reused when a transport is registered.
-    Fresh readiness probing remains the configured ensurer's responsibility.
+    The current tracker is the sole projection authority while it is alive. Every
+    ``AdbDevicesTrackingStarted`` event begins a fresh baseline: cached per-registration
+    resolutions are cleared, so an absence in a newly created tracker never becomes a
+    disappearance edge from the destroyed tracker that preceded it.
 
-    The supervisor holds each configured transport only for its explicit registration lifetime
-    and may run one bounded readiness ensure operation after a ``RESOLVED`` to ``ABSENT``
-    transition within one tracking generation. Initial absence, a tracking-generation boundary,
-    and transitions from non-resolved evidence never imply recovery intent. Registrations may
-    remain tracking-only; a policy requesting disappearance recovery is accepted only when the
-    configured ensurer explicitly supports active establishment for that exact transport.
+    Integer tracking generations are unnecessary because tracker scopes are not reused.
+    Recovery tokens remain private concurrency fences for independent transport ensure work.
     """
 
     def __init__(
@@ -95,9 +89,8 @@ class AdbConfiguredTransportSupervisor:
             _ConfiguredTransportRegistration,
         ] = {}
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
-        self._current_session_id: AdbDevicesTrackingSessionId | None = None
+        self._tracking_active = False
         self._latest_observation: AdbDevicesSnapshotObserved | None = None
-        self._latest_generation = 0
         self._closed = False
 
     def start(self) -> None:
@@ -106,23 +99,12 @@ class AdbConfiguredTransportSupervisor:
                 raise RuntimeError("configured transport supervisor is closed")
             if self._subscriptions:
                 raise RuntimeError("configured transport supervisor is already started")
-            started = self._bus.subscribe(
-                AdbDevicesTrackingStarted,
-                self._on_tracking_started,
+            self._subscriptions = (
+                self._bus.subscribe(AdbDevicesTrackingStarted, self._on_tracking_started),
+                self._bus.subscribe(AdbDevicesSnapshotObserved, self._on_snapshot_observed),
+                self._bus.subscribe(AdbDevicesTrackingFailed, self._on_tracking_terminal),
+                self._bus.subscribe(AdbDevicesTrackingStopped, self._on_tracking_terminal),
             )
-            snapshots = self._bus.subscribe(
-                AdbDevicesSnapshotObserved,
-                self._on_snapshot_observed,
-            )
-            failed = self._bus.subscribe(
-                AdbDevicesTrackingFailed,
-                self._on_tracking_terminal,
-            )
-            stopped = self._bus.subscribe(
-                AdbDevicesTrackingStopped,
-                self._on_tracking_terminal,
-            )
-            self._subscriptions = (started, snapshots, failed, stopped)
 
     def register(
         self,
@@ -138,17 +120,12 @@ class AdbConfiguredTransportSupervisor:
         if not isinstance(policy, AdbConfiguredTransportSupervisionPolicy):
             raise TypeError("policy must be AdbConfiguredTransportSupervisionPolicy")
         if policy.recovery_ensure_policy is not None:
-            establishment_supported = (
-                self._ensurer.supports_establishment(configuration)
-            )
+            establishment_supported = self._ensurer.supports_establishment(configuration)
             if not isinstance(establishment_supported, bool):
-                raise TypeError(
-                    "ensurer supports_establishment() must return bool"
-                )
+                raise TypeError("ensurer supports_establishment() must return bool")
             if not establishment_supported:
                 raise ValueError(
-                    "automatic disappearance recovery is not supported for this "
-                    "configured transport"
+                    "automatic disappearance recovery is not supported for this configured transport"
                 )
 
         publication: AdbConfiguredTransportResolutionChanged | None = None
@@ -162,8 +139,7 @@ class AdbConfiguredTransportSupervisor:
                 raise ValueError("ADB configured transport is already registered")
             if any(
                 candidate.serial == configuration.serial
-                and candidate.expected_connection_type
-                is configuration.expected_connection_type
+                and candidate.expected_connection_type is configuration.expected_connection_type
                 for candidate in self._registrations
             ):
                 raise ValueError(
@@ -171,10 +147,11 @@ class AdbConfiguredTransportSupervisor:
                 )
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
-            observation = self._latest_observation
+            observation = self._latest_observation if self._tracking_active else None
             if observation is not None:
-                publication, recovery_launch_requested = (
-                    self._project_registration_locked(registration, observation)
+                publication, recovery_launch_requested = self._project_registration_locked(
+                    registration,
+                    observation,
                 )
 
         if publication is not None:
@@ -186,18 +163,12 @@ class AdbConfiguredTransportSupervisor:
         self,
         configuration: AdbConfiguredTransport | AdbDeviceSerial,
     ) -> bool:
-        """Release one exact registration, or the sole registration for a serial."""
-
         if not isinstance(configuration, (AdbConfiguredTransport, AdbDeviceSerial)):
-            raise TypeError(
-                "configuration must be AdbConfiguredTransport or AdbDeviceSerial"
-            )
+            raise TypeError("configuration must be AdbConfiguredTransport or AdbDeviceSerial")
         with self._lock:
             key = self._resolve_registration_key_locked(configuration)
             registration = None if key is None else self._registrations.pop(key)
-            thread = (
-                None if registration is None else registration.active_recovery_thread
-            )
+            thread = None if registration is None else registration.active_recovery_thread
         if thread is not None and thread is not current_thread():
             thread.join()
         return registration is not None
@@ -206,12 +177,8 @@ class AdbConfiguredTransportSupervisor:
         self,
         configuration: AdbConfiguredTransport | AdbDeviceSerial,
     ) -> AdbConfiguredTransportResolution | None:
-        """Return one exact projection, or the sole projection for a serial."""
-
         if not isinstance(configuration, (AdbConfiguredTransport, AdbDeviceSerial)):
-            raise TypeError(
-                "configuration must be AdbConfiguredTransport or AdbDeviceSerial"
-            )
+            raise TypeError("configuration must be AdbConfiguredTransport or AdbDeviceSerial")
         with self._lock:
             key = self._resolve_registration_key_locked(configuration)
             registration = None if key is None else self._registrations.get(key)
@@ -224,7 +191,7 @@ class AdbConfiguredTransportSupervisor:
             self._closed = True
             subscriptions = self._subscriptions
             self._subscriptions = ()
-            self._current_session_id = None
+            self._tracking_active = False
             self._latest_observation = None
             threads = tuple(
                 registration.active_recovery_thread
@@ -239,43 +206,31 @@ class AdbConfiguredTransportSupervisor:
                 thread.join()
 
     def _on_tracking_started(self, event: AdbDevicesTrackingStarted) -> None:
-        if event.session_id.endpoint != self.endpoint:
+        if event.endpoint != self.endpoint:
             return
         with self._lock:
             if self._closed:
                 return
-            if event.session_id == self._current_session_id:
-                return
-            if event.session_id.generation <= self._latest_generation:
-                return
-            self._current_session_id = event.session_id
+            self._tracking_active = True
             self._latest_observation = None
-            self._latest_generation = event.session_id.generation
             for registration in self._registrations.values():
                 registration.resolution = None
-                registration.session_id = event.session_id
                 registration.disappearance_recovery_pending = False
                 registration.active_recovery_token = None
 
     def _on_snapshot_observed(self, event: AdbDevicesSnapshotObserved) -> None:
-        if event.session_id.endpoint != self.endpoint:
+        if event.endpoint != self.endpoint:
             return
         publications: list[object] = []
         recovery_launch_requests: list[AdbConfiguredTransport] = []
         with self._lock:
-            if self._closed:
+            if self._closed or not self._tracking_active:
                 return
-            if self._current_session_id != event.session_id:
-                if event.session_id.generation <= self._latest_generation:
-                    return
-                # Tolerate a late subscription that missed Started while still fencing out
-                # observations from generations already known to be terminal.
-                self._current_session_id = event.session_id
-                self._latest_generation = event.session_id.generation
             self._latest_observation = event
             for registration in self._registrations.values():
-                publication, recovery_launch_requested = (
-                    self._project_registration_locked(registration, event)
+                publication, recovery_launch_requested = self._project_registration_locked(
+                    registration,
+                    event,
                 )
                 if publication is not None:
                     publications.append(publication)
@@ -291,57 +246,42 @@ class AdbConfiguredTransportSupervisor:
         self,
         event: AdbDevicesTrackingFailed | AdbDevicesTrackingStopped,
     ) -> None:
-        if event.session_id.endpoint != self.endpoint:
+        if event.endpoint != self.endpoint:
             return
         with self._lock:
-            if self._closed or self._current_session_id != event.session_id:
+            if self._closed or not self._tracking_active:
                 return
-            # Existing projections remain last-known evidence, but must not bootstrap a new
-            # registration after their tracking generation has terminated.
-            self._current_session_id = None
+            self._tracking_active = False
             self._latest_observation = None
             for registration in self._registrations.values():
-                if registration.session_id == event.session_id:
-                    registration.disappearance_recovery_pending = False
-                    registration.active_recovery_token = None
+                registration.disappearance_recovery_pending = False
+                registration.active_recovery_token = None
 
     def _project_registration_locked(
         self,
         registration: _ConfiguredTransportRegistration,
         observation: AdbDevicesSnapshotObserved,
     ) -> tuple[AdbConfiguredTransportResolutionChanged | None, bool]:
-        session_id = observation.session_id
         previous = registration.resolution
         current = resolve_configured_transport(
             registration.configuration,
             observation.snapshot,
         )
-        baseline_changed = registration.session_id != session_id
-        effective_previous = None if baseline_changed else previous
-        changed = baseline_changed or previous != current
-        registration.session_id = session_id
+        changed = previous != current
         registration.resolution = current
 
-        if (
-            baseline_changed
-            or current.status is not AdbConfiguredTransportResolutionStatus.ABSENT
-        ):
+        if current.status is not AdbConfiguredTransportResolutionStatus.ABSENT:
             registration.disappearance_recovery_pending = False
             registration.active_recovery_token = None
 
         publication = (
-            AdbConfiguredTransportResolutionChanged(
-                session_id,
-                effective_previous,
-                current,
-            )
+            AdbConfiguredTransportResolutionChanged(previous, current)
             if changed
             else None
         )
         recoverable_disappearance = (
-            effective_previous is not None
-            and effective_previous.status
-            is AdbConfiguredTransportResolutionStatus.RESOLVED
+            previous is not None
+            and previous.status is AdbConfiguredTransportResolutionStatus.RESOLVED
             and current.status is AdbConfiguredTransportResolutionStatus.ABSENT
         )
         recovery_launch_requested = (
@@ -349,9 +289,6 @@ class AdbConfiguredTransportSupervisor:
             and registration.policy.recovery_ensure_policy is not None
         )
         if recovery_launch_requested:
-            # Recovery intent is created only from this eligible edge. If an invalidated older
-            # recovery thread is still unwinding, its finally block may consume the explicit
-            # pending request; it must never reconstruct intent from ABSENT.
             registration.disappearance_recovery_pending = True
             recovery_launch_requested = registration.active_recovery_thread is None
         return publication, recovery_launch_requested
@@ -379,8 +316,6 @@ class AdbConfiguredTransportSupervisor:
             registration.active_recovery_token = recovery_token
             registration.active_recovery_thread = thread
             try:
-                # Publish and start under the same lock observed by close()/unregister(). This
-                # prevents either method from trying to join a thread that has not started yet.
                 thread.start()
             except BaseException:
                 if registration.active_recovery_thread is thread:
@@ -413,7 +348,7 @@ class AdbConfiguredTransportSupervisor:
             if result.operation.configuration != configuration:
                 raise ValueError(
                     "ensure result configuration does not match supervised transport"
-            )
+                )
             with self._lock:
                 registration = self._registrations.get(configuration)
                 result_is_current = (
@@ -427,8 +362,6 @@ class AdbConfiguredTransportSupervisor:
                 self._bus.publish(
                     AdbConfiguredTransportRecoveryExhausted(configuration, result)
                 )
-            # A satisfied readiness probe is deliberately not projected here. The long-lived
-            # tracking stream remains authoritative and will publish the resulting inventory.
         finally:
             launch_pending_recovery = False
             with self._lock:
@@ -460,8 +393,7 @@ class AdbConfiguredTransportSupervisor:
         )
         if len(matches) > 1:
             raise ValueError(
-                "ADB device serial matches multiple configured transports; "
-                "use AdbConfiguredTransport"
+                "ADB device serial matches multiple configured transports; use AdbConfiguredTransport"
             )
         return matches[0] if matches else None
 

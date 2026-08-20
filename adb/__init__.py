@@ -20,10 +20,10 @@ from adb.errors import (
 )
 from adb.managed import AdbManagedRuntime, RegisteredTransport
 from adb.server import (
+    AdbOwnedServer,
     AdbServerAcquisitionPolicy,
     AdbServerConfigurationConflictError,
     AdbServerOwnershipLostError,
-    AdbServerRef,
     AdbServerStatusReader,
     acquire_process_adb_server,
 )
@@ -51,13 +51,13 @@ __all__ = [
     "AdbDevicesSnapshotReader",
     "AdbError",
     "AdbManagedRuntime",
+    "AdbOwnedServer",
     "AdbProtocolError",
     "AdbRemoteCommandError",
     "AdbServerAcquisitionPolicy",
     "AdbServerConfigurationConflictError",
     "AdbServerConnectionError",
     "AdbServerOwnershipLostError",
-    "AdbServerRef",
     "AdbServerStatusReader",
     "AdbServiceError",
     "AdbTimeoutError",

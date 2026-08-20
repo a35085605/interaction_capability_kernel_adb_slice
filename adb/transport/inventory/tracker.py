@@ -4,13 +4,13 @@ from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 from typing import Protocol, runtime_checkable
 
-from adb.server.endpoint import AdbServerEndpoint
 from adb.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.transport.inventory.model import AdbDevicesTrackingSessionId
+from adb.server.endpoint import AdbServerEndpoint
+from adb.transport.inventory.source import AdbTrackDevicesSession, AdbTrackDevicesSource
 from adb.transport.signal import (
     AdbDevicesSnapshotObserved,
     AdbDevicesTrackingFailed,
@@ -18,7 +18,6 @@ from adb.transport.signal import (
     AdbDevicesTrackingStarted,
     AdbDevicesTrackingStopped,
 )
-from adb.transport.inventory.source import AdbTrackDevicesSession, AdbTrackDevicesSource
 from eventing import EventPublisher
 
 
@@ -38,18 +37,23 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 @runtime_checkable
 class AdbDevicesTrackingController(Protocol):
+    """Single-use transport-inventory tracking scope."""
+
     @property
-    def active_session_id(self) -> AdbDevicesTrackingSessionId | None: ...
+    def active(self) -> bool: ...
 
-    def start(self) -> AdbDevicesTrackingSessionId: ...
-
-    def stop(self) -> None: ...
+    def start(self) -> None: ...
 
     def close(self) -> None: ...
 
 
 class AdbDevicesTracker:
-    """Track generation-fenced transport inventory and publish lifecycle signals."""
+    """Track one transport-inventory stream for one tracker lifetime.
+
+    A tracker instance is single-use. Natural stop/failure is terminal, and explicit close is
+    a teardown barrier: it closes the source and joins the worker before returning. Restarting
+    tracking therefore requires constructing a fresh :class:`AdbDevicesTracker`.
+    """
 
     def __init__(
         self,
@@ -68,106 +72,91 @@ class AdbDevicesTracker:
         self._source_factory = _source_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
-        self._generation = 0
-        self._active_session_id: AdbDevicesTrackingSessionId | None = None
+        self._started = False
         self._active_source: AdbTrackDevicesSource | None = None
         self._active_thread: Thread | None = None
         self._closed = False
 
     @property
-    def active_session_id(self) -> AdbDevicesTrackingSessionId | None:
-        """Return the allocated non-terminal tracking generation, if any."""
-
+    def active(self) -> bool:
         with self._lock:
-            return self._active_session_id
+            return not self._closed and self._active_thread is not None
 
-    def start(self) -> AdbDevicesTrackingSessionId:
-        """Allocate and start one new tracking generation in a background thread."""
+    def start(self) -> None:
+        """Start this tracker exactly once."""
 
         with self._lock:
             if self._closed:
                 raise RuntimeError("ADB devices tracker is closed")
-            if self._active_thread is not None:
-                raise RuntimeError("an ADB tracking session is already active")
-            self._generation += 1
-            session_id = AdbDevicesTrackingSessionId(
-                self.endpoint,
-                self._generation,
-            )
+            if self._started:
+                raise RuntimeError("ADB devices tracker is single-use and already started")
             source = self._source_factory(self.endpoint)
             if not isinstance(source, AdbTrackDevicesSource):
                 raise TypeError("source factory must return AdbTrackDevicesSource")
             thread = self._thread_factory(
-                target=self._run_session,
-                args=(session_id, source),
+                target=self._run,
+                args=(source,),
                 name=(
                     "adb-track-devices-"
-                    f"{self.endpoint.host}-{self.endpoint.port}-{session_id.generation}"
+                    f"{self.endpoint.host}-{self.endpoint.port}"
                 ),
             )
-            self._active_session_id = session_id
+            self._started = True
             self._active_source = source
             self._active_thread = thread
-            thread.start()
-            return session_id
+            try:
+                thread.start()
+            except BaseException:
+                self._active_source = None
+                self._active_thread = None
+                self._closed = True
+                source.close()
+                raise
 
-    def stop(self) -> None:
-        """Stop the active session without closing the tracker for future generations."""
+    def close(self) -> None:
+        """Destroy this tracker scope and wait for its worker to stop."""
 
         with self._lock:
             source = self._active_source
             thread = self._active_thread
+            self._closed = True
         if source is not None:
             source.close()
         if thread is not None and thread is not current_thread():
             thread.join()
 
-    def close(self) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-        self.stop()
-
-    def _run_session(
-        self,
-        session_id: AdbDevicesTrackingSessionId,
-        source: AdbTrackDevicesSource,
-    ) -> None:
+    def _run(self, source: AdbTrackDevicesSource) -> None:
         endpoint = self.endpoint
         session: AdbTrackDevicesSession | None = None
         terminal: object | None = None
         try:
             session = source.open()
             if session is None:
-                terminal = AdbDevicesTrackingStopped(endpoint, session_id)
-            else:
-                self._publisher.publish(
-                    AdbDevicesTrackingStarted(endpoint, session_id)
-                )
+                terminal = AdbDevicesTrackingStopped(endpoint)
+            elif self._can_publish(source):
+                self._publisher.publish(AdbDevicesTrackingStarted(endpoint))
                 for snapshot in session.snapshots():
+                    if not self._can_publish(source):
+                        break
                     self._publisher.publish(
-                        AdbDevicesSnapshotObserved(endpoint, session_id, snapshot)
+                        AdbDevicesSnapshotObserved(endpoint, snapshot)
                     )
-                terminal = AdbDevicesTrackingStopped(endpoint, session_id)
+                terminal = AdbDevicesTrackingStopped(endpoint)
         except AdbServerConnectionError as exc:
             terminal = AdbDevicesTrackingFailed(
                 endpoint,
-                session_id,
                 AdbDevicesTrackingFailure.SERVER_CONNECTION,
                 str(exc),
             )
         except AdbServiceError as exc:
             terminal = AdbDevicesTrackingFailed(
                 endpoint,
-                session_id,
                 AdbDevicesTrackingFailure.SERVICE,
                 str(exc),
             )
         except AdbProtocolError as exc:
             terminal = AdbDevicesTrackingFailed(
                 endpoint,
-                session_id,
                 AdbDevicesTrackingFailure.PROTOCOL,
                 str(exc),
             )
@@ -176,21 +165,23 @@ class AdbDevicesTracker:
                 session.close()
             else:
                 source.close()
-            self._mark_inactive(session_id, source)
+            publish_terminal = self._mark_terminal(source)
 
-        if terminal is not None:
+        if terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
-    def _mark_inactive(
-        self,
-        session_id: AdbDevicesTrackingSessionId,
-        source: AdbTrackDevicesSource,
-    ) -> None:
+    def _can_publish(self, source: AdbTrackDevicesSource) -> bool:
         with self._lock:
-            if self._active_session_id == session_id and self._active_source is source:
-                self._active_session_id = None
+            return not self._closed and self._active_source is source
+
+    def _mark_terminal(self, source: AdbTrackDevicesSource) -> bool:
+        with self._lock:
+            publish_terminal = not self._closed and self._active_source is source
+            if self._active_source is source:
                 self._active_source = None
                 self._active_thread = None
+            self._closed = True
+            return publish_terminal
 
 
 __all__ = [

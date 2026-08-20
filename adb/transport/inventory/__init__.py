@@ -1,11 +1,10 @@
-"""ADB transport inventory facts, reads, projections, and long-lived tracking."""
+"""ADB transport inventory facts, reads, projections, and single-use tracking."""
 
 from adb.transport.inventory.lookup import AdbTrackedDeviceLookup
 from adb.transport.inventory.model import (
     AdbConnectionState,
     AdbConnectionType,
     AdbDevicesSnapshot,
-    AdbDevicesTrackingSessionId,
     AdbTrackedDevice,
 )
 from adb.transport.inventory.reader import AdbDevicesSnapshotReader
@@ -37,7 +36,6 @@ __all__ = [
     "AdbDevicesTracker",
     "AdbDevicesTrackingController",
     "AdbDevicesTrackingReadiness",
-    "AdbDevicesTrackingSessionId",
     "AdbDevicesTrackingStart",
     "AdbDevicesTrackingStartOrchestrator",
     "AdbDevicesTrackingStartPolicy",

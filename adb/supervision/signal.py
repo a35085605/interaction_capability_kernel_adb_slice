@@ -7,7 +7,6 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.supervision.model import AdbServerRecoveryCycleId
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.inventory.resolution import AdbConfiguredTransportResolution
-from adb.transport.inventory.model import AdbDevicesTrackingSessionId
 from adb.transport.lifecycle.ensure import (
     AdbTransportEnsureResult,
     AdbTransportEnsureStatus,
@@ -16,23 +15,18 @@ from adb.transport.lifecycle.ensure import (
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportResolutionChanged:
-    """Signal carrying one configured-transport projection within a tracking generation."""
+    """Signal carrying one configured-transport projection in the current tracker scope."""
 
-    session_id: AdbDevicesTrackingSessionId
     previous: AdbConfiguredTransportResolution | None
     current: AdbConfiguredTransportResolution
 
     def __post_init__(self) -> None:
-        if not isinstance(self.session_id, AdbDevicesTrackingSessionId):
-            raise TypeError("session_id must be AdbDevicesTrackingSessionId")
         if self.previous is not None and not isinstance(
             self.previous, AdbConfiguredTransportResolution
         ):
             raise TypeError("previous must be AdbConfiguredTransportResolution or None")
         if not isinstance(self.current, AdbConfiguredTransportResolution):
             raise TypeError("current must be AdbConfiguredTransportResolution")
-        if self.current.configuration.endpoint != self.session_id.endpoint:
-            raise ValueError("configured transport resolution endpoint must match tracking session")
         if self.previous is not None and (
             self.previous.configuration != self.current.configuration
         ):
@@ -63,7 +57,29 @@ class AdbConfiguredTransportRecoveryExhausted:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerReconciliationRequested:
-    """Signal that downstream liveness evidence warrants a fresh server reconciliation."""
+    """Signal that current server liveness evidence requires ownership reconciliation."""
+
+    endpoint: AdbServerEndpoint
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerOwnershipLost:
+    """Signal that the current owned server lifetime has been invalidated."""
+
+    endpoint: AdbServerEndpoint
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerOwnershipRecovered:
+    """Signal that fresh session-created ownership is available at the endpoint."""
 
     endpoint: AdbServerEndpoint
 
@@ -74,7 +90,7 @@ class AdbServerReconciliationRequested:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryRetryDue:
-    """Signal delivered when one scheduled server-running recovery retry becomes due."""
+    """Signal delivered when one owned-server recovery retry becomes due."""
 
     endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId
@@ -93,7 +109,7 @@ class AdbServerRecoveryRetryDue:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryExhausted:
-    """Signal that automatic maintenance of the server running condition exhausted its budget."""
+    """Signal that fresh owned-server creation exhausted its retry budget."""
 
     endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId
@@ -114,6 +130,8 @@ AdbSupervisionSignal: TypeAlias = (
     AdbConfiguredTransportResolutionChanged
     | AdbConfiguredTransportRecoveryExhausted
     | AdbServerReconciliationRequested
+    | AdbServerOwnershipLost
+    | AdbServerOwnershipRecovered
     | AdbServerRecoveryRetryDue
     | AdbServerRecoveryExhausted
 )
@@ -122,6 +140,8 @@ AdbSupervisionSignal: TypeAlias = (
 __all__ = [
     "AdbConfiguredTransportRecoveryExhausted",
     "AdbConfiguredTransportResolutionChanged",
+    "AdbServerOwnershipLost",
+    "AdbServerOwnershipRecovered",
     "AdbServerReconciliationRequested",
     "AdbServerRecoveryExhausted",
     "AdbServerRecoveryRetryDue",
