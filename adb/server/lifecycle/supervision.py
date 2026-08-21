@@ -8,7 +8,7 @@ from numbers import Real
 from random import random
 from threading import Lock, Thread, current_thread
 
-from adb.server.lifecycle.native import AdbServerLaunchError
+from adb.server.lifecycle.handle import AdbServerLaunchError
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,

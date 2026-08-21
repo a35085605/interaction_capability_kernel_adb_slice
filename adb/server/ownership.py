@@ -4,7 +4,7 @@ from enum import Enum
 from threading import Condition
 
 from adb.server.model import AdbServerEndpoint
-from adb.server.lifecycle.native import AdbServerLauncher, AdbServerNativeHandle
+from adb.server.lifecycle.handle import AdbServerLauncher, AdbServerNativeHandle
 
 
 _OWNER_CONSTRUCTION_TOKEN = object()
@@ -85,7 +85,7 @@ class _DefaultAdbServerLauncher:
     def launch(self) -> AdbServerNativeHandle:
         delegate = self._delegate
         if delegate is None:
-            from adb.server.lifecycle.adapters import SubprocessAdbServerLauncher
+            from adb.server.lifecycle.launch import SubprocessAdbServerLauncher
 
             delegate = SubprocessAdbServerLauncher()
             self._delegate = delegate

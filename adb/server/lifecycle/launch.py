@@ -12,7 +12,7 @@ from adb._internal.client import AdbServiceClient
 from adb._internal.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
 from adb.server.model import AdbServerEndpoint
-from adb.server.lifecycle.native import (
+from adb.server.lifecycle.handle import (
     AdbServerCloseError,
     AdbServerLaunchError,
     AdbServerNativeHandle,
