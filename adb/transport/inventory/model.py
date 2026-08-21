@@ -5,7 +5,6 @@ from enum import IntEnum
 from numbers import Integral
 from typing import Literal
 
-from adb.server.endpoint import AdbServerEndpoint
 from adb.transport.selection import AdbTransportId
 
 
@@ -159,28 +158,9 @@ class AdbDevicesSnapshot:
                 raise TypeError(f"ADB devices[{index}] must be AdbTrackedDevice")
 
 
-@dataclass(frozen=True, slots=True, order=True)
-class AdbDevicesTrackingSessionId:
-    """Endpoint-scoped identity for one transport-inventory tracking generation."""
-
-    endpoint: AdbServerEndpoint
-    generation: int
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-        if isinstance(self.generation, bool) or not isinstance(self.generation, Integral):
-            raise TypeError("generation must be an integer")
-        generation = int(self.generation)
-        if generation <= 0:
-            raise ValueError("generation must be greater than zero")
-        object.__setattr__(self, "generation", generation)
-
-
 __all__ = [
     "AdbConnectionState",
     "AdbConnectionType",
     "AdbDevicesSnapshot",
-    "AdbDevicesTrackingSessionId",
     "AdbTrackedDevice",
 ]

@@ -9,6 +9,8 @@ from adb.supervision.model import (
 from adb.supervision.signal import (
     AdbConfiguredTransportRecoveryExhausted,
     AdbConfiguredTransportResolutionChanged,
+    AdbServerOwnershipLost,
+    AdbServerOwnershipRecovered,
     AdbServerReconciliationRequested,
     AdbServerRecoveryExhausted,
     AdbServerRecoveryRetryDue,
@@ -25,6 +27,8 @@ __all__ = [
     "AdbConfiguredTransportSupervisor",
     "AdbDevicesTrackingSupervisionPolicy",
     "AdbDevicesTrackingSupervisor",
+    "AdbServerOwnershipLost",
+    "AdbServerOwnershipRecovered",
     "AdbServerReconciliationRequested",
     "AdbServerRecoveryCycleId",
     "AdbServerRecoveryExhausted",

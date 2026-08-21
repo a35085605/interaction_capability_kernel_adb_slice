@@ -5,10 +5,7 @@ from enum import Enum
 from typing import TypeAlias
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.transport.inventory.model import (
-    AdbDevicesSnapshot,
-    AdbDevicesTrackingSessionId,
-)
+from adb.transport.inventory.model import AdbDevicesSnapshot
 from adb.transport.lifecycle.command import (
     AdbDeviceSideReconnect,
     AdbOfflineTransportsReconnect,
@@ -24,12 +21,6 @@ from native_attempt import NativeAttemptResult
 def _require_endpoint(value: object) -> AdbServerEndpoint:
     if not isinstance(value, AdbServerEndpoint):
         raise TypeError("endpoint must be AdbServerEndpoint")
-    return value
-
-
-def _require_tracking_session_id(value: object) -> AdbDevicesTrackingSessionId:
-    if not isinstance(value, AdbDevicesTrackingSessionId):
-        raise TypeError("session_id must be AdbDevicesTrackingSessionId")
     return value
 
 
@@ -79,7 +70,7 @@ class AdbTransportEnsureCompleted:
 
 
 class AdbDevicesTrackingFailure(str, Enum):
-    """Typed reason one transport-inventory tracking session terminated abnormally."""
+    """Typed reason one single-use transport-inventory tracker terminated abnormally."""
 
     SERVER_CONNECTION = "server_connection"
     SERVICE = "service"
@@ -88,46 +79,34 @@ class AdbDevicesTrackingFailure(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStarted:
-    """Signal that one transport-inventory tracking session entered stream mode."""
+    """Signal that the current tracker entered stream mode."""
 
     endpoint: AdbServerEndpoint
-    session_id: AdbDevicesTrackingSessionId
 
     def __post_init__(self) -> None:
         _require_endpoint(self.endpoint)
-        _require_tracking_session_id(self.session_id)
-        if self.session_id.endpoint != self.endpoint:
-            raise ValueError("session_id endpoint must match signal endpoint")
 
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStopped:
-    """Signal that tracking ended without implying transport disappearance."""
+    """Signal that the current tracker ended without implying transport disappearance."""
 
     endpoint: AdbServerEndpoint
-    session_id: AdbDevicesTrackingSessionId
 
     def __post_init__(self) -> None:
         _require_endpoint(self.endpoint)
-        _require_tracking_session_id(self.session_id)
-        if self.session_id.endpoint != self.endpoint:
-            raise ValueError("session_id endpoint must match signal endpoint")
 
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingFailed:
-    """Signal that tracking failed without synthesizing server or transport state."""
+    """Signal that the current tracker failed without synthesizing server state."""
 
     endpoint: AdbServerEndpoint
-    session_id: AdbDevicesTrackingSessionId
     failure: AdbDevicesTrackingFailure
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
         _require_endpoint(self.endpoint)
-        _require_tracking_session_id(self.session_id)
-        if self.session_id.endpoint != self.endpoint:
-            raise ValueError("session_id endpoint must match signal endpoint")
         if not isinstance(self.failure, AdbDevicesTrackingFailure):
             raise TypeError("failure must be AdbDevicesTrackingFailure")
         object.__setattr__(
@@ -142,17 +121,13 @@ class AdbDevicesTrackingFailed:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesSnapshotObserved:
-    """Signal carrying one complete snapshot emitted by ADB track-devices."""
+    """Signal carrying one complete snapshot emitted by the current tracker."""
 
     endpoint: AdbServerEndpoint
-    session_id: AdbDevicesTrackingSessionId
     snapshot: AdbDevicesSnapshot
 
     def __post_init__(self) -> None:
         _require_endpoint(self.endpoint)
-        _require_tracking_session_id(self.session_id)
-        if self.session_id.endpoint != self.endpoint:
-            raise ValueError("session_id endpoint must match signal endpoint")
         if not isinstance(self.snapshot, AdbDevicesSnapshot):
             raise TypeError("snapshot must be AdbDevicesSnapshot")
 

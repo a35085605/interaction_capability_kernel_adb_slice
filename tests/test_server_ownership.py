@@ -116,7 +116,7 @@ class AcquisitionOwnershipTests(unittest.TestCase):
 
 
 class ProcessAdbServerSlotTests(unittest.TestCase):
-    def test_multiple_slots_share_one_reference_and_one_creation(self) -> None:
+    def test_multiple_slots_share_one_owner_and_one_creation(self) -> None:
         state = _ProcessAdbServerSlotState()
         endpoint = AdbServerEndpoint("localhost", 5038)
         first_acquirer = _FakeAcquirer(endpoint)
@@ -125,11 +125,11 @@ class ProcessAdbServerSlotTests(unittest.TestCase):
         second = ProcessAdbServerSlot(second_acquirer, _state=state)
         policy = AdbServerAcquisitionPolicy()
 
-        first_ref = first.acquire(policy)
-        second_ref = second.acquire(policy)
+        first_owner = first.acquire(policy)
+        second_owner = second.acquire(policy)
 
-        self.assertIs(first_ref, second_ref)
-        self.assertEqual(first_ref.endpoint, endpoint)
+        self.assertIs(first_owner, second_owner)
+        self.assertEqual(first_owner.endpoint, endpoint)
         self.assertEqual(first_acquirer.calls, 1)
         self.assertEqual(second_acquirer.calls, 0)
 
@@ -141,12 +141,12 @@ class ProcessAdbServerSlotTests(unittest.TestCase):
         first = ProcessAdbServerSlot(winner, _state=state)
         second = ProcessAdbServerSlot(waiter, _state=state)
         policy = AdbServerAcquisitionPolicy()
-        refs: list[object] = []
+        owners: list[object] = []
         errors: list[BaseException] = []
 
         def acquire(slot: ProcessAdbServerSlot) -> None:
             try:
-                refs.append(slot.acquire(policy))
+                owners.append(slot.acquire(policy))
             except BaseException as exc:  # pragma: no cover - assertion aid
                 errors.append(exc)
 
@@ -162,8 +162,8 @@ class ProcessAdbServerSlotTests(unittest.TestCase):
         self.assertFalse(first_thread.is_alive())
         self.assertFalse(second_thread.is_alive())
         self.assertEqual(errors, [])
-        self.assertEqual(len(refs), 2)
-        self.assertIs(refs[0], refs[1])
+        self.assertEqual(len(owners), 2)
+        self.assertIs(owners[0], owners[1])
         self.assertEqual(winner.calls, 1)
         self.assertEqual(waiter.calls, 0)
 
@@ -180,14 +180,14 @@ class ProcessAdbServerSlotTests(unittest.TestCase):
                 endpoint=AdbServerEndpoint("localhost", 5042),
             )
 
-    def test_managed_runtime_requires_borrow_reference(self) -> None:
+    def test_managed_runtime_requires_owned_server(self) -> None:
         state = _ProcessAdbServerSlotState()
         endpoint = AdbServerEndpoint("localhost", 5043)
         slot = ProcessAdbServerSlot(_FakeAcquirer(endpoint), _state=state)
-        reference = slot.acquire(AdbServerAcquisitionPolicy())
+        owner = slot.acquire(AdbServerAcquisitionPolicy())
 
-        runtime = AdbManagedRuntime(reference)
-        self.assertIs(runtime.server, reference)
+        runtime = AdbManagedRuntime(owner)
+        self.assertIs(runtime.server, owner)
         self.assertEqual(runtime.endpoint, endpoint)
 
         with self.assertRaises(TypeError):

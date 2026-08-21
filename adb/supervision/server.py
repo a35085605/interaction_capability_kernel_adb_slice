@@ -5,16 +5,16 @@ from datetime import timedelta
 from random import random
 from threading import Lock, Thread, current_thread
 
-from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle import (
-    AdbServerAvailability,
-    AdbServerEnsureAvailability,
-    AdbServerEnsureOrchestrator,
-    AdbServerEnsureResult,
-    AdbServerEnsureStatus,
+from adb.server.acquisition import AdbServerAcquisitionError
+from adb.server.ownership import (
+    AdbOwnedServer,
+    AdbServerOwnershipLostError,
+    ProcessAdbServerSlot,
 )
 from adb.supervision.model import AdbServerRecoveryCycleId, AdbServerSupervisionPolicy
 from adb.supervision.signal import (
+    AdbServerOwnershipLost,
+    AdbServerOwnershipRecovered,
     AdbServerReconciliationRequested,
     AdbServerRecoveryExhausted,
     AdbServerRecoveryRetryDue,
@@ -40,49 +40,51 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 
 
 class AdbServerSupervisor:
-    """Maintain the desired running condition of one configured ADB server endpoint.
+    """Maintain durable intent for process-owned ADB server availability.
 
-    The bounded ``AdbServerEnsureOrchestrator`` remains the owner of one probe/command/
-    verification episode. This supervisor owns durable running intent, the recovery-enabled
-    gate, retry/backoff state, stale-cycle fencing, and serialization of managed start/stop
-    mutations for the endpoint.
+    The supervised resource itself does not cross a failure boundary. Terminal liveness
+    evidence invalidates the current :class:`AdbOwnedServer`, removes it from the process slot,
+    and publishes :class:`AdbServerOwnershipLost`. Managed dependents can then synchronously
+    tear down their server-bound scopes. Recovery creates a fresh owner at the same endpoint
+    and publishes :class:`AdbServerOwnershipRecovered` only after creation plus verification.
 
-    Availability monitoring is intentionally not hidden here: callers may invoke ``reconcile``
-    or publish ``AdbServerReconciliationRequested`` when fresh evidence or another supervised
-    condition suggests the running condition should be checked again. Downstream liveness sources
-    do not synthesize server availability; every accepted request still enters a fresh bounded
-    server ensure episode.
+    Existing listeners never satisfy recovery because ``ProcessAdbServerSlot.recover()`` uses
+    the same no-adopt acquisition path as initial ownership. Retry cycle IDs fence scheduled
+    retry work only; they are not server generations.
     """
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
+        server: AdbOwnedServer,
         event_bus: EventBus,
-        ensure_orchestrator: AdbServerEnsureOrchestrator,
+        slot: ProcessAdbServerSlot,
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
         *,
         _random: _RandomSource = random,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(server, AdbOwnedServer):
+            raise TypeError("server must be AdbOwnedServer")
+        if not server.active:
+            raise ValueError("server owner must be active")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
-        ):
+        ) or not callable(getattr(event_bus, "unsubscribe", None)):
             raise TypeError("event_bus must satisfy EventBus")
-        if not isinstance(ensure_orchestrator, AdbServerEnsureOrchestrator):
-            raise TypeError("ensure_orchestrator must be AdbServerEnsureOrchestrator")
-        if ensure_orchestrator.endpoint != endpoint:
-            raise ValueError("ensure orchestrator endpoint does not match ADB server endpoint")
+        if not isinstance(slot, ProcessAdbServerSlot):
+            raise TypeError("slot must be ProcessAdbServerSlot")
+        if slot.active_owner is not server:
+            raise ValueError("server must be the process slot's active owner")
         if not isinstance(scheduler, TemporalScheduler):
             raise TypeError("scheduler must satisfy TemporalScheduler")
         if not isinstance(policy, AdbServerSupervisionPolicy):
             raise TypeError("policy must be AdbServerSupervisionPolicy")
 
-        self.endpoint = endpoint
+        self.server: AdbOwnedServer | None = server
+        self.endpoint = server.endpoint
         self._bus = event_bus
-        self._ensure = ensure_orchestrator
+        self._slot = slot
         self._scheduler = scheduler
         self._policy = policy
         self._random = _random
@@ -114,38 +116,38 @@ class AdbServerSupervisor:
         with self._lock:
             return self._recovery_epoch
 
-    def start(self, *, recovery_enabled: bool) -> AdbServerEnsureResult:
-        """Establish the running condition and optionally keep recovery armed afterwards."""
+    def start(self, *, recovery_enabled: bool) -> None:
+        """Arm managed intent around the current owner or its future recreation."""
 
         enabled = _require_bool(recovery_enabled, field_name="recovery_enabled")
+        launch_cycle: AdbServerRecoveryCycleId | None = None
         with self._mutation_lock:
             with self._lock:
                 self._require_open()
                 old_token = self._invalidate_recovery_locked()
+                server = self.server
+                if server is not None and (
+                    not server.active or self._slot.active_owner is not server
+                ):
+                    self.server = None
+                    server = None
+                if server is None and not enabled:
+                    raise AdbServerOwnershipLostError(
+                        "cannot start supervision without an active owner when recovery is disabled"
+                    )
                 self._desired_running = True
                 self._recovery_enabled = enabled
                 self._recovery_epoch += 1
-                cycle_id = AdbServerRecoveryCycleId.new() if enabled else None
-                self._cycle_id = cycle_id
-                if cycle_id is not None:
-                    self._ensure_recovery_subscriptions_locked()
+                self._ensure_subscriptions_locked()
+                if server is None and enabled:
+                    launch_cycle = self._new_recovery_cycle_locked()
             if old_token is not None:
                 self._scheduler.cancel(old_token)
+        if launch_cycle is not None:
+            self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
-            result = self._ensure.ensure(
-                AdbServerEnsureAvailability(
-                    endpoint=self.endpoint,
-                    desired=AdbServerAvailability.AVAILABLE,
-                    policy=self._policy.ensure_policy,
-                )
-            )
-
-        if cycle_id is not None:
-            self._handle_recovery_result(cycle_id, 1, result)
-        return result
-
-    def stop(self) -> AdbServerEnsureResult:
-        """Establish the stopped condition and invalidate automatic running recovery."""
+    def stop(self) -> None:
+        """Disarm managed intent without terminating any native ADB server."""
 
         with self._mutation_lock:
             with self._lock:
@@ -156,67 +158,51 @@ class AdbServerSupervisor:
                 self._recovery_epoch += 1
             if old_token is not None:
                 self._scheduler.cancel(old_token)
-            return self._ensure.ensure(
-                AdbServerEnsureAvailability(
-                    endpoint=self.endpoint,
-                    desired=AdbServerAvailability.UNAVAILABLE,
-                    policy=self._policy.ensure_policy,
-                )
-            )
 
     def set_recovery_enabled(self, enabled: bool) -> None:
-        """Enable or disable maintenance of the server running condition without stopping it."""
+        """Enable or disable future recreation after ownership has been invalidated."""
 
         normalized = _require_bool(enabled, field_name="enabled")
         launch_cycle: AdbServerRecoveryCycleId | None = None
-        with self._lock:
-            self._require_open()
-            if normalized and not self._desired_running:
-                raise RuntimeError(
-                    "cannot enable ADB server recovery without a desired running condition"
-                )
-            if self._recovery_enabled is normalized:
-                return
-            old_token = self._invalidate_recovery_locked()
-            self._recovery_enabled = normalized
-            self._recovery_epoch += 1
-            if normalized:
-                launch_cycle = AdbServerRecoveryCycleId.new()
-                self._cycle_id = launch_cycle
-                self._ensure_recovery_subscriptions_locked()
-        if old_token is not None:
-            self._scheduler.cancel(old_token)
+        with self._mutation_lock:
+            with self._lock:
+                self._require_open()
+                if normalized and not self._desired_running:
+                    raise RuntimeError(
+                        "cannot enable ADB server recovery without managed running intent"
+                    )
+                if self._recovery_enabled is normalized:
+                    return
+                old_token = self._invalidate_recovery_locked()
+                self._recovery_enabled = normalized
+                self._recovery_epoch += 1
+                if normalized and self.server is None:
+                    launch_cycle = self._new_recovery_cycle_locked()
+            if old_token is not None:
+                self._scheduler.cancel(old_token)
         if launch_cycle is not None:
             self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
     def reconcile(self) -> None:
-        """Freshly reconcile the running condition when automatic recovery is currently allowed."""
+        """Invalidate the current owner from terminal liveness evidence and reconcile intent."""
 
-        with self._lock:
-            self._require_open()
-            if not self._recovery_armed_locked():
-                return
-            if self._cycle_id is not None:
-                return
-            cycle_id = AdbServerRecoveryCycleId.new()
-            self._cycle_id = cycle_id
-            self._recovery_epoch += 1
-            self._ensure_recovery_subscriptions_locked()
-        self._launch_recovery_attempt(cycle_id, attempt_number=1)
+        self._invalidate_owner_and_maybe_recover()
 
     def close(self) -> None:
-        """Stop supervising without changing the native server state."""
+        """Stop supervising without terminating native ADB or resetting a healthy owner."""
 
-        with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-            self._recovery_enabled = False
-            subscriptions = self._subscriptions
-            self._subscriptions = ()
-            retry_token = self._invalidate_recovery_locked()
-            attempt_threads = tuple(self._attempt_threads)
-            self._recovery_epoch += 1
+        with self._mutation_lock:
+            with self._lock:
+                if self._closed:
+                    return
+                self._closed = True
+                self._desired_running = False
+                self._recovery_enabled = False
+                subscriptions = self._subscriptions
+                self._subscriptions = ()
+                retry_token = self._invalidate_recovery_locked()
+                attempt_threads = tuple(self._attempt_threads)
+                self._recovery_epoch += 1
         for token in subscriptions:
             self._bus.unsubscribe(token)
         if retry_token is not None:
@@ -224,6 +210,41 @@ class AdbServerSupervisor:
         for thread in attempt_threads:
             if thread is not current_thread():
                 thread.join()
+
+    def _invalidate_owner_and_maybe_recover(self) -> None:
+        ownership_lost = False
+        launch_cycle: AdbServerRecoveryCycleId | None = None
+
+        with self._mutation_lock:
+            with self._lock:
+                self._require_open()
+                if not self._desired_running:
+                    return
+                server = self.server
+
+            if server is not None:
+                self._slot.mark_lost(server)
+                with self._lock:
+                    if self.server is server:
+                        self.server = None
+                        ownership_lost = True
+                        self._recovery_epoch += 1
+
+            with self._lock:
+                if (
+                    self._desired_running
+                    and self._recovery_enabled
+                    and self.server is None
+                    and self._cycle_id is None
+                ):
+                    launch_cycle = self._new_recovery_cycle_locked()
+
+        # Publish loss before starting a new creation attempt so server-bound dependents can
+        # tear down their old scopes before recovery can publish fresh ownership.
+        if ownership_lost:
+            self._bus.publish(AdbServerOwnershipLost(self.endpoint))
+        if launch_cycle is not None:
+            self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
     def _launch_recovery_attempt(
         self,
@@ -234,7 +255,7 @@ class AdbServerSupervisor:
             target=self._run_recovery_attempt,
             args=(cycle_id, attempt_number),
             name=(
-                "adb-server-recovery-"
+                "adb-owned-server-recovery-"
                 f"{self.endpoint.host}-{self.endpoint.port}-{attempt_number}"
             ),
         )
@@ -242,7 +263,11 @@ class AdbServerSupervisor:
             if not self._recovery_is_current_locked(cycle_id):
                 return
             self._attempt_threads.add(thread)
-        thread.start()
+            try:
+                thread.start()
+            except BaseException:
+                self._attempt_threads.discard(thread)
+                raise
 
     def _run_recovery_attempt(
         self,
@@ -250,37 +275,46 @@ class AdbServerSupervisor:
         attempt_number: int,
     ) -> None:
         active = current_thread()
+        acquisition_failed = False
+        recovered_event: AdbServerOwnershipRecovered | None = None
+        retry_token: ScheduleToken | None = None
         try:
             with self._mutation_lock:
                 with self._lock:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
-                result = self._ensure.ensure(
-                    AdbServerEnsureAvailability(
-                        endpoint=self.endpoint,
-                        desired=AdbServerAvailability.AVAILABLE,
-                        policy=self._policy.ensure_policy,
+                try:
+                    recovered = self._slot.recover(
+                        self._policy.recovery_acquisition_policy,
                     )
-                )
-            self._handle_recovery_result(cycle_id, attempt_number, result)
+                except AdbServerAcquisitionError:
+                    acquisition_failed = True
+                else:
+                    if recovered.endpoint != self.endpoint:
+                        raise ValueError("owned-server recovery changed endpoint")
+                    with self._lock:
+                        if not self._recovery_is_current_locked(cycle_id):
+                            return
+                        retry_token = self._retry_token
+                        self._retry_token = None
+                        self._cycle_id = None
+                        self.server = recovered
+                        recovered_event = AdbServerOwnershipRecovered(self.endpoint)
+
+            if recovered_event is not None:
+                if retry_token is not None:
+                    self._scheduler.cancel(retry_token)
+                self._bus.publish(recovered_event)
+                return
+
+            if acquisition_failed:
+                with self._lock:
+                    if not self._recovery_is_current_locked(cycle_id):
+                        return
+                self._schedule_retry_or_exhaust(cycle_id, attempt_number)
         finally:
             with self._lock:
                 self._attempt_threads.discard(active)
-
-    def _handle_recovery_result(
-        self,
-        cycle_id: AdbServerRecoveryCycleId,
-        attempt_number: int,
-        result: AdbServerEnsureResult,
-    ) -> None:
-        if result.status is AdbServerEnsureStatus.SATISFIED:
-            self._end_recovery_cycle(cycle_id)
-            return
-
-        with self._lock:
-            if not self._recovery_is_current_locked(cycle_id):
-                return
-        self._schedule_retry_or_exhaust(cycle_id, attempt_number)
 
     def _schedule_retry_or_exhaust(
         self,
@@ -319,7 +353,7 @@ class AdbServerSupervisor:
         if old_token is not None:
             self._scheduler.cancel(old_token)
 
-    def _ensure_recovery_subscriptions_locked(self) -> None:
+    def _ensure_subscriptions_locked(self) -> None:
         if self._subscriptions:
             return
         reconciliation_subscription = self._bus.subscribe(
@@ -338,16 +372,7 @@ class AdbServerSupervisor:
     ) -> None:
         if event.endpoint != self.endpoint:
             return
-        with self._lock:
-            if self._closed or not self._recovery_armed_locked():
-                return
-            if self._cycle_id is not None:
-                return
-            cycle_id = AdbServerRecoveryCycleId.new()
-            self._cycle_id = cycle_id
-            self._recovery_epoch += 1
-            self._ensure_recovery_subscriptions_locked()
-        self._launch_recovery_attempt(cycle_id, attempt_number=1)
+        self._invalidate_owner_and_maybe_recover()
 
     def _on_retry_due(self, event: AdbServerRecoveryRetryDue) -> None:
         if event.endpoint != self.endpoint:
@@ -358,10 +383,15 @@ class AdbServerSupervisor:
             self._retry_token = None
         self._launch_recovery_attempt(event.cycle_id, event.attempt_number)
 
-    def _end_recovery_cycle(
-        self,
-        cycle_id: AdbServerRecoveryCycleId,
-    ) -> None:
+    def _new_recovery_cycle_locked(self) -> AdbServerRecoveryCycleId:
+        if self._cycle_id is not None:
+            return self._cycle_id
+        cycle_id = AdbServerRecoveryCycleId.new()
+        self._cycle_id = cycle_id
+        self._recovery_epoch += 1
+        return cycle_id
+
+    def _end_recovery_cycle(self, cycle_id: AdbServerRecoveryCycleId) -> None:
         with self._lock:
             if self._cycle_id != cycle_id:
                 return
@@ -380,12 +410,11 @@ class AdbServerSupervisor:
     def _recovery_is_current_locked(self, cycle_id: AdbServerRecoveryCycleId) -> bool:
         return (
             not self._closed
-            and self._recovery_armed_locked()
+            and self._desired_running
+            and self._recovery_enabled
+            and self.server is None
             and self._cycle_id == cycle_id
         )
-
-    def _recovery_armed_locked(self) -> bool:
-        return self._desired_running and self._recovery_enabled
 
     def _require_open(self) -> None:
         if self._closed:

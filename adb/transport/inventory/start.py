@@ -10,7 +10,6 @@ from threading import Condition
 from time import monotonic
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.transport.inventory.model import AdbDevicesTrackingSessionId
 from adb.transport.inventory.tracker import AdbDevicesTrackingController
 from adb.transport.signal import (
     AdbDevicesTrackingFailed,
@@ -46,7 +45,7 @@ def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
 
 
 class AdbDevicesTrackingReadiness(str, Enum):
-    """Whether fresh upstream server evidence permits a new tracking generation."""
+    """Whether fresh upstream server evidence permits constructing a tracker scope."""
 
     READY = "ready"
     WAITING_FOR_SERVER = "waiting_for_server"
@@ -54,7 +53,7 @@ class AdbDevicesTrackingReadiness(str, Enum):
 
 
 class AdbDevicesTrackingStartStatus(str, Enum):
-    """Terminal status of one bounded transport-inventory tracking start episode."""
+    """Terminal status of one bounded single-use tracker start episode."""
 
     SATISFIED = "satisfied"
     FAILED = "failed"
@@ -63,7 +62,7 @@ class AdbDevicesTrackingStartStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStartPolicy:
-    """Bound one transport-inventory tracking start episode after readiness."""
+    """Bound one transport-inventory tracker start episode after readiness."""
 
     timeout_seconds: float
 
@@ -80,7 +79,7 @@ class AdbDevicesTrackingStartPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStart:
-    """Request one tracking generation after upstream server readiness is established."""
+    """Request startup of one freshly constructed tracker scope."""
 
     endpoint: AdbServerEndpoint
     readiness: AdbDevicesTrackingReadiness
@@ -89,70 +88,34 @@ class AdbDevicesTrackingStart:
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint")
-        if not isinstance(
-            self.readiness,
-            AdbDevicesTrackingReadiness,
-        ):
-            raise TypeError(
-                "readiness must be AdbDevicesTrackingReadiness"
-            )
-        if not isinstance(
-            self.policy,
-            AdbDevicesTrackingStartPolicy,
-        ):
-            raise TypeError(
-                "policy must be AdbDevicesTrackingStartPolicy"
-            )
+        if not isinstance(self.readiness, AdbDevicesTrackingReadiness):
+            raise TypeError("readiness must be AdbDevicesTrackingReadiness")
+        if not isinstance(self.policy, AdbDevicesTrackingStartPolicy):
+            raise TypeError("policy must be AdbDevicesTrackingStartPolicy")
 
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStartResult:
-    """Evidence from one bounded transport-inventory tracking start episode."""
+    """Evidence from one bounded single-use tracker start episode."""
 
     operation: AdbDevicesTrackingStart
     status: AdbDevicesTrackingStartStatus
-    tracking_session_id: AdbDevicesTrackingSessionId | None = None
     tracking_failure: AdbDevicesTrackingFailure | None = None
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(
-            self.operation,
-            AdbDevicesTrackingStart,
-        ):
-            raise TypeError(
-                "operation must be AdbDevicesTrackingStart"
-            )
-        if not isinstance(
-            self.status,
-            AdbDevicesTrackingStartStatus,
-        ):
-            raise TypeError(
-                "status must be AdbDevicesTrackingStartStatus"
-            )
-        if self.tracking_session_id is not None:
-            if not isinstance(self.tracking_session_id, AdbDevicesTrackingSessionId):
-                raise TypeError("tracking_session_id must be AdbDevicesTrackingSessionId or None")
-            if self.tracking_session_id.endpoint != self.operation.endpoint:
-                raise ValueError(
-                    "tracking session endpoint must match start operation"
-                )
+        if not isinstance(self.operation, AdbDevicesTrackingStart):
+            raise TypeError("operation must be AdbDevicesTrackingStart")
+        if not isinstance(self.status, AdbDevicesTrackingStartStatus):
+            raise TypeError("status must be AdbDevicesTrackingStartStatus")
         if self.tracking_failure is not None and not isinstance(
             self.tracking_failure,
             AdbDevicesTrackingFailure,
         ):
-            raise TypeError(
-                "tracking_failure must be AdbDevicesTrackingFailure or None"
-            )
+            raise TypeError("tracking_failure must be AdbDevicesTrackingFailure or None")
         if self.status is AdbDevicesTrackingStartStatus.SATISFIED:
-            if self.tracking_session_id is None:
-                raise ValueError(
-                    "satisfied start result requires tracking_session_id"
-                )
             if self.tracking_failure is not None:
-                raise ValueError(
-                    "satisfied start result cannot carry tracking_failure"
-                )
+                raise ValueError("satisfied start result cannot carry tracking_failure")
         object.__setattr__(
             self,
             "diagnostic",
@@ -170,13 +133,10 @@ class AdbDevicesTrackingStartResult:
 
 
 class AdbDevicesTrackingStartOrchestrator:
-    """Start one track-devices tracking generation after server readiness.
+    """Start one freshly constructed tracker after server readiness.
 
-    The caller must provide ``READY`` readiness projected from fresh upstream server evidence.
-    Only after that precondition is satisfied does the bounded start deadline begin.
-    The episode owns no retry/backoff or server-lifecycle policy. Satisfaction requires matching
-    ``AdbDevicesTrackingStarted`` evidence, not merely acceptance of ``tracking.start()``.
-    Server condition maintenance belongs to ``AdbServerSupervisor``.
+    The tracker is single-use. Satisfaction requires ``AdbDevicesTrackingStarted`` evidence;
+    failure, stop, or timeout leaves teardown/recomposition to the caller.
     """
 
     def __init__(
@@ -204,13 +164,8 @@ class AdbDevicesTrackingStartOrchestrator:
         self,
         operation: AdbDevicesTrackingStart,
     ) -> AdbDevicesTrackingStartResult:
-        if not isinstance(
-            operation,
-            AdbDevicesTrackingStart,
-        ):
-            raise TypeError(
-                "operation must be AdbDevicesTrackingStart"
-            )
+        if not isinstance(operation, AdbDevicesTrackingStart):
+            raise TypeError("operation must be AdbDevicesTrackingStart")
         if operation.endpoint != self.endpoint:
             raise ValueError("operation endpoint does not match configured ADB server endpoint")
         if operation.readiness is not AdbDevicesTrackingReadiness.READY:
@@ -218,13 +173,14 @@ class AdbDevicesTrackingStartOrchestrator:
                 "transport-inventory tracking start requires READY server readiness"
             )
 
-        # The start clock deliberately starts only after upstream readiness has been
-        # established. WAITING_FOR_SERVER and INDETERMINATE carry no tracking deadline.
         deadline = self._monotonic() + operation.policy.timeout_seconds
         condition = Condition()
         events: deque[object] = deque()
 
         def collect(event: object) -> None:
+            endpoint = getattr(event, "endpoint", None)
+            if endpoint != self.endpoint:
+                return
             with condition:
                 events.append(event)
                 condition.notify()
@@ -251,15 +207,13 @@ class AdbDevicesTrackingStartOrchestrator:
             )
 
         try:
-            session_id = self._tracker.start()
+            self._tracker.start()
         except RuntimeError as exc:
             return self._complete(
                 operation,
                 AdbDevicesTrackingStartStatus.FAILED,
                 diagnostic=str(exc),
             )
-        if session_id.endpoint != operation.endpoint:
-            raise ValueError("started tracking belongs to another ADB server endpoint")
 
         while True:
             event = self._next_event(condition, events, deadline)
@@ -267,24 +221,17 @@ class AdbDevicesTrackingStartOrchestrator:
                 return self._complete(
                     operation,
                     AdbDevicesTrackingStartStatus.TIMED_OUT,
-                    tracking_session_id=session_id,
                     diagnostic="timed out waiting for tracking start evidence",
                 )
-
-            event_session = getattr(event, "session_id", None)
-            if event_session != session_id:
-                continue
             if isinstance(event, AdbDevicesTrackingStarted):
                 return self._complete(
                     operation,
                     AdbDevicesTrackingStartStatus.SATISFIED,
-                    tracking_session_id=session_id,
                 )
             if isinstance(event, AdbDevicesTrackingFailed):
                 return self._complete(
                     operation,
                     AdbDevicesTrackingStartStatus.FAILED,
-                    tracking_session_id=session_id,
                     tracking_failure=event.failure,
                     diagnostic=(
                         event.diagnostic or f"tracking failed: {event.failure.value}"
@@ -294,7 +241,6 @@ class AdbDevicesTrackingStartOrchestrator:
                 return self._complete(
                     operation,
                     AdbDevicesTrackingStartStatus.FAILED,
-                    tracking_session_id=session_id,
                     diagnostic="tracking stopped before start",
                 )
 
@@ -327,14 +273,12 @@ class AdbDevicesTrackingStartOrchestrator:
         operation: AdbDevicesTrackingStart,
         status: AdbDevicesTrackingStartStatus,
         *,
-        tracking_session_id: AdbDevicesTrackingSessionId | None = None,
         tracking_failure: AdbDevicesTrackingFailure | None = None,
         diagnostic: str | None = None,
     ) -> AdbDevicesTrackingStartResult:
         return AdbDevicesTrackingStartResult(
             operation=operation,
             status=status,
-            tracking_session_id=tracking_session_id,
             tracking_failure=tracking_failure,
             diagnostic=diagnostic,
         )

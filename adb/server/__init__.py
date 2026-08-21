@@ -16,7 +16,6 @@ from adb.server.ownership import (
     AdbOwnedServer,
     AdbServerConfigurationConflictError,
     AdbServerOwnershipLostError,
-    AdbServerRef,
     ProcessAdbServerSlot,
     acquire_process_adb_server,
 )
@@ -33,7 +32,6 @@ __all__ = [
     "AdbServerEndpoint",
     "AdbServerEndpointObserver",
     "AdbServerOwnershipLostError",
-    "AdbServerRef",
     "AdbServerStatus",
     "AdbServerStatusReader",
     "AdbUsbBackend",

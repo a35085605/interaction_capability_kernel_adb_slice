@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from numbers import Real
 from uuid import uuid4
 
-from adb.server.lifecycle import AdbServerEnsurePolicy
+from adb.server.acquisition import AdbServerAcquisitionPolicy
 from adb.transport.lifecycle.ensure import AdbTransportEnsurePolicy
 
 
@@ -67,7 +67,7 @@ def _normalize_retry_configuration(
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportSupervisionPolicy:
-    """Projection with optional recovery after a same-generation observed disappearance."""
+    """Projection with optional recovery after an observed in-scope disappearance."""
 
     recovery_ensure_policy: AdbTransportEnsurePolicy | None = None
 
@@ -82,7 +82,11 @@ class AdbConfiguredTransportSupervisionPolicy:
 
 @dataclass(frozen=True, slots=True, order=True)
 class AdbServerRecoveryCycleId:
-    """Opaque identity for one server-running recovery cycle."""
+    """Opaque identity for one scheduled/retry recovery cycle.
+
+    This token fences stale retry work after recovery is disabled, restarted, or exhausted.
+    It is not an ADB server lifetime or resource generation identifier.
+    """
 
     value: str
 
@@ -103,9 +107,15 @@ class AdbServerRecoveryCycleId:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerSupervisionPolicy:
-    """Retry policy for maintaining one ADB server's desired running condition."""
+    """Retry policy for recreating process-owned ADB server ownership.
 
-    ensure_policy: AdbServerEnsurePolicy
+    Recovery uses the same session-created acquisition invariant as initial ownership and is
+    pinned to the invalidated owner's endpoint by :class:`ProcessAdbServerSlot`.
+    """
+
+    recovery_acquisition_policy: AdbServerAcquisitionPolicy = field(
+        default_factory=AdbServerAcquisitionPolicy
+    )
     retry_initial_seconds: float = 0.5
     retry_max_seconds: float = 30.0
     retry_multiplier: float = 2.0
@@ -113,8 +123,10 @@ class AdbServerSupervisionPolicy:
     max_attempts: int | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.ensure_policy, AdbServerEnsurePolicy):
-            raise TypeError("ensure_policy must be AdbServerEnsurePolicy")
+        if not isinstance(self.recovery_acquisition_policy, AdbServerAcquisitionPolicy):
+            raise TypeError(
+                "recovery_acquisition_policy must be AdbServerAcquisitionPolicy"
+            )
         initial, maximum, multiplier, jitter, max_attempts = _normalize_retry_configuration(
             retry_initial_seconds=self.retry_initial_seconds,
             retry_max_seconds=self.retry_max_seconds,
@@ -132,11 +144,11 @@ class AdbServerSupervisionPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingSupervisionPolicy:
-    """Bound one transport-inventory tracking-start episode.
+    """Bound one single-use transport-inventory tracker start episode.
 
     Tracking supervision deliberately owns no retry/backoff policy. A server-connection
-    failure requests upstream server reconciliation; later tracking reconciliation is driven
-    by fresh external evidence or an explicit caller request.
+    failure destroys the current tracker scope and requests upstream server reconciliation.
+    Fresh server ownership permits construction of a new tracker scope.
     """
 
     episode_timeout_seconds: float = 10.0

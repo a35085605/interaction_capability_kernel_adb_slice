@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from adb.server.ownership import AdbServerRef
+from adb.server.ownership import AdbOwnedServer
 from adb.transport.configuration import AdbConfiguredTransport
 
 
@@ -10,23 +10,24 @@ class RegisteredTransport(Protocol):
     """One configured transport registration managed by the ADB runtime."""
 
     def set_disappearance_recovery_enabled(self, enabled: bool) -> None:
-        """Toggle recovery after a transport disappears within one tracking generation."""
+        """Toggle recovery after an observed transport disappearance."""
         ...
 
 
 class AdbManagedRuntime:
-    """Managed lifecycle bound to the process-owned ADB server reference.
+    """Managed lifecycle rooted in one process-owned ADB server lifetime.
 
-    Managed composition deliberately does not accept a bare ``AdbServerEndpoint``.
-    The server reference must originate from the process-level ownership slot, so
-    endpoint observations alone cannot bootstrap managed ownership.
+    Managed composition deliberately does not accept a bare ``AdbServerEndpoint``. The
+    :class:`AdbOwnedServer` must originate from the process ownership slot. Resource-bound
+    children are expected to be destroyed when that owner is invalidated and recreated only
+    after a fresh owner is acquired.
     """
 
-    def __init__(self, server: AdbServerRef) -> None:
-        if not isinstance(server, AdbServerRef):
-            raise TypeError("server must be AdbServerRef")
+    def __init__(self, server: AdbOwnedServer) -> None:
+        if not isinstance(server, AdbOwnedServer):
+            raise TypeError("server must be AdbOwnedServer")
         if not server.active:
-            raise ValueError("server reference must be active")
+            raise ValueError("server owner must be active")
         self.server = server
         self.endpoint = server.endpoint
 
@@ -47,15 +48,15 @@ class AdbManagedRuntime:
     # ------------------------------------------------------------------
 
     def start_server(self, *, auto_recovery: bool = True) -> None:
-        """Establish the server running condition."""
+        """Establish managed running intent around the owned server."""
         raise NotImplementedError
 
     def stop_server(self) -> None:
-        """Establish the server stopped condition."""
+        """Disarm managed server intent without issuing native termination."""
         raise NotImplementedError
 
     def set_server_auto_recovery(self, enabled: bool) -> None:
-        """Enable or disable maintenance of the server running condition."""
+        """Enable or disable recreation after server ownership is invalidated."""
         raise NotImplementedError
 
     # ------------------------------------------------------------------
