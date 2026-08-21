@@ -7,6 +7,7 @@ from threading import Lock, Thread, current_thread
 
 from adb.server.lifecycle.native import AdbServerLaunchError
 from adb.server.model import (
+    AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
     AdbServerLaunchFailure,
     AdbServerOwnershipLossFailure,
@@ -20,8 +21,11 @@ from adb.server.ownership import (
 )
 from adb.supervision.model import AdbServerRecoveryCycleId, AdbServerSupervisionPolicy
 from adb.supervision.signal import (
+    AdbServerNativeCloseCompleted,
+    AdbServerNativeCloseUnproven,
     AdbServerOwnershipLost,
     AdbServerOwnershipRecovered,
+    AdbServerOwnershipRetired,
     AdbServerReconciliationRequested,
     AdbServerRecoveryExhausted,
     AdbServerRecoveryRetryDue,
@@ -50,9 +54,10 @@ class AdbServerSupervisor:
     """Maintain durable intent for active process-owned ADB server ownership.
 
     The supervised resource itself does not cross a failure boundary. Terminal liveness
-    evidence invalidates and disposes the current :class:`AdbOwnedServer`, then publishes
-    :class:`AdbServerOwnershipLost`. Managed dependents can synchronously tear down their old
-    server-bound scopes before recovery reacquires a fresh native generation.
+    evidence first retires the current :class:`AdbOwnedServer` and publishes
+    :class:`AdbServerOwnershipRetired`, so managed dependents can immediately tear down their
+    old server-bound scopes. Native close then proceeds privately; recovery cannot reacquire a
+    fresh generation until termination of the retired lifetime is proven.
 
     Existing listeners never satisfy recovery because the process owner can only acquire a
     native handle returned by its launcher. Retry cycle IDs fence scheduled retry work only;
@@ -72,8 +77,6 @@ class AdbServerSupervisor:
     ) -> None:
         if not isinstance(server, AdbOwnedServer):
             raise TypeError("server must be AdbOwnedServer")
-        if not server.active:
-            raise ValueError("server owner must be active")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -104,6 +107,7 @@ class AdbServerSupervisor:
         self._recovery_epoch = 0
         self._cycle_id: AdbServerRecoveryCycleId | None = None
         self._retry_token: ScheduleToken | None = None
+        self._closing_generation: int | None = None
         self._attempt_threads: set[Thread] = set()
         self._closed = False
 
@@ -132,9 +136,7 @@ class AdbServerSupervisor:
                 self._require_open()
                 old_token = self._invalidate_recovery_locked()
                 server = self.server
-                if server is not None and (
-                    not server.active or self._owner_manager.active_owner is not server
-                ):
+                if server is not None and self._owner_manager.active_owner is not server:
                     self.server = None
                     server = None
                 if server is None and not enabled:
@@ -145,7 +147,11 @@ class AdbServerSupervisor:
                 self._recovery_enabled = enabled
                 self._recovery_epoch += 1
                 self._ensure_subscriptions_locked()
-                if server is None and enabled:
+                if (
+                    server is None
+                    and enabled
+                    and self._closing_generation is None
+                ):
                     launch_cycle = self._new_recovery_cycle_locked()
             if old_token is not None:
                 self._scheduler.cancel(old_token)
@@ -182,7 +188,11 @@ class AdbServerSupervisor:
                 old_token = self._invalidate_recovery_locked()
                 self._recovery_enabled = normalized
                 self._recovery_epoch += 1
-                if normalized and self.server is None:
+                if (
+                    normalized
+                    and self.server is None
+                    and self._closing_generation is None
+                ):
                     launch_cycle = self._new_recovery_cycle_locked()
             if old_token is not None:
                 self._scheduler.cancel(old_token)
@@ -229,8 +239,7 @@ class AdbServerSupervisor:
         self,
         failure: AdbServerOwnershipLossFailure,
     ) -> None:
-        ownership_lost = False
-        launch_cycle: AdbServerRecoveryCycleId | None = None
+        retired_server: AdbOwnedServer | None = None
 
         with self._mutation_lock:
             with self._lock:
@@ -240,28 +249,97 @@ class AdbServerSupervisor:
                 server = self.server
 
             if server is not None:
-                self._owner_manager.invalidate(server)
+                self._owner_manager.retire(server)
                 with self._lock:
                     if self.server is server:
                         self.server = None
-                        ownership_lost = True
+                        self._closing_generation = server.generation
+                        retired_server = server
                         self._recovery_epoch += 1
 
-            with self._lock:
-                if (
-                    self._desired_running
-                    and self._recovery_enabled
-                    and self.server is None
-                    and self._cycle_id is None
-                ):
-                    launch_cycle = self._new_recovery_cycle_locked()
+        if retired_server is None:
+            return
 
-        # Publish loss before starting a new creation attempt so server-bound dependents can
-        # tear down their old scopes before recovery can publish fresh ownership.
-        if ownership_lost:
-            self._bus.publish(AdbServerOwnershipLost(self.endpoint, failure))
-        if launch_cycle is not None:
-            self._launch_recovery_attempt(launch_cycle, attempt_number=1)
+        # Public ownership disappears before native close begins. Dependents use the neutral
+        # retirement fact for teardown; loss remains separate failure evidence.
+        try:
+            self._bus.publish(
+                AdbServerOwnershipRetired(
+                    retired_server.endpoint,
+                    retired_server.generation,
+                )
+            )
+            self._bus.publish(
+                AdbServerOwnershipLost(
+                    retired_server.endpoint,
+                    retired_server.generation,
+                    failure,
+                )
+            )
+        finally:
+            self._launch_retired_disposal(retired_server)
+
+    def _launch_retired_disposal(self, server: AdbOwnedServer) -> None:
+        thread = self._thread_factory(
+            target=self._run_retired_disposal,
+            args=(server,),
+            name=(
+                "adb-owned-server-close-"
+                f"{server.endpoint.host}-{server.endpoint.port}-{server.generation}"
+            ),
+        )
+        with self._lock:
+            if self._closed and self._closing_generation != server.generation:
+                return
+            self._attempt_threads.add(thread)
+            try:
+                thread.start()
+            except BaseException:
+                self._attempt_threads.discard(thread)
+                raise
+
+    def _run_retired_disposal(self, server: AdbOwnedServer) -> None:
+        active = current_thread()
+        try:
+            try:
+                self._owner_manager.dispose_retired(server)
+            except Exception as exc:
+                self._bus.publish(
+                    AdbServerNativeCloseUnproven(
+                        server.endpoint,
+                        server.generation,
+                        AdbServerCloseUnprovenFailure(str(exc)),
+                    )
+                )
+                return
+
+            try:
+                self._bus.publish(
+                    AdbServerNativeCloseCompleted(
+                        server.endpoint,
+                        server.generation,
+                    )
+                )
+            finally:
+                launch_cycle: AdbServerRecoveryCycleId | None = None
+                with self._mutation_lock:
+                    with self._lock:
+                        if self._closing_generation == server.generation:
+                            self._closing_generation = None
+                        if (
+                            not self._closed
+                            and self._desired_running
+                            and self._recovery_enabled
+                            and self.server is None
+                            and self._closing_generation is None
+                            and self._cycle_id is None
+                        ):
+                            launch_cycle = self._new_recovery_cycle_locked()
+                if launch_cycle is not None:
+                    self._launch_recovery_attempt(launch_cycle, attempt_number=1)
+        finally:
+            with self._lock:
+                self._attempt_threads.discard(active)
 
     def _launch_recovery_attempt(
         self,
@@ -393,6 +471,10 @@ class AdbServerSupervisor:
     ) -> None:
         if event.endpoint != self.endpoint:
             return
+        with self._lock:
+            server = self.server
+            if server is None or server.generation != event.generation:
+                return
         self._invalidate_owner_and_maybe_recover(event.failure)
 
     def _on_retry_due(self, event: AdbServerRecoveryRetryDue) -> None:
@@ -434,6 +516,7 @@ class AdbServerSupervisor:
             and self._desired_running
             and self._recovery_enabled
             and self.server is None
+            and self._closing_generation is None
             and self._cycle_id == cycle_id
         )
 

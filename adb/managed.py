@@ -26,8 +26,6 @@ class AdbManagedRuntime:
     def __init__(self, server: AdbOwnedServer) -> None:
         if not isinstance(server, AdbOwnedServer):
             raise TypeError("server must be AdbOwnedServer")
-        if not server.active:
-            raise ValueError("server owner must be active")
         self.server = server
         self.endpoint = server.endpoint
 
