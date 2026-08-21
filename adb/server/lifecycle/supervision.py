@@ -176,7 +176,6 @@ class AdbServerSupervisor:
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._desired_running = False
         self._recovery_enabled = False
-        self._recovery_epoch = 0
         self._cycle_id: AdbServerRecoveryCycleId | None = None
         self._retry_token: ScheduleToken | None = None
         self._closing_generation: int | None = None
@@ -193,11 +192,6 @@ class AdbServerSupervisor:
     def recovery_enabled(self) -> bool:
         with self._lock:
             return self._recovery_enabled
-
-    @property
-    def recovery_epoch(self) -> int:
-        with self._lock:
-            return self._recovery_epoch
 
     def start(self, *, recovery_enabled: bool) -> None:
         """Arm managed intent around the current owner or its future recreation."""
@@ -218,7 +212,6 @@ class AdbServerSupervisor:
                     )
                 self._desired_running = True
                 self._recovery_enabled = enabled
-                self._recovery_epoch += 1
                 self._ensure_subscriptions_locked()
                 if (
                     server is None
@@ -240,7 +233,6 @@ class AdbServerSupervisor:
                 old_token = self._invalidate_recovery_locked()
                 self._desired_running = False
                 self._recovery_enabled = False
-                self._recovery_epoch += 1
             if old_token is not None:
                 self._scheduler.cancel(old_token)
 
@@ -260,7 +252,6 @@ class AdbServerSupervisor:
                     return
                 old_token = self._invalidate_recovery_locked()
                 self._recovery_enabled = normalized
-                self._recovery_epoch += 1
                 if (
                     normalized
                     and self.server is None
@@ -299,7 +290,6 @@ class AdbServerSupervisor:
                 self._subscriptions = ()
                 retry_token = self._invalidate_recovery_locked()
                 attempt_threads = tuple(self._attempt_threads)
-                self._recovery_epoch += 1
         try:
             for token in subscriptions:
                 self._bus.unsubscribe(token)
@@ -327,11 +317,9 @@ class AdbServerSupervisor:
             if server is not None:
                 self._owner_manager.retire(server)
                 with self._lock:
-                    if self.server is server:
-                        self.server = None
-                        self._closing_generation = server.generation
-                        retired_server = server
-                        self._recovery_epoch += 1
+                    self.server = None
+                    self._closing_generation = server.generation
+                    retired_server = server
 
         if retired_server is None:
             return
@@ -567,7 +555,6 @@ class AdbServerSupervisor:
             return self._cycle_id
         cycle_id = AdbServerRecoveryCycleId.new()
         self._cycle_id = cycle_id
-        self._recovery_epoch += 1
         return cycle_id
 
     def _end_recovery_cycle(self, cycle_id: AdbServerRecoveryCycleId) -> None:
