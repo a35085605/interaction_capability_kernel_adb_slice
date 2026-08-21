@@ -2,13 +2,10 @@ from __future__ import annotations
 
 from enum import Enum
 from threading import Condition
-from typing import TYPE_CHECKING
 
 from adb.server.model import AdbServerEndpoint
 from adb.server.lifecycle.handle import AdbServerNativeHandle
-
-if TYPE_CHECKING:
-    from adb.server.lifecycle.launch import AdbServerLauncher
+from adb.server.lifecycle.launch import AdbServerLauncher
 
 
 _OWNER_CONSTRUCTION_TOKEN = object()
@@ -89,7 +86,7 @@ class _DefaultAdbServerLauncher:
     def launch(self) -> AdbServerNativeHandle:
         delegate = self._delegate
         if delegate is None:
-            from adb.server.lifecycle.launch import SubprocessAdbServerLauncher
+            from adb.server.lifecycle.subprocess import SubprocessAdbServerLauncher
 
             delegate = SubprocessAdbServerLauncher()
             self._delegate = delegate
@@ -116,11 +113,8 @@ class _ProcessAdbServerOwner:
     def __init__(self, launcher: AdbServerLauncher | None = None) -> None:
         if launcher is None:
             launcher = _DefaultAdbServerLauncher()
-        else:
-            from adb.server.lifecycle.launch import AdbServerLauncher
-
-            if not isinstance(launcher, AdbServerLauncher):
-                raise TypeError("launcher must satisfy AdbServerLauncher")
+        elif not isinstance(launcher, AdbServerLauncher):
+            raise TypeError("launcher must satisfy AdbServerLauncher")
         self._launcher = launcher
         self._condition = Condition()
         self._status = _ProcessAdbServerOwnerStatus.ABSENT
