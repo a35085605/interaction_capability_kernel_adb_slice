@@ -4,12 +4,8 @@ from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.model import (
-    AdbServerAvailability,
-    AdbServerFailure,
-    AdbServerFailureKind,
-    AdbServerObservation,
-)
+from adb.server.model import AdbServerConnectionFailure
+from adb.server.ownership import AdbOwnedServer
 from adb.supervision.model import AdbDevicesTrackingSupervisionPolicy
 from adb.supervision.signal import (
     AdbServerOwnershipLost,
@@ -54,17 +50,21 @@ def _default_tracker_factory(
     return AdbDevicesTracker(endpoint, event_bus)
 
 
-def _project_server_observation(
-    observation: AdbServerObservation,
+def _project_server_owner(
+    endpoint: AdbServerEndpoint,
+    server: AdbOwnedServer | None,
 ) -> AdbDevicesTrackingReadiness:
-    if not isinstance(observation, AdbServerObservation):
-        raise TypeError("observation must be AdbServerObservation")
-    availability = observation.availability
-    if availability is AdbServerAvailability.AVAILABLE:
-        return AdbDevicesTrackingReadiness.READY
-    if availability is AdbServerAvailability.UNAVAILABLE:
+    if server is None:
         return AdbDevicesTrackingReadiness.WAITING_FOR_SERVER
-    return AdbDevicesTrackingReadiness.INDETERMINATE
+    if not isinstance(server, AdbOwnedServer):
+        raise TypeError("server must be AdbOwnedServer or None")
+    if server.endpoint != endpoint:
+        raise ValueError("server owner endpoint does not match tracking endpoint")
+    return (
+        AdbDevicesTrackingReadiness.READY
+        if server.active
+        else AdbDevicesTrackingReadiness.WAITING_FOR_SERVER
+    )
 
 
 class AdbDevicesTrackingSupervisor:
@@ -131,11 +131,10 @@ class AdbDevicesTrackingSupervisor:
         with self._lock:
             return self._tracking_active
 
-    def start(self, server_observation: AdbServerObservation) -> bool:
-        """Declare durable intent and synchronously start a fresh tracker when READY."""
+    def start(self, server: AdbOwnedServer | None) -> bool:
+        """Declare durable intent and start a fresh tracker for an active owner."""
 
-        self._require_observation_endpoint(server_observation)
-        readiness = _project_server_observation(server_observation)
+        readiness = _project_server_owner(self.endpoint, server)
         with self._lock:
             self._require_open()
             if self._desired_tracking:
@@ -160,11 +159,10 @@ class AdbDevicesTrackingSupervisor:
             raise
         return self._handle_start_result(tracker, result)
 
-    def reconcile(self, server_observation: AdbServerObservation) -> None:
-        """Reconcile tracking intent by creating or destroying the current tracker scope."""
+    def reconcile(self, server: AdbOwnedServer | None) -> None:
+        """Reconcile tracking intent against the current active owned server generation."""
 
-        self._require_observation_endpoint(server_observation)
-        readiness = _project_server_observation(server_observation)
+        readiness = _project_server_owner(self.endpoint, server)
         tracker_to_close: AdbDevicesTrackingController | None = None
         launch: tuple[
             Thread,
@@ -253,10 +251,7 @@ class AdbDevicesTrackingSupervisor:
             self._bus.publish(
                 AdbServerReconciliationRequested(
                     self.endpoint,
-                    AdbServerFailure(
-                        AdbServerFailureKind.CONNECTION,
-                        event.diagnostic,
-                    ),
+                    AdbServerConnectionFailure(event.diagnostic),
                 )
             )
 
@@ -287,12 +282,7 @@ class AdbDevicesTrackingSupervisor:
         with self._lock:
             if self._closed or not self._desired_tracking:
                 return
-        self.reconcile(
-            AdbServerObservation(
-                self.endpoint,
-                AdbServerAvailability.AVAILABLE,
-            )
-        )
+        self.reconcile(event.server)
 
     def _run_start_attempt(
         self,
@@ -367,10 +357,7 @@ class AdbDevicesTrackingSupervisor:
             self._bus.publish(
                 AdbServerReconciliationRequested(
                     self.endpoint,
-                    AdbServerFailure(
-                        AdbServerFailureKind.CONNECTION,
-                        result.diagnostic,
-                    ),
+                    AdbServerConnectionFailure(result.diagnostic),
                 )
             )
         return keep_tracker
@@ -414,12 +401,6 @@ class AdbDevicesTrackingSupervisor:
                 self._on_server_ownership_recovered,
             ),
         )
-
-    def _require_observation_endpoint(self, observation: AdbServerObservation) -> None:
-        if not isinstance(observation, AdbServerObservation):
-            raise TypeError("server observation must be AdbServerObservation")
-        if observation.endpoint != self.endpoint:
-            raise ValueError("server observation endpoint does not match tracking endpoint")
 
     def _require_open(self) -> None:
         if self._closed:
