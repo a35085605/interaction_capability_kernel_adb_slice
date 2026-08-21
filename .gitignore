@@ -92,3 +92,5 @@ all_code_dependency_packing.py
 all_code_dependency_unpacking.py
 app.py_old
 cleanup_whitespace.py
+
+changes.diff
