@@ -1,11 +1,18 @@
-"""Process-owned ADB server lifecycle, endpoint, and status contracts."""
+"""Process-owned ADB server lifecycle, endpoint, failure, and status contracts."""
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.model import (
-    AdbServerAvailability,
+    AdbServerCloseUnprovenFailure,
+    AdbServerConnectionFailure,
     AdbServerFailure,
-    AdbServerFailureKind,
-    AdbServerObservation,
+    AdbServerLaunchFailure,
+    AdbServerLifecycleFailure,
+    AdbServerOwnershipLossFailure,
+    AdbServerProcessExitedFailure,
+    AdbServerProtocolFailure,
+    AdbServerRequestFailure,
+    AdbServerServiceFailure,
+    AdbServerTimeoutFailure,
 )
 from adb.server.ownership import (
     AdbOwnedServer,
@@ -20,15 +27,22 @@ from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusRe
 __all__ = [
     "AdbMdnsBackend",
     "AdbOwnedServer",
-    "AdbServerAvailability",
+    "AdbServerCloseUnprovenFailure",
+    "AdbServerConnectionFailure",
     "AdbServerEndpoint",
     "AdbServerFailure",
-    "AdbServerFailureKind",
-    "AdbServerObservation",
+    "AdbServerLaunchFailure",
+    "AdbServerLifecycleFailure",
+    "AdbServerOwnershipLossFailure",
     "AdbServerOwnershipLostError",
+    "AdbServerProcessExitedFailure",
+    "AdbServerProtocolFailure",
+    "AdbServerRequestFailure",
+    "AdbServerServiceFailure",
     "AdbServerStaleOwnerError",
     "AdbServerStatus",
     "AdbServerStatusReader",
+    "AdbServerTimeoutFailure",
     "AdbUsbBackend",
     "acquire_process_adb_server",
     "close_process_adb_server",
