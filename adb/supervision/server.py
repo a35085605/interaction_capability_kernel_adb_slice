@@ -5,11 +5,12 @@ from datetime import timedelta
 from random import random
 from threading import Lock, Thread, current_thread
 
-from adb.server.acquisition import AdbServerAcquisitionError
+from adb.server.lifecycle.native import AdbServerLaunchError
 from adb.server.ownership import (
     AdbOwnedServer,
     AdbServerOwnershipLostError,
-    ProcessAdbServerSlot,
+    _PROCESS_ADB_SERVER_OWNER,
+    _ProcessAdbServerOwner,
 )
 from adb.supervision.model import AdbServerRecoveryCycleId, AdbServerSupervisionPolicy
 from adb.supervision.signal import (
@@ -43,24 +44,23 @@ class AdbServerSupervisor:
     """Maintain durable intent for process-owned ADB server availability.
 
     The supervised resource itself does not cross a failure boundary. Terminal liveness
-    evidence invalidates the current :class:`AdbOwnedServer`, removes it from the process slot,
-    and publishes :class:`AdbServerOwnershipLost`. Managed dependents can then synchronously
-    tear down their server-bound scopes. Recovery creates a fresh owner at the same endpoint
-    and publishes :class:`AdbServerOwnershipRecovered` only after creation plus verification.
+    evidence invalidates and disposes the current :class:`AdbOwnedServer`, then publishes
+    :class:`AdbServerOwnershipLost`. Managed dependents can synchronously tear down their old
+    server-bound scopes before recovery reacquires a fresh native generation.
 
-    Existing listeners never satisfy recovery because ``ProcessAdbServerSlot.recover()`` uses
-    the same no-adopt acquisition path as initial ownership. Retry cycle IDs fence scheduled
-    retry work only; they are not server generations.
+    Existing listeners never satisfy recovery because the process owner can only acquire a
+    native handle returned by its launcher. Retry cycle IDs fence scheduled retry work only;
+    each :class:`AdbOwnedServer` carries a separate native generation identity.
     """
 
     def __init__(
         self,
         server: AdbOwnedServer,
         event_bus: EventBus,
-        slot: ProcessAdbServerSlot,
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
         *,
+        _owner_manager: _ProcessAdbServerOwner = _PROCESS_ADB_SERVER_OWNER,
         _random: _RandomSource = random,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
@@ -72,10 +72,10 @@ class AdbServerSupervisor:
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
             raise TypeError("event_bus must satisfy EventBus")
-        if not isinstance(slot, ProcessAdbServerSlot):
-            raise TypeError("slot must be ProcessAdbServerSlot")
-        if slot.active_owner is not server:
-            raise ValueError("server must be the process slot's active owner")
+        if not isinstance(_owner_manager, _ProcessAdbServerOwner):
+            raise TypeError("_owner_manager must be _ProcessAdbServerOwner")
+        if _owner_manager.active_owner is not server:
+            raise ValueError("server must be the process owner's active generation")
         if not isinstance(scheduler, TemporalScheduler):
             raise TypeError("scheduler must satisfy TemporalScheduler")
         if not isinstance(policy, AdbServerSupervisionPolicy):
@@ -84,7 +84,7 @@ class AdbServerSupervisor:
         self.server: AdbOwnedServer | None = server
         self.endpoint = server.endpoint
         self._bus = event_bus
-        self._slot = slot
+        self._owner_manager = _owner_manager
         self._scheduler = scheduler
         self._policy = policy
         self._random = _random
@@ -127,7 +127,7 @@ class AdbServerSupervisor:
                 old_token = self._invalidate_recovery_locked()
                 server = self.server
                 if server is not None and (
-                    not server.active or self._slot.active_owner is not server
+                    not server.active or self._owner_manager.active_owner is not server
                 ):
                     self.server = None
                     server = None
@@ -223,7 +223,7 @@ class AdbServerSupervisor:
                 server = self.server
 
             if server is not None:
-                self._slot.mark_lost(server)
+                self._owner_manager.invalidate(server)
                 with self._lock:
                     if self.server is server:
                         self.server = None
@@ -275,7 +275,7 @@ class AdbServerSupervisor:
         attempt_number: int,
     ) -> None:
         active = current_thread()
-        acquisition_failed = False
+        launch_failed = False
         recovered_event: AdbServerOwnershipRecovered | None = None
         retry_token: ScheduleToken | None = None
         try:
@@ -284,11 +284,9 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
                 try:
-                    recovered = self._slot.recover(
-                        self._policy.recovery_acquisition_policy,
-                    )
-                except AdbServerAcquisitionError:
-                    acquisition_failed = True
+                    recovered = self._owner_manager.acquire()
+                except AdbServerLaunchError:
+                    launch_failed = True
                 else:
                     if recovered.endpoint != self.endpoint:
                         raise ValueError("owned-server recovery changed endpoint")
@@ -307,7 +305,7 @@ class AdbServerSupervisor:
                 self._bus.publish(recovered_event)
                 return
 
-            if acquisition_failed:
+            if launch_failed:
                 with self._lock:
                     if not self._recovery_is_current_locked(cycle_id):
                         return

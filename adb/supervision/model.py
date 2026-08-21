@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import math
 from numbers import Real
 from uuid import uuid4
 
-from adb.server.acquisition import AdbServerAcquisitionPolicy
 from adb.transport.lifecycle.ensure import AdbTransportEnsurePolicy
 
 
@@ -107,15 +106,8 @@ class AdbServerRecoveryCycleId:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerSupervisionPolicy:
-    """Retry policy for recreating process-owned ADB server ownership.
+    """Retry policy for reacquiring the process-owned ADB server singleton."""
 
-    Recovery uses the same session-created acquisition invariant as initial ownership and is
-    pinned to the invalidated owner's endpoint by :class:`ProcessAdbServerSlot`.
-    """
-
-    recovery_acquisition_policy: AdbServerAcquisitionPolicy = field(
-        default_factory=AdbServerAcquisitionPolicy
-    )
     retry_initial_seconds: float = 0.5
     retry_max_seconds: float = 30.0
     retry_multiplier: float = 2.0
@@ -123,10 +115,6 @@ class AdbServerSupervisionPolicy:
     max_attempts: int | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.recovery_acquisition_policy, AdbServerAcquisitionPolicy):
-            raise TypeError(
-                "recovery_acquisition_policy must be AdbServerAcquisitionPolicy"
-            )
         initial, maximum, multiplier, jitter, max_attempts = _normalize_retry_configuration(
             retry_initial_seconds=self.retry_initial_seconds,
             retry_max_seconds=self.retry_max_seconds,

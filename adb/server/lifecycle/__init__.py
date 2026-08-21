@@ -1,43 +1,19 @@
-"""ADB server lifecycle atomic commands and bounded same-domain orchestration."""
+"""Process-owned ADB server native lifecycle contracts."""
 
-from adb.server.lifecycle.command import (
-    AdbServerStart,
-    AdbServerStarter,
-    AdbServerStop,
-    AdbServerStopper,
+from adb.server.lifecycle.native import (
+    AdbServerCloseError,
+    AdbServerLaunchError,
+    AdbServerLauncher,
+    AdbServerNativeError,
+    AdbServerNativeHandle,
 )
-from adb.server.lifecycle.ensure import (
-    AdbServerAvailability,
-    AdbServerEnsureAvailability,
-    AdbServerEnsureOrchestrator,
-    AdbServerEnsurePolicy,
-    AdbServerEnsureResult,
-    AdbServerEnsureStatus,
-    AdbServerEnsureUnsatisfiedReason,
-    AdbServerProbeResult,
-    AdbServerSatisfaction,
-)
-from adb.server.lifecycle.creation import (
-    AdbServerCreationAttempt,
-    AdbServerCreationEvidence,
-    AdbServerCreator,
-)
+from adb.server.model import AdbServerAvailability
 
 __all__ = [
     "AdbServerAvailability",
-    "AdbServerCreationAttempt",
-    "AdbServerCreationEvidence",
-    "AdbServerCreator",
-    "AdbServerEnsureAvailability",
-    "AdbServerEnsureOrchestrator",
-    "AdbServerEnsurePolicy",
-    "AdbServerEnsureResult",
-    "AdbServerEnsureStatus",
-    "AdbServerEnsureUnsatisfiedReason",
-    "AdbServerProbeResult",
-    "AdbServerSatisfaction",
-    "AdbServerStart",
-    "AdbServerStarter",
-    "AdbServerStop",
-    "AdbServerStopper",
+    "AdbServerCloseError",
+    "AdbServerLaunchError",
+    "AdbServerLauncher",
+    "AdbServerNativeError",
+    "AdbServerNativeHandle",
 ]

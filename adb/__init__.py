@@ -21,12 +21,12 @@ from adb.errors import (
 from adb.managed import AdbManagedRuntime, RegisteredTransport
 from adb.server import (
     AdbOwnedServer,
-    AdbServerAcquisitionPolicy,
-    AdbServerConfigurationConflictError,
     AdbServerOwnershipLostError,
+    AdbServerStaleOwnerError,
     AdbServerStatusReader,
     acquire_process_adb_server,
     close_process_adb_server,
+    invalidate_process_adb_server,
 )
 from adb.transport import (
     AdbConnectionState,
@@ -55,10 +55,9 @@ __all__ = [
     "AdbOwnedServer",
     "AdbProtocolError",
     "AdbRemoteCommandError",
-    "AdbServerAcquisitionPolicy",
-    "AdbServerConfigurationConflictError",
     "AdbServerConnectionError",
     "AdbServerOwnershipLostError",
+    "AdbServerStaleOwnerError",
     "AdbServerStatusReader",
     "AdbServiceError",
     "AdbTimeoutError",
@@ -77,4 +76,5 @@ __all__ = [
     "RegisteredTransport",
     "acquire_process_adb_server",
     "close_process_adb_server",
+    "invalidate_process_adb_server",
 ]

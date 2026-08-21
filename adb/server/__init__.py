@@ -1,46 +1,28 @@
-"""ADB server acquisition, process ownership, endpoint, and status ownership."""
+"""Process-owned ADB server lifecycle, endpoint, and status contracts."""
 
-from adb.server.acquisition import (
-    AdbServerAcquisition,
-    AdbServerAcquisitionError,
-    AdbServerAcquisitionPolicy,
-    AdbServerCandidateAttempt,
-    AdbServerCandidateOutcome,
-)
-from adb.server.endpoint import (
-    AdbServerEndpoint,
-    AdbServerEndpointObserver,
-    EndpointObservation,
-    EndpointObservationStatus,
-)
+from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerAvailability
 from adb.server.ownership import (
     AdbOwnedServer,
-    AdbServerConfigurationConflictError,
     AdbServerOwnershipLostError,
-    ProcessAdbServerSlot,
+    AdbServerStaleOwnerError,
     acquire_process_adb_server,
     close_process_adb_server,
+    invalidate_process_adb_server,
 )
 from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
 
 __all__ = [
     "AdbMdnsBackend",
     "AdbOwnedServer",
-    "AdbServerAcquisition",
-    "AdbServerAcquisitionError",
-    "AdbServerAcquisitionPolicy",
-    "AdbServerCandidateAttempt",
-    "AdbServerCandidateOutcome",
-    "AdbServerConfigurationConflictError",
+    "AdbServerAvailability",
     "AdbServerEndpoint",
-    "AdbServerEndpointObserver",
     "AdbServerOwnershipLostError",
+    "AdbServerStaleOwnerError",
     "AdbServerStatus",
     "AdbServerStatusReader",
     "AdbUsbBackend",
-    "EndpointObservation",
-    "EndpointObservationStatus",
-    "ProcessAdbServerSlot",
     "acquire_process_adb_server",
     "close_process_adb_server",
+    "invalidate_process_adb_server",
 ]

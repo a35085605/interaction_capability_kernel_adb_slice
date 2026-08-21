@@ -5,21 +5,10 @@ from threading import Condition, Lock
 from time import monotonic, sleep
 import unittest
 
-from adb.server.acquisition import (
-    AdbServerAcquisition,
-    AdbServerAcquisitionError,
-    AdbServerAcquisitionPolicy,
-    AdbServerCandidateAttempt,
-    AdbServerCandidateOutcome,
-)
-from adb.server.endpoint import (
-    AdbServerEndpoint,
-    EndpointObservation,
-    EndpointObservationStatus,
-)
-from adb.server.lifecycle import AdbServerAvailability
-from adb.server.ownership import ProcessAdbServerSlot, _ProcessAdbServerSlotState
-from adb.server.status.model import AdbServerStatus
+from adb.server.endpoint import AdbServerEndpoint
+from adb.server.lifecycle.native import AdbServerLaunchError
+from adb.server.model import AdbServerAvailability
+from adb.server.ownership import _ProcessAdbServerOwner
 from adb.supervision.devices_tracking import AdbDevicesTrackingSupervisor
 from adb.supervision.model import (
     AdbDevicesTrackingSupervisionPolicy,
@@ -31,67 +20,51 @@ from adb.supervision.signal import (
     AdbServerOwnershipRecovered,
     AdbServerReconciliationRequested,
     AdbServerRecoveryExhausted,
+    AdbServerRecoveryRetryDue,
 )
 from adb.transport.signal import AdbDevicesTrackingStarted
 from eventing import EventSubscriptionToken
 from scheduling import ScheduleToken
 
 
-def _created_acquisition(endpoint: AdbServerEndpoint) -> AdbServerAcquisition:
-    precheck = EndpointObservation(
-        endpoint,
-        EndpointObservationStatus.NO_LISTENER_OBSERVED,
-    )
-    verified = EndpointObservation(
-        endpoint,
-        EndpointObservationStatus.ADB_SERVER_VERIFIED,
-        server_status=AdbServerStatus(),
-    )
-    attempt = AdbServerCandidateAttempt(
-        endpoint,
-        (precheck,),
-        AdbServerCandidateOutcome.CREATED_BY_ACQUISITION,
-        verification_observations=(verified,),
-    )
-    return AdbServerAcquisition(endpoint, AdbServerStatus(), (attempt,))
+class _FakeNativeHandle:
+    def __init__(self, endpoint: AdbServerEndpoint) -> None:
+        self._endpoint = endpoint
+        self.running = True
+        self.close_calls = 0
+
+    @property
+    def endpoint(self) -> AdbServerEndpoint:
+        return self._endpoint
+
+    @property
+    def active(self) -> bool:
+        return self.running
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.running = False
 
 
-def _occupied_error(endpoint: AdbServerEndpoint) -> AdbServerAcquisitionError:
-    observed = EndpointObservation(
-        endpoint,
-        EndpointObservationStatus.ADB_SERVER_VERIFIED,
-        server_status=AdbServerStatus(),
-    )
-    attempt = AdbServerCandidateAttempt(
-        endpoint,
-        (observed,),
-        AdbServerCandidateOutcome.OCCUPIED,
-    )
-    return AdbServerAcquisitionError((attempt,))
-
-
-class _ScriptedAcquirer:
+class _ScriptedLauncher:
     def __init__(
         self,
-        default_endpoint: AdbServerEndpoint,
+        endpoint: AdbServerEndpoint,
         *,
         fail_on_calls: frozenset[int] = frozenset(),
     ) -> None:
-        self.default_endpoint = default_endpoint
+        self.endpoint = endpoint
         self.fail_on_calls = fail_on_calls
-        self.calls: list[AdbServerEndpoint] = []
+        self.calls = 0
+        self.handles: list[_FakeNativeHandle] = []
 
-    def acquire(
-        self,
-        policy: AdbServerAcquisitionPolicy,
-        *,
-        endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServerAcquisition:
-        resolved = endpoint or self.default_endpoint
-        self.calls.append(resolved)
-        if len(self.calls) in self.fail_on_calls:
-            raise _occupied_error(resolved)
-        return _created_acquisition(resolved)
+    def launch(self) -> _FakeNativeHandle:
+        self.calls += 1
+        if self.calls in self.fail_on_calls:
+            raise AdbServerLaunchError("scripted launch failure")
+        handle = _FakeNativeHandle(self.endpoint)
+        self.handles.append(handle)
+        return handle
 
 
 class _EventBus:
@@ -206,63 +179,54 @@ def _wait_until(predicate, timeout: float = 2.0) -> None:
 
 
 class ProcessAdbServerRecoveryTests(unittest.TestCase):
-    def test_lost_owner_is_removed_and_recovery_creates_fresh_owner(self) -> None:
-        state = _ProcessAdbServerSlotState()
-        endpoint = AdbServerEndpoint("localhost", 5050)
-        acquirer = _ScriptedAcquirer(endpoint)
-        slot = ProcessAdbServerSlot(acquirer, _state=state)
-        policy = AdbServerAcquisitionPolicy()
+    def test_invalidated_owner_is_disposed_and_acquire_creates_fresh_generation(self) -> None:
+        endpoint = AdbServerEndpoint("127.0.0.1", 5050)
+        launcher = _ScriptedLauncher(endpoint)
+        manager = _ProcessAdbServerOwner(launcher)
+        first = manager.acquire()
 
-        first = slot.acquire(policy, endpoint=endpoint)
-        self.assertTrue(first.active)
-
-        self.assertTrue(slot.mark_lost(first))
+        self.assertTrue(manager.invalidate(first))
         self.assertFalse(first.active)
-        self.assertIsNone(slot.active_owner)
+        self.assertEqual(launcher.handles[0].close_calls, 1)
+        self.assertIsNone(manager.active_owner)
 
-        recovered = slot.recover(policy)
+        recovered = manager.acquire()
         self.assertIsNot(recovered, first)
+        self.assertEqual(recovered.generation, 2)
         self.assertEqual(recovered.endpoint, endpoint)
-        self.assertTrue(recovered.active)
-        self.assertIs(slot.active_owner, recovered)
-        self.assertEqual(acquirer.calls, [endpoint, endpoint])
+        self.assertIs(manager.active_owner, recovered)
+        self.assertEqual(launcher.calls, 2)
 
-    def test_failed_recovery_stays_lost_and_retries_same_endpoint(self) -> None:
-        state = _ProcessAdbServerSlotState()
-        endpoint = AdbServerEndpoint("localhost", 5051)
-        acquirer = _ScriptedAcquirer(endpoint, fail_on_calls=frozenset({2}))
-        slot = ProcessAdbServerSlot(acquirer, _state=state)
-        policy = AdbServerAcquisitionPolicy()
+    def test_failed_reacquire_stays_absent_and_next_acquire_retries(self) -> None:
+        endpoint = AdbServerEndpoint("127.0.0.1", 5051)
+        launcher = _ScriptedLauncher(endpoint, fail_on_calls=frozenset({2}))
+        manager = _ProcessAdbServerOwner(launcher)
+        first = manager.acquire()
+        manager.invalidate(first)
 
-        first = slot.acquire(policy, endpoint=endpoint)
-        slot.mark_lost(first)
+        with self.assertRaises(AdbServerLaunchError):
+            manager.acquire()
+        self.assertIsNone(manager.active_owner)
 
-        with self.assertRaises(AdbServerAcquisitionError):
-            slot.recover(policy)
-
-        self.assertFalse(first.active)
-        self.assertIsNone(slot.active_owner)
-
-        recovered = slot.recover(policy)
-        self.assertIsNot(recovered, first)
-        self.assertEqual(acquirer.calls, [endpoint, endpoint, endpoint])
+        recovered = manager.acquire()
+        self.assertEqual(recovered.generation, 2)
+        self.assertEqual(launcher.calls, 3)
 
 
 class AdbServerSupervisorRecoveryTests(unittest.TestCase):
-    def test_reconciliation_destroys_old_owner_before_recovery(self) -> None:
-        state = _ProcessAdbServerSlotState()
-        endpoint = AdbServerEndpoint("localhost", 5052)
-        acquirer = _ScriptedAcquirer(endpoint)
-        slot = ProcessAdbServerSlot(acquirer, _state=state)
-        first = slot.acquire(AdbServerAcquisitionPolicy(), endpoint=endpoint)
+    def test_reconciliation_disposes_old_generation_before_recovery(self) -> None:
+        endpoint = AdbServerEndpoint("127.0.0.1", 5052)
+        launcher = _ScriptedLauncher(endpoint)
+        manager = _ProcessAdbServerOwner(launcher)
+        first = manager.acquire()
         bus = _EventBus()
         scheduler = _Scheduler()
         supervisor = AdbServerSupervisor(
             first,
             bus,
-            slot,
             scheduler,
             AdbServerSupervisionPolicy(max_attempts=1),
+            _owner_manager=manager,
         )
         supervisor.start(recovery_enabled=True)
 
@@ -273,9 +237,11 @@ class AdbServerSupervisorRecoveryTests(unittest.TestCase):
         assert recovered is not None
 
         self.assertFalse(first.active)
+        self.assertEqual(launcher.handles[0].close_calls, 1)
         self.assertIsNot(recovered, first)
-        self.assertIs(slot.active_owner, recovered)
-        self.assertEqual(acquirer.calls, [endpoint, endpoint])
+        self.assertEqual(recovered.generation, 2)
+        self.assertIs(manager.active_owner, recovered)
+        self.assertEqual(launcher.calls, 2)
         loss_index = next(
             index
             for index, event in enumerate(bus.events)
@@ -289,20 +255,19 @@ class AdbServerSupervisorRecoveryTests(unittest.TestCase):
         self.assertLess(loss_index, recovery_index)
         supervisor.close()
 
-    def test_existing_listener_conflict_exhausts_with_no_active_owner(self) -> None:
-        state = _ProcessAdbServerSlotState()
-        endpoint = AdbServerEndpoint("localhost", 5053)
-        acquirer = _ScriptedAcquirer(endpoint, fail_on_calls=frozenset({2}))
-        slot = ProcessAdbServerSlot(acquirer, _state=state)
-        first = slot.acquire(AdbServerAcquisitionPolicy(), endpoint=endpoint)
+    def test_launch_failure_exhausts_with_no_active_owner(self) -> None:
+        endpoint = AdbServerEndpoint("127.0.0.1", 5053)
+        launcher = _ScriptedLauncher(endpoint, fail_on_calls=frozenset({2}))
+        manager = _ProcessAdbServerOwner(launcher)
+        first = manager.acquire()
         bus = _EventBus()
         scheduler = _Scheduler()
         supervisor = AdbServerSupervisor(
             first,
             bus,
-            slot,
             scheduler,
             AdbServerSupervisionPolicy(max_attempts=1),
+            _owner_manager=manager,
         )
         supervisor.start(recovery_enabled=True)
 
@@ -310,37 +275,72 @@ class AdbServerSupervisorRecoveryTests(unittest.TestCase):
         bus.wait_for(AdbServerRecoveryExhausted)
 
         self.assertFalse(first.active)
-        self.assertIsNone(slot.active_owner)
+        self.assertIsNone(manager.active_owner)
         self.assertIsNone(supervisor.server)
-        self.assertEqual(acquirer.calls, [endpoint, endpoint])
+        self.assertEqual(launcher.calls, 2)
         self.assertFalse(
             any(isinstance(event, AdbServerOwnershipRecovered) for event in bus.events)
         )
         supervisor.close()
 
-    def test_recovery_disabled_still_invalidates_owner(self) -> None:
-        state = _ProcessAdbServerSlotState()
-        endpoint = AdbServerEndpoint("localhost", 5054)
-        acquirer = _ScriptedAcquirer(endpoint)
-        slot = ProcessAdbServerSlot(acquirer, _state=state)
-        first = slot.acquire(AdbServerAcquisitionPolicy(), endpoint=endpoint)
+    def test_scheduled_retry_reacquires_through_same_owner_manager(self) -> None:
+        endpoint = AdbServerEndpoint("127.0.0.1", 5054)
+        launcher = _ScriptedLauncher(endpoint, fail_on_calls=frozenset({2}))
+        manager = _ProcessAdbServerOwner(launcher)
+        first = manager.acquire()
         bus = _EventBus()
         scheduler = _Scheduler()
         supervisor = AdbServerSupervisor(
             first,
             bus,
-            slot,
+            scheduler,
+            AdbServerSupervisionPolicy(
+                retry_initial_seconds=0.01,
+                retry_max_seconds=0.01,
+                retry_jitter_ratio=0.0,
+                max_attempts=2,
+            ),
+            _owner_manager=manager,
+        )
+        supervisor.start(recovery_enabled=True)
+
+        bus.publish(AdbServerReconciliationRequested(endpoint))
+        _wait_until(lambda: bool(scheduler.scheduled))
+        retry_event = scheduler.scheduled[-1][1]
+        self.assertIsInstance(retry_event, AdbServerRecoveryRetryDue)
+        bus.publish(retry_event)
+        bus.wait_for(AdbServerOwnershipRecovered)
+        _wait_until(lambda: supervisor.server is not None)
+
+        recovered = supervisor.server
+        assert recovered is not None
+        self.assertEqual(recovered.generation, 2)
+        self.assertEqual(launcher.calls, 3)
+        supervisor.close()
+
+    def test_recovery_disabled_still_disposes_current_owner(self) -> None:
+        endpoint = AdbServerEndpoint("127.0.0.1", 5055)
+        launcher = _ScriptedLauncher(endpoint)
+        manager = _ProcessAdbServerOwner(launcher)
+        first = manager.acquire()
+        bus = _EventBus()
+        scheduler = _Scheduler()
+        supervisor = AdbServerSupervisor(
+            first,
+            bus,
             scheduler,
             AdbServerSupervisionPolicy(max_attempts=1),
+            _owner_manager=manager,
         )
         supervisor.start(recovery_enabled=False)
 
         bus.publish(AdbServerReconciliationRequested(endpoint))
 
         self.assertFalse(first.active)
-        self.assertIsNone(slot.active_owner)
+        self.assertEqual(launcher.handles[0].close_calls, 1)
+        self.assertIsNone(manager.active_owner)
         self.assertIsNone(supervisor.server)
-        self.assertEqual(acquirer.calls, [endpoint])
+        self.assertEqual(launcher.calls, 1)
         self.assertTrue(
             any(isinstance(event, AdbServerOwnershipLost) for event in bus.events)
         )
@@ -349,7 +349,7 @@ class AdbServerSupervisorRecoveryTests(unittest.TestCase):
 
 class TrackingScopeRecompositionTests(unittest.TestCase):
     def test_server_loss_closes_tracker_and_recovery_creates_a_new_one(self) -> None:
-        endpoint = AdbServerEndpoint("localhost", 5055)
+        endpoint = AdbServerEndpoint("127.0.0.1", 5056)
         bus = _EventBus()
         factory = _TrackerFactory()
         supervisor = AdbDevicesTrackingSupervisor(
