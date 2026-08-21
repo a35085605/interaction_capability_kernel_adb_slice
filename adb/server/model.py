@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from numbers import Integral
+from uuid import uuid4
 
 
 def _normalize_required_text(value: object, *, field_name: str) -> str:
@@ -31,4 +32,25 @@ class AdbServerEndpoint:
         object.__setattr__(self, "port", port)
 
 
-__all__ = ["AdbServerEndpoint"]
+@dataclass(frozen=True, slots=True, order=True)
+class AdbServerRecoveryCycleId:
+    """Opaque identity for one scheduled/retry server recovery cycle."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "value",
+            _normalize_required_text(
+                self.value,
+                field_name="ADB server recovery cycle id",
+            ),
+        )
+
+    @classmethod
+    def new(cls) -> "AdbServerRecoveryCycleId":
+        return cls(uuid4().hex)
+
+
+__all__ = ["AdbServerEndpoint", "AdbServerRecoveryCycleId"]

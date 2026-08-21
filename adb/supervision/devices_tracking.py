@@ -7,7 +7,7 @@ from adb.server.failure import AdbServerConnectionFailure
 from adb.server.model import AdbServerEndpoint
 from adb.server.ownership import AdbOwnedServer
 from adb.supervision.model import AdbDevicesTrackingSupervisionPolicy
-from adb.supervision.signal import (
+from adb.server.signal import (
     AdbServerOwnershipRetired,
     AdbServerOwnershipRecovered,
     AdbServerReconciliationRequested,

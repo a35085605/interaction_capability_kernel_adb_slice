@@ -1,0 +1,773 @@
+diff --git a/adb/server/lifecycle/__init__.py b/adb/server/lifecycle/__init__.py
+index 9f6ca4a..95a5d0d 100644
+--- a/adb/server/lifecycle/__init__.py
++++ b/adb/server/lifecycle/__init__.py
+@@ -1,4 +1,4 @@
+-"""Process-owned ADB server native lifecycle contracts."""
++"""Process-owned ADB server lifecycle contracts and supervision."""
+ 
+ from adb.server.lifecycle.native import (
+     AdbServerCloseError,
+diff --git a/adb/supervision/server.py b/adb/server/lifecycle/supervision.py
+similarity index 85%
+rename from adb/supervision/server.py
+rename to adb/server/lifecycle/supervision.py
+index 0bf80b3..52a9be0 100644
+--- a/adb/supervision/server.py
++++ b/adb/server/lifecycle/supervision.py
+@@ -1,7 +1,10 @@
+ from __future__ import annotations
+ 
+ from collections.abc import Callable
++from dataclasses import dataclass
+ from datetime import timedelta
++import math
++from numbers import Real
+ from random import random
+ from threading import Lock, Thread, current_thread
+ 
+@@ -19,8 +22,8 @@ from adb.server.ownership import (
+     _PROCESS_ADB_SERVER_OWNER,
+     _ProcessAdbServerOwner,
+ )
+-from adb.supervision.model import AdbServerRecoveryCycleId, AdbServerSupervisionPolicy
+-from adb.supervision.signal import (
++from adb.server.model import AdbServerRecoveryCycleId
++from adb.server.signal import (
+     AdbServerNativeCloseCompleted,
+     AdbServerNativeCloseUnproven,
+     AdbServerOwnershipLost,
+@@ -34,6 +37,77 @@ from eventing import EventBus, EventSubscriptionToken
+ from scheduling import ScheduleToken, TemporalScheduler
+ 
+ 
++def _normalize_positive_seconds(value: object, *, field_name: str) -> float:
++    if isinstance(value, bool) or not isinstance(value, Real):
++        raise TypeError(f"{field_name} must be a real number")
++    normalized = float(value)
++    if not math.isfinite(normalized) or normalized <= 0.0:
++        raise ValueError(f"{field_name} must be finite and greater than zero")
++    return normalized
++
++
++def _normalize_retry_configuration(
++    *,
++    retry_initial_seconds: object,
++    retry_max_seconds: object,
++    retry_multiplier: object,
++    retry_jitter_ratio: object,
++    max_attempts: object,
++) -> tuple[float, float, float, float, int | None]:
++    initial = _normalize_positive_seconds(
++        retry_initial_seconds,
++        field_name="ADB server supervision initial retry",
++    )
++    maximum = _normalize_positive_seconds(
++        retry_max_seconds,
++        field_name="ADB server supervision maximum retry",
++    )
++    multiplier = _normalize_positive_seconds(
++        retry_multiplier,
++        field_name="ADB server supervision retry multiplier",
++    )
++    if multiplier < 1.0:
++        raise ValueError("ADB server supervision retry multiplier must be at least one")
++    if maximum < initial:
++        raise ValueError("ADB server supervision maximum retry must be >= initial retry")
++    if isinstance(retry_jitter_ratio, bool) or not isinstance(retry_jitter_ratio, Real):
++        raise TypeError("ADB server supervision retry jitter ratio must be a real number")
++    jitter = float(retry_jitter_ratio)
++    if not math.isfinite(jitter) or not 0.0 <= jitter < 1.0:
++        raise ValueError("ADB server supervision retry jitter ratio must be in [0, 1)")
++    if max_attempts is not None:
++        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
++            raise TypeError("ADB server supervision max_attempts must be an integer or None")
++        if max_attempts <= 0:
++            raise ValueError("ADB server supervision max_attempts must be greater than zero")
++    return initial, maximum, multiplier, jitter, max_attempts
++
++
++@dataclass(frozen=True, slots=True)
++class AdbServerSupervisionPolicy:
++    """Retry policy for reacquiring the process-owned ADB server singleton."""
++
++    retry_initial_seconds: float = 0.5
++    retry_max_seconds: float = 30.0
++    retry_multiplier: float = 2.0
++    retry_jitter_ratio: float = 0.2
++    max_attempts: int | None = None
++
++    def __post_init__(self) -> None:
++        initial, maximum, multiplier, jitter, max_attempts = _normalize_retry_configuration(
++            retry_initial_seconds=self.retry_initial_seconds,
++            retry_max_seconds=self.retry_max_seconds,
++            retry_multiplier=self.retry_multiplier,
++            retry_jitter_ratio=self.retry_jitter_ratio,
++            max_attempts=self.max_attempts,
++        )
++        object.__setattr__(self, "retry_initial_seconds", initial)
++        object.__setattr__(self, "retry_max_seconds", maximum)
++        object.__setattr__(self, "retry_multiplier", multiplier)
++        object.__setattr__(self, "retry_jitter_ratio", jitter)
++        object.__setattr__(self, "max_attempts", max_attempts)
++
++
+ _RandomSource = Callable[[], float]
+ _ThreadFactory = Callable[..., Thread]
+ 
+@@ -538,4 +612,8 @@ class AdbServerSupervisor:
+         return max(base * factor, 1e-6)
+ 
+ 
+-__all__ = ["AdbServerSupervisor"]
++__all__ = [
++    "AdbServerRecoveryCycleId",
++    "AdbServerSupervisionPolicy",
++    "AdbServerSupervisor",
++]
+diff --git a/adb/server/model.py b/adb/server/model.py
+index b6e81a8..c34bff9 100644
+--- a/adb/server/model.py
++++ b/adb/server/model.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ from dataclasses import dataclass
+ from numbers import Integral
++from uuid import uuid4
+ 
+ 
+ def _normalize_required_text(value: object, *, field_name: str) -> str:
+@@ -31,4 +32,25 @@ class AdbServerEndpoint:
+         object.__setattr__(self, "port", port)
+ 
+ 
+-__all__ = ["AdbServerEndpoint"]
++@dataclass(frozen=True, slots=True, order=True)
++class AdbServerRecoveryCycleId:
++    """Opaque identity for one scheduled/retry server recovery cycle."""
++
++    value: str
++
++    def __post_init__(self) -> None:
++        object.__setattr__(
++            self,
++            "value",
++            _normalize_required_text(
++                self.value,
++                field_name="ADB server recovery cycle id",
++            ),
++        )
++
++    @classmethod
++    def new(cls) -> "AdbServerRecoveryCycleId":
++        return cls(uuid4().hex)
++
++
++__all__ = ["AdbServerEndpoint", "AdbServerRecoveryCycleId"]
+diff --git a/adb/server/signal.py b/adb/server/signal.py
+new file mode 100644
+index 0000000..7c7b66c
+--- /dev/null
++++ b/adb/server/signal.py
+@@ -0,0 +1,192 @@
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import TypeAlias
++
++from adb.server.failure import (
++    AdbServerCloseUnprovenFailure,
++    AdbServerConnectionFailure,
++    AdbServerLaunchFailure,
++    AdbServerOwnershipLossFailure,
++    AdbServerProcessExitedFailure,
++)
++from adb.server.model import AdbServerEndpoint, AdbServerRecoveryCycleId
++from adb.server.ownership import AdbOwnedServer
++
++
++_OWNERSHIP_LOSS_FAILURE_TYPES = (
++    AdbServerConnectionFailure,
++    AdbServerProcessExitedFailure,
++)
++
++
++def _require_generation(value: object) -> int:
++    if isinstance(value, bool) or not isinstance(value, int):
++        raise TypeError("generation must be an integer")
++    if value <= 0:
++        raise ValueError("generation must be greater than zero")
++    return value
++
++
++def _require_endpoint(value: object) -> AdbServerEndpoint:
++    if not isinstance(value, AdbServerEndpoint):
++        raise TypeError("endpoint must be AdbServerEndpoint")
++    return value
++
++
++@dataclass(frozen=True, slots=True)
++class AdbServerReconciliationRequested:
++    """Signal that terminal liveness evidence requires generation-fenced reconciliation."""
++
++    endpoint: AdbServerEndpoint
++    generation: int
++    failure: AdbServerOwnershipLossFailure
++
++    def __post_init__(self) -> None:
++        _require_endpoint(self.endpoint)
++        _require_generation(self.generation)
++        if not isinstance(self.failure, _OWNERSHIP_LOSS_FAILURE_TYPES):
++            raise TypeError(
++                "failure must be AdbServerConnectionFailure or "
++                "AdbServerProcessExitedFailure"
++            )
++
++
++@dataclass(frozen=True, slots=True)
++class AdbServerOwnershipRetired:
++    """Public fact that one owned generation is irreversibly no longer usable."""
++
++    endpoint: AdbServerEndpoint
++    generation: int
++
++    def __post_init__(self) -> None:
++        _require_endpoint(self.endpoint)
++        _require_generation(self.generation)
++
++
++@dataclass(frozen=True, slots=True)
++class AdbServerOwnershipLost:
++    """Failure evidence explaining why one already-retired generation lost ownership."""
++
++    endpoint: AdbServerEndpoint
++    generation: int
++    failure: AdbServerOwnershipLossFailure
++
++    def __post_init__(self) -> None:
++        _require_endpoint(self.endpoint)
++        _require_generation(self.generation)
++        if not isinstance(self.failure, _OWNERSHIP_LOSS_FAILURE_TYPES):
++            raise TypeError(
++                "failure must be AdbServerConnectionFailure or "
++                "AdbServerProcessExitedFailure"
++            )
++
++
++@dataclass(frozen=True, slots=True)
++class AdbServerNativeCloseCompleted:
++    """Private-lifecycle fact that native termination of a retired generation was proven."""
++
++    endpoint: AdbServerEndpoint
++    generation: int
++
++    def __post_init__(self) -> None:
++        _require_endpoint(self.endpoint)
++        _require_generation(self.generation)
++
++
++@dataclass(frozen=True, slots=True)
++class AdbServerNativeCloseUnproven:
++    """Private-lifecycle fact that termination of a retired generation remains unproven."""
++
++    endpoint: AdbServerEndpoint
++    generation: int
++    failure: AdbServerCloseUnprovenFailure
++
++    def __post_init__(self) -> None:
++        _require_endpoint(self.endpoint)
++        _require_generation(self.generation)
++        if not isinstance(self.failure, AdbServerCloseUnprovenFailure):
++            raise TypeError("failure must be AdbServerCloseUnprovenFailure")
++
++
++@dataclass(frozen=True, slots=True)
++class AdbServerOwnershipRecovered:
++    """Signal carrying the fresh usable process-owned ADB server generation."""
++
++    server: AdbOwnedServer
++
++    def __post_init__(self) -> None:
++        if not isinstance(self.server, AdbOwnedServer):
++            raise TypeError("server must be AdbOwnedServer")
++
++    @property
++    def endpoint(self) -> AdbServerEndpoint:
++        return self.server.endpoint
++
++    @property
++    def generation(self) -> int:
++        return self.server.generation
++
++
++@dataclass(frozen=True, slots=True)
++class AdbServerRecoveryRetryDue:
++    """Signal delivered when one owned-server recovery retry becomes due."""
++
++    endpoint: AdbServerEndpoint
++    cycle_id: AdbServerRecoveryCycleId
++    attempt_number: int
++
++    def __post_init__(self) -> None:
++        _require_endpoint(self.endpoint)
++        if not isinstance(self.cycle_id, AdbServerRecoveryCycleId):
++            raise TypeError("cycle_id must be AdbServerRecoveryCycleId")
++        if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
++            raise TypeError("attempt_number must be an integer")
++        if self.attempt_number <= 0:
++            raise ValueError("attempt_number must be greater than zero")
++
++
++@dataclass(frozen=True, slots=True)
++class AdbServerRecoveryExhausted:
++    """Signal that fresh owned-server creation exhausted its retry budget."""
++
++    endpoint: AdbServerEndpoint
++    cycle_id: AdbServerRecoveryCycleId
++    attempts: int
++    failure: AdbServerLaunchFailure
++
++    def __post_init__(self) -> None:
++        _require_endpoint(self.endpoint)
++        if not isinstance(self.cycle_id, AdbServerRecoveryCycleId):
++            raise TypeError("cycle_id must be AdbServerRecoveryCycleId")
++        if isinstance(self.attempts, bool) or not isinstance(self.attempts, int):
++            raise TypeError("attempts must be an integer")
++        if self.attempts <= 0:
++            raise ValueError("attempts must be greater than zero")
++        if not isinstance(self.failure, AdbServerLaunchFailure):
++            raise TypeError("failure must be AdbServerLaunchFailure")
++
++
++AdbServerSignal: TypeAlias = (
++    AdbServerReconciliationRequested
++    | AdbServerOwnershipRetired
++    | AdbServerOwnershipLost
++    | AdbServerNativeCloseCompleted
++    | AdbServerNativeCloseUnproven
++    | AdbServerOwnershipRecovered
++    | AdbServerRecoveryRetryDue
++    | AdbServerRecoveryExhausted
++)
++
++
++__all__ = [
++    "AdbServerNativeCloseCompleted",
++    "AdbServerNativeCloseUnproven",
++    "AdbServerOwnershipLost",
++    "AdbServerOwnershipRecovered",
++    "AdbServerOwnershipRetired",
++    "AdbServerReconciliationRequested",
++    "AdbServerRecoveryExhausted",
++    "AdbServerRecoveryRetryDue",
++    "AdbServerSignal",
++]
+diff --git a/adb/supervision/__init__.py b/adb/supervision/__init__.py
+index da7f9c1..70974e1 100644
+--- a/adb/supervision/__init__.py
++++ b/adb/supervision/__init__.py
+@@ -1,27 +1,16 @@
+-"""Long-lived ADB server, transport, and tracking supervision."""
++"""Long-lived ADB transport and tracking supervision."""
+ 
++from adb.supervision.configured_transport import AdbConfiguredTransportSupervisor
++from adb.supervision.devices_tracking import AdbDevicesTrackingSupervisor
+ from adb.supervision.model import (
+     AdbConfiguredTransportSupervisionPolicy,
+     AdbDevicesTrackingSupervisionPolicy,
+-    AdbServerRecoveryCycleId,
+-    AdbServerSupervisionPolicy,
+ )
+ from adb.supervision.signal import (
+     AdbConfiguredTransportRecoveryExhausted,
+     AdbConfiguredTransportResolutionChanged,
+-    AdbServerNativeCloseCompleted,
+-    AdbServerNativeCloseUnproven,
+-    AdbServerOwnershipLost,
+-    AdbServerOwnershipRecovered,
+-    AdbServerOwnershipRetired,
+-    AdbServerReconciliationRequested,
+-    AdbServerRecoveryExhausted,
+-    AdbServerRecoveryRetryDue,
+     AdbSupervisionSignal,
+ )
+-from adb.supervision.server import AdbServerSupervisor
+-from adb.supervision.configured_transport import AdbConfiguredTransportSupervisor
+-from adb.supervision.devices_tracking import AdbDevicesTrackingSupervisor
+ 
+ __all__ = [
+     "AdbConfiguredTransportRecoveryExhausted",
+@@ -30,16 +19,5 @@ __all__ = [
+     "AdbConfiguredTransportSupervisor",
+     "AdbDevicesTrackingSupervisionPolicy",
+     "AdbDevicesTrackingSupervisor",
+-    "AdbServerNativeCloseCompleted",
+-    "AdbServerNativeCloseUnproven",
+-    "AdbServerOwnershipLost",
+-    "AdbServerOwnershipRecovered",
+-    "AdbServerOwnershipRetired",
+-    "AdbServerReconciliationRequested",
+-    "AdbServerRecoveryCycleId",
+-    "AdbServerRecoveryExhausted",
+-    "AdbServerRecoveryRetryDue",
+-    "AdbServerSupervisionPolicy",
+-    "AdbServerSupervisor",
+     "AdbSupervisionSignal",
+ ]
+diff --git a/adb/supervision/devices_tracking.py b/adb/supervision/devices_tracking.py
+index da9c153..6a1da22 100644
+--- a/adb/supervision/devices_tracking.py
++++ b/adb/supervision/devices_tracking.py
+@@ -7,7 +7,7 @@ from adb.server.failure import AdbServerConnectionFailure
+ from adb.server.model import AdbServerEndpoint
+ from adb.server.ownership import AdbOwnedServer
+ from adb.supervision.model import AdbDevicesTrackingSupervisionPolicy
+-from adb.supervision.signal import (
++from adb.server.signal import (
+     AdbServerOwnershipRetired,
+     AdbServerOwnershipRecovered,
+     AdbServerReconciliationRequested,
+diff --git a/adb/supervision/model.py b/adb/supervision/model.py
+index 9be9453..42ea1ab 100644
+--- a/adb/supervision/model.py
++++ b/adb/supervision/model.py
+@@ -3,7 +3,6 @@ from __future__ import annotations
+ from dataclasses import dataclass
+ import math
+ from numbers import Real
+-from uuid import uuid4
+ 
+ from adb.transport.lifecycle.ensure import AdbTransportEnsurePolicy
+ 
+@@ -17,53 +16,6 @@ def _normalize_positive_seconds(value: object, *, field_name: str) -> float:
+     return normalized
+ 
+ 
+-def _normalize_required_text(value: object, *, field_name: str) -> str:
+-    if not isinstance(value, str):
+-        raise TypeError(f"{field_name} must be a string")
+-    normalized = value.strip()
+-    if not normalized:
+-        raise ValueError(f"{field_name} cannot be empty")
+-    return normalized
+-
+-
+-def _normalize_retry_configuration(
+-    *,
+-    retry_initial_seconds: object,
+-    retry_max_seconds: object,
+-    retry_multiplier: object,
+-    retry_jitter_ratio: object,
+-    max_attempts: object,
+-    prefix: str,
+-) -> tuple[float, float, float, float, int | None]:
+-    initial = _normalize_positive_seconds(
+-        retry_initial_seconds,
+-        field_name=f"{prefix} initial retry",
+-    )
+-    maximum = _normalize_positive_seconds(
+-        retry_max_seconds,
+-        field_name=f"{prefix} maximum retry",
+-    )
+-    multiplier = _normalize_positive_seconds(
+-        retry_multiplier,
+-        field_name=f"{prefix} retry multiplier",
+-    )
+-    if multiplier < 1.0:
+-        raise ValueError(f"{prefix} retry multiplier must be at least one")
+-    if maximum < initial:
+-        raise ValueError(f"{prefix} maximum retry must be >= initial retry")
+-    if isinstance(retry_jitter_ratio, bool) or not isinstance(retry_jitter_ratio, Real):
+-        raise TypeError(f"{prefix} retry jitter ratio must be a real number")
+-    jitter = float(retry_jitter_ratio)
+-    if not math.isfinite(jitter) or not 0.0 <= jitter < 1.0:
+-        raise ValueError(f"{prefix} retry jitter ratio must be in [0, 1)")
+-    if max_attempts is not None:
+-        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
+-            raise TypeError(f"{prefix} max_attempts must be an integer or None")
+-        if max_attempts <= 0:
+-            raise ValueError(f"{prefix} max_attempts must be greater than zero")
+-    return initial, maximum, multiplier, jitter, max_attempts
+-
+-
+ @dataclass(frozen=True, slots=True)
+ class AdbConfiguredTransportSupervisionPolicy:
+     """Projection with optional recovery after an observed in-scope disappearance."""
+@@ -79,57 +31,6 @@ class AdbConfiguredTransportSupervisionPolicy:
+             )
+ 
+ 
+-@dataclass(frozen=True, slots=True, order=True)
+-class AdbServerRecoveryCycleId:
+-    """Opaque identity for one scheduled/retry recovery cycle.
+-
+-    This token fences stale retry work after recovery is disabled, restarted, or exhausted.
+-    It is not an ADB server lifetime or resource generation identifier.
+-    """
+-
+-    value: str
+-
+-    def __post_init__(self) -> None:
+-        object.__setattr__(
+-            self,
+-            "value",
+-            _normalize_required_text(
+-                self.value,
+-                field_name="ADB server recovery cycle id",
+-            ),
+-        )
+-
+-    @classmethod
+-    def new(cls) -> "AdbServerRecoveryCycleId":
+-        return cls(uuid4().hex)
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class AdbServerSupervisionPolicy:
+-    """Retry policy for reacquiring the process-owned ADB server singleton."""
+-
+-    retry_initial_seconds: float = 0.5
+-    retry_max_seconds: float = 30.0
+-    retry_multiplier: float = 2.0
+-    retry_jitter_ratio: float = 0.2
+-    max_attempts: int | None = None
+-
+-    def __post_init__(self) -> None:
+-        initial, maximum, multiplier, jitter, max_attempts = _normalize_retry_configuration(
+-            retry_initial_seconds=self.retry_initial_seconds,
+-            retry_max_seconds=self.retry_max_seconds,
+-            retry_multiplier=self.retry_multiplier,
+-            retry_jitter_ratio=self.retry_jitter_ratio,
+-            max_attempts=self.max_attempts,
+-            prefix="ADB server supervision",
+-        )
+-        object.__setattr__(self, "retry_initial_seconds", initial)
+-        object.__setattr__(self, "retry_max_seconds", maximum)
+-        object.__setattr__(self, "retry_multiplier", multiplier)
+-        object.__setattr__(self, "retry_jitter_ratio", jitter)
+-        object.__setattr__(self, "max_attempts", max_attempts)
+-
+-
+ @dataclass(frozen=True, slots=True)
+ class AdbDevicesTrackingSupervisionPolicy:
+     """Bound one single-use transport-inventory tracker start episode.
+@@ -155,6 +56,4 @@ class AdbDevicesTrackingSupervisionPolicy:
+ __all__ = [
+     "AdbConfiguredTransportSupervisionPolicy",
+     "AdbDevicesTrackingSupervisionPolicy",
+-    "AdbServerRecoveryCycleId",
+-    "AdbServerSupervisionPolicy",
+ ]
+diff --git a/adb/supervision/signal.py b/adb/supervision/signal.py
+index 7251c84..53344fa 100644
+--- a/adb/supervision/signal.py
++++ b/adb/supervision/signal.py
+@@ -3,16 +3,6 @@ from __future__ import annotations
+ from dataclasses import dataclass
+ from typing import TypeAlias
+ 
+-from adb.server.failure import (
+-    AdbServerCloseUnprovenFailure,
+-    AdbServerConnectionFailure,
+-    AdbServerLaunchFailure,
+-    AdbServerOwnershipLossFailure,
+-    AdbServerProcessExitedFailure,
+-)
+-from adb.server.model import AdbServerEndpoint
+-from adb.server.ownership import AdbOwnedServer
+-from adb.supervision.model import AdbServerRecoveryCycleId
+ from adb.transport.configuration import AdbConfiguredTransport
+ from adb.transport.inventory.resolution import AdbConfiguredTransportResolution
+ from adb.transport.lifecycle.ensure import (
+@@ -21,26 +11,6 @@ from adb.transport.lifecycle.ensure import (
+ )
+ 
+ 
+-_OWNERSHIP_LOSS_FAILURE_TYPES = (
+-    AdbServerConnectionFailure,
+-    AdbServerProcessExitedFailure,
+-)
+-
+-
+-def _require_generation(value: object) -> int:
+-    if isinstance(value, bool) or not isinstance(value, int):
+-        raise TypeError("generation must be an integer")
+-    if value <= 0:
+-        raise ValueError("generation must be greater than zero")
+-    return value
+-
+-
+-def _require_endpoint(value: object) -> AdbServerEndpoint:
+-    if not isinstance(value, AdbServerEndpoint):
+-        raise TypeError("endpoint must be AdbServerEndpoint")
+-    return value
+-
+-
+ @dataclass(frozen=True, slots=True)
+ class AdbConfiguredTransportResolutionChanged:
+     """Signal carrying one configured-transport projection in the current tracker scope."""
+@@ -83,163 +53,13 @@ class AdbConfiguredTransportRecoveryExhausted:
+             )
+ 
+ 
+-@dataclass(frozen=True, slots=True)
+-class AdbServerReconciliationRequested:
+-    """Signal that terminal liveness evidence requires generation-fenced reconciliation."""
+-
+-    endpoint: AdbServerEndpoint
+-    generation: int
+-    failure: AdbServerOwnershipLossFailure
+-
+-    def __post_init__(self) -> None:
+-        _require_endpoint(self.endpoint)
+-        _require_generation(self.generation)
+-        if not isinstance(self.failure, _OWNERSHIP_LOSS_FAILURE_TYPES):
+-            raise TypeError(
+-                "failure must be AdbServerConnectionFailure or "
+-                "AdbServerProcessExitedFailure"
+-            )
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class AdbServerOwnershipRetired:
+-    """Public fact that one owned generation is irreversibly no longer usable."""
+-
+-    endpoint: AdbServerEndpoint
+-    generation: int
+-
+-    def __post_init__(self) -> None:
+-        _require_endpoint(self.endpoint)
+-        _require_generation(self.generation)
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class AdbServerOwnershipLost:
+-    """Failure evidence explaining why one already-retired generation lost ownership."""
+-
+-    endpoint: AdbServerEndpoint
+-    generation: int
+-    failure: AdbServerOwnershipLossFailure
+-
+-    def __post_init__(self) -> None:
+-        _require_endpoint(self.endpoint)
+-        _require_generation(self.generation)
+-        if not isinstance(self.failure, _OWNERSHIP_LOSS_FAILURE_TYPES):
+-            raise TypeError(
+-                "failure must be AdbServerConnectionFailure or "
+-                "AdbServerProcessExitedFailure"
+-            )
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class AdbServerNativeCloseCompleted:
+-    """Private-lifecycle fact that native termination of a retired generation was proven."""
+-
+-    endpoint: AdbServerEndpoint
+-    generation: int
+-
+-    def __post_init__(self) -> None:
+-        _require_endpoint(self.endpoint)
+-        _require_generation(self.generation)
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class AdbServerNativeCloseUnproven:
+-    """Private-lifecycle fact that termination of a retired generation remains unproven."""
+-
+-    endpoint: AdbServerEndpoint
+-    generation: int
+-    failure: AdbServerCloseUnprovenFailure
+-
+-    def __post_init__(self) -> None:
+-        _require_endpoint(self.endpoint)
+-        _require_generation(self.generation)
+-        if not isinstance(self.failure, AdbServerCloseUnprovenFailure):
+-            raise TypeError("failure must be AdbServerCloseUnprovenFailure")
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class AdbServerOwnershipRecovered:
+-    """Signal carrying the fresh usable process-owned ADB server generation."""
+-
+-    server: AdbOwnedServer
+-
+-    def __post_init__(self) -> None:
+-        if not isinstance(self.server, AdbOwnedServer):
+-            raise TypeError("server must be AdbOwnedServer")
+-
+-    @property
+-    def endpoint(self) -> AdbServerEndpoint:
+-        return self.server.endpoint
+-
+-    @property
+-    def generation(self) -> int:
+-        return self.server.generation
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class AdbServerRecoveryRetryDue:
+-    """Signal delivered when one owned-server recovery retry becomes due."""
+-
+-    endpoint: AdbServerEndpoint
+-    cycle_id: AdbServerRecoveryCycleId
+-    attempt_number: int
+-
+-    def __post_init__(self) -> None:
+-        _require_endpoint(self.endpoint)
+-        if not isinstance(self.cycle_id, AdbServerRecoveryCycleId):
+-            raise TypeError("cycle_id must be AdbServerRecoveryCycleId")
+-        if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
+-            raise TypeError("attempt_number must be an integer")
+-        if self.attempt_number <= 0:
+-            raise ValueError("attempt_number must be greater than zero")
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class AdbServerRecoveryExhausted:
+-    """Signal that fresh owned-server creation exhausted its retry budget."""
+-
+-    endpoint: AdbServerEndpoint
+-    cycle_id: AdbServerRecoveryCycleId
+-    attempts: int
+-    failure: AdbServerLaunchFailure
+-
+-    def __post_init__(self) -> None:
+-        _require_endpoint(self.endpoint)
+-        if not isinstance(self.cycle_id, AdbServerRecoveryCycleId):
+-            raise TypeError("cycle_id must be AdbServerRecoveryCycleId")
+-        if isinstance(self.attempts, bool) or not isinstance(self.attempts, int):
+-            raise TypeError("attempts must be an integer")
+-        if self.attempts <= 0:
+-            raise ValueError("attempts must be greater than zero")
+-        if not isinstance(self.failure, AdbServerLaunchFailure):
+-            raise TypeError("failure must be AdbServerLaunchFailure")
+-
+-
+ AdbSupervisionSignal: TypeAlias = (
+-    AdbConfiguredTransportResolutionChanged
+-    | AdbConfiguredTransportRecoveryExhausted
+-    | AdbServerReconciliationRequested
+-    | AdbServerOwnershipRetired
+-    | AdbServerOwnershipLost
+-    | AdbServerNativeCloseCompleted
+-    | AdbServerNativeCloseUnproven
+-    | AdbServerOwnershipRecovered
+-    | AdbServerRecoveryRetryDue
+-    | AdbServerRecoveryExhausted
++    AdbConfiguredTransportResolutionChanged | AdbConfiguredTransportRecoveryExhausted
+ )
+ 
+ 
+ __all__ = [
+     "AdbConfiguredTransportRecoveryExhausted",
+     "AdbConfiguredTransportResolutionChanged",
+-    "AdbServerNativeCloseCompleted",
+-    "AdbServerNativeCloseUnproven",
+-    "AdbServerOwnershipLost",
+-    "AdbServerOwnershipRecovered",
+-    "AdbServerOwnershipRetired",
+-    "AdbServerReconciliationRequested",
+-    "AdbServerRecoveryExhausted",
+-    "AdbServerRecoveryRetryDue",
+     "AdbSupervisionSignal",
+ ]
