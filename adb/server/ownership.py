@@ -9,6 +9,7 @@ from adb.server.lifecycle.launch import AdbServerLauncher
 
 
 _OWNER_CONSTRUCTION_TOKEN = object()
+_SUPERVISION_LEASE_CONSTRUCTION_TOKEN = object()
 
 
 class AdbServerOwnershipLostError(RuntimeError):
@@ -77,6 +78,22 @@ class _OwnedServerLifetime:
         self.native = native
 
 
+class _AdbServerSupervisionLease:
+    """Opaque authority proving exclusive supervision of one process owner."""
+
+    __slots__ = ()
+
+    def __init__(self, *, _token: object) -> None:
+        if _token is not _SUPERVISION_LEASE_CONSTRUCTION_TOKEN:
+            raise TypeError(
+                "ADB server supervision leases are created by the process ADB server owner"
+            )
+
+    @classmethod
+    def _new(cls) -> "_AdbServerSupervisionLease":
+        return cls(_token=_SUPERVISION_LEASE_CONSTRUCTION_TOKEN)
+
+
 class _DefaultAdbServerLauncher:
     """Lazily construct the concrete launcher after the ADB package graph is imported."""
 
@@ -121,6 +138,40 @@ class _ProcessAdbServerOwner:
         self._lifetime: _OwnedServerLifetime | None = None
         self._generation = 0
         self._close_failure: BaseException | None = None
+        self._supervision_lease: _AdbServerSupervisionLease | None = None
+
+    def claim_supervision(self, owner: AdbOwnedServer) -> _AdbServerSupervisionLease:
+        """Exclusively claim lifecycle supervision authority across server generations.
+
+        The claim is bound to this process owner rather than to one generation so a supervisor
+        can retain durable recovery intent while the active owner is temporarily absent. The
+        initial generation check and claim are serialized as one operation.
+        """
+
+        self._require_owner(owner)
+        with self._condition:
+            lifetime = self._lifetime
+            if (
+                self._status is not _ProcessAdbServerOwnerStatus.ACTIVE
+                or lifetime is None
+                or lifetime.owner is not owner
+            ):
+                raise ValueError("server must be the process owner's active generation")
+            if self._supervision_lease is not None:
+                raise RuntimeError("ADB server supervision authority is already claimed")
+            lease = _AdbServerSupervisionLease._new()
+            self._supervision_lease = lease
+            return lease
+
+    def release_supervision(self, lease: _AdbServerSupervisionLease) -> None:
+        """Release one exact supervision claim without changing native server ownership."""
+
+        if not isinstance(lease, _AdbServerSupervisionLease):
+            raise TypeError("lease must be _AdbServerSupervisionLease")
+        with self._condition:
+            if self._supervision_lease is not lease:
+                raise RuntimeError("ADB server supervision lease is not active")
+            self._supervision_lease = None
 
     def acquire(self) -> AdbOwnedServer:
         """Return the active generation or launch one fresh process-owned server.

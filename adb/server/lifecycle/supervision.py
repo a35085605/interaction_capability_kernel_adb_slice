@@ -157,8 +157,6 @@ class AdbServerSupervisor:
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(_owner_manager, _ProcessAdbServerOwner):
             raise TypeError("_owner_manager must be _ProcessAdbServerOwner")
-        if _owner_manager.active_owner is not server:
-            raise ValueError("server must be the process owner's active generation")
         if not isinstance(scheduler, TemporalScheduler):
             raise TypeError("scheduler must satisfy TemporalScheduler")
         if not isinstance(policy, AdbServerSupervisionPolicy):
@@ -184,6 +182,7 @@ class AdbServerSupervisor:
         self._closing_generation: int | None = None
         self._attempt_threads: set[Thread] = set()
         self._closed = False
+        self._supervision_lease = self._owner_manager.claim_supervision(server)
 
     @property
     def desired_running(self) -> bool:
@@ -301,13 +300,16 @@ class AdbServerSupervisor:
                 retry_token = self._invalidate_recovery_locked()
                 attempt_threads = tuple(self._attempt_threads)
                 self._recovery_epoch += 1
-        for token in subscriptions:
-            self._bus.unsubscribe(token)
-        if retry_token is not None:
-            self._scheduler.cancel(retry_token)
-        for thread in attempt_threads:
-            if thread is not current_thread():
-                thread.join()
+        try:
+            for token in subscriptions:
+                self._bus.unsubscribe(token)
+            if retry_token is not None:
+                self._scheduler.cancel(retry_token)
+            for thread in attempt_threads:
+                if thread is not current_thread():
+                    thread.join()
+        finally:
+            self._owner_manager.release_supervision(self._supervision_lease)
 
     def _invalidate_owner_and_maybe_recover(
         self,
