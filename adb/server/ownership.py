@@ -5,18 +5,21 @@ from threading import Condition
 
 from adb.server.acquisition import (
     AdbServerAcquirer,
+    AdbServerAcquisition,
+    AdbServerAcquisitionError,
     AdbServerAcquisitionPolicy,
-    AdbServerLease,
 )
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.lifecycle.command import AdbServerStop, AdbServerStopper
 from adb.server.status.model import AdbServerStatus
+from native_attempt import NativeAttemptResult
 
 
 _OWNER_CONSTRUCTION_TOKEN = object()
 
 
 class AdbServerConfigurationConflictError(RuntimeError):
-    """A process-owned server is already active with incompatible configuration."""
+    """A process-owned server is already bound to a different endpoint lineage."""
 
     def __init__(
         self,
@@ -37,61 +40,54 @@ class AdbServerOwnershipLostError(RuntimeError):
 
 
 class AdbOwnedServer:
-    """One session-created managed ADB server owned by the process slot.
+    """One verified native ADB server lifetime created by this process.
 
-    ``owned`` is creation-derived: acquisition observed no listener, obtained positive
-    creation evidence, and then verified a compatible ADB listener at the same endpoint.
-    The object deliberately does not claim continuous native PID/process identity.
-
-    The object is a lifetime capability, not a generation identifier. Once marked lost it
-    becomes permanently inactive and is never revived; recovery creates a fresh
-    :class:`AdbOwnedServer` instance instead.
+    Ownership is creation-derived, not endpoint-derived: acquisition observed no listener,
+    this process obtained positive native creation evidence, and then verified a compatible
+    ADB listener at that endpoint. Once this lifetime is invalidated it never becomes owned
+    again, even if a listener later exists at the same endpoint.
     """
 
-    __slots__ = ("_lease", "_logically_active")
+    __slots__ = ("_acquisition", "_active")
 
-    def __init__(self, lease: AdbServerLease, *, _token: object) -> None:
+    def __init__(self, acquisition: AdbServerAcquisition, *, _token: object) -> None:
         if _token is not _OWNER_CONSTRUCTION_TOKEN:
             raise TypeError("AdbOwnedServer values are created by ProcessAdbServerSlot")
-        if not isinstance(lease, AdbServerLease):
-            raise TypeError("lease must be AdbServerLease")
-        if not lease.active:
-            raise ValueError("lease must be active")
-        self._lease = lease
-        self._logically_active = True
+        if not isinstance(acquisition, AdbServerAcquisition):
+            raise TypeError("acquisition must be AdbServerAcquisition")
+        self._acquisition = acquisition
+        self._active = True
 
     @classmethod
-    def _from_lease(cls, lease: AdbServerLease) -> "AdbOwnedServer":
-        return cls(lease, _token=_OWNER_CONSTRUCTION_TOKEN)
+    def _from_acquisition(cls, acquisition: AdbServerAcquisition) -> "AdbOwnedServer":
+        return cls(acquisition, _token=_OWNER_CONSTRUCTION_TOKEN)
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
-        return self._lease.endpoint
+        return self._acquisition.endpoint
 
     @property
     def active(self) -> bool:
-        return self._logically_active and self._lease.active
+        return self._active
 
     @property
     def server_status(self) -> AdbServerStatus:
         """Server status captured by successful acquisition verification."""
 
-        return self._lease.server_status
+        return self._acquisition.server_status
 
     @property
     def attempts(self) -> tuple[object, ...]:
         """Candidate evidence retained by successful acquisition."""
 
-        return self._lease.attempts
+        return self._acquisition.attempts
 
     def _mark_lost(self) -> bool:
-        """Invalidate this lifetime and release only its process-local endpoint lease."""
+        """Permanently invalidate this owned lifetime."""
 
-        if not self._logically_active:
+        if not self._active:
             return False
-        self._logically_active = False
-        if self._lease.active:
-            self._lease.release()
+        self._active = False
         return True
 
 
@@ -99,8 +95,8 @@ class _ProcessAdbServerSlotStatus(str, Enum):
     EMPTY = "empty"
     CREATING = "creating"
     ACTIVE = "active"
-    LOST = "lost"
-    RECOVERING = "recovering"
+    CLOSING = "closing"
+    UNOWNED = "unowned"
 
 
 class _ProcessAdbServerSlotState:
@@ -116,14 +112,12 @@ _PROCESS_ADB_SERVER_STATE = _ProcessAdbServerSlotState()
 
 
 class ProcessAdbServerSlot:
-    """Serialize managed ADB ownership into one process-level slot.
+    """Serialize process-owned ADB server lifetimes around one endpoint lineage.
 
-    Initial acquisition may search candidates. Recovery is pinned to the endpoint whose
-    previous owner was invalidated. Existing listeners are never adopted: every new owner
-    must come through the normal no-listener -> create -> verify acquisition path.
-
-    Lost owners are removed from the active slot immediately. The slot keeps only the
-    endpoint and acquisition capability needed to attempt fresh ownership later.
+    Initial acquisition may search untouched candidates. Once native creation may have
+    occurred, the selected endpoint is pinned. Every later generation must be created again
+    at that same endpoint; an existing listener, including one left by an older generation
+    of this process, is treated as foreign and is never adopted.
     """
 
     def __init__(
@@ -156,7 +150,7 @@ class ProcessAdbServerSlot:
         with state.condition:
             while state.status in {
                 _ProcessAdbServerSlotStatus.CREATING,
-                _ProcessAdbServerSlotStatus.RECOVERING,
+                _ProcessAdbServerSlotStatus.CLOSING,
             }:
                 active_endpoint = state.requested_endpoint
                 if (
@@ -170,9 +164,7 @@ class ProcessAdbServerSlot:
             if state.status is _ProcessAdbServerSlotStatus.ACTIVE:
                 assert state.owner is not None
                 if not state.owner.active:
-                    state.owner._mark_lost()
-                    state.owner = None
-                    state.status = _ProcessAdbServerSlotStatus.LOST
+                    self._detach_owner_locked(state, state.owner.endpoint)
                     state.condition.notify_all()
                     raise AdbServerOwnershipLostError(
                         "process ADB server ownership is no longer active"
@@ -180,27 +172,34 @@ class ProcessAdbServerSlot:
                 self._require_compatible_endpoint(state.owner.endpoint, endpoint)
                 return state.owner
 
-            if state.status is _ProcessAdbServerSlotStatus.LOST:
+            if state.status is _ProcessAdbServerSlotStatus.UNOWNED:
+                pinned = state.requested_endpoint
+                if endpoint is not None and pinned is not None and endpoint != pinned:
+                    raise AdbServerConfigurationConflictError(pinned, endpoint)
                 raise AdbServerOwnershipLostError(
-                    "process ADB server ownership is lost; use recover()"
+                    "process ADB server endpoint is unowned; use recover()"
                 )
 
             state.status = _ProcessAdbServerSlotStatus.CREATING
             state.requested_endpoint = endpoint
             state.acquirer = self._acquirer
 
-        lease: object | None = None
         try:
-            lease = self._acquirer.acquire(policy, endpoint=endpoint)
-            owner = self._owner_from_lease(lease)
-        except BaseException:
-            if isinstance(lease, AdbServerLease) and lease.active:
-                lease.release()
+            acquisition = self._acquirer.acquire(policy, endpoint=endpoint)
+            owner = self._owner_from_acquisition(acquisition)
+        except AdbServerAcquisitionError as exc:
             with state.condition:
-                state.status = _ProcessAdbServerSlotStatus.EMPTY
-                state.owner = None
-                state.requested_endpoint = None
-                state.acquirer = None
+                if exc.pinned_endpoint is not None:
+                    state.status = _ProcessAdbServerSlotStatus.UNOWNED
+                    state.requested_endpoint = exc.pinned_endpoint
+                    state.acquirer = self._acquirer
+                else:
+                    self._reset_empty_locked(state)
+                state.condition.notify_all()
+            raise
+        except BaseException:
+            with state.condition:
+                self._reset_empty_locked(state)
                 state.condition.notify_all()
             raise
 
@@ -212,10 +211,10 @@ class ProcessAdbServerSlot:
         return owner
 
     def mark_lost(self, owner: AdbOwnedServer) -> bool:
-        """Remove the current owner from service after terminal liveness evidence.
+        """Invalidate the current owner without attempting endpoint-based native teardown.
 
-        The old owner becomes permanently inactive. No endpoint observation can restore it.
-        Recovery, if desired, must create a fresh owner at the remembered endpoint.
+        The endpoint remains pinned. A future recovery must create a new native server at the
+        same endpoint and therefore cannot adopt a listener left by this or any other process.
         """
 
         if not isinstance(owner, AdbOwnedServer):
@@ -229,15 +228,14 @@ class ProcessAdbServerSlot:
                     )
                 endpoint = owner.endpoint
                 owner._mark_lost()
-                state.owner = None
-                state.requested_endpoint = endpoint
-                state.status = _ProcessAdbServerSlotStatus.LOST
+                self._detach_owner_locked(state, endpoint)
                 state.condition.notify_all()
                 return True
             if (
                 state.status in {
-                    _ProcessAdbServerSlotStatus.LOST,
-                    _ProcessAdbServerSlotStatus.RECOVERING,
+                    _ProcessAdbServerSlotStatus.UNOWNED,
+                    _ProcessAdbServerSlotStatus.CLOSING,
+                    _ProcessAdbServerSlotStatus.CREATING,
                 }
                 and not owner.active
                 and state.requested_endpoint == owner.endpoint
@@ -247,11 +245,50 @@ class ProcessAdbServerSlot:
                 "ADB server owner is not attached to the process slot"
             )
 
-    def recover(self, policy: AdbServerAcquisitionPolicy) -> AdbOwnedServer:
-        """Create a fresh owner at the endpoint remembered by the LOST slot.
+    def close(
+        self,
+        owner: AdbOwnedServer,
+        stopper: AdbServerStopper,
+    ) -> NativeAttemptResult:
+        """Fence the current owned lifetime, issue its authorized native stop, and detach it.
 
-        Recovery never searches another endpoint and never adopts an existing listener.
-        A failed acquisition leaves the slot LOST for a later retry.
+        Native stop success is not required to end the Python ownership lifetime. The endpoint
+        remains pinned afterwards; if a listener survived, the next recovery observes it as an
+        existing foreign listener and refuses to adopt it.
+        """
+
+        if not isinstance(owner, AdbOwnedServer):
+            raise TypeError("owner must be AdbOwnedServer")
+        if not callable(getattr(stopper, "stop", None)):
+            raise TypeError("stopper must provide stop()")
+
+        state = self._state
+        with state.condition:
+            if state.status is not _ProcessAdbServerSlotStatus.ACTIVE or state.owner is not owner:
+                raise AdbServerOwnershipLostError(
+                    "ADB server owner is not the process slot's current active owner"
+                )
+            endpoint = owner.endpoint
+            owner._mark_lost()
+            state.status = _ProcessAdbServerSlotStatus.CLOSING
+
+        try:
+            result = stopper.stop(AdbServerStop(endpoint))
+            if not isinstance(result, NativeAttemptResult):
+                raise TypeError("stopper.stop() must return NativeAttemptResult")
+            return result
+        finally:
+            with state.condition:
+                if state.owner is owner:
+                    self._detach_owner_locked(state, endpoint)
+                state.condition.notify_all()
+
+    def recover(self, policy: AdbServerAcquisitionPolicy) -> AdbOwnedServer:
+        """Create a fresh owner at the endpoint pinned by the prior server lifetime.
+
+        Recovery never searches another endpoint and never adopts an existing listener. An
+        older server from this process is indistinguishable from any other pre-existing
+        listener once its owned lifetime has ended.
         """
 
         if not isinstance(policy, AdbServerAcquisitionPolicy):
@@ -259,35 +296,36 @@ class ProcessAdbServerSlot:
 
         state = self._state
         with state.condition:
-            while state.status is _ProcessAdbServerSlotStatus.RECOVERING:
+            while state.status in {
+                _ProcessAdbServerSlotStatus.CREATING,
+                _ProcessAdbServerSlotStatus.CLOSING,
+            }:
                 state.condition.wait()
 
             if state.status is _ProcessAdbServerSlotStatus.ACTIVE:
                 assert state.owner is not None
                 return state.owner
-            if state.status is not _ProcessAdbServerSlotStatus.LOST:
+            if state.status is not _ProcessAdbServerSlotStatus.UNOWNED:
                 raise AdbServerOwnershipLostError(
-                    "ADB server recovery requires a LOST process slot"
+                    "ADB server recovery requires an unowned pinned endpoint"
                 )
             endpoint = state.requested_endpoint
             acquirer = state.acquirer
             if endpoint is None:
-                raise RuntimeError("LOST ADB server slot has no recovery endpoint")
+                raise RuntimeError("unowned ADB server slot has no pinned endpoint")
             if acquirer is None or not callable(getattr(acquirer, "acquire", None)):
-                raise RuntimeError("LOST ADB server slot has no recovery acquirer")
-            state.status = _ProcessAdbServerSlotStatus.RECOVERING
+                raise RuntimeError("unowned ADB server slot has no recovery acquirer")
+            state.status = _ProcessAdbServerSlotStatus.CREATING
 
-        lease: object | None = None
         try:
-            lease = acquirer.acquire(policy, endpoint=endpoint)
-            owner = self._owner_from_lease(lease)
+            acquisition = acquirer.acquire(policy, endpoint=endpoint)
+            owner = self._owner_from_acquisition(acquisition)
         except BaseException:
-            if isinstance(lease, AdbServerLease) and lease.active:
-                lease.release()
             with state.condition:
-                state.status = _ProcessAdbServerSlotStatus.LOST
+                state.status = _ProcessAdbServerSlotStatus.UNOWNED
                 state.owner = None
                 state.requested_endpoint = endpoint
+                state.acquirer = acquirer
                 state.condition.notify_all()
             raise
 
@@ -309,21 +347,32 @@ class ProcessAdbServerSlot:
             assert state.owner is not None
             if not state.owner.active:
                 endpoint = state.owner.endpoint
-                state.owner._mark_lost()
-                state.owner = None
-                state.requested_endpoint = endpoint
-                state.status = _ProcessAdbServerSlotStatus.LOST
+                self._detach_owner_locked(state, endpoint)
                 state.condition.notify_all()
                 return None
             return state.owner
 
     @staticmethod
-    def _owner_from_lease(lease: object) -> AdbOwnedServer:
-        if not isinstance(lease, AdbServerLease):
-            raise TypeError("acquirer.acquire() must return AdbServerLease")
-        if not lease.active:
-            raise ValueError("acquirer returned an inactive AdbServerLease")
-        return AdbOwnedServer._from_lease(lease)
+    def _owner_from_acquisition(acquisition: object) -> AdbOwnedServer:
+        if not isinstance(acquisition, AdbServerAcquisition):
+            raise TypeError("acquirer.acquire() must return AdbServerAcquisition")
+        return AdbOwnedServer._from_acquisition(acquisition)
+
+    @staticmethod
+    def _detach_owner_locked(
+        state: _ProcessAdbServerSlotState,
+        endpoint: AdbServerEndpoint,
+    ) -> None:
+        state.owner = None
+        state.requested_endpoint = endpoint
+        state.status = _ProcessAdbServerSlotStatus.UNOWNED
+
+    @staticmethod
+    def _reset_empty_locked(state: _ProcessAdbServerSlotState) -> None:
+        state.status = _ProcessAdbServerSlotStatus.EMPTY
+        state.owner = None
+        state.requested_endpoint = None
+        state.acquirer = None
 
     @staticmethod
     def _require_compatible_endpoint(
@@ -347,10 +396,21 @@ def acquire_process_adb_server(
     return _PROCESS_ADB_SERVER_SLOT.acquire(policy, endpoint=endpoint)
 
 
+def close_process_adb_server(owner: AdbOwnedServer) -> NativeAttemptResult:
+    """Close the current process-owned server using its creation-derived stop authority."""
+
+    if not isinstance(owner, AdbOwnedServer):
+        raise TypeError("owner must be AdbOwnedServer")
+    from adb.server.lifecycle.adapters import SubprocessAdbServer
+
+    return _PROCESS_ADB_SERVER_SLOT.close(owner, SubprocessAdbServer(owner.endpoint))
+
+
 __all__ = [
     "AdbOwnedServer",
     "AdbServerConfigurationConflictError",
     "AdbServerOwnershipLostError",
     "ProcessAdbServerSlot",
     "acquire_process_adb_server",
+    "close_process_adb_server",
 ]
