@@ -21,7 +21,7 @@ from adb.transport.inventory.start import (
 )
 from adb.transport.inventory.tracker import (
     AdbDevicesTracker,
-    AdbDevicesTrackingController,
+    AdbDevicesTrackingScope,
 )
 from adb.transport.signal import (
     AdbDevicesTrackingFailed,
@@ -33,7 +33,7 @@ from eventing import EventBus, EventSubscriptionToken
 
 
 _ThreadFactory = Callable[..., Thread]
-_TrackerFactory = Callable[[AdbOwnedServer, EventBus], AdbDevicesTrackingController]
+_TrackerFactory = Callable[[AdbOwnedServer, EventBus], AdbDevicesTrackingScope]
 
 
 def _default_thread_factory(*args, **kwargs) -> Thread:
@@ -45,7 +45,7 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 def _default_tracker_factory(
     server: AdbOwnedServer,
     event_bus: EventBus,
-) -> AdbDevicesTrackingController:
+) -> AdbDevicesTrackingScope:
     return AdbDevicesTracker(server, event_bus)
 
 
@@ -100,7 +100,7 @@ class AdbDevicesTrackingSupervisor:
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._desired_tracking = False
         self._readiness = AdbDevicesTrackingReadiness.INDETERMINATE
-        self._tracker: AdbDevicesTrackingController | None = None
+        self._tracker: AdbDevicesTrackingScope | None = None
         self._start: AdbDevicesTrackingStartOrchestrator | None = None
         self._tracking_active = False
         self._server_generation: int | None = None
@@ -163,10 +163,10 @@ class AdbDevicesTrackingSupervisor:
         """Reconcile tracking intent against the current active owned server generation."""
 
         readiness = _project_server_owner(server)
-        tracker_to_close: AdbDevicesTrackingController | None = None
+        tracker_to_close: AdbDevicesTrackingScope | None = None
         launch: tuple[
             Thread,
-            AdbDevicesTrackingController,
+            AdbDevicesTrackingScope,
             AdbDevicesTrackingStartOrchestrator,
         ] | None = None
 
@@ -321,7 +321,7 @@ class AdbDevicesTrackingSupervisor:
 
     def _run_start_attempt(
         self,
-        tracker: AdbDevicesTrackingController,
+        tracker: AdbDevicesTrackingScope,
         starter: AdbDevicesTrackingStartOrchestrator,
         readiness: AdbDevicesTrackingReadiness,
     ) -> None:
@@ -359,13 +359,13 @@ class AdbDevicesTrackingSupervisor:
 
     def _handle_start_result(
         self,
-        tracker: AdbDevicesTrackingController,
+        tracker: AdbDevicesTrackingScope,
         result: AdbDevicesTrackingStartResult,
     ) -> bool:
         request_server_reconciliation = False
         reconciliation_generation: int | None = None
         keep_tracker = False
-        tracker_to_close: AdbDevicesTrackingController | None = None
+        tracker_to_close: AdbDevicesTrackingScope | None = None
 
         with self._lock:
             if self._tracker is not tracker:
@@ -403,15 +403,15 @@ class AdbDevicesTrackingSupervisor:
 
     def _create_tracker_locked(
         self,
-    ) -> tuple[AdbDevicesTrackingController, AdbDevicesTrackingStartOrchestrator]:
+    ) -> tuple[AdbDevicesTrackingScope, AdbDevicesTrackingStartOrchestrator]:
         if self._tracker is not None:
             raise RuntimeError("a tracker scope already exists")
         server = self.server
         if server is None:
             raise RuntimeError("cannot create tracker without an active owned server")
         tracker = self._tracker_factory(server, self._bus)
-        if not isinstance(tracker, AdbDevicesTrackingController):
-            raise TypeError("tracker factory must return AdbDevicesTrackingController")
+        if not isinstance(tracker, AdbDevicesTrackingScope):
+            raise TypeError("tracker factory must return AdbDevicesTrackingScope")
         starter = AdbDevicesTrackingStartOrchestrator(
             server,
             self._bus,
@@ -422,7 +422,7 @@ class AdbDevicesTrackingSupervisor:
         self._tracking_active = False
         return tracker, starter
 
-    def _detach_tracker_locked(self) -> AdbDevicesTrackingController | None:
+    def _detach_tracker_locked(self) -> AdbDevicesTrackingScope | None:
         tracker = self._tracker
         self._tracker = None
         self._start = None

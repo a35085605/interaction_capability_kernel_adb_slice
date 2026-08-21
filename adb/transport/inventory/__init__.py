@@ -23,7 +23,7 @@ from adb.transport.inventory.start import (
 )
 from adb.transport.inventory.tracker import (
     AdbDevicesTracker,
-    AdbDevicesTrackingController,
+    AdbDevicesTrackingScope,
 )
 
 __all__ = [
@@ -34,7 +34,7 @@ __all__ = [
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotReader",
     "AdbDevicesTracker",
-    "AdbDevicesTrackingController",
+    "AdbDevicesTrackingScope",
     "AdbDevicesTrackingReadiness",
     "AdbDevicesTrackingStart",
     "AdbDevicesTrackingStartOrchestrator",

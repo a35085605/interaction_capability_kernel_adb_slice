@@ -10,7 +10,7 @@ from threading import Condition
 from time import monotonic
 
 from adb.server.ownership import AdbOwnedServer
-from adb.transport.inventory.tracker import AdbDevicesTrackingController
+from adb.transport.inventory.tracker import AdbDevicesTrackingScope
 from adb.transport.signal import (
     AdbDevicesTrackingFailed,
     AdbDevicesTrackingFailure,
@@ -143,7 +143,7 @@ class AdbDevicesTrackingStartOrchestrator:
         self,
         server: AdbOwnedServer,
         event_bus: EventBus,
-        tracker: AdbDevicesTrackingController,
+        tracker: AdbDevicesTrackingScope,
         *,
         _monotonic: _MonotonicClock = monotonic,
     ) -> None:
@@ -153,8 +153,8 @@ class AdbDevicesTrackingStartOrchestrator:
             getattr(event_bus, "unsubscribe", None)
         ):
             raise TypeError("event_bus must satisfy EventBus")
-        if not isinstance(tracker, AdbDevicesTrackingController):
-            raise TypeError("tracker must satisfy tracking controller")
+        if not isinstance(tracker, AdbDevicesTrackingScope):
+            raise TypeError("tracker must satisfy tracking scope")
         self.server = server
         self._bus = event_bus
         self._tracker = tracker

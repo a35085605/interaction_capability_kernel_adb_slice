@@ -36,7 +36,7 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 
 @runtime_checkable
-class AdbDevicesTrackingController(Protocol):
+class AdbDevicesTrackingScope(Protocol):
     """Single-use transport-inventory tracking scope."""
 
     @property
@@ -134,10 +134,10 @@ class AdbDevicesTracker:
             session = source.open()
             if session is None:
                 terminal = AdbDevicesTrackingStopped(server)
-            elif self._can_publish(source):
+            elif self._can_publish_from(source):
                 self._publisher.publish(AdbDevicesTrackingStarted(server))
                 for snapshot in session.snapshots():
-                    if not self._can_publish(source):
+                    if not self._can_publish_from(source):
                         break
                     self._publisher.publish(
                         AdbDevicesSnapshotObserved(server, snapshot)
@@ -171,7 +171,7 @@ class AdbDevicesTracker:
         if terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
-    def _can_publish(self, source: AdbTrackDevicesSource) -> bool:
+    def _can_publish_from(self, source: AdbTrackDevicesSource) -> bool:
         with self._lock:
             return not self._closed and self._active_source is source
 
@@ -187,5 +187,5 @@ class AdbDevicesTracker:
 
 __all__ = [
     "AdbDevicesTracker",
-    "AdbDevicesTrackingController",
+    "AdbDevicesTrackingScope",
 ]
