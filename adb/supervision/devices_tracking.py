@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 
+from adb.server.failure import AdbServerConnectionFailure
 from adb.server.model import AdbServerEndpoint
-from adb.server.model import AdbServerConnectionFailure
 from adb.server.ownership import AdbOwnedServer
 from adb.supervision.model import AdbDevicesTrackingSupervisionPolicy
 from adb.supervision.signal import (

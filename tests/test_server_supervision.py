@@ -6,7 +6,7 @@ import unittest
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.native import AdbServerCloseError
-from adb.server.model import AdbServerConnectionFailure
+from adb.server.failure import AdbServerConnectionFailure
 from adb.server.ownership import _ProcessAdbServerOwner
 from adb.supervision.model import AdbServerSupervisionPolicy
 from adb.supervision.server import AdbServerSupervisor

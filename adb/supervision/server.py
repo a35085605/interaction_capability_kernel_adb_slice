@@ -6,7 +6,7 @@ from random import random
 from threading import Lock, Thread, current_thread
 
 from adb.server.lifecycle.native import AdbServerLaunchError
-from adb.server.model import (
+from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
     AdbServerLaunchFailure,

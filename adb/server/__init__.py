@@ -1,7 +1,6 @@
 """Process-owned ADB server lifecycle, endpoint, failure, and status contracts."""
 
-from adb.server.model import (
-    AdbServerEndpoint,
+from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
     AdbServerFailure,
@@ -14,6 +13,7 @@ from adb.server.model import (
     AdbServerServiceFailure,
     AdbServerTimeoutFailure,
 )
+from adb.server.model import AdbServerEndpoint
 from adb.server.ownership import (
     AdbOwnedServer,
     AdbServerOwnershipLostError,

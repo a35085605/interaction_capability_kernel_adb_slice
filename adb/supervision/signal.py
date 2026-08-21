@@ -3,14 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from adb.server.model import AdbServerEndpoint
-from adb.server.model import (
+from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
     AdbServerLaunchFailure,
     AdbServerOwnershipLossFailure,
     AdbServerProcessExitedFailure,
 )
+from adb.server.model import AdbServerEndpoint
 from adb.server.ownership import AdbOwnedServer
 from adb.supervision.model import AdbServerRecoveryCycleId
 from adb.transport.configuration import AdbConfiguredTransport
