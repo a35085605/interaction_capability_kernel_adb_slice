@@ -15,11 +15,9 @@ from adb.server.endpoint.observation import (
     SmartSocketAdbServerEndpointObserver,
 )
 from adb.server.endpoint.provisioning import (
+    AdbServerEndpointAllocator,
     AdbServerEndpointExhaustedError,
-    AdbServerEndpointLease,
-    AdbServerEndpointReservation,
-    AdbServerEndpointReservationProvider,
-    InMemoryAdbServerEndpointProvisioner,
+    SequentialAdbServerEndpointAllocator,
 )
 from adb.server.lifecycle.creation import (
     AdbServerCreationAttempt,
@@ -60,9 +58,9 @@ def _positive_seconds(value: object, *, field_name: str) -> float:
 class AdbServerAcquisitionPolicy:
     """Bounded candidate and verification policy for one session-created acquisition.
 
-    Acquisition never adopts an existing listener. Existing listeners are candidate
-    conflicts, and only positive ``CREATED_BY_ATTEMPT`` evidence may enter protocol
-    verification for promotion.
+    Existing listeners are never adopted. Candidate search may advance only while no native
+    creation may have occurred. Once a creation attempt reports positive or indeterminate
+    creation evidence, that endpoint becomes the terminal candidate for the acquisition.
     """
 
     max_candidates: int = 32
@@ -112,7 +110,7 @@ class AdbServerCandidateOutcome(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerCandidateAttempt:
-    """Evidence retained for one reserved candidate."""
+    """Evidence retained for one candidate endpoint."""
 
     endpoint: AdbServerEndpoint
     precheck_observations: tuple[EndpointObservation, ...]
@@ -140,6 +138,16 @@ class AdbServerCandidateAttempt:
             if self.creation_attempt.endpoint != self.endpoint:
                 raise ValueError("creation attempt must match the candidate endpoint")
 
+    @property
+    def native_creation_may_have_occurred(self) -> bool:
+        """Whether this candidate may now contain a native server created by this attempt."""
+
+        creation = self.creation_attempt
+        return creation is not None and creation.evidence in {
+            AdbServerCreationEvidence.CREATED_BY_ATTEMPT,
+            AdbServerCreationEvidence.INDETERMINATE,
+        }
+
 
 class AdbServerAcquisitionError(RuntimeError):
     """No candidate satisfied session-created acquisition requirements."""
@@ -159,71 +167,44 @@ class AdbServerAcquisitionError(RuntimeError):
         )
         super().__init__(f"ADB server acquisition failed: {detail}")
 
+    @property
+    def pinned_endpoint(self) -> AdbServerEndpoint | None:
+        """Endpoint that must remain pinned after a possibly mutating failed creation."""
 
-class AdbServerLease:
-    """Verified session-created server evidence plus an endpoint reservation.
+        if not self.attempts:
+            return None
+        terminal = self.attempts[-1]
+        return terminal.endpoint if terminal.native_creation_may_have_occurred else None
 
-    A successful lease proves that this acquisition obtained positive native creation
-    evidence and then verified a compatible ADB listener at the same endpoint. It does
-    not prove that a later listener at that endpoint is still the same native process.
 
-    Releasing the lease releases only the process-local endpoint reservation and never
-    issues ``kill-server``. Process-level managed ownership is provided separately by
-    :mod:`adb.server.ownership` and intentionally keeps its lease for process lifetime.
+@dataclass(frozen=True, slots=True)
+class AdbServerAcquisition:
+    """Immutable evidence for one verified server created by this acquisition.
+
+    This receipt is not a native lifetime lease. Runtime ownership is established only when
+    the process singleton slot promotes the receipt into an :class:`AdbOwnedServer`.
     """
 
-    __slots__ = (
-        "endpoint",
-        "server_status",
-        "attempts",
-        "_endpoint_lease",
-    )
+    endpoint: AdbServerEndpoint
+    server_status: AdbServerStatus
+    attempts: tuple[AdbServerCandidateAttempt, ...]
 
-    def __init__(
-        self,
-        endpoint_lease: AdbServerEndpointLease,
-        server_status: AdbServerStatus,
-        attempts: tuple[AdbServerCandidateAttempt, ...],
-    ) -> None:
-        if not isinstance(endpoint_lease, AdbServerEndpointLease):
-            raise TypeError("endpoint_lease must be AdbServerEndpointLease")
-        if not endpoint_lease.active:
-            raise ValueError("endpoint_lease must be active")
-        if not isinstance(server_status, AdbServerStatus):
+    def __post_init__(self) -> None:
+        if not isinstance(self.endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(self.server_status, AdbServerStatus):
             raise TypeError("server_status must be AdbServerStatus")
-        if not isinstance(attempts, tuple) or not attempts:
-            raise ValueError("server lease requires acquisition attempts")
-        if not all(isinstance(item, AdbServerCandidateAttempt) for item in attempts):
+        if not isinstance(self.attempts, tuple) or not self.attempts:
+            raise ValueError("server acquisition requires acquisition attempts")
+        if not all(isinstance(item, AdbServerCandidateAttempt) for item in self.attempts):
             raise TypeError("attempts must contain AdbServerCandidateAttempt values")
-        if attempts[-1].endpoint != endpoint_lease.endpoint:
-            raise ValueError("terminal acquisition attempt must match the leased endpoint")
-        if attempts[-1].outcome is not AdbServerCandidateOutcome.CREATED_BY_ACQUISITION:
+        terminal = self.attempts[-1]
+        if terminal.endpoint != self.endpoint:
+            raise ValueError("terminal acquisition attempt must match the acquired endpoint")
+        if terminal.outcome is not AdbServerCandidateOutcome.CREATED_BY_ACQUISITION:
             raise ValueError(
-                "server lease requires terminal CREATED_BY_ACQUISITION evidence"
+                "server acquisition requires terminal CREATED_BY_ACQUISITION evidence"
             )
-        self.endpoint = endpoint_lease.endpoint
-        self.server_status = server_status
-        self.attempts = attempts
-        self._endpoint_lease = endpoint_lease
-
-    @property
-    def active(self) -> bool:
-        return self._endpoint_lease.active
-
-    def release(self) -> None:
-        """Release only the process-local reservation, not the native server."""
-
-        self._endpoint_lease.release()
-
-    close = release
-
-    def __enter__(self) -> "AdbServerLease":
-        if not self.active:
-            raise RuntimeError("ADB server lease is no longer active")
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self.release()
 
 
 _MonotonicClock = Callable[[], float]
@@ -231,33 +212,33 @@ _Sleeper = Callable[[float], None]
 
 
 class AdbServerAcquirer:
-    """Reserve, observe, create, verify, and promote session-created ADB servers.
+    """Allocate, observe, create, and verify session-created ADB servers.
 
-    This is the low-level acquisition primitive. It never adopts an already-running
-    listener. Canonical managed callers should acquire through
-    :func:`adb.server.acquire_process_adb_server`, which serializes acquisition into the
-    process-level server slot.
+    This low-level primitive never adopts an already-running listener. Candidate allocation
+    is acquisition-local bookkeeping only; operating-system bind success is decided by the
+    native creator. After any possibly mutating creation result, acquisition stops on that
+    endpoint instead of searching another candidate.
     """
 
     def __init__(
         self,
-        reservation_provider: AdbServerEndpointReservationProvider | None = None,
+        endpoint_allocator: AdbServerEndpointAllocator | None = None,
         observer: AdbServerEndpointObserver | None = None,
         creator: AdbServerCreator | None = None,
         *,
         _monotonic: _MonotonicClock = monotonic,
         _sleep: _Sleeper = sleep,
     ) -> None:
-        if reservation_provider is None:
-            reservation_provider = InMemoryAdbServerEndpointProvisioner()
+        if endpoint_allocator is None:
+            endpoint_allocator = SequentialAdbServerEndpointAllocator()
         if observer is None:
             observer = SmartSocketAdbServerEndpointObserver()
         if creator is None:
             from adb.server.lifecycle.adapters import SubprocessAdbServerCreator
 
             creator = SubprocessAdbServerCreator()
-        if not callable(getattr(reservation_provider, "reserve", None)):
-            raise TypeError("reservation_provider must provide reserve()")
+        if not callable(getattr(endpoint_allocator, "allocate", None)):
+            raise TypeError("endpoint_allocator must provide allocate()")
         if not callable(getattr(observer, "observe", None)):
             raise TypeError("observer must provide observe()")
         if not callable(getattr(creator, "create", None)):
@@ -266,7 +247,7 @@ class AdbServerAcquirer:
             raise TypeError("_monotonic must be callable")
         if not callable(_sleep):
             raise TypeError("_sleep must be callable")
-        self._reservations = reservation_provider
+        self._endpoint_allocator = endpoint_allocator
         self._observer = observer
         self._creator = creator
         self._monotonic = _monotonic
@@ -277,7 +258,7 @@ class AdbServerAcquirer:
         policy: AdbServerAcquisitionPolicy,
         *,
         endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServerLease:
+    ) -> AdbServerAcquisition:
         if not isinstance(policy, AdbServerAcquisitionPolicy):
             raise TypeError("policy must be AdbServerAcquisitionPolicy")
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
@@ -289,67 +270,54 @@ class AdbServerAcquirer:
 
         for _ in range(candidate_limit):
             try:
-                reservation = self._reservations.reserve(
-                    endpoint=endpoint,
-                    excluded_endpoints=frozenset(attempted_endpoints),
-                )
+                candidate = self._next_candidate(endpoint, attempted_endpoints)
             except AdbServerEndpointExhaustedError:
                 break
-            if not isinstance(reservation, AdbServerEndpointReservation):
-                raise TypeError("reserve() must return AdbServerEndpointReservation")
-            candidate = reservation.endpoint
             attempted_endpoints.add(candidate)
 
-            try:
-                precheck = self._precheck(candidate, policy)
-                initial = precheck[-1]
+            precheck = self._precheck(candidate, policy)
+            initial = precheck[-1]
 
-                if initial.status is EndpointObservationStatus.ADB_SERVER_VERIFIED:
-                    attempts.append(
-                        AdbServerCandidateAttempt(
-                            candidate,
-                            precheck,
-                            AdbServerCandidateOutcome.OCCUPIED,
-                        )
+            if initial.status is EndpointObservationStatus.ADB_SERVER_VERIFIED:
+                attempts.append(
+                    AdbServerCandidateAttempt(
+                        candidate,
+                        precheck,
+                        AdbServerCandidateOutcome.OCCUPIED,
                     )
-                    continue
-
-                if initial.status is EndpointObservationStatus.INDETERMINATE:
-                    attempts.append(
-                        AdbServerCandidateAttempt(
-                            candidate,
-                            precheck,
-                            AdbServerCandidateOutcome.INDETERMINATE,
-                        )
-                    )
-                    continue
-
-                if initial.status is not EndpointObservationStatus.NO_LISTENER_OBSERVED:
-                    attempts.append(
-                        AdbServerCandidateAttempt(
-                            candidate,
-                            precheck,
-                            AdbServerCandidateOutcome.OCCUPIED,
-                        )
-                    )
-                    continue
-
-                creation = self._creator.create(candidate)
-                if not isinstance(creation, AdbServerCreationAttempt):
-                    raise TypeError("creator.create() must return AdbServerCreationAttempt")
-                if creation.endpoint != candidate:
-                    raise ValueError("creation attempt endpoint does not match candidate")
-
-                verification = (
-                    self._verify(candidate, policy)
-                    if creation.evidence is AdbServerCreationEvidence.CREATED_BY_ATTEMPT
-                    else ()
                 )
+                continue
+
+            if initial.status is EndpointObservationStatus.INDETERMINATE:
+                attempts.append(
+                    AdbServerCandidateAttempt(
+                        candidate,
+                        precheck,
+                        AdbServerCandidateOutcome.INDETERMINATE,
+                    )
+                )
+                continue
+
+            if initial.status is not EndpointObservationStatus.NO_LISTENER_OBSERVED:
+                attempts.append(
+                    AdbServerCandidateAttempt(
+                        candidate,
+                        precheck,
+                        AdbServerCandidateOutcome.OCCUPIED,
+                    )
+                )
+                continue
+
+            creation = self._creator.create(candidate)
+            if not isinstance(creation, AdbServerCreationAttempt):
+                raise TypeError("creator.create() must return AdbServerCreationAttempt")
+            if creation.endpoint != candidate:
+                raise ValueError("creation attempt endpoint does not match candidate")
+
+            if creation.evidence is AdbServerCreationEvidence.CREATED_BY_ATTEMPT:
+                verification = self._verify(candidate, policy)
                 verified = self._last_verified(verification)
-                if (
-                    creation.evidence is AdbServerCreationEvidence.CREATED_BY_ATTEMPT
-                    and verified is not None
-                ):
+                if verified is not None:
                     record = AdbServerCandidateAttempt(
                         candidate,
                         precheck,
@@ -357,30 +325,51 @@ class AdbServerAcquirer:
                         creation,
                         verification,
                     )
-                    return self._promote(
-                        reservation,
-                        verified,
+                    if verified.server_status is None:
+                        raise ValueError("verified acquisition requires server status")
+                    return AdbServerAcquisition(
+                        candidate,
+                        verified.server_status,
                         tuple([*attempts, record]),
                     )
 
-                outcome = (
-                    AdbServerCandidateOutcome.VERIFICATION_FAILED
-                    if creation.evidence is AdbServerCreationEvidence.CREATED_BY_ATTEMPT
-                    else AdbServerCandidateOutcome.CREATION_NOT_CONFIRMED
-                )
                 attempts.append(
                     AdbServerCandidateAttempt(
                         candidate,
                         precheck,
-                        outcome,
+                        AdbServerCandidateOutcome.VERIFICATION_FAILED,
                         creation,
                         verification,
                     )
                 )
-            finally:
-                reservation.release()
+                raise AdbServerAcquisitionError(tuple(attempts))
+
+            attempts.append(
+                AdbServerCandidateAttempt(
+                    candidate,
+                    precheck,
+                    AdbServerCandidateOutcome.CREATION_NOT_CONFIRMED,
+                    creation,
+                )
+            )
+            if creation.evidence is AdbServerCreationEvidence.INDETERMINATE:
+                raise AdbServerAcquisitionError(tuple(attempts))
 
         raise AdbServerAcquisitionError(tuple(attempts))
+
+    def _next_candidate(
+        self,
+        endpoint: AdbServerEndpoint | None,
+        attempted_endpoints: set[AdbServerEndpoint],
+    ) -> AdbServerEndpoint:
+        if endpoint is not None:
+            return endpoint
+        candidate = self._endpoint_allocator.allocate(frozenset(attempted_endpoints))
+        if not isinstance(candidate, AdbServerEndpoint):
+            raise TypeError("endpoint_allocator.allocate() must return AdbServerEndpoint")
+        if candidate in attempted_endpoints:
+            raise ValueError("endpoint allocator returned an excluded endpoint")
+        return candidate
 
     def _precheck(
         self,
@@ -440,31 +429,12 @@ class AdbServerAcquirer:
             else None
         )
 
-    @staticmethod
-    def _promote(
-        reservation: AdbServerEndpointReservation,
-        verified: EndpointObservation,
-        attempts: tuple[AdbServerCandidateAttempt, ...],
-    ) -> AdbServerLease:
-        if verified.server_status is None:
-            raise ValueError("lease promotion requires a verified server status")
-        endpoint_lease = reservation.promote()
-        try:
-            return AdbServerLease(
-                endpoint_lease,
-                verified.server_status,
-                attempts,
-            )
-        except BaseException:
-            endpoint_lease.release()
-            raise
-
 
 __all__ = [
     "AdbServerAcquirer",
+    "AdbServerAcquisition",
     "AdbServerAcquisitionError",
     "AdbServerAcquisitionPolicy",
     "AdbServerCandidateAttempt",
     "AdbServerCandidateOutcome",
-    "AdbServerLease",
 ]
