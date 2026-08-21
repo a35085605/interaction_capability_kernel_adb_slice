@@ -10,6 +10,7 @@ from typing import Protocol, runtime_checkable
 
 from adb.errors import AdbError
 from adb.server.model import AdbServerEndpoint
+from adb.server.ownership import AdbOwnedServer
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.inventory.model import (
     AdbConnectionState,
@@ -126,20 +127,25 @@ class AdbTransportEnsurePolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportEnsureReadiness:
-    """Request bounded establishment and verification of configured-transport readiness."""
+    """Request bounded readiness verification against one owned server generation."""
 
+    server: AdbOwnedServer
     configuration: AdbConfiguredTransport
     policy: AdbTransportEnsurePolicy
 
     def __post_init__(self) -> None:
+        if not isinstance(self.server, AdbOwnedServer):
+            raise TypeError("server must be AdbOwnedServer")
         if not isinstance(self.configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
         if not isinstance(self.policy, AdbTransportEnsurePolicy):
             raise TypeError("policy must be AdbTransportEnsurePolicy")
+        if self.configuration.endpoint != self.server.endpoint:
+            raise ValueError("configured transport endpoint does not match owned server endpoint")
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
-        return self.configuration.endpoint
+        return self.server.endpoint
 
     @property
     def serial(self) -> AdbDeviceSerial:
@@ -382,7 +388,7 @@ class AdbTransportEnsureOrchestrator:
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
+        server: AdbOwnedServer,
         snapshot_reader: AdbDevicesSnapshotReader,
         publisher: EventPublisher,
         *,
@@ -390,8 +396,8 @@ class AdbTransportEnsureOrchestrator:
         _monotonic: _MonotonicClock = monotonic,
         _sleep: _Sleeper = sleep,
     ) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(server, AdbOwnedServer):
+            raise TypeError("server must be AdbOwnedServer")
         if not callable(getattr(snapshot_reader, "read", None)):
             raise TypeError("snapshot_reader must provide read()")
         if not isinstance(publisher, EventPublisher):
@@ -403,7 +409,8 @@ class AdbTransportEnsureOrchestrator:
             raise TypeError(
                 "establisher must satisfy AdbTransportEstablisher or be None"
             )
-        self.endpoint = endpoint
+        self.server = server
+        self.endpoint = server.endpoint
         self._snapshot_reader = snapshot_reader
         self._publisher = publisher
         self._establisher = establisher
@@ -432,8 +439,8 @@ class AdbTransportEnsureOrchestrator:
     ) -> AdbTransportEnsureResult:
         if not isinstance(operation, AdbTransportEnsureReadiness):
             raise TypeError("operation must be AdbTransportEnsureReadiness")
-        if operation.endpoint != self.endpoint:
-            raise ValueError("operation endpoint does not match configured ADB server endpoint")
+        if operation.server is not self.server:
+            raise ValueError("operation server does not match ensure orchestrator owned server")
 
         policy = operation.policy
         deadline = self._monotonic() + policy.timeout_seconds
@@ -441,7 +448,7 @@ class AdbTransportEnsureOrchestrator:
 
         while True:
             try:
-                snapshot = self._snapshot_reader.read(self.endpoint)
+                snapshot = self._snapshot_reader.read(self.server)
             except AdbError as exc:
                 episode.record_probe_failure(exc)
             else:

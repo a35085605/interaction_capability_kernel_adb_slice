@@ -5,6 +5,7 @@ from enum import Enum
 from typing import TypeAlias
 
 from adb.server.model import AdbServerEndpoint
+from adb.server.ownership import AdbOwnedServer
 from adb.transport.inventory.model import AdbDevicesSnapshot
 from adb.transport.lifecycle.command import (
     AdbDeviceSideReconnect,
@@ -18,9 +19,9 @@ from adb.transport.lifecycle.ensure import AdbTransportEnsureResult
 from native_attempt import NativeAttemptResult
 
 
-def _require_endpoint(value: object) -> AdbServerEndpoint:
-    if not isinstance(value, AdbServerEndpoint):
-        raise TypeError("endpoint must be AdbServerEndpoint")
+def _require_server(value: object) -> AdbOwnedServer:
+    if not isinstance(value, AdbOwnedServer):
+        raise TypeError("server must be AdbOwnedServer")
     return value
 
 
@@ -79,34 +80,50 @@ class AdbDevicesTrackingFailure(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStarted:
-    """Signal that the current tracker entered stream mode."""
+    """Signal that the current tracker entered stream mode for one owned server generation."""
 
-    endpoint: AdbServerEndpoint
+    server: AdbOwnedServer
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
+        _require_server(self.server)
+
+    @property
+    def endpoint(self) -> AdbServerEndpoint:
+        return self.server.endpoint
+
+    @property
+    def generation(self) -> int:
+        return self.server.generation
 
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStopped:
-    """Signal that the current tracker ended without implying transport disappearance."""
+    """Signal that one owned-server tracker ended without implying transport disappearance."""
 
-    endpoint: AdbServerEndpoint
+    server: AdbOwnedServer
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
+        _require_server(self.server)
+
+    @property
+    def endpoint(self) -> AdbServerEndpoint:
+        return self.server.endpoint
+
+    @property
+    def generation(self) -> int:
+        return self.server.generation
 
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingFailed:
     """Signal that the current tracker failed without synthesizing server state."""
 
-    endpoint: AdbServerEndpoint
+    server: AdbOwnedServer
     failure: AdbDevicesTrackingFailure
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
+        _require_server(self.server)
         if not isinstance(self.failure, AdbDevicesTrackingFailure):
             raise TypeError("failure must be AdbDevicesTrackingFailure")
         object.__setattr__(
@@ -118,18 +135,34 @@ class AdbDevicesTrackingFailed:
             ),
         )
 
+    @property
+    def endpoint(self) -> AdbServerEndpoint:
+        return self.server.endpoint
+
+    @property
+    def generation(self) -> int:
+        return self.server.generation
+
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesSnapshotObserved:
     """Signal carrying one complete snapshot emitted by the current tracker."""
 
-    endpoint: AdbServerEndpoint
+    server: AdbOwnedServer
     snapshot: AdbDevicesSnapshot
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
+        _require_server(self.server)
         if not isinstance(self.snapshot, AdbDevicesSnapshot):
             raise TypeError("snapshot must be AdbDevicesSnapshot")
+
+    @property
+    def endpoint(self) -> AdbServerEndpoint:
+        return self.server.endpoint
+
+    @property
+    def generation(self) -> int:
+        return self.server.generation
 
 
 AdbTransportSignal: TypeAlias = (

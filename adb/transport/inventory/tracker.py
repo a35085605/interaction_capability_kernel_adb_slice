@@ -9,7 +9,7 @@ from adb.errors import (
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.server.model import AdbServerEndpoint
+from adb.server.ownership import AdbOwnedServer
 from adb.transport.inventory.source import AdbTrackDevicesSession, AdbTrackDevicesSource
 from adb.transport.signal import (
     AdbDevicesSnapshotObserved,
@@ -21,12 +21,12 @@ from adb.transport.signal import (
 from eventing import EventPublisher
 
 
-_SourceFactory = Callable[[AdbServerEndpoint], AdbTrackDevicesSource]
+_SourceFactory = Callable[[AdbOwnedServer], AdbTrackDevicesSource]
 _ThreadFactory = Callable[..., Thread]
 
 
-def _default_source_factory(endpoint: AdbServerEndpoint) -> AdbTrackDevicesSource:
-    return AdbTrackDevicesSource(endpoint)
+def _default_source_factory(server: AdbOwnedServer) -> AdbTrackDevicesSource:
+    return AdbTrackDevicesSource(server)
 
 
 def _default_thread_factory(*args, **kwargs) -> Thread:
@@ -57,17 +57,18 @@ class AdbDevicesTracker:
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
+        server: AdbOwnedServer,
         publisher: EventPublisher,
         *,
         _source_factory: _SourceFactory = _default_source_factory,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(server, AdbOwnedServer):
+            raise TypeError("server must be AdbOwnedServer")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
-        self.endpoint = endpoint
+        self.server = server
+        self.endpoint = server.endpoint
         self._publisher = publisher
         self._source_factory = _source_factory
         self._thread_factory = _thread_factory
@@ -90,7 +91,7 @@ class AdbDevicesTracker:
                 raise RuntimeError("ADB devices tracker is closed")
             if self._started:
                 raise RuntimeError("ADB devices tracker is single-use and already started")
-            source = self._source_factory(self.endpoint)
+            source = self._source_factory(self.server)
             if not isinstance(source, AdbTrackDevicesSource):
                 raise TypeError("source factory must return AdbTrackDevicesSource")
             thread = self._thread_factory(
@@ -126,37 +127,37 @@ class AdbDevicesTracker:
             thread.join()
 
     def _run(self, source: AdbTrackDevicesSource) -> None:
-        endpoint = self.endpoint
+        server = self.server
         session: AdbTrackDevicesSession | None = None
         terminal: object | None = None
         try:
             session = source.open()
             if session is None:
-                terminal = AdbDevicesTrackingStopped(endpoint)
+                terminal = AdbDevicesTrackingStopped(server)
             elif self._can_publish(source):
-                self._publisher.publish(AdbDevicesTrackingStarted(endpoint))
+                self._publisher.publish(AdbDevicesTrackingStarted(server))
                 for snapshot in session.snapshots():
                     if not self._can_publish(source):
                         break
                     self._publisher.publish(
-                        AdbDevicesSnapshotObserved(endpoint, snapshot)
+                        AdbDevicesSnapshotObserved(server, snapshot)
                     )
-                terminal = AdbDevicesTrackingStopped(endpoint)
+                terminal = AdbDevicesTrackingStopped(server)
         except AdbServerConnectionError as exc:
             terminal = AdbDevicesTrackingFailed(
-                endpoint,
+                server,
                 AdbDevicesTrackingFailure.SERVER_CONNECTION,
                 str(exc),
             )
         except AdbServiceError as exc:
             terminal = AdbDevicesTrackingFailed(
-                endpoint,
+                server,
                 AdbDevicesTrackingFailure.SERVICE,
                 str(exc),
             )
         except AdbProtocolError as exc:
             terminal = AdbDevicesTrackingFailed(
-                endpoint,
+                server,
                 AdbDevicesTrackingFailure.PROTOCOL,
                 str(exc),
             )

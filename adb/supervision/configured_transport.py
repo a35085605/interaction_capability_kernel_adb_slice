@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Lock, Thread, current_thread
 
-from adb.server.model import AdbServerEndpoint
+from adb.server.ownership import AdbOwnedServer
 from adb.supervision.model import AdbConfiguredTransportSupervisionPolicy
 from adb.supervision.signal import (
     AdbConfiguredTransportRecoveryExhausted,
@@ -65,21 +65,22 @@ class AdbConfiguredTransportSupervisor:
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
+        server: AdbOwnedServer,
         event_bus: EventBus,
         ensurer: AdbTransportEnsurer,
         *,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(server, AdbOwnedServer):
+            raise TypeError("server must be AdbOwnedServer")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(ensurer, AdbTransportEnsurer):
             raise TypeError("ensurer must satisfy AdbTransportEnsurer")
-        self.endpoint = endpoint
+        self.server = server
+        self.endpoint = server.endpoint
         self._bus = event_bus
         self._ensurer = ensurer
         self._thread_factory = _thread_factory
@@ -206,7 +207,7 @@ class AdbConfiguredTransportSupervisor:
                 thread.join()
 
     def _on_tracking_started(self, event: AdbDevicesTrackingStarted) -> None:
-        if event.endpoint != self.endpoint:
+        if event.server is not self.server:
             return
         with self._lock:
             if self._closed:
@@ -219,7 +220,7 @@ class AdbConfiguredTransportSupervisor:
                 registration.active_recovery_token = None
 
     def _on_snapshot_observed(self, event: AdbDevicesSnapshotObserved) -> None:
-        if event.endpoint != self.endpoint:
+        if event.server is not self.server:
             return
         publications: list[object] = []
         recovery_launch_requests: list[AdbConfiguredTransport] = []
@@ -246,7 +247,7 @@ class AdbConfiguredTransportSupervisor:
         self,
         event: AdbDevicesTrackingFailed | AdbDevicesTrackingStopped,
     ) -> None:
-        if event.endpoint != self.endpoint:
+        if event.server is not self.server:
             return
         with self._lock:
             if self._closed or not self._tracking_active:
@@ -341,7 +342,7 @@ class AdbConfiguredTransportSupervisor:
                 ensure_policy = registration.policy.recovery_ensure_policy
             assert ensure_policy is not None
             result = self._ensurer.ensure(
-                AdbTransportEnsureReadiness(configuration, ensure_policy),
+                AdbTransportEnsureReadiness(self.server, configuration, ensure_policy),
             )
             if not isinstance(result, AdbTransportEnsureResult):
                 raise TypeError("ensurer must return AdbTransportEnsureResult")

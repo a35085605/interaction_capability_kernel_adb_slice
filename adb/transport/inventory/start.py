@@ -9,7 +9,7 @@ from numbers import Real
 from threading import Condition
 from time import monotonic
 
-from adb.server.model import AdbServerEndpoint
+from adb.server.ownership import AdbOwnedServer
 from adb.transport.inventory.tracker import AdbDevicesTrackingController
 from adb.transport.signal import (
     AdbDevicesTrackingFailed,
@@ -81,13 +81,13 @@ class AdbDevicesTrackingStartPolicy:
 class AdbDevicesTrackingStart:
     """Request startup of one freshly constructed tracker scope."""
 
-    endpoint: AdbServerEndpoint
+    server: AdbOwnedServer
     readiness: AdbDevicesTrackingReadiness
     policy: AdbDevicesTrackingStartPolicy
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(self.server, AdbOwnedServer):
+            raise TypeError("server must be AdbOwnedServer")
         if not isinstance(self.readiness, AdbDevicesTrackingReadiness):
             raise TypeError("readiness must be AdbDevicesTrackingReadiness")
         if not isinstance(self.policy, AdbDevicesTrackingStartPolicy):
@@ -141,21 +141,21 @@ class AdbDevicesTrackingStartOrchestrator:
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
+        server: AdbOwnedServer,
         event_bus: EventBus,
         tracker: AdbDevicesTrackingController,
         *,
         _monotonic: _MonotonicClock = monotonic,
     ) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(server, AdbOwnedServer):
+            raise TypeError("server must be AdbOwnedServer")
         if not callable(getattr(event_bus, "subscribe", None)) or not callable(
             getattr(event_bus, "unsubscribe", None)
         ):
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(tracker, AdbDevicesTrackingController):
             raise TypeError("tracker must satisfy tracking controller")
-        self.endpoint = endpoint
+        self.server = server
         self._bus = event_bus
         self._tracker = tracker
         self._monotonic = _monotonic
@@ -166,8 +166,8 @@ class AdbDevicesTrackingStartOrchestrator:
     ) -> AdbDevicesTrackingStartResult:
         if not isinstance(operation, AdbDevicesTrackingStart):
             raise TypeError("operation must be AdbDevicesTrackingStart")
-        if operation.endpoint != self.endpoint:
-            raise ValueError("operation endpoint does not match configured ADB server endpoint")
+        if operation.server is not self.server:
+            raise ValueError("operation server does not match tracker owned server")
         if operation.readiness is not AdbDevicesTrackingReadiness.READY:
             raise RuntimeError(
                 "transport-inventory tracking start requires READY server readiness"
@@ -178,8 +178,8 @@ class AdbDevicesTrackingStartOrchestrator:
         events: deque[object] = deque()
 
         def collect(event: object) -> None:
-            endpoint = getattr(event, "endpoint", None)
-            if endpoint != self.endpoint:
+            event_server = getattr(event, "server", None)
+            if event_server is not self.server:
                 return
             with condition:
                 events.append(event)
