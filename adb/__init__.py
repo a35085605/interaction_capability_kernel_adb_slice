@@ -26,6 +26,7 @@ from adb.server import (
     AdbServerOwnershipLostError,
     AdbServerStatusReader,
     acquire_process_adb_server,
+    close_process_adb_server,
 )
 from adb.transport import (
     AdbConnectionState,
@@ -75,4 +76,5 @@ __all__ = [
     "AdbTransportUnavailableError",
     "RegisteredTransport",
     "acquire_process_adb_server",
+    "close_process_adb_server",
 ]

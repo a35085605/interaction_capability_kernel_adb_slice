@@ -1,6 +1,7 @@
 """ADB server acquisition, process ownership, endpoint, and status ownership."""
 
 from adb.server.acquisition import (
+    AdbServerAcquisition,
     AdbServerAcquisitionError,
     AdbServerAcquisitionPolicy,
     AdbServerCandidateAttempt,
@@ -18,12 +19,14 @@ from adb.server.ownership import (
     AdbServerOwnershipLostError,
     ProcessAdbServerSlot,
     acquire_process_adb_server,
+    close_process_adb_server,
 )
 from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
 
 __all__ = [
     "AdbMdnsBackend",
     "AdbOwnedServer",
+    "AdbServerAcquisition",
     "AdbServerAcquisitionError",
     "AdbServerAcquisitionPolicy",
     "AdbServerCandidateAttempt",
@@ -39,4 +42,5 @@ __all__ = [
     "EndpointObservationStatus",
     "ProcessAdbServerSlot",
     "acquire_process_adb_server",
+    "close_process_adb_server",
 ]

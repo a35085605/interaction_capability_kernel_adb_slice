@@ -6,17 +6,16 @@ from time import monotonic, sleep
 import unittest
 
 from adb.server.acquisition import (
+    AdbServerAcquisition,
     AdbServerAcquisitionError,
     AdbServerAcquisitionPolicy,
     AdbServerCandidateAttempt,
     AdbServerCandidateOutcome,
-    AdbServerLease,
 )
 from adb.server.endpoint import (
     AdbServerEndpoint,
     EndpointObservation,
     EndpointObservationStatus,
-    InMemoryAdbServerEndpointProvisioner,
 )
 from adb.server.lifecycle import AdbServerAvailability
 from adb.server.ownership import ProcessAdbServerSlot, _ProcessAdbServerSlotState
@@ -38,10 +37,7 @@ from eventing import EventSubscriptionToken
 from scheduling import ScheduleToken
 
 
-def _created_lease(endpoint: AdbServerEndpoint) -> AdbServerLease:
-    provisioner = InMemoryAdbServerEndpointProvisioner()
-    reservation = provisioner.reserve(endpoint=endpoint)
-    endpoint_lease = reservation.promote()
+def _created_acquisition(endpoint: AdbServerEndpoint) -> AdbServerAcquisition:
     precheck = EndpointObservation(
         endpoint,
         EndpointObservationStatus.NO_LISTENER_OBSERVED,
@@ -57,7 +53,7 @@ def _created_lease(endpoint: AdbServerEndpoint) -> AdbServerLease:
         AdbServerCandidateOutcome.CREATED_BY_ACQUISITION,
         verification_observations=(verified,),
     )
-    return AdbServerLease(endpoint_lease, AdbServerStatus(), (attempt,))
+    return AdbServerAcquisition(endpoint, AdbServerStatus(), (attempt,))
 
 
 def _occupied_error(endpoint: AdbServerEndpoint) -> AdbServerAcquisitionError:
@@ -90,12 +86,12 @@ class _ScriptedAcquirer:
         policy: AdbServerAcquisitionPolicy,
         *,
         endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServerLease:
+    ) -> AdbServerAcquisition:
         resolved = endpoint or self.default_endpoint
         self.calls.append(resolved)
         if len(self.calls) in self.fail_on_calls:
             raise _occupied_error(resolved)
-        return _created_lease(resolved)
+        return _created_acquisition(resolved)
 
 
 class _EventBus:
