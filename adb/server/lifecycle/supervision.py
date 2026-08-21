@@ -130,8 +130,9 @@ class AdbServerSupervisor:
     The supervised resource itself does not cross a failure boundary. Terminal liveness
     evidence first retires the current :class:`AdbOwnedServer` and publishes
     :class:`AdbServerOwnershipRetired`, so managed dependents can immediately tear down their
-    old server-bound scopes. Native close then proceeds privately; recovery cannot reacquire a
-    fresh generation until termination of the retired lifetime is proven.
+    old server-bound scopes. Native close then proceeds privately. Pinned owners fence recovery
+    behind proven close; non-pinned owners may recover a fresh generation while retired native
+    teardown continues independently.
 
     Existing listeners never satisfy recovery because the process owner can only acquire a
     native handle returned by its launcher. Retry cycle IDs fence scheduled retry work only;
@@ -306,6 +307,7 @@ class AdbServerSupervisor:
         failure: AdbServerOwnershipLossFailure,
     ) -> None:
         retired_server: AdbOwnedServer | None = None
+        launch_cycle: AdbServerRecoveryCycleId | None = None
 
         with self._mutation_lock:
             with self._lock:
@@ -318,8 +320,15 @@ class AdbServerSupervisor:
                 self._owner_manager.retire(server)
                 with self._lock:
                     self.server = None
-                    self._closing_generation = server.generation
+                    if self._owner_manager.requires_retired_close_before_launch:
+                        self._closing_generation = server.generation
                     retired_server = server
+                    if (
+                        not self._owner_manager.requires_retired_close_before_launch
+                        and self._recovery_enabled
+                        and self._cycle_id is None
+                    ):
+                        launch_cycle = self._new_recovery_cycle_locked()
 
         if retired_server is None:
             return
@@ -342,6 +351,8 @@ class AdbServerSupervisor:
             )
         finally:
             self._launch_retired_disposal(retired_server)
+            if launch_cycle is not None:
+                self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
     def _launch_retired_disposal(self, server: AdbOwnedServer) -> None:
         thread = self._thread_factory(
@@ -447,8 +458,11 @@ class AdbServerSupervisor:
                 except AdbServerLaunchError as exc:
                     launch_failure = AdbServerLaunchFailure(str(exc))
                 else:
-                    if recovered.endpoint != self.endpoint:
-                        raise ValueError("owned-server recovery changed endpoint")
+                    if (
+                        self._owner_manager.requires_retired_close_before_launch
+                        and recovered.endpoint != self.endpoint
+                    ):
+                        raise ValueError("pinned owned-server recovery changed endpoint")
                     with self._lock:
                         if not self._recovery_is_current_locked(cycle_id):
                             return
@@ -456,6 +470,7 @@ class AdbServerSupervisor:
                         self._retry_token = None
                         self._cycle_id = None
                         self.server = recovered
+                        self.endpoint = recovered.endpoint
                         recovered_event = AdbServerOwnershipRecovered(recovered)
 
             if recovered_event is not None:

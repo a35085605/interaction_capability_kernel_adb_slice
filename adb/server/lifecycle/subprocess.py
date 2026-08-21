@@ -108,15 +108,16 @@ class SubprocessAdbServerLauncher:
     before spawning ``adb server nodaemon``. The inherited socket and foreground child process
     form the native ownership authority: an already-running listener can never satisfy launch.
 
-    The first successful launch may let the OS select an ephemeral loopback port. That resolved
-    endpoint is retained by this launcher for later generations so recovery keeps one endpoint
-    without storing endpoint lineage in the process-owner state machine.
+    By default the first successful launch pins its resolved endpoint for later generations. With
+    ``pin_endpoint=False`` each generation may reserve a fresh ephemeral endpoint, allowing a new
+    generation to launch after retirement while teardown of an older native lifetime continues.
     """
 
     def __init__(
         self,
         endpoint: AdbServerEndpoint | None = None,
         *,
+        pin_endpoint: bool = True,
         executable: str = "adb",
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
@@ -131,8 +132,13 @@ class SubprocessAdbServerLauncher:
     ) -> None:
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint or None")
+        if not isinstance(pin_endpoint, bool):
+            raise TypeError("pin_endpoint must be a bool")
+        if endpoint is not None and not pin_endpoint:
+            raise ValueError("pin_endpoint=False requires endpoint=None")
         if not isinstance(_socket_activation_supported, bool):
             raise TypeError("_socket_activation_supported must be a bool")
+        self.pin_endpoint = pin_endpoint
         self.executable = normalize_executable(executable)
         self.startup_timeout_seconds = normalize_timeout(startup_timeout_seconds)
         self.shutdown_timeout_seconds = normalize_timeout(shutdown_timeout_seconds)
@@ -159,10 +165,16 @@ class SubprocessAdbServerLauncher:
 
     @property
     def endpoint(self) -> AdbServerEndpoint | None:
-        """Return the endpoint pinned by the first successful launch, if any."""
+        """Return the configured or generation-pinned endpoint, if any."""
 
         with self._lock:
             return self._endpoint
+
+    @property
+    def requires_retired_close_before_launch(self) -> bool:
+        """Whether later generations reuse the same endpoint and require exclusive teardown."""
+
+        return self.pin_endpoint
 
     def launch(self) -> AdbServerNativeHandle:
         if not self._socket_activation_supported:
@@ -216,7 +228,7 @@ class SubprocessAdbServerLauncher:
                 raise
 
             # Pin only after this exact child has reached ADB protocol readiness.
-            if self._endpoint is None:
+            if self.pin_endpoint and self._endpoint is None:
                 self._endpoint = endpoint
             return handle
 

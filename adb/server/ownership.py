@@ -100,6 +100,10 @@ class _DefaultAdbServerLauncher:
     def __init__(self) -> None:
         self._delegate: AdbServerLauncher | None = None
 
+    @property
+    def requires_retired_close_before_launch(self) -> bool:
+        return True
+
     def launch(self) -> AdbServerNativeHandle:
         delegate = self._delegate
         if delegate is None:
@@ -114,31 +118,65 @@ class _ProcessAdbServerOwnerStatus(str, Enum):
     ABSENT = "absent"
     STARTING = "starting"
     ACTIVE = "active"
+
+
+class _RetiredServerLifetimeStatus(str, Enum):
     CLOSING = "closing"
     CLOSE_UNPROVEN = "close_unproven"
+
+
+class _RetiredServerLifetime:
+    """Private teardown state for one irreversibly retired generation."""
+
+    __slots__ = ("lifetime", "status", "close_failure")
+
+    def __init__(self, lifetime: _OwnedServerLifetime) -> None:
+        self.lifetime = lifetime
+        self.status = _RetiredServerLifetimeStatus.CLOSING
+        self.close_failure: BaseException | None = None
 
 
 class _ProcessAdbServerOwner:
     """Serialize public ownership and private native ADB server lifetimes.
 
-    Public ownership has only two projections: an :class:`AdbOwnedServer` is currently usable,
-    or no owned server is available. Native teardown is a separate private lifecycle. Retiring
-    a generation removes it from the public projection before potentially blocking native close
-    work begins. Close failure never resurrects the retired generation.
+    Public ownership and native teardown are deliberately separate. Retiring a generation
+    irreversibly removes it from the public projection and moves its exact native handle into
+    retired-lifetime tracking. Whether a fresh generation must wait for all retired native
+    lifetimes to be proven closed is a launcher/owner policy rather than an ownership invariant.
     """
 
-    def __init__(self, launcher: AdbServerLauncher | None = None) -> None:
+    def __init__(
+        self,
+        launcher: AdbServerLauncher | None = None,
+        *,
+        require_retired_close_before_launch: bool | None = None,
+    ) -> None:
         if launcher is None:
             launcher = _DefaultAdbServerLauncher()
         elif not isinstance(launcher, AdbServerLauncher):
             raise TypeError("launcher must satisfy AdbServerLauncher")
+        if require_retired_close_before_launch is None:
+            require_retired_close_before_launch = getattr(
+                launcher,
+                "requires_retired_close_before_launch",
+                True,
+            )
+        if not isinstance(require_retired_close_before_launch, bool):
+            raise TypeError("require_retired_close_before_launch must be a bool")
         self._launcher = launcher
         self._condition = Condition()
         self._status = _ProcessAdbServerOwnerStatus.ABSENT
-        self._lifetime: _OwnedServerLifetime | None = None
+        self._active_lifetime: _OwnedServerLifetime | None = None
+        self._retired_lifetimes: dict[int, _RetiredServerLifetime] = {}
         self._generation = 0
-        self._close_failure: BaseException | None = None
+        self._require_retired_close_before_launch = require_retired_close_before_launch
         self._supervision_lease: _AdbServerSupervisionLease | None = None
+
+    @property
+    def requires_retired_close_before_launch(self) -> bool:
+        """Whether a fresh generation is fenced behind retired native close proof."""
+
+        return self._require_retired_close_before_launch
 
     def claim_supervision(self, owner: AdbOwnedServer) -> _AdbServerSupervisionLease:
         """Exclusively claim lifecycle supervision authority across server generations.
@@ -150,7 +188,7 @@ class _ProcessAdbServerOwner:
 
         self._require_owner(owner)
         with self._condition:
-            lifetime = self._lifetime
+            lifetime = self._active_lifetime
             if (
                 self._status is not _ProcessAdbServerOwnerStatus.ACTIVE
                 or lifetime is None
@@ -176,30 +214,41 @@ class _ProcessAdbServerOwner:
     def acquire(self) -> AdbOwnedServer:
         """Return the active generation or launch one fresh process-owned server.
 
-        A generation whose native close could not be proven remains quarantined. The process
-        owner will not create a new generation until teardown of the previous native lifetime is
-        proven by a later successful ``dispose_retired`` call.
+        Retired native lifetimes remain independently tracked until close is proven. Owners that
+        require endpoint/native exclusivity fence fresh launch behind that proof; non-pinned owners
+        may launch a new generation immediately after retirement.
         """
 
         with self._condition:
-            while self._status in {
-                _ProcessAdbServerOwnerStatus.STARTING,
-                _ProcessAdbServerOwnerStatus.CLOSING,
-            }:
+            while self._status is _ProcessAdbServerOwnerStatus.STARTING:
                 self._condition.wait()
 
             if self._status is _ProcessAdbServerOwnerStatus.ACTIVE:
-                assert self._lifetime is not None
-                return self._lifetime.owner
-            if self._status is _ProcessAdbServerOwnerStatus.CLOSE_UNPROVEN:
-                failure = self._close_failure
-                error = AdbServerOwnershipLostError(
-                    "cannot acquire a new ADB server generation while termination of the "
-                    "previous owned lifetime remains unproven"
+                assert self._active_lifetime is not None
+                return self._active_lifetime.owner
+
+            if self._require_retired_close_before_launch:
+                while any(
+                    retired.status is _RetiredServerLifetimeStatus.CLOSING
+                    for retired in self._retired_lifetimes.values()
+                ):
+                    self._condition.wait()
+                unproven = next(
+                    (
+                        retired
+                        for retired in self._retired_lifetimes.values()
+                        if retired.status is _RetiredServerLifetimeStatus.CLOSE_UNPROVEN
+                    ),
+                    None,
                 )
-                if failure is not None:
-                    raise error from failure
-                raise error
+                if unproven is not None:
+                    error = AdbServerOwnershipLostError(
+                        "cannot acquire a new ADB server generation while termination of a "
+                        "previous owned lifetime remains unproven"
+                    )
+                    if unproven.close_failure is not None:
+                        raise error from unproven.close_failure
+                    raise error
 
             assert self._status is _ProcessAdbServerOwnerStatus.ABSENT
             self._status = _ProcessAdbServerOwnerStatus.STARTING
@@ -211,15 +260,14 @@ class _ProcessAdbServerOwner:
         except BaseException:
             with self._condition:
                 self._status = _ProcessAdbServerOwnerStatus.ABSENT
-                self._lifetime = None
+                self._active_lifetime = None
                 self._condition.notify_all()
             raise
 
         with self._condition:
             self._generation += 1
             owner = AdbOwnedServer._from_identity(native.endpoint, self._generation)
-            self._lifetime = _OwnedServerLifetime(owner, native)
-            self._close_failure = None
+            self._active_lifetime = _OwnedServerLifetime(owner, native)
             self._status = _ProcessAdbServerOwnerStatus.ACTIVE
             self._condition.notify_all()
             return owner
@@ -227,15 +275,18 @@ class _ProcessAdbServerOwner:
     def retire(self, owner: AdbOwnedServer) -> bool:
         """Irreversibly withdraw one generation from public ownership.
 
-        Retirement is intentionally non-blocking with respect to native process termination. A
-        successful return means ``active_owner`` is already ``None`` and callers may immediately
-        tear down every server-bound child scope. Native disposal is performed separately through
-        :meth:`dispose_retired`.
+        Retirement is non-blocking with respect to native process termination. The exact native
+        handle is retained in private retired-lifetime tracking until :meth:`dispose_retired`
+        proves termination.
         """
 
         self._require_owner(owner)
         with self._condition:
-            lifetime = self._lifetime
+            retired = self._retired_lifetimes.get(owner.generation)
+            if retired is not None and retired.lifetime.owner is owner:
+                return False
+
+            lifetime = self._active_lifetime
             if lifetime is None:
                 if owner.generation <= self._generation:
                     return False
@@ -244,85 +295,68 @@ class _ProcessAdbServerOwner:
                 if owner.generation < lifetime.owner.generation:
                     return False
                 raise self._stale_owner_error(owner)
-            if self._status is _ProcessAdbServerOwnerStatus.ACTIVE:
-                self._status = _ProcessAdbServerOwnerStatus.CLOSING
-                self._close_failure = None
-                self._condition.notify_all()
-                return True
-            if self._status in {
-                _ProcessAdbServerOwnerStatus.CLOSING,
-                _ProcessAdbServerOwnerStatus.CLOSE_UNPROVEN,
-            }:
-                return False
-            raise self._stale_owner_error(owner)
+            if self._status is not _ProcessAdbServerOwnerStatus.ACTIVE:
+                raise self._stale_owner_error(owner)
+
+            self._active_lifetime = None
+            self._retired_lifetimes[owner.generation] = _RetiredServerLifetime(lifetime)
+            self._status = _ProcessAdbServerOwnerStatus.ABSENT
+            self._condition.notify_all()
+            return True
 
     def dispose_retired(self, owner: AdbOwnedServer) -> None:
         """Prove native termination for one already-retired generation.
 
-        Failure leaves the generation publicly absent and quarantines its private native lifetime
-        as ``CLOSE_UNPROVEN``. A later call for the same generation may retry close proof; a new
-        generation cannot be acquired until one such attempt succeeds.
+        Failure leaves only that retired native lifetime as ``CLOSE_UNPROVEN``. A later call for
+        the same generation may retry close proof without affecting any newer active generation.
         """
 
         self._require_owner(owner)
         with self._condition:
-            lifetime = self._lifetime
-            if lifetime is None or lifetime.owner is not owner:
+            retired = self._retired_lifetimes.get(owner.generation)
+            if retired is None or retired.lifetime.owner is not owner:
                 raise self._stale_owner_error(owner)
-            if self._status not in {
-                _ProcessAdbServerOwnerStatus.CLOSING,
-                _ProcessAdbServerOwnerStatus.CLOSE_UNPROVEN,
-            }:
-                raise RuntimeError("ADB server generation must be retired before native disposal")
-            self._status = _ProcessAdbServerOwnerStatus.CLOSING
-            self._close_failure = None
-            native = lifetime.native
+            retired.status = _RetiredServerLifetimeStatus.CLOSING
+            retired.close_failure = None
+            native = retired.lifetime.native
 
         try:
             native.close()
         except BaseException as exc:
             with self._condition:
-                if self._lifetime is lifetime:
-                    self._status = _ProcessAdbServerOwnerStatus.CLOSE_UNPROVEN
-                    self._close_failure = exc
+                current = self._retired_lifetimes.get(owner.generation)
+                if current is retired:
+                    retired.status = _RetiredServerLifetimeStatus.CLOSE_UNPROVEN
+                    retired.close_failure = exc
                     self._condition.notify_all()
             raise
 
         with self._condition:
-            if self._lifetime is lifetime:
-                self._lifetime = None
-                self._close_failure = None
-                self._status = _ProcessAdbServerOwnerStatus.ABSENT
+            current = self._retired_lifetimes.get(owner.generation)
+            if current is retired:
+                del self._retired_lifetimes[owner.generation]
                 self._condition.notify_all()
 
     def invalidate(self, owner: AdbOwnedServer) -> bool:
-        """Retire and synchronously dispose the current generation after liveness loss."""
+        """Retire and synchronously dispose one generation after liveness loss."""
 
-        retired = self.retire(owner)
+        retired_now = self.retire(owner)
         with self._condition:
-            lifetime = self._lifetime
-            can_dispose = (
-                lifetime is not None
-                and lifetime.owner is owner
-                and self._status
-                in {
-                    _ProcessAdbServerOwnerStatus.CLOSING,
-                    _ProcessAdbServerOwnerStatus.CLOSE_UNPROVEN,
-                }
-            )
+            retired = self._retired_lifetimes.get(owner.generation)
+            can_dispose = retired is not None and retired.lifetime.owner is owner
         if not can_dispose:
             return False
         self.dispose_retired(owner)
-        return retired or can_dispose
+        return retired_now or can_dispose
 
     def close(self, owner: AdbOwnedServer) -> None:
-        """Retire and synchronously close the current generation."""
+        """Retire and synchronously close one exact owned generation."""
 
-        retired = self.retire(owner)
-        if not retired:
+        retired_now = self.retire(owner)
+        if not retired_now:
             with self._condition:
-                lifetime = self._lifetime
-                if lifetime is None or lifetime.owner is not owner:
+                retired = self._retired_lifetimes.get(owner.generation)
+                if retired is None or retired.lifetime.owner is not owner:
                     raise self._stale_owner_error(owner)
         self.dispose_retired(owner)
 
@@ -333,8 +367,8 @@ class _ProcessAdbServerOwner:
         with self._condition:
             if self._status is not _ProcessAdbServerOwnerStatus.ACTIVE:
                 return None
-            assert self._lifetime is not None
-            return self._lifetime.owner
+            assert self._active_lifetime is not None
+            return self._active_lifetime.owner
 
     @staticmethod
     def _require_owner(owner: object) -> None:
@@ -342,7 +376,7 @@ class _ProcessAdbServerOwner:
             raise TypeError("owner must be AdbOwnedServer")
 
     def _stale_owner_error(self, owner: AdbOwnedServer) -> AdbServerStaleOwnerError:
-        lifetime = self._lifetime
+        lifetime = self._active_lifetime
         current_generation = lifetime.owner.generation if lifetime is not None else None
         return AdbServerStaleOwnerError(
             "ADB server generation "
