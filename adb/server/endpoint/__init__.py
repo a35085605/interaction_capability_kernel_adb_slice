@@ -1,4 +1,4 @@
-"""ADB server endpoint values, observations, and process-local reservations."""
+"""ADB server endpoint identity, observation, and candidate allocation."""
 
 from adb.server.endpoint.model import AdbServerEndpoint
 from adb.server.endpoint.observation import (
@@ -9,31 +9,19 @@ from adb.server.endpoint.observation import (
 )
 from adb.server.endpoint.provisioning import (
     AdbServerEndpointAllocator,
-    AdbServerEndpointConflictError,
     AdbServerEndpointExhaustedError,
-    AdbServerEndpointLease,
-    AdbServerEndpointProvisioner,
     AdbServerEndpointProvisioningError,
-    AdbServerEndpointReservation,
-    AdbServerEndpointReservationProvider,
-    InMemoryAdbServerEndpointProvisioner,
     SequentialAdbServerEndpointAllocator,
 )
 
 __all__ = [
     "AdbServerEndpoint",
     "AdbServerEndpointAllocator",
-    "AdbServerEndpointConflictError",
     "AdbServerEndpointExhaustedError",
-    "AdbServerEndpointLease",
     "AdbServerEndpointObserver",
-    "AdbServerEndpointProvisioner",
     "AdbServerEndpointProvisioningError",
-    "AdbServerEndpointReservation",
-    "AdbServerEndpointReservationProvider",
     "EndpointObservation",
     "EndpointObservationStatus",
-    "InMemoryAdbServerEndpointProvisioner",
     "SequentialAdbServerEndpointAllocator",
     "SmartSocketAdbServerEndpointObserver",
 ]
