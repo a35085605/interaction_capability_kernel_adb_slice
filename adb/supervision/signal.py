@@ -5,6 +5,7 @@ from typing import TypeAlias
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.model import (
+    AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
     AdbServerLaunchFailure,
     AdbServerOwnershipLossFailure,
@@ -24,6 +25,20 @@ _OWNERSHIP_LOSS_FAILURE_TYPES = (
     AdbServerConnectionFailure,
     AdbServerProcessExitedFailure,
 )
+
+
+def _require_generation(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("generation must be an integer")
+    if value <= 0:
+        raise ValueError("generation must be greater than zero")
+    return value
+
+
+def _require_endpoint(value: object) -> AdbServerEndpoint:
+    if not isinstance(value, AdbServerEndpoint):
+        raise TypeError("endpoint must be AdbServerEndpoint")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,31 +85,45 @@ class AdbConfiguredTransportRecoveryExhausted:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerReconciliationRequested:
-    """Signal that terminal liveness evidence requires ownership reconciliation."""
+    """Signal that terminal liveness evidence requires generation-fenced reconciliation."""
 
     endpoint: AdbServerEndpoint
+    generation: int
     failure: AdbServerOwnershipLossFailure
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        _require_endpoint(self.endpoint)
+        _require_generation(self.generation)
         if not isinstance(self.failure, _OWNERSHIP_LOSS_FAILURE_TYPES):
             raise TypeError(
                 "failure must be AdbServerConnectionFailure or "
                 "AdbServerProcessExitedFailure"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerOwnershipRetired:
+    """Public fact that one owned generation is irreversibly no longer usable."""
+
+    endpoint: AdbServerEndpoint
+    generation: int
+
+    def __post_init__(self) -> None:
+        _require_endpoint(self.endpoint)
+        _require_generation(self.generation)
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerOwnershipLost:
-    """Signal that the current owned server lifetime was invalidated from liveness evidence."""
+    """Failure evidence explaining why one already-retired generation lost ownership."""
 
     endpoint: AdbServerEndpoint
+    generation: int
     failure: AdbServerOwnershipLossFailure
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        _require_endpoint(self.endpoint)
+        _require_generation(self.generation)
         if not isinstance(self.failure, _OWNERSHIP_LOSS_FAILURE_TYPES):
             raise TypeError(
                 "failure must be AdbServerConnectionFailure or "
@@ -103,20 +132,49 @@ class AdbServerOwnershipLost:
 
 
 @dataclass(frozen=True, slots=True)
+class AdbServerNativeCloseCompleted:
+    """Private-lifecycle fact that native termination of a retired generation was proven."""
+
+    endpoint: AdbServerEndpoint
+    generation: int
+
+    def __post_init__(self) -> None:
+        _require_endpoint(self.endpoint)
+        _require_generation(self.generation)
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerNativeCloseUnproven:
+    """Private-lifecycle fact that termination of a retired generation remains unproven."""
+
+    endpoint: AdbServerEndpoint
+    generation: int
+    failure: AdbServerCloseUnprovenFailure
+
+    def __post_init__(self) -> None:
+        _require_endpoint(self.endpoint)
+        _require_generation(self.generation)
+        if not isinstance(self.failure, AdbServerCloseUnprovenFailure):
+            raise TypeError("failure must be AdbServerCloseUnprovenFailure")
+
+
+@dataclass(frozen=True, slots=True)
 class AdbServerOwnershipRecovered:
-    """Signal carrying the fresh active process-owned ADB server generation."""
+    """Signal carrying the fresh usable process-owned ADB server generation."""
 
     server: AdbOwnedServer
 
     def __post_init__(self) -> None:
         if not isinstance(self.server, AdbOwnedServer):
             raise TypeError("server must be AdbOwnedServer")
-        if not self.server.active:
-            raise ValueError("recovered server owner must be active")
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
         return self.server.endpoint
+
+    @property
+    def generation(self) -> int:
+        return self.server.generation
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,8 +186,7 @@ class AdbServerRecoveryRetryDue:
     attempt_number: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        _require_endpoint(self.endpoint)
         if not isinstance(self.cycle_id, AdbServerRecoveryCycleId):
             raise TypeError("cycle_id must be AdbServerRecoveryCycleId")
         if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
@@ -148,8 +205,7 @@ class AdbServerRecoveryExhausted:
     failure: AdbServerLaunchFailure
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        _require_endpoint(self.endpoint)
         if not isinstance(self.cycle_id, AdbServerRecoveryCycleId):
             raise TypeError("cycle_id must be AdbServerRecoveryCycleId")
         if isinstance(self.attempts, bool) or not isinstance(self.attempts, int):
@@ -164,7 +220,10 @@ AdbSupervisionSignal: TypeAlias = (
     AdbConfiguredTransportResolutionChanged
     | AdbConfiguredTransportRecoveryExhausted
     | AdbServerReconciliationRequested
+    | AdbServerOwnershipRetired
     | AdbServerOwnershipLost
+    | AdbServerNativeCloseCompleted
+    | AdbServerNativeCloseUnproven
     | AdbServerOwnershipRecovered
     | AdbServerRecoveryRetryDue
     | AdbServerRecoveryExhausted
@@ -174,8 +233,11 @@ AdbSupervisionSignal: TypeAlias = (
 __all__ = [
     "AdbConfiguredTransportRecoveryExhausted",
     "AdbConfiguredTransportResolutionChanged",
+    "AdbServerNativeCloseCompleted",
+    "AdbServerNativeCloseUnproven",
     "AdbServerOwnershipLost",
     "AdbServerOwnershipRecovered",
+    "AdbServerOwnershipRetired",
     "AdbServerReconciliationRequested",
     "AdbServerRecoveryExhausted",
     "AdbServerRecoveryRetryDue",
