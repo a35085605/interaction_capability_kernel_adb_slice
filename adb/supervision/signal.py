@@ -4,13 +4,25 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.model import AdbServerFailure
+from adb.server.model import (
+    AdbServerConnectionFailure,
+    AdbServerLaunchFailure,
+    AdbServerOwnershipLossFailure,
+    AdbServerProcessExitedFailure,
+)
+from adb.server.ownership import AdbOwnedServer
 from adb.supervision.model import AdbServerRecoveryCycleId
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.inventory.resolution import AdbConfiguredTransportResolution
 from adb.transport.lifecycle.ensure import (
     AdbTransportEnsureResult,
     AdbTransportEnsureStatus,
+)
+
+
+_OWNERSHIP_LOSS_FAILURE_TYPES = (
+    AdbServerConnectionFailure,
+    AdbServerProcessExitedFailure,
 )
 
 
@@ -58,41 +70,53 @@ class AdbConfiguredTransportRecoveryExhausted:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerReconciliationRequested:
-    """Signal that terminal server liveness evidence requires ownership reconciliation."""
+    """Signal that terminal liveness evidence requires ownership reconciliation."""
 
     endpoint: AdbServerEndpoint
-    failure: AdbServerFailure
+    failure: AdbServerOwnershipLossFailure
 
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint")
-        if not isinstance(self.failure, AdbServerFailure):
-            raise TypeError("failure must be AdbServerFailure")
+        if not isinstance(self.failure, _OWNERSHIP_LOSS_FAILURE_TYPES):
+            raise TypeError(
+                "failure must be AdbServerConnectionFailure or "
+                "AdbServerProcessExitedFailure"
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerOwnershipLost:
-    """Signal that the current owned server lifetime was invalidated from failure evidence."""
+    """Signal that the current owned server lifetime was invalidated from liveness evidence."""
 
     endpoint: AdbServerEndpoint
-    failure: AdbServerFailure
+    failure: AdbServerOwnershipLossFailure
 
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint")
-        if not isinstance(self.failure, AdbServerFailure):
-            raise TypeError("failure must be AdbServerFailure")
+        if not isinstance(self.failure, _OWNERSHIP_LOSS_FAILURE_TYPES):
+            raise TypeError(
+                "failure must be AdbServerConnectionFailure or "
+                "AdbServerProcessExitedFailure"
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerOwnershipRecovered:
-    """Signal that fresh session-created ownership is available at the endpoint."""
+    """Signal carrying the fresh active process-owned ADB server generation."""
 
-    endpoint: AdbServerEndpoint
+    server: AdbOwnedServer
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(self.server, AdbOwnedServer):
+            raise TypeError("server must be AdbOwnedServer")
+        if not self.server.active:
+            raise ValueError("recovered server owner must be active")
+
+    @property
+    def endpoint(self) -> AdbServerEndpoint:
+        return self.server.endpoint
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +145,7 @@ class AdbServerRecoveryExhausted:
     endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId
     attempts: int
-    failure: AdbServerFailure
+    failure: AdbServerLaunchFailure
 
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, AdbServerEndpoint):
@@ -132,8 +156,8 @@ class AdbServerRecoveryExhausted:
             raise TypeError("attempts must be an integer")
         if self.attempts <= 0:
             raise ValueError("attempts must be greater than zero")
-        if not isinstance(self.failure, AdbServerFailure):
-            raise TypeError("failure must be AdbServerFailure")
+        if not isinstance(self.failure, AdbServerLaunchFailure):
+            raise TypeError("failure must be AdbServerLaunchFailure")
 
 
 AdbSupervisionSignal: TypeAlias = (

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
-
-from adb.server.endpoint import AdbServerEndpoint
+from typing import TypeAlias
 
 
 def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
@@ -17,36 +15,13 @@ def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
     return normalized
 
 
-class AdbServerAvailability(str, Enum):
-    """Observed availability of the process-owned ADB server endpoint."""
-
-    AVAILABLE = "available"
-    UNAVAILABLE = "unavailable"
-    INDETERMINATE = "indeterminate"
-
-
-class AdbServerFailureKind(str, Enum):
-    """Typed cause carried as server failure evidence instead of availability state."""
-
-    CONNECTION = "connection"
-    TIMEOUT = "timeout"
-    PROTOCOL = "protocol"
-    SERVICE = "service"
-    PROCESS_EXITED = "process_exited"
-    LAUNCH = "launch"
-    CLOSE_UNPROVEN = "close_unproven"
-
-
 @dataclass(frozen=True, slots=True)
-class AdbServerFailure:
-    """Immutable evidence describing why one server observation or lifecycle step failed."""
+class _AdbServerFailure:
+    """Immutable evidence from one specific ADB server failure boundary."""
 
-    kind: AdbServerFailureKind
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.kind, AdbServerFailureKind):
-            raise TypeError("kind must be AdbServerFailureKind")
         object.__setattr__(
             self,
             "diagnostic",
@@ -58,29 +33,67 @@ class AdbServerFailure:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerObservation:
-    """Availability projection paired with the evidence that supports a negative conclusion."""
+class AdbServerConnectionFailure(_AdbServerFailure):
+    """The current ADB server lifetime lost a required transport connection."""
 
-    endpoint: AdbServerEndpoint
-    availability: AdbServerAvailability
-    failure: AdbServerFailure | None = None
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-        if not isinstance(self.availability, AdbServerAvailability):
-            raise TypeError("availability must be AdbServerAvailability")
-        if self.failure is not None and not isinstance(self.failure, AdbServerFailure):
-            raise TypeError("failure must be AdbServerFailure or None")
-        if self.availability is AdbServerAvailability.AVAILABLE and self.failure is not None:
-            raise ValueError("available server observation cannot carry failure evidence")
-        if self.availability is AdbServerAvailability.UNAVAILABLE and self.failure is None:
-            raise ValueError("unavailable server observation requires failure evidence")
+@dataclass(frozen=True, slots=True)
+class AdbServerTimeoutFailure(_AdbServerFailure):
+    """One bounded ADB server operation exceeded its timeout."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerProtocolFailure(_AdbServerFailure):
+    """ADB framing or payload data violated the expected protocol."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerServiceFailure(_AdbServerFailure):
+    """The ADB server rejected one service request."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerProcessExitedFailure(_AdbServerFailure):
+    """The exact process-owned native ADB server lifetime exited."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerLaunchFailure(_AdbServerFailure):
+    """Creation of one fresh process-owned ADB server lifetime failed."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerCloseUnprovenFailure(_AdbServerFailure):
+    """Termination of one exact owned ADB server lifetime could not be proven."""
+
+
+AdbServerRequestFailure: TypeAlias = (
+    AdbServerConnectionFailure
+    | AdbServerTimeoutFailure
+    | AdbServerProtocolFailure
+    | AdbServerServiceFailure
+)
+AdbServerLifecycleFailure: TypeAlias = (
+    AdbServerProcessExitedFailure
+    | AdbServerLaunchFailure
+    | AdbServerCloseUnprovenFailure
+)
+AdbServerFailure: TypeAlias = AdbServerRequestFailure | AdbServerLifecycleFailure
+AdbServerOwnershipLossFailure: TypeAlias = (
+    AdbServerConnectionFailure | AdbServerProcessExitedFailure
+)
 
 
 __all__ = [
-    "AdbServerAvailability",
+    "AdbServerCloseUnprovenFailure",
+    "AdbServerConnectionFailure",
     "AdbServerFailure",
-    "AdbServerFailureKind",
-    "AdbServerObservation",
+    "AdbServerLaunchFailure",
+    "AdbServerLifecycleFailure",
+    "AdbServerOwnershipLossFailure",
+    "AdbServerProcessExitedFailure",
+    "AdbServerProtocolFailure",
+    "AdbServerRequestFailure",
+    "AdbServerServiceFailure",
+    "AdbServerTimeoutFailure",
 ]

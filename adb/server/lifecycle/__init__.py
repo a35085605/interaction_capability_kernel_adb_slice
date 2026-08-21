@@ -7,10 +7,8 @@ from adb.server.lifecycle.native import (
     AdbServerNativeError,
     AdbServerNativeHandle,
 )
-from adb.server.model import AdbServerAvailability
 
 __all__ = [
-    "AdbServerAvailability",
     "AdbServerCloseError",
     "AdbServerLaunchError",
     "AdbServerLauncher",
