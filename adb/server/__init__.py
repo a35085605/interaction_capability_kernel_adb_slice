@@ -1,7 +1,12 @@
 """Process-owned ADB server lifecycle, endpoint, and status contracts."""
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.model import AdbServerAvailability
+from adb.server.model import (
+    AdbServerAvailability,
+    AdbServerFailure,
+    AdbServerFailureKind,
+    AdbServerObservation,
+)
 from adb.server.ownership import (
     AdbOwnedServer,
     AdbServerOwnershipLostError,
@@ -17,6 +22,9 @@ __all__ = [
     "AdbOwnedServer",
     "AdbServerAvailability",
     "AdbServerEndpoint",
+    "AdbServerFailure",
+    "AdbServerFailureKind",
+    "AdbServerObservation",
     "AdbServerOwnershipLostError",
     "AdbServerStaleOwnerError",
     "AdbServerStatus",
