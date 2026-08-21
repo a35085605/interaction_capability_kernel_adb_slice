@@ -6,7 +6,12 @@ from random import random
 from threading import Lock, Thread, current_thread
 
 from adb.server.lifecycle.native import AdbServerLaunchError
-from adb.server.model import AdbServerFailure, AdbServerFailureKind
+from adb.server.model import (
+    AdbServerConnectionFailure,
+    AdbServerLaunchFailure,
+    AdbServerOwnershipLossFailure,
+    AdbServerProcessExitedFailure,
+)
 from adb.server.ownership import (
     AdbOwnedServer,
     AdbServerOwnershipLostError,
@@ -42,7 +47,7 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 
 
 class AdbServerSupervisor:
-    """Maintain durable intent for process-owned ADB server availability.
+    """Maintain durable intent for active process-owned ADB server ownership.
 
     The supervised resource itself does not cross a failure boundary. Terminal liveness
     evidence invalidates and disposes the current :class:`AdbOwnedServer`, then publishes
@@ -184,11 +189,17 @@ class AdbServerSupervisor:
         if launch_cycle is not None:
             self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
-    def reconcile(self, failure: AdbServerFailure) -> None:
+    def reconcile(self, failure: AdbServerOwnershipLossFailure) -> None:
         """Invalidate the current owner from terminal liveness evidence and reconcile intent."""
 
-        if not isinstance(failure, AdbServerFailure):
-            raise TypeError("failure must be AdbServerFailure")
+        if not isinstance(
+            failure,
+            (AdbServerConnectionFailure, AdbServerProcessExitedFailure),
+        ):
+            raise TypeError(
+                "failure must be AdbServerConnectionFailure or "
+                "AdbServerProcessExitedFailure"
+            )
         self._invalidate_owner_and_maybe_recover(failure)
 
     def close(self) -> None:
@@ -214,7 +225,10 @@ class AdbServerSupervisor:
             if thread is not current_thread():
                 thread.join()
 
-    def _invalidate_owner_and_maybe_recover(self, failure: AdbServerFailure) -> None:
+    def _invalidate_owner_and_maybe_recover(
+        self,
+        failure: AdbServerOwnershipLossFailure,
+    ) -> None:
         ownership_lost = False
         launch_cycle: AdbServerRecoveryCycleId | None = None
 
@@ -278,7 +292,7 @@ class AdbServerSupervisor:
         attempt_number: int,
     ) -> None:
         active = current_thread()
-        launch_failure: AdbServerFailure | None = None
+        launch_failure: AdbServerLaunchFailure | None = None
         recovered_event: AdbServerOwnershipRecovered | None = None
         retry_token: ScheduleToken | None = None
         try:
@@ -289,10 +303,7 @@ class AdbServerSupervisor:
                 try:
                     recovered = self._owner_manager.acquire()
                 except AdbServerLaunchError as exc:
-                    launch_failure = AdbServerFailure(
-                        AdbServerFailureKind.LAUNCH,
-                        str(exc),
-                    )
+                    launch_failure = AdbServerLaunchFailure(str(exc))
                 else:
                     if recovered.endpoint != self.endpoint:
                         raise ValueError("owned-server recovery changed endpoint")
@@ -303,7 +314,7 @@ class AdbServerSupervisor:
                         self._retry_token = None
                         self._cycle_id = None
                         self.server = recovered
-                        recovered_event = AdbServerOwnershipRecovered(self.endpoint)
+                        recovered_event = AdbServerOwnershipRecovered(recovered)
 
             if recovered_event is not None:
                 if retry_token is not None:
@@ -328,7 +339,7 @@ class AdbServerSupervisor:
         self,
         cycle_id: AdbServerRecoveryCycleId,
         attempt_number: int,
-        failure: AdbServerFailure,
+        failure: AdbServerLaunchFailure,
     ) -> None:
         max_attempts = self._policy.max_attempts
         if max_attempts is not None and attempt_number >= max_attempts:
