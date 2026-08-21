@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
-from adb.server.model import AdbServerEndpoint
 from adb.transport.selection import AdbDeviceSerial
 
 if TYPE_CHECKING:
@@ -70,19 +69,17 @@ AdbTransportConfiguration: TypeAlias = (
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransport:
-    """ADB-domain configuration for one endpoint-bound transport.
+    """ADB-domain configuration for one transport independent of server ownership.
 
     The nested transport configuration makes USB and TCP establishment semantics explicit while
-    keeping ``serial`` as the stable native selection key. Runtime ``transport_id`` values remain
-    fresh inventory facts rather than configured identity or implicit ensure-operation state.
+    keeping ``serial`` as the stable native selection key. Runtime server ownership and
+    ``transport_id`` values remain fresh runtime facts rather than configured identity or implicit
+    ensure-operation state.
     """
 
-    endpoint: AdbServerEndpoint
     transport: AdbTransportConfiguration
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
         if not isinstance(
             self.transport,
             (AdbUsbTransportConfiguration, AdbTcpTransportConfiguration),

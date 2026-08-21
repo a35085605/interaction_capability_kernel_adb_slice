@@ -140,8 +140,6 @@ class AdbTransportEnsureReadiness:
             raise TypeError("configuration must be AdbConfiguredTransport")
         if not isinstance(self.policy, AdbTransportEnsurePolicy):
             raise TypeError("policy must be AdbTransportEnsurePolicy")
-        if self.configuration.endpoint != self.server.endpoint:
-            raise ValueError("configured transport endpoint does not match owned server endpoint")
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
@@ -423,8 +421,6 @@ class AdbTransportEnsureOrchestrator:
     ) -> bool:
         if not isinstance(configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
-        if configuration.endpoint != self.endpoint:
-            return False
         establisher = self._establisher
         if establisher is None:
             return False

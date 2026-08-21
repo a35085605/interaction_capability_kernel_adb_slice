@@ -114,8 +114,6 @@ class AdbConfiguredTransportSupervisor:
     ) -> None:
         if not isinstance(configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
-        if configuration.endpoint != self.endpoint:
-            raise ValueError("configured transport endpoint does not match ADB server endpoint")
         if policy is None:
             policy = AdbConfiguredTransportSupervisionPolicy()
         if not isinstance(policy, AdbConfiguredTransportSupervisionPolicy):
