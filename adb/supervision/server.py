@@ -6,6 +6,7 @@ from random import random
 from threading import Lock, Thread, current_thread
 
 from adb.server.lifecycle.native import AdbServerLaunchError
+from adb.server.model import AdbServerFailure, AdbServerFailureKind
 from adb.server.ownership import (
     AdbOwnedServer,
     AdbServerOwnershipLostError,
@@ -183,10 +184,12 @@ class AdbServerSupervisor:
         if launch_cycle is not None:
             self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
-    def reconcile(self) -> None:
+    def reconcile(self, failure: AdbServerFailure) -> None:
         """Invalidate the current owner from terminal liveness evidence and reconcile intent."""
 
-        self._invalidate_owner_and_maybe_recover()
+        if not isinstance(failure, AdbServerFailure):
+            raise TypeError("failure must be AdbServerFailure")
+        self._invalidate_owner_and_maybe_recover(failure)
 
     def close(self) -> None:
         """Stop supervising without terminating native ADB or resetting a healthy owner."""
@@ -211,7 +214,7 @@ class AdbServerSupervisor:
             if thread is not current_thread():
                 thread.join()
 
-    def _invalidate_owner_and_maybe_recover(self) -> None:
+    def _invalidate_owner_and_maybe_recover(self, failure: AdbServerFailure) -> None:
         ownership_lost = False
         launch_cycle: AdbServerRecoveryCycleId | None = None
 
@@ -242,7 +245,7 @@ class AdbServerSupervisor:
         # Publish loss before starting a new creation attempt so server-bound dependents can
         # tear down their old scopes before recovery can publish fresh ownership.
         if ownership_lost:
-            self._bus.publish(AdbServerOwnershipLost(self.endpoint))
+            self._bus.publish(AdbServerOwnershipLost(self.endpoint, failure))
         if launch_cycle is not None:
             self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
@@ -275,7 +278,7 @@ class AdbServerSupervisor:
         attempt_number: int,
     ) -> None:
         active = current_thread()
-        launch_failed = False
+        launch_failure: AdbServerFailure | None = None
         recovered_event: AdbServerOwnershipRecovered | None = None
         retry_token: ScheduleToken | None = None
         try:
@@ -285,8 +288,11 @@ class AdbServerSupervisor:
                         return
                 try:
                     recovered = self._owner_manager.acquire()
-                except AdbServerLaunchError:
-                    launch_failed = True
+                except AdbServerLaunchError as exc:
+                    launch_failure = AdbServerFailure(
+                        AdbServerFailureKind.LAUNCH,
+                        str(exc),
+                    )
                 else:
                     if recovered.endpoint != self.endpoint:
                         raise ValueError("owned-server recovery changed endpoint")
@@ -305,11 +311,15 @@ class AdbServerSupervisor:
                 self._bus.publish(recovered_event)
                 return
 
-            if launch_failed:
+            if launch_failure is not None:
                 with self._lock:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
-                self._schedule_retry_or_exhaust(cycle_id, attempt_number)
+                self._schedule_retry_or_exhaust(
+                    cycle_id,
+                    attempt_number,
+                    launch_failure,
+                )
         finally:
             with self._lock:
                 self._attempt_threads.discard(active)
@@ -318,6 +328,7 @@ class AdbServerSupervisor:
         self,
         cycle_id: AdbServerRecoveryCycleId,
         attempt_number: int,
+        failure: AdbServerFailure,
     ) -> None:
         max_attempts = self._policy.max_attempts
         if max_attempts is not None and attempt_number >= max_attempts:
@@ -327,6 +338,7 @@ class AdbServerSupervisor:
                     self.endpoint,
                     cycle_id,
                     attempt_number,
+                    failure,
                 )
             )
             return
@@ -370,7 +382,7 @@ class AdbServerSupervisor:
     ) -> None:
         if event.endpoint != self.endpoint:
             return
-        self._invalidate_owner_and_maybe_recover()
+        self._invalidate_owner_and_maybe_recover(event.failure)
 
     def _on_retry_due(self, event: AdbServerRecoveryRetryDue) -> None:
         if event.endpoint != self.endpoint:
