@@ -100,18 +100,14 @@ class _DefaultAdbServerLauncher:
     def __init__(self) -> None:
         self._delegate: AdbServerLauncher | None = None
 
-    @property
-    def requires_retired_close_before_launch(self) -> bool:
-        return True
-
-    def launch(self) -> AdbServerNativeHandle:
+    def launch(self, endpoint: AdbServerEndpoint | None = None) -> AdbServerNativeHandle:
         delegate = self._delegate
         if delegate is None:
             from adb.server.lifecycle.subprocess import SubprocessAdbServerLauncher
 
             delegate = SubprocessAdbServerLauncher()
             self._delegate = delegate
-        return delegate.launch()
+        return delegate.launch(endpoint)
 
 
 class _ProcessAdbServerOwnerStatus(str, Enum):
@@ -141,42 +137,22 @@ class _ProcessAdbServerOwner:
 
     Public ownership and native teardown are deliberately separate. Retiring a generation
     irreversibly removes it from the public projection and moves its exact native handle into
-    retired-lifetime tracking. Whether a fresh generation must wait for all retired native
-    lifetimes to be proven closed is a launcher/owner policy rather than an ownership invariant.
+    retired-lifetime tracking. Fresh-generation endpoint continuity and close fencing are
+    supervision concerns rather than ownership invariants.
     """
 
-    def __init__(
-        self,
-        launcher: AdbServerLauncher | None = None,
-        *,
-        require_retired_close_before_launch: bool | None = None,
-    ) -> None:
+    def __init__(self, launcher: AdbServerLauncher | None = None) -> None:
         if launcher is None:
             launcher = _DefaultAdbServerLauncher()
         elif not isinstance(launcher, AdbServerLauncher):
             raise TypeError("launcher must satisfy AdbServerLauncher")
-        if require_retired_close_before_launch is None:
-            require_retired_close_before_launch = getattr(
-                launcher,
-                "requires_retired_close_before_launch",
-                True,
-            )
-        if not isinstance(require_retired_close_before_launch, bool):
-            raise TypeError("require_retired_close_before_launch must be a bool")
         self._launcher = launcher
         self._condition = Condition()
         self._status = _ProcessAdbServerOwnerStatus.ABSENT
         self._active_lifetime: _OwnedServerLifetime | None = None
         self._retired_lifetimes: dict[int, _RetiredServerLifetime] = {}
         self._generation = 0
-        self._require_retired_close_before_launch = require_retired_close_before_launch
         self._supervision_lease: _AdbServerSupervisionLease | None = None
-
-    @property
-    def requires_retired_close_before_launch(self) -> bool:
-        """Whether a fresh generation is fenced behind retired native close proof."""
-
-        return self._require_retired_close_before_launch
 
     def claim_supervision(self, owner: AdbOwnedServer) -> _AdbServerSupervisionLease:
         """Exclusively claim lifecycle supervision authority across server generations.
@@ -211,13 +187,16 @@ class _ProcessAdbServerOwner:
                 raise RuntimeError("ADB server supervision lease is not active")
             self._supervision_lease = None
 
-    def acquire(self) -> AdbOwnedServer:
+    def acquire(self, endpoint: AdbServerEndpoint | None = None) -> AdbOwnedServer:
         """Return the active generation or launch one fresh process-owned server.
 
-        Retired native lifetimes remain independently tracked until close is proven. Owners that
-        require endpoint/native exclusivity fence fresh launch behind that proof; non-pinned owners
-        may launch a new generation immediately after retirement.
+        ``endpoint`` constrains only a newly launched generation. Retired native lifetimes remain
+        independently tracked until close is proven; cross-generation endpoint continuity is
+        intentionally owned by supervision rather than by this process owner.
         """
+
+        if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint or None")
 
         with self._condition:
             while self._status is _ProcessAdbServerOwnerStatus.STARTING:
@@ -227,34 +206,11 @@ class _ProcessAdbServerOwner:
                 assert self._active_lifetime is not None
                 return self._active_lifetime.owner
 
-            if self._require_retired_close_before_launch:
-                while any(
-                    retired.status is _RetiredServerLifetimeStatus.CLOSING
-                    for retired in self._retired_lifetimes.values()
-                ):
-                    self._condition.wait()
-                unproven = next(
-                    (
-                        retired
-                        for retired in self._retired_lifetimes.values()
-                        if retired.status is _RetiredServerLifetimeStatus.CLOSE_UNPROVEN
-                    ),
-                    None,
-                )
-                if unproven is not None:
-                    error = AdbServerOwnershipLostError(
-                        "cannot acquire a new ADB server generation while termination of a "
-                        "previous owned lifetime remains unproven"
-                    )
-                    if unproven.close_failure is not None:
-                        raise error from unproven.close_failure
-                    raise error
-
             assert self._status is _ProcessAdbServerOwnerStatus.ABSENT
             self._status = _ProcessAdbServerOwnerStatus.STARTING
 
         try:
-            native = self._launcher.launch()
+            native = self._launcher.launch(endpoint)
             if not isinstance(native, AdbServerNativeHandle):
                 raise TypeError("launcher.launch() must return AdbServerNativeHandle")
         except BaseException:
@@ -387,10 +343,15 @@ class _ProcessAdbServerOwner:
 _PROCESS_ADB_SERVER_OWNER = _ProcessAdbServerOwner()
 
 
-def acquire_process_adb_server() -> AdbOwnedServer:
-    """Acquire or create the single process-owned ADB server generation."""
+def acquire_process_adb_server(
+    endpoint: AdbServerEndpoint | None = None,
+) -> AdbOwnedServer:
+    """Acquire or create the single process-owned ADB server generation.
 
-    return _PROCESS_ADB_SERVER_OWNER.acquire()
+    ``endpoint`` constrains only creation of a fresh generation.
+    """
+
+    return _PROCESS_ADB_SERVER_OWNER.acquire(endpoint)
 
 
 def invalidate_process_adb_server(owner: AdbOwnedServer) -> bool:

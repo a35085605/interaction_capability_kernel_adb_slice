@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 import math
 from numbers import Real
 from random import random
 from threading import Lock, Thread, current_thread
+from typing import TypeAlias
 
 from adb.server.lifecycle.launch import AdbServerLaunchError
 from adb.server.failure import (
@@ -22,7 +23,7 @@ from adb.server.ownership import (
     _PROCESS_ADB_SERVER_OWNER,
     _ProcessAdbServerOwner,
 )
-from adb.server.model import AdbServerRecoveryCycleId
+from adb.server.model import AdbServerEndpoint, AdbServerRecoveryCycleId
 from adb.server.signal import (
     AdbServerNativeCloseCompleted,
     AdbServerNativeCloseUnproven,
@@ -84,16 +85,61 @@ def _normalize_retry_configuration(
 
 
 @dataclass(frozen=True, slots=True)
+class AdbServerPerGenerationEndpoint:
+    """Let every recovered generation resolve its own endpoint independently."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerPinFirstResolvedEndpoint:
+    """Pin the first owned generation's resolved endpoint across later generations."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerFixedEndpoint:
+    """Require every supervised generation to use one explicitly configured endpoint."""
+
+    endpoint: AdbServerEndpoint
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint")
+
+
+AdbServerEndpointPolicy: TypeAlias = (
+    AdbServerPerGenerationEndpoint
+    | AdbServerPinFirstResolvedEndpoint
+    | AdbServerFixedEndpoint
+)
+
+
+def _require_endpoint_policy(value: object) -> AdbServerEndpointPolicy:
+    if not isinstance(
+        value,
+        (
+            AdbServerPerGenerationEndpoint,
+            AdbServerPinFirstResolvedEndpoint,
+            AdbServerFixedEndpoint,
+        ),
+    ):
+        raise TypeError("endpoint_policy must be an ADB server endpoint policy")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
 class AdbServerSupervisionPolicy:
-    """Retry policy for reacquiring the process-owned ADB server singleton."""
+    """Recovery policy for reacquiring the process-owned ADB server singleton."""
 
     retry_initial_seconds: float = 0.5
     retry_max_seconds: float = 30.0
     retry_multiplier: float = 2.0
     retry_jitter_ratio: float = 0.2
     max_attempts: int | None = None
+    endpoint_policy: AdbServerEndpointPolicy = field(
+        default_factory=AdbServerPinFirstResolvedEndpoint
+    )
 
     def __post_init__(self) -> None:
+        endpoint_policy = _require_endpoint_policy(self.endpoint_policy)
         initial, maximum, multiplier, jitter, max_attempts = _normalize_retry_configuration(
             retry_initial_seconds=self.retry_initial_seconds,
             retry_max_seconds=self.retry_max_seconds,
@@ -101,6 +147,7 @@ class AdbServerSupervisionPolicy:
             retry_jitter_ratio=self.retry_jitter_ratio,
             max_attempts=self.max_attempts,
         )
+        object.__setattr__(self, "endpoint_policy", endpoint_policy)
         object.__setattr__(self, "retry_initial_seconds", initial)
         object.__setattr__(self, "retry_max_seconds", maximum)
         object.__setattr__(self, "retry_multiplier", multiplier)
@@ -130,9 +177,9 @@ class AdbServerSupervisor:
     The supervised resource itself does not cross a failure boundary. Terminal liveness
     evidence first retires the current :class:`AdbOwnedServer` and publishes
     :class:`AdbServerOwnershipRetired`, so managed dependents can immediately tear down their
-    old server-bound scopes. Native close then proceeds privately. Pinned owners fence recovery
-    behind proven close; non-pinned owners may recover a fresh generation while retired native
-    teardown continues independently.
+    old server-bound scopes. Native close then proceeds privately. Endpoint continuity policy
+    decides whether recovery reuses an endpoint and therefore waits for proven close, or lets the
+    next generation resolve an independent endpoint while retired teardown continues.
 
     Existing listeners never satisfy recovery because the process owner can only acquire a
     native handle returned by its launcher. Retry cycle IDs fence scheduled retry work only;
@@ -163,8 +210,21 @@ class AdbServerSupervisor:
         if not isinstance(policy, AdbServerSupervisionPolicy):
             raise TypeError("policy must be AdbServerSupervisionPolicy")
 
+        endpoint_policy = policy.endpoint_policy
+        if isinstance(endpoint_policy, AdbServerFixedEndpoint):
+            if server.endpoint != endpoint_policy.endpoint:
+                raise ValueError(
+                    "fixed endpoint policy must match the initially supervised generation"
+                )
+            pinned_endpoint: AdbServerEndpoint | None = endpoint_policy.endpoint
+        elif isinstance(endpoint_policy, AdbServerPinFirstResolvedEndpoint):
+            pinned_endpoint = server.endpoint
+        else:
+            pinned_endpoint = None
+
         self.server: AdbOwnedServer | None = server
         self.endpoint = server.endpoint
+        self._pinned_endpoint = pinned_endpoint
         self._bus = event_bus
         self._owner_manager = _owner_manager
         self._scheduler = scheduler
@@ -320,11 +380,11 @@ class AdbServerSupervisor:
                 self._owner_manager.retire(server)
                 with self._lock:
                     self.server = None
-                    if self._owner_manager.requires_retired_close_before_launch:
+                    if self._requires_retired_close_before_launch():
                         self._closing_generation = server.generation
                     retired_server = server
                     if (
-                        not self._owner_manager.requires_retired_close_before_launch
+                        not self._requires_retired_close_before_launch()
                         and self._recovery_enabled
                         and self._cycle_id is None
                     ):
@@ -454,15 +514,13 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
                 try:
-                    recovered = self._owner_manager.acquire()
+                    recovered = self._owner_manager.acquire(self._recovery_launch_endpoint())
                 except AdbServerLaunchError as exc:
                     launch_failure = AdbServerLaunchFailure(str(exc))
                 else:
-                    if (
-                        self._owner_manager.requires_retired_close_before_launch
-                        and recovered.endpoint != self.endpoint
-                    ):
-                        raise ValueError("pinned owned-server recovery changed endpoint")
+                    expected_endpoint = self._recovery_launch_endpoint()
+                    if expected_endpoint is not None and recovered.endpoint != expected_endpoint:
+                        raise ValueError("endpoint-pinned owned-server recovery changed endpoint")
                     with self._lock:
                         if not self._recovery_is_current_locked(cycle_id):
                             return
@@ -598,6 +656,15 @@ class AdbServerSupervisor:
             and self._cycle_id == cycle_id
         )
 
+    def _requires_retired_close_before_launch(self) -> bool:
+        return not isinstance(
+            self._policy.endpoint_policy,
+            AdbServerPerGenerationEndpoint,
+        )
+
+    def _recovery_launch_endpoint(self) -> AdbServerEndpoint | None:
+        return self._pinned_endpoint
+
     def _require_open(self) -> None:
         if self._closed:
             raise RuntimeError("ADB server supervisor is closed")
@@ -617,6 +684,10 @@ class AdbServerSupervisor:
 
 
 __all__ = [
+    "AdbServerEndpointPolicy",
+    "AdbServerFixedEndpoint",
+    "AdbServerPerGenerationEndpoint",
+    "AdbServerPinFirstResolvedEndpoint",
     "AdbServerRecoveryCycleId",
     "AdbServerSupervisionPolicy",
     "AdbServerSupervisor",

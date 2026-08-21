@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from adb.server.lifecycle.handle import AdbServerNativeError, AdbServerNativeHandle
+from adb.server.model import AdbServerEndpoint
 
 
 class AdbServerLaunchError(AdbServerNativeError):
@@ -17,7 +18,9 @@ class AdbServerLauncher(Protocol):
     failure must not be represented as an owned server and must not adopt an existing listener.
     """
 
-    def launch(self) -> AdbServerNativeHandle: ...
+    def launch(self, endpoint: AdbServerEndpoint | None = None) -> AdbServerNativeHandle:
+        """Launch one fresh lifetime, optionally binding this launch to ``endpoint``."""
+        ...
 
 
 __all__ = ["AdbServerLaunchError", "AdbServerLauncher"]

@@ -102,22 +102,16 @@ class _SubprocessAdbServerHandle:
 
 
 class SubprocessAdbServerLauncher:
-    """Launch a foreground ADB server from an OS-owned listening socket.
+    """Launch one foreground ADB server from an OS-owned listening socket.
 
-    On POSIX, ADB's ``acceptfd:`` socket activation path lets this process bind and listen
-    before spawning ``adb server nodaemon``. The inherited socket and foreground child process
-    form the native ownership authority: an already-running listener can never satisfy launch.
-
-    By default the first successful launch pins its resolved endpoint for later generations. With
-    ``pin_endpoint=False`` each generation may reserve a fresh ephemeral endpoint, allowing a new
-    generation to launch after retirement while teardown of an older native lifetime continues.
+    Endpoint selection is per launch. ``endpoint=None`` asks the OS for a fresh ephemeral
+    loopback endpoint; an explicit endpoint constrains only that launch. Cross-generation
+    endpoint continuity belongs to supervision policy, not to the launcher.
     """
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint | None = None,
         *,
-        pin_endpoint: bool = True,
         executable: str = "adb",
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
@@ -130,20 +124,12 @@ class SubprocessAdbServerLauncher:
         _status_reader: _ServerStatusReader | None = None,
         _socket_activation_supported: bool = os.name != "nt",
     ) -> None:
-        if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint or None")
-        if not isinstance(pin_endpoint, bool):
-            raise TypeError("pin_endpoint must be a bool")
-        if endpoint is not None and not pin_endpoint:
-            raise ValueError("pin_endpoint=False requires endpoint=None")
         if not isinstance(_socket_activation_supported, bool):
             raise TypeError("_socket_activation_supported must be a bool")
-        self.pin_endpoint = pin_endpoint
         self.executable = normalize_executable(executable)
         self.startup_timeout_seconds = normalize_timeout(startup_timeout_seconds)
         self.shutdown_timeout_seconds = normalize_timeout(shutdown_timeout_seconds)
         self.probe_interval_seconds = _normalize_probe_interval(probe_interval_seconds)
-        self._endpoint = endpoint
         self._popen_factory = _popen_factory
         self._resolver = _resolver
         self._socket_factory = _socket_factory
@@ -163,20 +149,9 @@ class SubprocessAdbServerLauncher:
         self._status_reader = _status_reader
         self._lock = Lock()
 
-    @property
-    def endpoint(self) -> AdbServerEndpoint | None:
-        """Return the configured or generation-pinned endpoint, if any."""
-
-        with self._lock:
-            return self._endpoint
-
-    @property
-    def requires_retired_close_before_launch(self) -> bool:
-        """Whether later generations reuse the same endpoint and require exclusive teardown."""
-
-        return self.pin_endpoint
-
-    def launch(self) -> AdbServerNativeHandle:
+    def launch(self, endpoint: AdbServerEndpoint | None = None) -> AdbServerNativeHandle:
+        if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint or None")
         if not self._socket_activation_supported:
             raise AdbServerLaunchError(
                 "ADB acceptfd socket activation is unavailable on this platform; "
@@ -184,7 +159,7 @@ class SubprocessAdbServerLauncher:
             )
 
         with self._lock:
-            reservation, endpoint = self._reserve_listener_locked()
+            reservation, resolved_endpoint = self._reserve_listener_locked(endpoint)
             process: subprocess.Popen[bytes] | None = None
             handle: _SubprocessAdbServerHandle | None = None
             try:
@@ -204,7 +179,7 @@ class SubprocessAdbServerLauncher:
                     pass_fds=(fd,),
                 )
                 handle = _SubprocessAdbServerHandle(
-                    endpoint,
+                    resolved_endpoint,
                     process,
                     self.shutdown_timeout_seconds,
                 )
@@ -217,7 +192,7 @@ class SubprocessAdbServerLauncher:
 
             assert process is not None and handle is not None
             try:
-                self._wait_until_ready(endpoint, process)
+                self._wait_until_ready(resolved_endpoint, process)
             except BaseException:
                 try:
                     handle.close()
@@ -226,16 +201,13 @@ class SubprocessAdbServerLauncher:
                         "ADB server launch failed and its child process could not be closed"
                     ) from close_exc
                 raise
-
-            # Pin only after this exact child has reached ADB protocol readiness.
-            if self.pin_endpoint and self._endpoint is None:
-                self._endpoint = endpoint
             return handle
 
-    def _reserve_listener_locked(self) -> tuple[socket.socket, AdbServerEndpoint]:
-        configured = self._endpoint
-        host = configured.host if configured is not None else "127.0.0.1"
-        port = configured.port if configured is not None else 0
+    def _reserve_listener_locked(
+        self, endpoint: AdbServerEndpoint | None
+    ) -> tuple[socket.socket, AdbServerEndpoint]:
+        host = endpoint.host if endpoint is not None else "127.0.0.1"
+        port = endpoint.port if endpoint is not None else 0
 
         try:
             addresses = self._resolver(host, port, type=socket.SOCK_STREAM)
@@ -263,8 +235,8 @@ class SubprocessAdbServerLauncher:
                 listener.bind(sockaddr)
                 listener.listen(socket.SOMAXCONN)
                 bound = listener.getsockname()
-                endpoint = AdbServerEndpoint(str(bound[0]), int(bound[1]))
-                return listener, endpoint
+                resolved = AdbServerEndpoint(str(bound[0]), int(bound[1]))
+                return listener, resolved
             except OSError as exc:
                 failures.append(str(exc))
                 try:
