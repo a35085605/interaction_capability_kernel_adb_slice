@@ -11,7 +11,7 @@ from typing import Protocol
 from adb._internal.client import AdbServiceClient
 from adb._internal.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.server.lifecycle.native import (
     AdbServerCloseError,
     AdbServerLaunchError,

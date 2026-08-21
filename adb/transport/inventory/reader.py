@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.transport.inventory.model import AdbDevicesSnapshot
 
 if TYPE_CHECKING:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.server.model import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,

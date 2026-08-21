@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from adb._internal.client import AdbServiceClient
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.transport.features import AdbTransportFeatures
 from adb.transport.selection import AdbTransportSelector
 

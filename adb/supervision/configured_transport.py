@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Lock, Thread, current_thread
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.supervision.model import AdbConfiguredTransportSupervisionPolicy
 from adb.supervision.signal import (
     AdbConfiguredTransportRecoveryExhausted,

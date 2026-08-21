@@ -15,7 +15,7 @@ from adb.errors import (
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 
 
 _SERVICE = "host:track-devices-proto-binary"

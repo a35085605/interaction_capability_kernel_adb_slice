@@ -9,7 +9,7 @@ from numbers import Real
 from threading import Condition
 from time import monotonic
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.transport.inventory.tracker import AdbDevicesTrackingController
 from adb.transport.signal import (
     AdbDevicesTrackingFailed,

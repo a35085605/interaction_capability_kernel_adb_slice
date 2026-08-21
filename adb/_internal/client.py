@@ -17,7 +17,7 @@ from adb.errors import (
     AdbTransportUnavailableError,
 )
 from adb._internal.framing import encode_service, parse_hex_length
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.transport.selection import (
     AdbTransportById,
     AdbTransportBySerial,

@@ -9,7 +9,7 @@ from time import monotonic, sleep
 from typing import Protocol, runtime_checkable
 
 from adb.errors import AdbError
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.inventory.model import (
     AdbConnectionState,

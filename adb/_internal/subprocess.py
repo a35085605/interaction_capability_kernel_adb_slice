@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import math
 import subprocess
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.transport.selection import AdbTransportById, AdbTransportBySerial, AdbTransportSelector
 from native_attempt import NativeAttemptResult, NativeAttemptStatus, NativeCompletionScope
 

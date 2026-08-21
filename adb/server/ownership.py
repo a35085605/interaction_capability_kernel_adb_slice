@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from threading import Condition
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.server.lifecycle.native import AdbServerLauncher, AdbServerNativeHandle
 
 

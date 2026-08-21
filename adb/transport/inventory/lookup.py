@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.transport.inventory.model import AdbDevicesSnapshot, AdbTrackedDevice
 from adb.transport.inventory.reader import (
     AdbDevicesSnapshotReader,

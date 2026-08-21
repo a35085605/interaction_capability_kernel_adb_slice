@@ -9,7 +9,7 @@ from adb._internal.subprocess import (
     selector_args,
     server_args,
 )
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.model import AdbServerEndpoint
 from adb.transport.lifecycle.command import (
     AdbDeviceSideReconnect,
     AdbOfflineTransportsReconnect,
