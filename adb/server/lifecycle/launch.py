@@ -6,7 +6,7 @@ import socket
 import subprocess
 from threading import Lock
 from time import monotonic, sleep
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from adb._internal.client import AdbServiceClient
 from adb._internal.subprocess import normalize_executable, normalize_timeout
@@ -14,8 +14,9 @@ from adb.errors import AdbError
 from adb.server.model import AdbServerEndpoint
 from adb.server.lifecycle.handle import (
     AdbServerCloseError,
-    AdbServerLaunchError,
+    AdbServerNativeError,
     AdbServerNativeHandle,
+    _SubprocessAdbServerHandle,
 )
 from adb.server.status.reader import SmartSocketAdbServerStatusReader
 
@@ -38,70 +39,19 @@ def _normalize_probe_interval(value: object) -> float:
     return normalized
 
 
-class _SubprocessAdbServerHandle:
-    """Exact foreground ADB server child process owned by this Python process."""
+class AdbServerLaunchError(AdbServerNativeError):
+    """A fresh process-owned native ADB server could not be launched."""
 
-    def __init__(
-        self,
-        endpoint: AdbServerEndpoint,
-        process: subprocess.Popen[bytes],
-        shutdown_timeout_seconds: float,
-    ) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-        self._endpoint = endpoint
-        self._process = process
-        self._shutdown_timeout_seconds = shutdown_timeout_seconds
-        self._lock = Lock()
-        self._closed = False
 
-    @property
-    def endpoint(self) -> AdbServerEndpoint:
-        return self._endpoint
+@runtime_checkable
+class AdbServerLauncher(Protocol):
+    """Atomically create one fresh native ADB server and return its ownership handle.
 
-    @property
-    def active(self) -> bool:
-        with self._lock:
-            return not self._closed and self._process.poll() is None
+    A successful return transfers exact close authority to the returned handle. A launch
+    failure must not be represented as an owned server and must not adopt an existing listener.
+    """
 
-    def close(self) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            if self._process.poll() is not None:
-                self._closed = True
-                return
-
-            try:
-                self._process.terminate()
-            except OSError as exc:
-                if self._process.poll() is None:
-                    raise AdbServerCloseError(
-                        f"failed to terminate owned ADB server at {self.endpoint.host}:"
-                        f"{self.endpoint.port}: {exc}"
-                    ) from exc
-
-            try:
-                self._process.wait(timeout=self._shutdown_timeout_seconds)
-            except subprocess.TimeoutExpired:
-                try:
-                    self._process.kill()
-                except OSError as exc:
-                    if self._process.poll() is None:
-                        raise AdbServerCloseError(
-                            f"failed to kill owned ADB server at {self.endpoint.host}:"
-                            f"{self.endpoint.port}: {exc}"
-                        ) from exc
-                try:
-                    self._process.wait(timeout=self._shutdown_timeout_seconds)
-                except subprocess.TimeoutExpired as exc:
-                    raise AdbServerCloseError(
-                        "owned ADB server did not terminate after kill"
-                    ) from exc
-
-            if self._process.poll() is None:
-                raise AdbServerCloseError("owned ADB server termination was not confirmed")
-            self._closed = True
+    def launch(self) -> AdbServerNativeHandle: ...
 
 
 class SubprocessAdbServerLauncher:
@@ -300,4 +250,8 @@ class SubprocessAdbServerLauncher:
             self._sleep(min(self.probe_interval_seconds, remaining))
 
 
-__all__ = ["SubprocessAdbServerLauncher"]
+__all__ = [
+    "AdbServerLaunchError",
+    "AdbServerLauncher",
+    "SubprocessAdbServerLauncher",
+]
