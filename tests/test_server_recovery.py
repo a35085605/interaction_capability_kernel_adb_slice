@@ -7,7 +7,12 @@ import unittest
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.native import AdbServerLaunchError
-from adb.server.model import AdbServerAvailability
+from adb.server.model import (
+    AdbServerAvailability,
+    AdbServerFailure,
+    AdbServerFailureKind,
+    AdbServerObservation,
+)
 from adb.server.ownership import _ProcessAdbServerOwner
 from adb.supervision.devices_tracking import AdbDevicesTrackingSupervisor
 from adb.supervision.model import (
@@ -22,7 +27,11 @@ from adb.supervision.signal import (
     AdbServerRecoveryExhausted,
     AdbServerRecoveryRetryDue,
 )
-from adb.transport.signal import AdbDevicesTrackingStarted
+from adb.transport.signal import (
+    AdbDevicesTrackingFailed,
+    AdbDevicesTrackingFailure,
+    AdbDevicesTrackingStarted,
+)
 from eventing import EventSubscriptionToken
 from scheduling import ScheduleToken
 
@@ -170,12 +179,41 @@ class _TrackerFactory:
         return tracker
 
 
+def _server_failure(
+    kind: AdbServerFailureKind = AdbServerFailureKind.CONNECTION,
+    diagnostic: str = "scripted server failure",
+) -> AdbServerFailure:
+    return AdbServerFailure(kind, diagnostic)
+
+
+def _available_server(endpoint: AdbServerEndpoint) -> AdbServerObservation:
+    return AdbServerObservation(endpoint, AdbServerAvailability.AVAILABLE)
+
+
 def _wait_until(predicate, timeout: float = 2.0) -> None:
     deadline = monotonic() + timeout
     while not predicate():
         if monotonic() >= deadline:
             raise AssertionError("timed out waiting for condition")
         sleep(0.01)
+
+
+class AdbServerFailureModelTests(unittest.TestCase):
+    def test_unavailable_observation_requires_failure_evidence(self) -> None:
+        endpoint = AdbServerEndpoint("127.0.0.1", 5048)
+
+        with self.assertRaises(ValueError):
+            AdbServerObservation(endpoint, AdbServerAvailability.UNAVAILABLE)
+
+    def test_available_observation_rejects_failure_evidence(self) -> None:
+        endpoint = AdbServerEndpoint("127.0.0.1", 5049)
+
+        with self.assertRaises(ValueError):
+            AdbServerObservation(
+                endpoint,
+                AdbServerAvailability.AVAILABLE,
+                _server_failure(),
+            )
 
 
 class ProcessAdbServerRecoveryTests(unittest.TestCase):
@@ -230,7 +268,8 @@ class AdbServerSupervisorRecoveryTests(unittest.TestCase):
         )
         supervisor.start(recovery_enabled=True)
 
-        bus.publish(AdbServerReconciliationRequested(endpoint))
+        failure = _server_failure(diagnostic="tracker lost server connection")
+        bus.publish(AdbServerReconciliationRequested(endpoint, failure))
         bus.wait_for(AdbServerOwnershipRecovered)
         _wait_until(lambda: supervisor.server is not None)
         recovered = supervisor.server
@@ -253,6 +292,9 @@ class AdbServerSupervisorRecoveryTests(unittest.TestCase):
             if isinstance(event, AdbServerOwnershipRecovered)
         )
         self.assertLess(loss_index, recovery_index)
+        loss_event = bus.events[loss_index]
+        assert isinstance(loss_event, AdbServerOwnershipLost)
+        self.assertEqual(loss_event.failure, failure)
         supervisor.close()
 
     def test_launch_failure_exhausts_with_no_active_owner(self) -> None:
@@ -271,8 +313,16 @@ class AdbServerSupervisorRecoveryTests(unittest.TestCase):
         )
         supervisor.start(recovery_enabled=True)
 
-        bus.publish(AdbServerReconciliationRequested(endpoint))
-        bus.wait_for(AdbServerRecoveryExhausted)
+        bus.publish(
+            AdbServerReconciliationRequested(
+                endpoint,
+                _server_failure(diagnostic="server disappeared"),
+            )
+        )
+        exhausted = bus.wait_for(AdbServerRecoveryExhausted)
+        assert isinstance(exhausted, AdbServerRecoveryExhausted)
+        self.assertEqual(exhausted.failure.kind, AdbServerFailureKind.LAUNCH)
+        self.assertEqual(exhausted.failure.diagnostic, "scripted launch failure")
 
         self.assertFalse(first.active)
         self.assertIsNone(manager.active_owner)
@@ -304,7 +354,12 @@ class AdbServerSupervisorRecoveryTests(unittest.TestCase):
         )
         supervisor.start(recovery_enabled=True)
 
-        bus.publish(AdbServerReconciliationRequested(endpoint))
+        bus.publish(
+            AdbServerReconciliationRequested(
+                endpoint,
+                _server_failure(diagnostic="server disappeared"),
+            )
+        )
         _wait_until(lambda: bool(scheduler.scheduled))
         retry_event = scheduler.scheduled[-1][1]
         self.assertIsInstance(retry_event, AdbServerRecoveryRetryDue)
@@ -334,7 +389,12 @@ class AdbServerSupervisorRecoveryTests(unittest.TestCase):
         )
         supervisor.start(recovery_enabled=False)
 
-        bus.publish(AdbServerReconciliationRequested(endpoint))
+        bus.publish(
+            AdbServerReconciliationRequested(
+                endpoint,
+                _server_failure(diagnostic="server disappeared"),
+            )
+        )
 
         self.assertFalse(first.active)
         self.assertEqual(launcher.handles[0].close_calls, 1)
@@ -359,12 +419,12 @@ class TrackingScopeRecompositionTests(unittest.TestCase):
             _tracker_factory=factory,
         )
 
-        self.assertTrue(supervisor.start(AdbServerAvailability.AVAILABLE))
+        self.assertTrue(supervisor.start(_available_server(endpoint)))
         self.assertEqual(len(factory.instances), 1)
         first = factory.instances[0]
         self.assertTrue(first.active)
 
-        bus.publish(AdbServerOwnershipLost(endpoint))
+        bus.publish(AdbServerOwnershipLost(endpoint, _server_failure()))
         self.assertTrue(first.closed)
         self.assertFalse(supervisor.tracking_active)
 
@@ -377,6 +437,35 @@ class TrackingScopeRecompositionTests(unittest.TestCase):
         self.assertTrue(second.active)
         supervisor.close()
         self.assertTrue(second.closed)
+
+    def test_server_connection_failure_requests_reconciliation_with_evidence(self) -> None:
+        endpoint = AdbServerEndpoint("127.0.0.1", 5057)
+        bus = _EventBus()
+        factory = _TrackerFactory()
+        supervisor = AdbDevicesTrackingSupervisor(
+            endpoint,
+            bus,
+            AdbDevicesTrackingSupervisionPolicy(episode_timeout_seconds=1.0),
+            _tracker_factory=factory,
+        )
+
+        self.assertTrue(supervisor.start(_available_server(endpoint)))
+        bus.publish(
+            AdbDevicesTrackingFailed(
+                endpoint,
+                AdbDevicesTrackingFailure.SERVER_CONNECTION,
+                "unexpected EOF from ADB server",
+            )
+        )
+
+        request = next(
+            event
+            for event in bus.events
+            if isinstance(event, AdbServerReconciliationRequested)
+        )
+        self.assertEqual(request.failure.kind, AdbServerFailureKind.CONNECTION)
+        self.assertEqual(request.failure.diagnostic, "unexpected EOF from ADB server")
+        supervisor.close()
 
 
 if __name__ == "__main__":
