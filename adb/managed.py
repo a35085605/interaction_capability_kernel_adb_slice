@@ -18,7 +18,7 @@ class AdbManagedRuntime:
     """Managed lifecycle rooted in one process-owned ADB server lifetime.
 
     Managed composition deliberately does not accept a bare ``AdbServerEndpoint``. The
-    :class:`AdbOwnedServer` must originate from the process ownership slot. Resource-bound
+    :class:`AdbOwnedServer` must originate from the process singleton owner. Resource-bound
     children are expected to be destroyed when that owner is invalidated and recreated only
     after a fresh owner is acquired.
     """
