@@ -1,4 +1,4 @@
-"""Process-owned ADB server lifecycle contracts and supervision."""
+"""Process-owned ADB server native lifecycle contracts."""
 
 from adb.server.lifecycle.handle import (
     AdbServerCloseError,

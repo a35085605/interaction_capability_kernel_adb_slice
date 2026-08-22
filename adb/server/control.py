@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from adb.server.model import AdbServerEndpoint
+from adb.server.endpoint import AdbServerEndpoint
 
 if TYPE_CHECKING:
     from adb.server.status.model import AdbServerStatus

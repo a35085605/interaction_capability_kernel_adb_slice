@@ -6,7 +6,7 @@ from threading import Condition
 from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServer, _AdbServerSequence
-from adb.server.model import AdbServerEndpoint
+from adb.server.endpoint import AdbServerEndpoint
 from adb.server.ownership import _OwnedAdbServerLifetimeStore
 
 

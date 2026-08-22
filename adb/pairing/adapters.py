@@ -8,7 +8,7 @@ from adb._internal.subprocess import (
     run_adb,
     server_args,
 )
-from adb.server.model import AdbServerEndpoint
+from adb.server.endpoint import AdbServerEndpoint
 from adb.pairing.command import AdbWirelessPair
 from native_attempt import NativeAttemptResult
 

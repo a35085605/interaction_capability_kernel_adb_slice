@@ -7,7 +7,7 @@ from threading import Condition
 from adb.server.identity import AdbServer
 from adb.server.lifecycle.handle import AdbServerNativeHandle
 from adb.server.lifecycle.launch import AdbServerLauncher
-from adb.server.model import AdbServerEndpoint
+from adb.server.endpoint import AdbServerEndpoint
 
 
 _OWNED_SERVER_CONSTRUCTION_TOKEN = object()

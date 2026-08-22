@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from adb.server.lifecycle.handle import AdbServerNativeError, AdbServerNativeHandle
-from adb.server.model import AdbServerEndpoint
+from adb.server.endpoint import AdbServerEndpoint
 
 
 class AdbServerLaunchError(AdbServerNativeError):

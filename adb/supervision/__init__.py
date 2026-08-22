@@ -1,10 +1,19 @@
-"""Long-lived ADB transport and tracking supervision."""
+"""Long-lived ADB server, transport, and tracking supervision."""
 
 from adb.supervision.configured_transport import AdbConfiguredTransportSupervisor
 from adb.supervision.devices_tracking import AdbDevicesTrackingSupervisor
 from adb.supervision.model import (
     AdbConfiguredTransportSupervisionPolicy,
     AdbDevicesTrackingSupervisionPolicy,
+)
+from adb.supervision.server import (
+    AdbServerEndpointPolicy,
+    AdbServerFixedEndpoint,
+    AdbServerPerGenerationEndpoint,
+    AdbServerPinFirstResolvedEndpoint,
+    AdbServerRecoveryCycleId,
+    AdbServerSupervisionPolicy,
+    AdbServerSupervisor,
 )
 from adb.supervision.signal import (
     AdbConfiguredTransportRecoveryExhausted,
@@ -19,5 +28,12 @@ __all__ = [
     "AdbConfiguredTransportSupervisor",
     "AdbDevicesTrackingSupervisionPolicy",
     "AdbDevicesTrackingSupervisor",
+    "AdbServerEndpointPolicy",
+    "AdbServerFixedEndpoint",
+    "AdbServerPerGenerationEndpoint",
+    "AdbServerPinFirstResolvedEndpoint",
+    "AdbServerRecoveryCycleId",
+    "AdbServerSupervisionPolicy",
+    "AdbServerSupervisor",
     "AdbSupervisionSignal",
 ]

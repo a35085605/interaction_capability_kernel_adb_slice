@@ -5,7 +5,7 @@ from typing import Protocol
 
 from adb._internal.client import AdbServiceClient
 from adb._internal.proto import parse_server_status
-from adb.server.model import AdbServerEndpoint
+from adb.server.endpoint import AdbServerEndpoint
 from adb.server.status.model import AdbServerStatus
 
 

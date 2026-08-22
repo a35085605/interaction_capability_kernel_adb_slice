@@ -17,7 +17,7 @@ from adb.server.failure import (
     AdbServerTimeoutFailure,
 )
 from adb.server.identity import AdbServer
-from adb.server.model import AdbServerEndpoint
+from adb.server.endpoint import AdbServerEndpoint
 from adb.server.ownership import (
     AdbServerOwnershipLostError,
     AdbServerStaleOwnerError,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TypeAlias
+from uuid import uuid4
 
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
@@ -11,7 +12,29 @@ from adb.server.failure import (
     AdbServerProcessExitedFailure,
 )
 from adb.server.identity import AdbServer
-from adb.server.model import AdbServerEndpoint, AdbServerRecoveryCycleId
+from adb.server.endpoint import AdbServerEndpoint
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class AdbServerRecoveryCycleId:
+    """Opaque identity for one scheduled/retry server recovery cycle."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str):
+            raise TypeError(
+                "ADB server recovery cycle id must be a string, "
+                f"got {type(self.value).__name__}"
+            )
+        normalized = self.value.strip()
+        if not normalized:
+            raise ValueError("ADB server recovery cycle id cannot be empty")
+        object.__setattr__(self, "value", normalized)
+
+    @classmethod
+    def new(cls) -> "AdbServerRecoveryCycleId":
+        return cls(uuid4().hex)
 
 
 _LIVENESS_FAILURE_TYPES = (
@@ -177,6 +200,7 @@ __all__ = [
     "AdbServerOwnershipRecovered",
     "AdbServerOwnershipRetired",
     "AdbServerReconciliationRequested",
+    "AdbServerRecoveryCycleId",
     "AdbServerRecoveryExhausted",
     "AdbServerRecoveryRetryDue",
     "AdbServerSignal",

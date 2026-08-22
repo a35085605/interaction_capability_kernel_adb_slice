@@ -25,8 +25,9 @@ from adb.server.coordination import (
 )
 from adb.server.identity import AdbServer
 from adb.server.ownership import AdbServerOwnershipLostError
-from adb.server.model import AdbServerEndpoint, AdbServerRecoveryCycleId
+from adb.server.endpoint import AdbServerEndpoint
 from adb.server.signal import (
+    AdbServerRecoveryCycleId,
     AdbServerNativeCloseCompleted,
     AdbServerNativeCloseUnproven,
     AdbServerOwnershipLost,

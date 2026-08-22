@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TypeAlias
 
-from adb.server.model import AdbServerEndpoint
+from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
 from adb.transport.inventory.model import AdbDevicesSnapshot
 from adb.transport.lifecycle.command import (
