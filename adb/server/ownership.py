@@ -355,13 +355,20 @@ def acquire_process_adb_server(
 
 
 def invalidate_process_adb_server(owner: AdbOwnedServer) -> bool:
-    """Retire and dispose the current process-owned server after ownership loss."""
+    """Retire and dispose one owned generation after ownership loss.
+
+    Disposal is retried when the exact generation was already retired but its native close
+    has not yet been proven.
+    """
 
     return _PROCESS_ADB_SERVER_OWNER.invalidate(owner)
 
 
 def close_process_adb_server(owner: AdbOwnedServer) -> None:
-    """Retire and close the current process-owned server through its private native handle."""
+    """Retire and close one exact owned generation through its private native handle.
+
+    If the generation was already retired but remains tracked, this retries native close proof.
+    """
 
     _PROCESS_ADB_SERVER_OWNER.close(owner)
 

@@ -17,8 +17,9 @@ class AdbServerCloseError(AdbServerNativeError):
 class AdbServerNativeHandle(Protocol):
     """Exact native lifetime handle returned by one successful launch.
 
-    The handle is the authority for both ownership identity and teardown. Implementations
-    must never represent a pre-existing ADB listener that was merely discovered by endpoint.
+    The handle is the private authority for the exact native lifetime and its teardown. Public
+    ownership identity is assigned separately by the process owner. Implementations must never
+    represent a pre-existing ADB listener that was merely discovered by endpoint.
     """
 
     @property

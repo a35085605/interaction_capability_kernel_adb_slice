@@ -298,7 +298,11 @@ class AdbServerSupervisor:
                 self._scheduler.cancel(old_token)
 
     def set_recovery_enabled(self, enabled: bool) -> None:
-        """Enable or disable future recreation after ownership has been invalidated."""
+        """Enable or disable automatic ownership recovery.
+
+        Enabling recovery while managed ownership is already absent may start a recovery attempt
+        immediately.
+        """
 
         normalized = _require_bool(enabled, field_name="enabled")
         launch_cycle: AdbServerRecoveryCycleId | None = None
@@ -338,7 +342,11 @@ class AdbServerSupervisor:
         self._invalidate_owner_and_maybe_recover(failure)
 
     def close(self) -> None:
-        """Stop supervising without terminating native ADB or resetting a healthy owner."""
+        """Stop supervising without retiring or terminating the healthy current owner.
+
+        Already-started teardown for retired generations is allowed to finish before supervision
+        authority is released.
+        """
 
         with self._mutation_lock:
             with self._lock:

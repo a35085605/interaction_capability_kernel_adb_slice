@@ -34,7 +34,7 @@ class _AdbServerFailure:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerConnectionFailure(_AdbServerFailure):
-    """The current ADB server lifetime lost a required transport connection."""
+    """Communication with the current ADB server lifetime could not be established or was lost."""
 
 
 @dataclass(frozen=True, slots=True)
