@@ -79,18 +79,4 @@ __all__ = [
     "AdbServerStartError",
     "AdbServerStop",
     "AdbServerStopError",
-    "AdbServerMutationReservedError",
-    "SubprocessAdbServerController",
 ]
-
-
-def __getattr__(name: str):
-    if name == "AdbServerMutationReservedError":
-        from adb.server.coordination import AdbServerMutationReservedError
-
-        return AdbServerMutationReservedError
-    if name == "SubprocessAdbServerController":
-        from adb.server.subprocess import SubprocessAdbServerController
-
-        return SubprocessAdbServerController
-    raise AttributeError(name)

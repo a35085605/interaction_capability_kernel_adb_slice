@@ -205,39 +205,6 @@ class _ProcessAdbServerCoordinator:
         with self._mutation_scope(lease):
             self._lifetimes.close(server)
 
-    # Compatibility projections for callers of the former private control primitive.
-    def acquire(
-        self,
-        endpoint: AdbServerEndpoint | None = None,
-        *,
-        lease: _AdbServerMutationLease | None = None,
-    ) -> AdbServer:
-        return self.acquire_server(endpoint, lease=lease)
-
-    def retire(
-        self,
-        server: AdbServer,
-        *,
-        lease: _AdbServerMutationLease | None = None,
-    ) -> bool:
-        return self.retire_server(server, lease=lease)
-
-    def invalidate(
-        self,
-        server: AdbServer,
-        *,
-        lease: _AdbServerMutationLease | None = None,
-    ) -> bool:
-        return self.invalidate_server(server, lease=lease)
-
-    def close(
-        self,
-        server: AdbServer,
-        *,
-        lease: _AdbServerMutationLease | None = None,
-    ) -> None:
-        self.close_server(server, lease=lease)
-
     @property
     def active_server(self) -> AdbServer | None:
         return self._lifetimes.active_server
@@ -296,11 +263,6 @@ class _ProcessAdbServerCoordinator:
 
 _PROCESS_ADB_SERVER_LIFETIMES = _AdbServerLifetimeStore()
 _PROCESS_ADB_SERVER_COORDINATOR = _ProcessAdbServerCoordinator(_PROCESS_ADB_SERVER_LIFETIMES)
-
-# Private compatibility aliases. Coordination, not control, owns these implementations.
-_AdbServerControl = _AdbServerCoordination
-_ProcessAdbServerControl = _ProcessAdbServerCoordinator
-_PROCESS_ADB_SERVER_CONTROL = _PROCESS_ADB_SERVER_COORDINATOR
 
 
 __all__ = ["AdbServerMutationReservedError"]

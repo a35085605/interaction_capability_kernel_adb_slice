@@ -353,11 +353,6 @@ class _AdbServerLifetimeStore:
         )
 
 
-# Compatibility names for private callers while process ownership is represented as
-# ADB-domain provenance plus controller-owned native lifetime state.
-_OwnedAdbServerLifetimeStore = _AdbServerLifetimeStore
-_ProcessAdbServerOwner = _AdbServerLifetimeStore
-
 
 def acquire_process_adb_server(endpoint: AdbServerEndpoint | None = None) -> AdbServer:
     """Acquire or create the process-coordinated ADB-owned server lifetime."""
