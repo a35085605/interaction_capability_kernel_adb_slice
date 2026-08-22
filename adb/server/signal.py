@@ -134,7 +134,7 @@ class AdbServerNativeCloseUnproven(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerOwnershipRecovered(_ServerSignalProjection):
-    """Signal carrying the fresh usable process-owned ADB server."""
+    """Signal carrying the fresh usable ADB-owned server."""
 
     server: AdbServer
 
@@ -144,7 +144,7 @@ class AdbServerOwnershipRecovered(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryRetryDue:
-    """Signal delivered when one owned-server recovery retry becomes due."""
+    """Signal delivered when one ADB-owned server recovery retry becomes due."""
 
     endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId
@@ -162,7 +162,7 @@ class AdbServerRecoveryRetryDue:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryExhausted:
-    """Signal that fresh owned-server creation exhausted its retry budget."""
+    """Signal that fresh ADB-owned server creation exhausted its retry budget."""
 
     endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId

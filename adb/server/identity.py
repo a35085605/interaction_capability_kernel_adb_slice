@@ -11,9 +11,9 @@ class AdbServer:
     """Coordinator-local reference to one ADB server lifetime epoch.
 
     ``endpoint`` answers where the service was reached for this epoch. ``epoch`` is a local
-    monotonic fencing token used to reject delayed work and stale events. The value does not by
-    itself prove that two endpoint observations refer to the same native process; exact native
-    lifetime authority remains private to the owned-lifetime store and coordinator.
+    monotonic fencing token used to reject delayed work and stale events. The identity makes no
+    claim about native process identity, OS handles, ADB ownership provenance, or termination
+    capability.
     """
 
     endpoint: AdbServerEndpoint

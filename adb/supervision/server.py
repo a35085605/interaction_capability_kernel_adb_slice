@@ -130,7 +130,7 @@ def _require_endpoint_policy(value: object) -> AdbServerEndpointPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerSupervisionPolicy:
-    """Recovery policy for reacquiring the process-coordinated owned ADB server."""
+    """Recovery policy for reacquiring the process-coordinated ADB-owned server."""
 
     retry_initial_seconds: float = 0.5
     retry_max_seconds: float = 30.0
@@ -175,7 +175,7 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 
 
 class AdbServerSupervisor:
-    """Maintain durable intent for active process-owned ADB server ownership.
+    """Maintain durable intent for active process-coordinated ADB ownership.
 
     The supervised resource itself does not cross a failure boundary. Terminal liveness
     evidence first retires the current :class:`AdbServer` and publishes
@@ -184,8 +184,8 @@ class AdbServerSupervisor:
     decides whether recovery reuses an endpoint and therefore waits for proven close, or lets the
     next server resolve an independent endpoint while retired teardown continues.
 
-    Existing listeners never satisfy recovery because the owned lifetime store only accepts a
-    native handle returned by its launcher. Retry cycle IDs fence scheduled retry work only;
+    Existing listeners never satisfy recovery because the lifecycle backend creates a fresh server
+    before the ADB ownership store records it as owned. Retry cycle IDs fence scheduled retry work only;
     each :class:`AdbServer` carries a separate server identity.
     """
 

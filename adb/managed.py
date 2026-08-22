@@ -15,10 +15,10 @@ class RegisteredTransport(Protocol):
 
 
 class AdbManagedRuntime:
-    """Managed lifecycle rooted in one process-owned ADB server lifetime.
+    """Managed lifecycle rooted in one process-coordinated ADB-owned server lifetime.
 
     Managed composition deliberately does not accept a bare ``AdbServerEndpoint``. The
-    :class:`AdbServer` must originate from the process-coordinated owned lifetime store.
+    :class:`AdbServer` must originate from the process-coordinated ADB ownership store.
     Resource-bound children are expected to be destroyed when that server is retired
     and recreated only after a fresh server is acquired.
     """

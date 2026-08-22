@@ -7,7 +7,7 @@ from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServer, _AdbServerSequence
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.ownership import _OwnedAdbServerLifetimeStore
+from adb.server.ownership import _AdbServerLifetimeStore
 
 
 _MUTATION_LEASE_CONSTRUCTION_TOKEN = object()
@@ -70,20 +70,21 @@ class _AdbServerCoordination(Protocol):
 class _ProcessAdbServerCoordinator:
     """Fence process-wide mutations independently from public server identity.
 
-    The owned lifetime store retains exact native handles. This coordinator defines the singleton
-    mutation domain, owns server epoch generation, and grants optional exclusive authority. A lease
+    The ADB lifetime store retains identities and creation provenance while its lifecycle backend
+    owns any exact process handles. This coordinator defines the singleton mutation domain, owns
+    server epoch generation, and grants optional exclusive authority. A lease
     survives temporary absence of an active server so recovery cannot be raced by unrelated process
     callers.
     """
 
     def __init__(
         self,
-        lifetimes: _OwnedAdbServerLifetimeStore,
+        lifetimes: _AdbServerLifetimeStore,
         *,
         server_sequence: _AdbServerSequence | None = None,
     ) -> None:
-        if not isinstance(lifetimes, _OwnedAdbServerLifetimeStore):
-            raise TypeError("lifetimes must be _OwnedAdbServerLifetimeStore")
+        if not isinstance(lifetimes, _AdbServerLifetimeStore):
+            raise TypeError("lifetimes must be _AdbServerLifetimeStore")
         if server_sequence is None:
             server_sequence = _AdbServerSequence()
         elif not isinstance(server_sequence, _AdbServerSequence):
@@ -293,7 +294,7 @@ class _ProcessAdbServerCoordinator:
             raise TypeError("server must be AdbServer")
 
 
-_PROCESS_ADB_SERVER_LIFETIMES = _OwnedAdbServerLifetimeStore()
+_PROCESS_ADB_SERVER_LIFETIMES = _AdbServerLifetimeStore()
 _PROCESS_ADB_SERVER_COORDINATOR = _ProcessAdbServerCoordinator(_PROCESS_ADB_SERVER_LIFETIMES)
 
 # Private compatibility aliases. Coordination, not control, owns these implementations.

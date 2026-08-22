@@ -11,7 +11,7 @@ from typing import Protocol
 from adb._internal.client import AdbServiceClient
 from adb._internal.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
-from adb.server.lifecycle.handle import AdbServerCloseError, AdbServerNativeHandle
+from adb.server.lifecycle.handle import AdbServerCloseError, AdbServerProcessLifetime
 from adb.server.lifecycle.launch import AdbServerLaunchError
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.status.reader import SmartSocketAdbServerStatusReader
@@ -36,7 +36,7 @@ def _normalize_probe_interval(value: object) -> float:
 
 
 class _SubprocessAdbServerHandle:
-    """Exact foreground ADB server child process owned by this Python process."""
+    """Exact foreground ADB server child-process lifetime retained by this backend."""
 
     def __init__(
         self,
@@ -74,7 +74,7 @@ class _SubprocessAdbServerHandle:
             except OSError as exc:
                 if self._process.poll() is None:
                     raise AdbServerCloseError(
-                        f"failed to terminate owned ADB server at {self.endpoint.host}:"
+                        f"failed to terminate ADB server child process at {self.endpoint.host}:"
                         f"{self.endpoint.port}: {exc}"
                     ) from exc
 
@@ -86,23 +86,23 @@ class _SubprocessAdbServerHandle:
                 except OSError as exc:
                     if self._process.poll() is None:
                         raise AdbServerCloseError(
-                            f"failed to kill owned ADB server at {self.endpoint.host}:"
+                            f"failed to kill ADB server child process at {self.endpoint.host}:"
                             f"{self.endpoint.port}: {exc}"
                         ) from exc
                 try:
                     self._process.wait(timeout=self._shutdown_timeout_seconds)
                 except subprocess.TimeoutExpired as exc:
                     raise AdbServerCloseError(
-                        "owned ADB server did not terminate after kill"
+                        "ADB server child process did not terminate after kill"
                     ) from exc
 
             if self._process.poll() is None:
-                raise AdbServerCloseError("owned ADB server termination was not confirmed")
+                raise AdbServerCloseError("ADB server child-process termination was not confirmed")
             self._closed = True
 
 
 class SubprocessAdbServerLauncher:
-    """Launch one foreground ADB server from an OS-owned listening socket.
+    """Launch one foreground ADB server using a backend-owned listening socket.
 
     Endpoint selection is per launch. ``endpoint=None`` asks the OS for a fresh ephemeral
     loopback endpoint; an explicit endpoint constrains only that launch. Cross-generation
@@ -149,13 +149,13 @@ class SubprocessAdbServerLauncher:
         self._status_reader = _status_reader
         self._lock = Lock()
 
-    def launch(self, endpoint: AdbServerEndpoint | None = None) -> AdbServerNativeHandle:
+    def launch(self, endpoint: AdbServerEndpoint | None = None) -> AdbServerProcessLifetime:
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint or None")
         if not self._socket_activation_supported:
             raise AdbServerLaunchError(
                 "ADB acceptfd socket activation is unavailable on this platform; "
-                "a platform-specific owned-server launcher is required"
+                "a platform-specific process-lifecycle backend is required"
             )
 
         with self._lock:
@@ -185,7 +185,7 @@ class SubprocessAdbServerLauncher:
                 )
             except OSError as exc:
                 raise AdbServerLaunchError(
-                    f"failed to launch owned ADB server process: {exc}"
+                    f"failed to launch ADB server child process: {exc}"
                 ) from exc
             finally:
                 reservation.close()
@@ -245,7 +245,7 @@ class SubprocessAdbServerLauncher:
                     pass
 
         detail = "; ".join(failures) or "no bind candidate succeeded"
-        raise AdbServerLaunchError(f"failed to reserve owned ADB server listener: {detail}")
+        raise AdbServerLaunchError(f"failed to reserve ADB server listener: {detail}")
 
     def _wait_until_ready(
         self,
@@ -258,7 +258,7 @@ class SubprocessAdbServerLauncher:
             return_code = process.poll()
             if return_code is not None:
                 raise AdbServerLaunchError(
-                    f"owned ADB server exited during startup with code {return_code}"
+                    f"ADB server child process exited during startup with code {return_code}"
                 )
 
             try:
@@ -268,7 +268,7 @@ class SubprocessAdbServerLauncher:
             else:
                 if process.poll() is not None:
                     raise AdbServerLaunchError(
-                        "owned ADB server exited while startup readiness was being verified"
+                        "ADB server child process exited while startup readiness was being verified"
                     )
                 return
 
@@ -276,7 +276,7 @@ class SubprocessAdbServerLauncher:
             if remaining <= 0.0:
                 suffix = f": {last_error}" if last_error is not None else ""
                 raise AdbServerLaunchError(
-                    f"timed out waiting for owned ADB server readiness{suffix}"
+                    f"timed out waiting for created ADB server readiness{suffix}"
                 )
             self._sleep(min(self.probe_interval_seconds, remaining))
 

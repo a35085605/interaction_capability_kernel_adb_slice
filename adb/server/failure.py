@@ -54,17 +54,17 @@ class AdbServerServiceFailure(_AdbServerFailure):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerProcessExitedFailure(_AdbServerFailure):
-    """The exact process-owned native ADB server lifetime exited."""
+    """The backend-observed exact ADB server process lifetime exited."""
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerLaunchFailure(_AdbServerFailure):
-    """Creation of one fresh process-owned ADB server lifetime failed."""
+    """Creation of one fresh ADB-owned server failed."""
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerCloseUnprovenFailure(_AdbServerFailure):
-    """Termination of one exact owned ADB server lifetime could not be proven."""
+    """Exact backend termination of one created ADB server could not be proven."""
 
 
 AdbServerRequestFailure: TypeAlias = (

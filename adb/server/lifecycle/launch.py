@@ -2,24 +2,25 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from adb.server.lifecycle.handle import AdbServerNativeError, AdbServerNativeHandle
+from adb.server.lifecycle.handle import AdbServerNativeError, AdbServerProcessLifetime
 from adb.server.endpoint import AdbServerEndpoint
 
 
 class AdbServerLaunchError(AdbServerNativeError):
-    """A fresh owned native ADB server could not be launched."""
+    """Creation of one fresh native ADB server process failed."""
 
 
 @runtime_checkable
 class AdbServerLauncher(Protocol):
-    """Atomically create one fresh native ADB server and return its ownership handle.
+    """Process-backend primitive that launches one fresh ADB server process.
 
-    A successful return transfers exact close authority to the returned handle. A launch
-    failure must not be represented as an owned server and must not adopt an existing listener.
+    A successful launch returns a backend process-lifetime capability.  That capability does
+    not define ADB ownership; creation provenance and lifecycle responsibility are modeled
+    separately by ``adb.server.ownership``.
     """
 
-    def launch(self, endpoint: AdbServerEndpoint | None = None) -> AdbServerNativeHandle:
-        """Launch one fresh lifetime, optionally binding this launch to ``endpoint``."""
+    def launch(self, endpoint: AdbServerEndpoint | None = None) -> AdbServerProcessLifetime:
+        """Launch one fresh process lifetime, optionally binding this launch to ``endpoint``."""
         ...
 
 

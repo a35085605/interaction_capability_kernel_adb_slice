@@ -18,6 +18,10 @@ class AdbServerController(Protocol):
     A controller deliberately carries no ownership or generation guarantee. ``start`` may
     create a server or simply observe an already-running service, while ``close`` may request
     service termination without proving that one exact native lifetime was terminated.
+
+    Ownership is policy, not capability: an adopted or unknown server can still be technically
+    terminable through this controller. Higher layers decide whether exercising that capability is
+    authorized for the server's ADB-level creation provenance.
     """
 
     @property
@@ -34,7 +38,7 @@ class AdbServerController(Protocol):
 class SubprocessAdbServerController:
     """Control one ADB server endpoint through ordinary ``adb`` server commands.
 
-    This is intentionally weaker than an owned native handle: it uses ``start-server`` and
+    This is intentionally weaker than an exact process-lifetime backend: it uses ``start-server`` and
     ``kill-server`` and therefore does not claim exact-lifetime teardown authority.
     """
 

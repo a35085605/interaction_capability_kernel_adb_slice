@@ -6,20 +6,21 @@ from adb.server.endpoint import AdbServerEndpoint
 
 
 class AdbServerNativeError(RuntimeError):
-    """Base error for exact native ADB server lifecycle failures."""
+    """Base error for backend-specific ADB server process lifecycle failures."""
 
 
 class AdbServerCloseError(AdbServerNativeError):
-    """An owned native ADB server process could not be proven terminated."""
+    """A backend could not prove termination of one exact process lifetime."""
 
 
 @runtime_checkable
-class AdbServerNativeHandle(Protocol):
-    """Exact native lifetime handle returned by one successful launch.
+class AdbServerProcessLifetime(Protocol):
+    """Backend-only capability for one exact native ADB server process lifetime.
 
-    The handle is the private authority for the exact native lifetime and its teardown. Public
-    server identity is assigned separately while exact ownership remains private to the lifetime
-    store. Implementations must never represent a pre-existing ADB listener that was merely discovered by endpoint.
+    This is intentionally a process-backend concept, not ADB-level ownership.  ADB domain
+    code should retain only server identity and creation provenance; concrete launch backends
+    may keep this capability privately to provide stronger teardown guarantees than
+    ``adb kill-server`` can provide.
     """
 
     @property
@@ -33,8 +34,14 @@ class AdbServerNativeHandle(Protocol):
         ...
 
 
+# Compatibility alias for callers of the former ADB-facing name.  The capability is now
+# explicitly documented as a process-backend implementation detail.
+AdbServerNativeHandle = AdbServerProcessLifetime
+
+
 __all__ = [
     "AdbServerCloseError",
     "AdbServerNativeError",
     "AdbServerNativeHandle",
+    "AdbServerProcessLifetime",
 ]

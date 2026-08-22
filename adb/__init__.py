@@ -20,12 +20,16 @@ from adb.errors import (
 )
 from adb.managed import AdbManagedRuntime, RegisteredTransport
 from adb.server import (
+    ANY_ADB_SERVER_TERMINATION_POLICY,
     AdbServerController,
     AdbServer,
     AdbServerMutationReservedError,
+    AdbServerOwnership,
     AdbServerOwnershipLostError,
     AdbServerStaleOwnerError,
+    AdbServerTerminationPolicy,
     AdbServerStatusReader,
+    OWNED_ONLY_ADB_SERVER_TERMINATION_POLICY,
     SubprocessAdbServerController,
     acquire_process_adb_server,
     close_process_adb_server,
@@ -48,6 +52,7 @@ from adb.transport import (
 )
 
 __all__ = [
+    "ANY_ADB_SERVER_TERMINATION_POLICY",
     "AdbConnectionState",
     "AdbConnectionType",
     "AdbDeviceSerial",
@@ -60,9 +65,11 @@ __all__ = [
     "AdbServerConnectionError",
     "AdbServerController",
     "AdbServerMutationReservedError",
+    "AdbServerOwnership",
     "AdbServer",
     "AdbServerOwnershipLostError",
     "AdbServerStaleOwnerError",
+    "AdbServerTerminationPolicy",
     "AdbServerStatusReader",
     "AdbServiceError",
     "AdbTimeoutError",
@@ -78,6 +85,7 @@ __all__ = [
     "AdbTransportSelectionError",
     "AdbTransportSelector",
     "AdbTransportUnavailableError",
+    "OWNED_ONLY_ADB_SERVER_TERMINATION_POLICY",
     "RegisteredTransport",
     "SubprocessAdbServerController",
     "acquire_process_adb_server",
