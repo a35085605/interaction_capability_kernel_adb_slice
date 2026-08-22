@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from adb.server.control import AdbServerStopError
+from adb.server.lifecycle.control.port import AdbServerStopError
 from adb.server.endpoint import AdbServerEndpoint
 
 

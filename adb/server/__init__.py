@@ -1,6 +1,6 @@
 """ADB server identity, control, lifecycle relationships, coordination, and status contracts."""
 
-from adb.server.control import (
+from adb.server.lifecycle.control.port import (
     AdbServerControlError,
     AdbServerController,
     AdbServerStart,
@@ -36,7 +36,7 @@ from adb.server.ownership import (
     invalidate_process_adb_server,
 )
 from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
-from adb.server.subprocess import SubprocessAdbServerController
+from adb.server.lifecycle.control.subprocess import SubprocessAdbServerController
 
 __all__ = [
     "ANY_ADB_SERVER_TERMINATION_POLICY",

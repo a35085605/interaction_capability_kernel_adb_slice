@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Lock
 
-from adb.server.control import (
+from adb.server.lifecycle.control.port import (
     AdbServerStart,
     AdbServerStartError,
     AdbServerStop,

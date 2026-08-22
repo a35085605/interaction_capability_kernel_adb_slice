@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable
 from enum import Enum
 from threading import Condition
 
-from adb.server.control import AdbServerController, AdbServerStart, AdbServerStop
+from adb.server.lifecycle.control.port import AdbServerController, AdbServerStart, AdbServerStop
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
 from adb.server.lifecycle.backend import AdbServerLifecycleBackend
@@ -17,7 +17,7 @@ class AdbServerOwnership(str, Enum):
     This value deliberately says nothing about OS/process handles or termination capability.
     ``OWNED`` means this coordination domain created the server and accepts lifecycle
     responsibility for it. ``ADOPTED`` and ``UNKNOWN`` remain valid relationships independent
-    of whether a concrete :class:`~adb.server.control.AdbServerController` can stop that identity.
+    of whether a concrete :class:`~adb.server.lifecycle.control.port.AdbServerController` can stop that identity.
     """
 
     OWNED = "owned"
@@ -29,7 +29,7 @@ class AdbServerTerminationPolicy:
     """Policy deciding which ADB ownership relationships may request termination.
 
     Capability and authorization are intentionally separate: this policy does not execute a
-    termination mechanism and an :class:`~adb.server.control.AdbServerController` does not consult
+    termination mechanism and an :class:`~adb.server.lifecycle.control.port.AdbServerController` does not consult
     it implicitly.
     """
 
@@ -292,7 +292,7 @@ class _AdbServerLifetimeStore:
             if backend is not None:
                 controller = _LifecycleBackendAdbServerController(backend, server_factory)
             else:
-                from adb.server.subprocess import SubprocessAdbServerController
+                from adb.server.lifecycle.control.subprocess import SubprocessAdbServerController
 
                 controller = SubprocessAdbServerController(
                     _server_factory=server_factory,

@@ -9,7 +9,7 @@ from random import random
 from threading import Lock, Thread, current_thread
 from typing import TypeAlias
 
-from adb.server.control import AdbServerStartError, AdbServerStopError
+from adb.server.lifecycle.control.port import AdbServerStartError, AdbServerStopError
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
