@@ -5,9 +5,9 @@ from contextlib import contextmanager
 from threading import Condition
 from typing import Protocol, runtime_checkable
 
-from adb.server.identity import AdbServerIncarnation, _AdbServerIncarnationSequence
+from adb.server.identity import AdbServer, _AdbServerSequence
 from adb.server.model import AdbServerEndpoint
-from adb.server.ownership import AdbOwnedServer, _OwnedAdbServerLifetimeStore
+from adb.server.ownership import _OwnedAdbServerLifetimeStore
 
 
 _MUTATION_LEASE_CONSTRUCTION_TOKEN = object()
@@ -37,59 +37,59 @@ class _AdbServerCoordination(Protocol):
 
     def claim_mutation_authority(
         self,
-        expected_current: AdbServerIncarnation | None = None,
+        expected_current: AdbServer | None = None,
     ) -> _AdbServerMutationLease: ...
 
     def release_mutation_authority(self, lease: _AdbServerMutationLease) -> None: ...
 
-    def acquire_owned(
+    def acquire_server(
         self,
         endpoint: AdbServerEndpoint | None = None,
         *,
         lease: _AdbServerMutationLease | None = None,
-    ) -> AdbOwnedServer: ...
+    ) -> AdbServer: ...
 
-    def retire_owned(
+    def retire_server(
         self,
-        owner: AdbOwnedServer,
+        server: AdbServer,
         *,
         lease: _AdbServerMutationLease | None = None,
     ) -> bool: ...
 
     def dispose_retired(
         self,
-        owner: AdbOwnedServer,
+        server: AdbServer,
         *,
         lease: _AdbServerMutationLease | None = None,
     ) -> None: ...
 
     @property
-    def active_owned_server(self) -> AdbOwnedServer | None: ...
+    def active_server(self) -> AdbServer | None: ...
 
 
 class _ProcessAdbServerCoordinator:
-    """Fence process-wide mutations independently from ownership identity.
+    """Fence process-wide mutations independently from public server identity.
 
     The owned lifetime store retains exact native handles. This coordinator defines the singleton
-    mutation domain, owns incarnation epoch generation, and grants optional exclusive authority.
-    A lease survives temporary absence of an active server so recovery cannot be raced by unrelated
-    process callers.
+    mutation domain, owns server epoch generation, and grants optional exclusive authority. A lease
+    survives temporary absence of an active server so recovery cannot be raced by unrelated process
+    callers.
     """
 
     def __init__(
         self,
         lifetimes: _OwnedAdbServerLifetimeStore,
         *,
-        incarnation_sequence: _AdbServerIncarnationSequence | None = None,
+        server_sequence: _AdbServerSequence | None = None,
     ) -> None:
         if not isinstance(lifetimes, _OwnedAdbServerLifetimeStore):
             raise TypeError("lifetimes must be _OwnedAdbServerLifetimeStore")
-        if incarnation_sequence is None:
-            incarnation_sequence = _AdbServerIncarnationSequence()
-        elif not isinstance(incarnation_sequence, _AdbServerIncarnationSequence):
-            raise TypeError("incarnation_sequence must be _AdbServerIncarnationSequence")
+        if server_sequence is None:
+            server_sequence = _AdbServerSequence()
+        elif not isinstance(server_sequence, _AdbServerSequence):
+            raise TypeError("server_sequence must be _AdbServerSequence")
         self._lifetimes = lifetimes
-        self._incarnations = incarnation_sequence
+        self._servers = server_sequence
         self._condition = Condition()
         self._mutation_lease: _AdbServerMutationLease | None = None
         self._claim_pending = False
@@ -99,20 +99,17 @@ class _ProcessAdbServerCoordinator:
 
     def claim_mutation_authority(
         self,
-        expected_current: AdbServerIncarnation | None = None,
+        expected_current: AdbServer | None = None,
     ) -> _AdbServerMutationLease:
-        """Reserve process mutations after fencing against the expected current incarnation.
+        """Reserve mutations after fencing against the expected current server.
 
         ``expected_current`` gives claim CAS-like semantics: after already-admitted ordinary
-        mutations drain, the claim succeeds only if that incarnation is still current. Once
-        granted, the lease is not tied to that incarnation and may span current -> absent -> fresh
-        incarnation transitions during supervised recovery.
+        mutations drain, the claim succeeds only if that server is still current. Once granted,
+        the lease may span current -> absent -> fresh server transitions during recovery.
         """
 
-        if expected_current is not None and not isinstance(
-            expected_current, AdbServerIncarnation
-        ):
-            raise TypeError("expected_current must be AdbServerIncarnation or None")
+        if expected_current is not None and not isinstance(expected_current, AdbServer):
+            raise TypeError("expected_current must be AdbServer or None")
         with self._condition:
             if self._mutation_lease is not None or self._claim_pending:
                 raise RuntimeError("ADB server mutation authority is already claimed")
@@ -122,10 +119,8 @@ class _ProcessAdbServerCoordinator:
                     self._condition.wait()
                 if expected_current is not None:
                     active = self._lifetimes.active_server
-                    if active is None or active.incarnation != expected_current:
-                        raise ValueError(
-                            "expected ADB server incarnation is not the active owned server"
-                        )
+                    if active != expected_current:
+                        raise ValueError("expected ADB server is not the active server")
                 lease = _AdbServerMutationLease._new()
                 self._mutation_lease = lease
                 return lease
@@ -147,12 +142,12 @@ class _ProcessAdbServerCoordinator:
                 self._release_pending = False
                 self._condition.notify_all()
 
-    def acquire_owned(
+    def acquire_server(
         self,
         endpoint: AdbServerEndpoint | None = None,
         *,
         lease: _AdbServerMutationLease | None = None,
-    ) -> AdbOwnedServer:
+    ) -> AdbServer:
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint or None")
 
@@ -166,44 +161,48 @@ class _ProcessAdbServerCoordinator:
         with self._mutation_scope(lease):
             return self._lifetimes.acquire(
                 endpoint,
-                incarnation_factory=self._incarnations.next,
+                server_factory=self._servers.next,
             )
 
-    def retire_owned(
+    def retire_server(
         self,
-        owner: AdbOwnedServer,
+        server: AdbServer,
         *,
         lease: _AdbServerMutationLease | None = None,
     ) -> bool:
+        self._require_server_type(server)
         with self._mutation_scope(lease):
-            return self._lifetimes.retire(owner)
+            return self._lifetimes.retire(server)
 
     def dispose_retired(
         self,
-        owner: AdbOwnedServer,
+        server: AdbServer,
         *,
         lease: _AdbServerMutationLease | None = None,
     ) -> None:
+        self._require_server_type(server)
         with self._mutation_scope(lease):
-            self._lifetimes.dispose_retired(owner)
+            self._lifetimes.dispose_retired(server)
 
-    def invalidate_owned(
+    def invalidate_server(
         self,
-        owner: AdbOwnedServer,
+        server: AdbServer,
         *,
         lease: _AdbServerMutationLease | None = None,
     ) -> bool:
+        self._require_server_type(server)
         with self._mutation_scope(lease):
-            return self._lifetimes.invalidate(owner)
+            return self._lifetimes.invalidate(server)
 
-    def close_owned(
+    def close_server(
         self,
-        owner: AdbOwnedServer,
+        server: AdbServer,
         *,
         lease: _AdbServerMutationLease | None = None,
     ) -> None:
+        self._require_server_type(server)
         with self._mutation_scope(lease):
-            self._lifetimes.close(owner)
+            self._lifetimes.close(server)
 
     # Compatibility projections for callers of the former private control primitive.
     def acquire(
@@ -211,40 +210,36 @@ class _ProcessAdbServerCoordinator:
         endpoint: AdbServerEndpoint | None = None,
         *,
         lease: _AdbServerMutationLease | None = None,
-    ) -> AdbOwnedServer:
-        return self.acquire_owned(endpoint, lease=lease)
+    ) -> AdbServer:
+        return self.acquire_server(endpoint, lease=lease)
 
     def retire(
         self,
-        owner: AdbOwnedServer,
+        server: AdbServer,
         *,
         lease: _AdbServerMutationLease | None = None,
     ) -> bool:
-        return self.retire_owned(owner, lease=lease)
+        return self.retire_server(server, lease=lease)
 
     def invalidate(
         self,
-        owner: AdbOwnedServer,
+        server: AdbServer,
         *,
         lease: _AdbServerMutationLease | None = None,
     ) -> bool:
-        return self.invalidate_owned(owner, lease=lease)
+        return self.invalidate_server(server, lease=lease)
 
     def close(
         self,
-        owner: AdbOwnedServer,
+        server: AdbServer,
         *,
         lease: _AdbServerMutationLease | None = None,
     ) -> None:
-        self.close_owned(owner, lease=lease)
+        self.close_server(server, lease=lease)
 
     @property
-    def active_owned_server(self) -> AdbOwnedServer | None:
+    def active_server(self) -> AdbServer | None:
         return self._lifetimes.active_server
-
-    @property
-    def active_owner(self) -> AdbOwnedServer | None:
-        return self.active_owned_server
 
     @contextmanager
     def _mutation_scope(
@@ -291,6 +286,11 @@ class _ProcessAdbServerCoordinator:
     def _require_lease_type(lease: object) -> None:
         if not isinstance(lease, _AdbServerMutationLease):
             raise TypeError("lease must be _AdbServerMutationLease")
+
+    @staticmethod
+    def _require_server_type(server: object) -> None:
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
 
 
 _PROCESS_ADB_SERVER_LIFETIMES = _OwnedAdbServerLifetimeStore()

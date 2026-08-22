@@ -18,8 +18,8 @@ class AdbServerNativeHandle(Protocol):
     """Exact native lifetime handle returned by one successful launch.
 
     The handle is the private authority for the exact native lifetime and its teardown. Public
-    incarnation identity and ownership relationship are assigned separately. Implementations must never
-    represent a pre-existing ADB listener that was merely discovered by endpoint.
+    server identity is assigned separately while exact ownership remains private to the lifetime
+    store. Implementations must never represent a pre-existing ADB listener that was merely discovered by endpoint.
     """
 
     @property

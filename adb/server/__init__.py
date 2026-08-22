@@ -16,10 +16,9 @@ from adb.server.failure import (
     AdbServerServiceFailure,
     AdbServerTimeoutFailure,
 )
-from adb.server.identity import AdbServerIncarnation
+from adb.server.identity import AdbServer
 from adb.server.model import AdbServerEndpoint
 from adb.server.ownership import (
-    AdbOwnedServer,
     AdbServerOwnershipLostError,
     AdbServerStaleOwnerError,
     acquire_process_adb_server,
@@ -30,13 +29,12 @@ from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusRe
 
 __all__ = [
     "AdbMdnsBackend",
-    "AdbOwnedServer",
     "AdbServerCloseUnprovenFailure",
     "AdbServerConnectionFailure",
     "AdbServerController",
     "AdbServerEndpoint",
     "AdbServerFailure",
-    "AdbServerIncarnation",
+    "AdbServer",
     "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",

@@ -10,9 +10,8 @@ from adb.server.failure import (
     AdbServerLivenessFailure,
     AdbServerProcessExitedFailure,
 )
-from adb.server.identity import AdbServerIncarnation
+from adb.server.identity import AdbServer
 from adb.server.model import AdbServerEndpoint, AdbServerRecoveryCycleId
-from adb.server.ownership import AdbOwnedServer
 
 
 _LIVENESS_FAILURE_TYPES = (
@@ -21,9 +20,9 @@ _LIVENESS_FAILURE_TYPES = (
 )
 
 
-def _require_incarnation(value: object) -> AdbServerIncarnation:
-    if not isinstance(value, AdbServerIncarnation):
-        raise TypeError("incarnation must be AdbServerIncarnation")
+def _require_server(value: object) -> AdbServer:
+    if not isinstance(value, AdbServer):
+        raise TypeError("server must be AdbServer")
     return value
 
 
@@ -33,29 +32,27 @@ def _require_endpoint(value: object) -> AdbServerEndpoint:
     return value
 
 
-class _IncarnationSignalProjection:
-    incarnation: AdbServerIncarnation
+class _ServerSignalProjection:
+    server: AdbServer
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
-        """Compatibility projection of :attr:`incarnation`."""
-
-        return self.incarnation.endpoint
+        return self.server.endpoint
 
     @property
     def epoch(self) -> int:
-        return self.incarnation.epoch
+        return self.server.epoch
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerReconciliationRequested(_IncarnationSignalProjection):
-    """Signal that terminal liveness evidence requires incarnation-fenced reconciliation."""
+class AdbServerReconciliationRequested(_ServerSignalProjection):
+    """Signal that terminal liveness evidence requires server-fenced reconciliation."""
 
-    incarnation: AdbServerIncarnation
+    server: AdbServer
     failure: AdbServerLivenessFailure
 
     def __post_init__(self) -> None:
-        _require_incarnation(self.incarnation)
+        _require_server(self.server)
         if not isinstance(self.failure, _LIVENESS_FAILURE_TYPES):
             raise TypeError(
                 "failure must be AdbServerConnectionFailure or "
@@ -64,24 +61,24 @@ class AdbServerReconciliationRequested(_IncarnationSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerOwnershipRetired(_IncarnationSignalProjection):
-    """Public fact that one owned incarnation is irreversibly no longer usable."""
+class AdbServerOwnershipRetired(_ServerSignalProjection):
+    """Public fact that one server lifetime is irreversibly no longer usable."""
 
-    incarnation: AdbServerIncarnation
+    server: AdbServer
 
     def __post_init__(self) -> None:
-        _require_incarnation(self.incarnation)
+        _require_server(self.server)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerOwnershipLost(_IncarnationSignalProjection):
-    """Failure evidence explaining why one already-retired owned incarnation was lost."""
+class AdbServerOwnershipLost(_ServerSignalProjection):
+    """Failure evidence explaining why one already-retired server lifetime was lost."""
 
-    incarnation: AdbServerIncarnation
+    server: AdbServer
     failure: AdbServerLivenessFailure
 
     def __post_init__(self) -> None:
-        _require_incarnation(self.incarnation)
+        _require_server(self.server)
         if not isinstance(self.failure, _LIVENESS_FAILURE_TYPES):
             raise TypeError(
                 "failure must be AdbServerConnectionFailure or "
@@ -90,49 +87,36 @@ class AdbServerOwnershipLost(_IncarnationSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerNativeCloseCompleted(_IncarnationSignalProjection):
-    """Private-lifecycle fact that termination of a retired incarnation was proven."""
+class AdbServerNativeCloseCompleted(_ServerSignalProjection):
+    """Private-lifecycle fact that termination of a retired server was proven."""
 
-    incarnation: AdbServerIncarnation
+    server: AdbServer
 
     def __post_init__(self) -> None:
-        _require_incarnation(self.incarnation)
+        _require_server(self.server)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerNativeCloseUnproven(_IncarnationSignalProjection):
-    """Private-lifecycle fact that termination of a retired incarnation remains unproven."""
+class AdbServerNativeCloseUnproven(_ServerSignalProjection):
+    """Private-lifecycle fact that termination of a retired server remains unproven."""
 
-    incarnation: AdbServerIncarnation
+    server: AdbServer
     failure: AdbServerCloseUnprovenFailure
 
     def __post_init__(self) -> None:
-        _require_incarnation(self.incarnation)
+        _require_server(self.server)
         if not isinstance(self.failure, AdbServerCloseUnprovenFailure):
             raise TypeError("failure must be AdbServerCloseUnprovenFailure")
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerOwnershipRecovered:
-    """Signal carrying the fresh usable process-owned ADB server incarnation."""
+class AdbServerOwnershipRecovered(_ServerSignalProjection):
+    """Signal carrying the fresh usable process-owned ADB server."""
 
-    server: AdbOwnedServer
+    server: AdbServer
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
-
-    @property
-    def incarnation(self) -> AdbServerIncarnation:
-        return self.server.incarnation
-
-    @property
-    def endpoint(self) -> AdbServerEndpoint:
-        return self.incarnation.endpoint
-
-    @property
-    def epoch(self) -> int:
-        return self.incarnation.epoch
+        _require_server(self.server)
 
 
 @dataclass(frozen=True, slots=True)

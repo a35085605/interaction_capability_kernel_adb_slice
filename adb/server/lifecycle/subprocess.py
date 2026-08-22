@@ -105,7 +105,7 @@ class SubprocessAdbServerLauncher:
     """Launch one foreground ADB server from an OS-owned listening socket.
 
     Endpoint selection is per launch. ``endpoint=None`` asks the OS for a fresh ephemeral
-    loopback endpoint; an explicit endpoint constrains only that launch. Cross-incarnation
+    loopback endpoint; an explicit endpoint constrains only that launch. Cross-generation
     endpoint continuity belongs to supervision policy, not to the launcher.
     """
 

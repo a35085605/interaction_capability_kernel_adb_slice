@@ -5,7 +5,7 @@ from enum import Enum
 from typing import TypeAlias
 
 from adb.server.model import AdbServerEndpoint
-from adb.server.ownership import AdbOwnedServer
+from adb.server.identity import AdbServer
 from adb.transport.inventory.model import AdbDevicesSnapshot
 from adb.transport.lifecycle.command import (
     AdbDeviceSideReconnect,
@@ -19,9 +19,9 @@ from adb.transport.lifecycle.ensure import AdbTransportEnsureResult
 from native_attempt import NativeAttemptResult
 
 
-def _require_server(value: object) -> AdbOwnedServer:
-    if not isinstance(value, AdbOwnedServer):
-        raise TypeError("server must be AdbOwnedServer")
+def _require_server(value: object) -> AdbServer:
+    if not isinstance(value, AdbServer):
+        raise TypeError("server must be AdbServer")
     return value
 
 
@@ -80,9 +80,9 @@ class AdbDevicesTrackingFailure(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStarted:
-    """Signal that the current tracker entered stream mode for one owned server incarnation."""
+    """Signal that the current tracker entered stream mode for one server lifetime."""
 
-    server: AdbOwnedServer
+    server: AdbServer
 
     def __post_init__(self) -> None:
         _require_server(self.server)
@@ -98,9 +98,9 @@ class AdbDevicesTrackingStarted:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStopped:
-    """Signal that one owned-server tracker ended without implying transport disappearance."""
+    """Signal that one server-bound tracker ended without implying transport disappearance."""
 
-    server: AdbOwnedServer
+    server: AdbServer
 
     def __post_init__(self) -> None:
         _require_server(self.server)
@@ -118,7 +118,7 @@ class AdbDevicesTrackingStopped:
 class AdbDevicesTrackingFailed:
     """Signal that the current tracker failed without synthesizing server state."""
 
-    server: AdbOwnedServer
+    server: AdbServer
     failure: AdbDevicesTrackingFailure
     diagnostic: str | None = None
 
@@ -148,7 +148,7 @@ class AdbDevicesTrackingFailed:
 class AdbDevicesSnapshotObserved:
     """Signal carrying one complete snapshot emitted by the current tracker."""
 
-    server: AdbOwnedServer
+    server: AdbServer
     snapshot: AdbDevicesSnapshot
 
     def __post_init__(self) -> None:

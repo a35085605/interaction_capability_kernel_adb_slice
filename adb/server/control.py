@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class AdbServerController(Protocol):
     """Service-level control of an ADB server endpoint.
 
-    A controller deliberately carries no ownership or incarnation guarantee. ``start`` may
+    A controller deliberately carries no ownership or generation guarantee. ``start`` may
     create a server or simply observe an already-running service, while ``close`` may request
     service termination without proving that one exact native lifetime was terminated.
     """

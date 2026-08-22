@@ -9,7 +9,7 @@ from adb.errors import (
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.server.ownership import AdbOwnedServer
+from adb.server.identity import AdbServer
 from adb.transport.inventory.source import AdbTrackDevicesSession, AdbTrackDevicesSource
 from adb.transport.signal import (
     AdbDevicesSnapshotObserved,
@@ -21,11 +21,11 @@ from adb.transport.signal import (
 from eventing import EventPublisher
 
 
-_SourceFactory = Callable[[AdbOwnedServer], AdbTrackDevicesSource]
+_SourceFactory = Callable[[AdbServer], AdbTrackDevicesSource]
 _ThreadFactory = Callable[..., Thread]
 
 
-def _default_source_factory(server: AdbOwnedServer) -> AdbTrackDevicesSource:
+def _default_source_factory(server: AdbServer) -> AdbTrackDevicesSource:
     return AdbTrackDevicesSource(server)
 
 
@@ -57,14 +57,14 @@ class AdbDevicesTracker:
 
     def __init__(
         self,
-        server: AdbOwnedServer,
+        server: AdbServer,
         publisher: EventPublisher,
         *,
         _source_factory: _SourceFactory = _default_source_factory,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
         self.server = server

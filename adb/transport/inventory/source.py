@@ -15,7 +15,7 @@ from adb.errors import (
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.server.ownership import AdbOwnedServer
+from adb.server.identity import AdbServer
 
 
 _SERVICE = "host:track-devices-proto-binary"
@@ -75,11 +75,11 @@ class AdbTrackDevicesSource:
 
     def __init__(
         self,
-        server: AdbOwnedServer,
+        server: AdbServer,
         startup_timeout_seconds: float = 5.0,
     ) -> None:
-        if not isinstance(server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
         self.server = server
         self.endpoint = server.endpoint
         self.startup_timeout_seconds = _normalize_startup_timeout(

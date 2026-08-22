@@ -10,7 +10,7 @@ from typing import Protocol, runtime_checkable
 
 from adb.errors import AdbError
 from adb.server.model import AdbServerEndpoint
-from adb.server.ownership import AdbOwnedServer
+from adb.server.identity import AdbServer
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.inventory.model import (
     AdbConnectionState,
@@ -127,15 +127,15 @@ class AdbTransportEnsurePolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportEnsureReadiness:
-    """Request bounded readiness verification against one owned server incarnation."""
+    """Request bounded readiness verification against one server lifetime."""
 
-    server: AdbOwnedServer
+    server: AdbServer
     configuration: AdbConfiguredTransport
     policy: AdbTransportEnsurePolicy
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
+        if not isinstance(self.server, AdbServer):
+            raise TypeError("server must be AdbServer")
         if not isinstance(self.configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
         if not isinstance(self.policy, AdbTransportEnsurePolicy):
@@ -378,7 +378,7 @@ class _ReadinessEpisodeState:
 class AdbTransportEnsureOrchestrator:
     """Ensure one configured transport is ready within one deadline.
 
-    Long-lived inventory tracking, incarnation epoch fencing, and recovery triggering belong to
+    Long-lived inventory tracking, server epoch fencing, and recovery triggering belong to
     ``AdbConfiguredTransportSupervisor``. This orchestrator independently re-probes current
     inventory before acting, performs at most one supported establishment command, and polls
     fresh snapshots until readiness reaches a terminal state or the deadline expires.
@@ -386,7 +386,7 @@ class AdbTransportEnsureOrchestrator:
 
     def __init__(
         self,
-        server: AdbOwnedServer,
+        server: AdbServer,
         snapshot_reader: AdbDevicesSnapshotReader,
         publisher: EventPublisher,
         *,
@@ -394,8 +394,8 @@ class AdbTransportEnsureOrchestrator:
         _monotonic: _MonotonicClock = monotonic,
         _sleep: _Sleeper = sleep,
     ) -> None:
-        if not isinstance(server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
         if not callable(getattr(snapshot_reader, "read", None)):
             raise TypeError("snapshot_reader must provide read()")
         if not isinstance(publisher, EventPublisher):
@@ -435,8 +435,8 @@ class AdbTransportEnsureOrchestrator:
     ) -> AdbTransportEnsureResult:
         if not isinstance(operation, AdbTransportEnsureReadiness):
             raise TypeError("operation must be AdbTransportEnsureReadiness")
-        if operation.server is not self.server:
-            raise ValueError("operation server does not match ensure orchestrator owned server")
+        if operation.server != self.server:
+            raise ValueError("operation server does not match ensure orchestrator server")
 
         policy = operation.policy
         deadline = self._monotonic() + policy.timeout_seconds

@@ -23,8 +23,8 @@ from adb.server.coordination import (
     _AdbServerCoordination,
     _AdbServerMutationLease,
 )
-from adb.server.identity import AdbServerIncarnation
-from adb.server.ownership import AdbOwnedServer, AdbServerOwnershipLostError
+from adb.server.identity import AdbServer
+from adb.server.ownership import AdbServerOwnershipLostError
 from adb.server.model import AdbServerEndpoint, AdbServerRecoveryCycleId
 from adb.server.signal import (
     AdbServerNativeCloseCompleted,
@@ -88,17 +88,17 @@ def _normalize_retry_configuration(
 
 @dataclass(frozen=True, slots=True)
 class AdbServerPerGenerationEndpoint:
-    """Let every recovered incarnation resolve its own endpoint independently."""
+    """Let every recovered server resolve its own endpoint independently."""
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerPinFirstResolvedEndpoint:
-    """Pin the first owned incarnation's resolved endpoint across later incarnations."""
+    """Pin the first server's resolved endpoint across later servers."""
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerFixedEndpoint:
-    """Require every supervised incarnation to use one explicitly configured endpoint."""
+    """Require every supervised server to use one explicitly configured endpoint."""
 
     endpoint: AdbServerEndpoint
 
@@ -177,20 +177,20 @@ class AdbServerSupervisor:
     """Maintain durable intent for active process-owned ADB server ownership.
 
     The supervised resource itself does not cross a failure boundary. Terminal liveness
-    evidence first retires the current :class:`AdbOwnedServer` and publishes
+    evidence first retires the current :class:`AdbServer` and publishes
     :class:`AdbServerOwnershipRetired`, so managed dependents can immediately tear down their
     old server-bound scopes. Native close then proceeds privately. Endpoint continuity policy
     decides whether recovery reuses an endpoint and therefore waits for proven close, or lets the
-    next incarnation resolve an independent endpoint while retired teardown continues.
+    next server resolve an independent endpoint while retired teardown continues.
 
     Existing listeners never satisfy recovery because the owned lifetime store only accepts a
     native handle returned by its launcher. Retry cycle IDs fence scheduled retry work only;
-    each :class:`AdbOwnedServer` carries a separate incarnation identity.
+    each :class:`AdbServer` carries a separate server identity.
     """
 
     def __init__(
         self,
-        server: AdbOwnedServer,
+        server: AdbServer,
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
@@ -199,8 +199,8 @@ class AdbServerSupervisor:
         _random: _RandomSource = random,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -216,7 +216,7 @@ class AdbServerSupervisor:
         if isinstance(endpoint_policy, AdbServerFixedEndpoint):
             if server.endpoint != endpoint_policy.endpoint:
                 raise ValueError(
-                    "fixed endpoint policy must match the initially supervised incarnation"
+                    "fixed endpoint policy must match the initially supervised server"
                 )
             pinned_endpoint: AdbServerEndpoint | None = endpoint_policy.endpoint
         elif isinstance(endpoint_policy, AdbServerPinFirstResolvedEndpoint):
@@ -224,7 +224,7 @@ class AdbServerSupervisor:
         else:
             pinned_endpoint = None
 
-        self.server: AdbOwnedServer | None = server
+        self.server: AdbServer | None = server
         self.endpoint = server.endpoint
         self._pinned_endpoint = pinned_endpoint
         self._bus = event_bus
@@ -241,12 +241,12 @@ class AdbServerSupervisor:
         self._recovery_enabled = False
         self._cycle_id: AdbServerRecoveryCycleId | None = None
         self._retry_token: ScheduleToken | None = None
-        self._closing_incarnation: AdbServerIncarnation | None = None
-        self._pending_retired_disposals: dict[AdbServerIncarnation, AdbOwnedServer] = {}
+        self._closing_server: AdbServer | None = None
+        self._pending_retired_disposals: set[AdbServer] = set()
         self._attempt_threads: set[Thread] = set()
         self._closed = False
         self._mutation_lease: _AdbServerMutationLease = (
-            self._coordination.claim_mutation_authority(server.incarnation)
+            self._coordination.claim_mutation_authority(server)
         )
 
     @property
@@ -260,7 +260,7 @@ class AdbServerSupervisor:
             return self._recovery_enabled
 
     def start(self, *, recovery_enabled: bool) -> None:
-        """Arm managed intent around the current owned incarnation or its future recreation."""
+        """Arm managed intent around the current server or its future recreation."""
 
         enabled = _require_bool(recovery_enabled, field_name="recovery_enabled")
         launch_cycle: AdbServerRecoveryCycleId | None = None
@@ -269,7 +269,7 @@ class AdbServerSupervisor:
                 self._require_open()
                 old_token = self._invalidate_recovery_locked()
                 server = self.server
-                if server is not None and self._coordination.active_owned_server is not server:
+                if server is not None and self._coordination.active_server != server:
                     self.server = None
                     server = None
                 if server is None and not enabled:
@@ -282,7 +282,7 @@ class AdbServerSupervisor:
                 if (
                     server is None
                     and enabled
-                    and self._closing_incarnation is None
+                    and self._closing_server is None
                 ):
                     launch_cycle = self._new_recovery_cycle_locked()
             if old_token is not None:
@@ -325,7 +325,7 @@ class AdbServerSupervisor:
                 if (
                     normalized
                     and self.server is None
-                    and self._closing_incarnation is None
+                    and self._closing_server is None
                 ):
                     launch_cycle = self._new_recovery_cycle_locked()
             if old_token is not None:
@@ -334,7 +334,7 @@ class AdbServerSupervisor:
             self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
     def reconcile(self, failure: AdbServerLivenessFailure) -> None:
-        """Retire the current owned incarnation from terminal liveness evidence and reconcile intent."""
+        """Retire the current server from terminal liveness evidence and reconcile intent."""
 
         if not isinstance(
             failure,
@@ -365,7 +365,7 @@ class AdbServerSupervisor:
                 subscriptions = self._subscriptions
                 self._subscriptions = ()
                 retry_token = self._invalidate_recovery_locked()
-                pending_retired = tuple(self._pending_retired_disposals.values())
+                pending_retired = tuple(self._pending_retired_disposals)
                 self._pending_retired_disposals.clear()
                 attempt_threads = tuple(self._attempt_threads)
         try:
@@ -385,7 +385,7 @@ class AdbServerSupervisor:
         self,
         failure: AdbServerLivenessFailure,
     ) -> None:
-        retired_server: AdbOwnedServer | None = None
+        retired_server: AdbServer | None = None
         launch_cycle: AdbServerRecoveryCycleId | None = None
 
         with self._mutation_lock:
@@ -396,13 +396,13 @@ class AdbServerSupervisor:
                 server = self.server
 
             if server is not None:
-                self._coordination.retire_owned(server, lease=self._mutation_lease)
+                self._coordination.retire_server(server, lease=self._mutation_lease)
                 with self._lock:
                     self.server = None
                     if self._requires_retired_close_before_launch():
-                        self._closing_incarnation = server.incarnation
+                        self._closing_server = server
                     retired_server = server
-                    self._pending_retired_disposals[server.incarnation] = server
+                    self._pending_retired_disposals.add(server)
                     if (
                         not self._requires_retired_close_before_launch()
                         and self._recovery_enabled
@@ -417,11 +417,11 @@ class AdbServerSupervisor:
         # retirement fact for teardown; loss remains separate failure evidence.
         try:
             self._bus.publish(
-                AdbServerOwnershipRetired(retired_server.incarnation)
+                AdbServerOwnershipRetired(retired_server)
             )
             self._bus.publish(
                 AdbServerOwnershipLost(
-                    retired_server.incarnation,
+                    retired_server,
                     failure,
                 )
             )
@@ -430,17 +430,16 @@ class AdbServerSupervisor:
             if launch_cycle is not None:
                 self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
-    def _launch_retired_disposal(self, server: AdbOwnedServer) -> None:
+    def _launch_retired_disposal(self, server: AdbServer) -> None:
         with self._mutation_lock:
             with self._lock:
-                pending = self._pending_retired_disposals.get(server.incarnation)
-                if pending is not server:
+                if server not in self._pending_retired_disposals:
                     return
                 thread = self._thread_factory(
                     target=self._run_retired_disposal,
                     args=(server,),
                     name=(
-                        "adb-owned-server-close-"
+                        "adb-server-close-"
                         f"{server.endpoint.host}-{server.endpoint.port}-{server.epoch}"
                     ),
                 )
@@ -451,9 +450,9 @@ class AdbServerSupervisor:
                     self._attempt_threads.discard(thread)
                     raise
                 else:
-                    del self._pending_retired_disposals[server.incarnation]
+                    self._pending_retired_disposals.remove(server)
 
-    def _run_retired_disposal(self, server: AdbOwnedServer) -> None:
+    def _run_retired_disposal(self, server: AdbServer) -> None:
         active = current_thread()
         try:
             self._dispose_retired_server(server)
@@ -461,13 +460,13 @@ class AdbServerSupervisor:
             with self._lock:
                 self._attempt_threads.discard(active)
 
-    def _dispose_retired_server(self, server: AdbOwnedServer) -> None:
+    def _dispose_retired_server(self, server: AdbServer) -> None:
         try:
             self._coordination.dispose_retired(server, lease=self._mutation_lease)
         except AdbServerCloseError as exc:
             self._bus.publish(
                 AdbServerNativeCloseUnproven(
-                    server.incarnation,
+                    server,
                     AdbServerCloseUnprovenFailure(str(exc)),
                 )
             )
@@ -475,20 +474,20 @@ class AdbServerSupervisor:
 
         try:
             self._bus.publish(
-                AdbServerNativeCloseCompleted(server.incarnation)
+                AdbServerNativeCloseCompleted(server)
             )
         finally:
             launch_cycle: AdbServerRecoveryCycleId | None = None
             with self._mutation_lock:
                 with self._lock:
-                    if self._closing_incarnation == server.incarnation:
-                        self._closing_incarnation = None
+                    if self._closing_server == server:
+                        self._closing_server = None
                     if (
                         not self._closed
                         and self._desired_running
                         and self._recovery_enabled
                         and self.server is None
-                        and self._closing_incarnation is None
+                        and self._closing_server is None
                         and self._cycle_id is None
                     ):
                         launch_cycle = self._new_recovery_cycle_locked()
@@ -504,7 +503,7 @@ class AdbServerSupervisor:
             target=self._run_recovery_attempt,
             args=(cycle_id, attempt_number),
             name=(
-                "adb-owned-server-recovery-"
+                "adb-server-recovery-"
                 f"{self.endpoint.host}-{self.endpoint.port}-{attempt_number}"
             ),
         )
@@ -533,7 +532,7 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
                 try:
-                    recovered = self._coordination.acquire_owned(
+                    recovered = self._coordination.acquire_server(
                         self._recovery_launch_endpoint(),
                         lease=self._mutation_lease,
                     )
@@ -542,7 +541,7 @@ class AdbServerSupervisor:
                 else:
                     expected_endpoint = self._recovery_launch_endpoint()
                     if expected_endpoint is not None and recovered.endpoint != expected_endpoint:
-                        raise ValueError("endpoint-pinned owned-server recovery changed endpoint")
+                        raise ValueError("endpoint-pinned server recovery changed endpoint")
                     with self._lock:
                         if not self._recovery_is_current_locked(cycle_id):
                             return
@@ -632,7 +631,7 @@ class AdbServerSupervisor:
             return
         with self._lock:
             server = self.server
-            if server is None or server.incarnation != event.incarnation:
+            if server is None or server != event.server:
                 return
         self._invalidate_owner_and_maybe_recover(event.failure)
 
@@ -674,7 +673,7 @@ class AdbServerSupervisor:
             and self._desired_running
             and self._recovery_enabled
             and self.server is None
-            and self._closing_incarnation is None
+            and self._closing_server is None
             and self._cycle_id == cycle_id
         )
 

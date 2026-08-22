@@ -1,6 +1,6 @@
 """Host-side ADB native nouns and atomic read capabilities.
 
-ADB server endpoint control, incarnation identity, lifecycle relationships, and process
+ADB server endpoint control, server identity, lifecycle relationships, and process
 coordination are separate concepts. Pairing commands live under ``adb.pairing``; transport
 inventory and tracking live under ``adb.transport``; Android framework queries reached through
 ADB live under ``android.adb``.
@@ -20,9 +20,8 @@ from adb.errors import (
 )
 from adb.managed import AdbManagedRuntime, RegisteredTransport
 from adb.server import (
-    AdbOwnedServer,
     AdbServerController,
-    AdbServerIncarnation,
+    AdbServer,
     AdbServerMutationReservedError,
     AdbServerOwnershipLostError,
     AdbServerStaleOwnerError,
@@ -56,13 +55,12 @@ __all__ = [
     "AdbDevicesSnapshotReader",
     "AdbError",
     "AdbManagedRuntime",
-    "AdbOwnedServer",
     "AdbProtocolError",
     "AdbRemoteCommandError",
     "AdbServerConnectionError",
     "AdbServerController",
     "AdbServerMutationReservedError",
-    "AdbServerIncarnation",
+    "AdbServer",
     "AdbServerOwnershipLostError",
     "AdbServerStaleOwnerError",
     "AdbServerStatusReader",

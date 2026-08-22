@@ -9,7 +9,7 @@ from numbers import Real
 from threading import Condition
 from time import monotonic
 
-from adb.server.ownership import AdbOwnedServer
+from adb.server.identity import AdbServer
 from adb.transport.inventory.tracker import AdbDevicesTrackingScope
 from adb.transport.signal import (
     AdbDevicesTrackingFailed,
@@ -81,13 +81,13 @@ class AdbDevicesTrackingStartPolicy:
 class AdbDevicesTrackingStart:
     """Request startup of one freshly constructed tracker scope."""
 
-    server: AdbOwnedServer
+    server: AdbServer
     readiness: AdbDevicesTrackingReadiness
     policy: AdbDevicesTrackingStartPolicy
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
+        if not isinstance(self.server, AdbServer):
+            raise TypeError("server must be AdbServer")
         if not isinstance(self.readiness, AdbDevicesTrackingReadiness):
             raise TypeError("readiness must be AdbDevicesTrackingReadiness")
         if not isinstance(self.policy, AdbDevicesTrackingStartPolicy):
@@ -141,14 +141,14 @@ class AdbDevicesTrackingStartOrchestrator:
 
     def __init__(
         self,
-        server: AdbOwnedServer,
+        server: AdbServer,
         event_bus: EventBus,
         tracker: AdbDevicesTrackingScope,
         *,
         _monotonic: _MonotonicClock = monotonic,
     ) -> None:
-        if not isinstance(server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
         if not callable(getattr(event_bus, "subscribe", None)) or not callable(
             getattr(event_bus, "unsubscribe", None)
         ):
@@ -166,8 +166,8 @@ class AdbDevicesTrackingStartOrchestrator:
     ) -> AdbDevicesTrackingStartResult:
         if not isinstance(operation, AdbDevicesTrackingStart):
             raise TypeError("operation must be AdbDevicesTrackingStart")
-        if operation.server is not self.server:
-            raise ValueError("operation server does not match tracker owned server")
+        if operation.server != self.server:
+            raise ValueError("operation server does not match tracker server")
         if operation.readiness is not AdbDevicesTrackingReadiness.READY:
             raise RuntimeError(
                 "transport-inventory tracking start requires READY server readiness"
@@ -179,7 +179,7 @@ class AdbDevicesTrackingStartOrchestrator:
 
         def collect(event: object) -> None:
             event_server = getattr(event, "server", None)
-            if event_server is not self.server:
+            if event_server != self.server:
                 return
             with condition:
                 events.append(event)

@@ -9,7 +9,7 @@ from adb._internal.subprocess import (
     selector_args,
     server_args,
 )
-from adb.server.ownership import AdbOwnedServer
+from adb.server.identity import AdbServer
 from adb.transport.lifecycle.command import (
     AdbDeviceSideReconnect,
     AdbOfflineTransportsReconnect,
@@ -22,15 +22,15 @@ from native_attempt import NativeAttemptResult
 
 @dataclass(frozen=True, slots=True)
 class SubprocessAdbTransport:
-    """Execute one owned-server transport lifecycle command per bounded CLI attempt."""
+    """Execute one server-bound transport lifecycle command per bounded CLI attempt."""
 
-    server: AdbOwnedServer
+    server: AdbServer
     executable: str = "adb"
     timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
+        if not isinstance(self.server, AdbServer):
+            raise TypeError("server must be AdbServer")
         object.__setattr__(self, "executable", normalize_executable(self.executable))
         object.__setattr__(self, "timeout_seconds", normalize_timeout(self.timeout_seconds))
 

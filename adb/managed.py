@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from adb.server.ownership import AdbOwnedServer
+from adb.server.identity import AdbServer
 from adb.transport.configuration import AdbConfiguredTransport
 
 
@@ -18,14 +18,14 @@ class AdbManagedRuntime:
     """Managed lifecycle rooted in one process-owned ADB server lifetime.
 
     Managed composition deliberately does not accept a bare ``AdbServerEndpoint``. The
-    :class:`AdbOwnedServer` must originate from the process-coordinated owned lifetime store.
-    Resource-bound children are expected to be destroyed when that owned incarnation is retired
-    and recreated only after a fresh owned incarnation is acquired.
+    :class:`AdbServer` must originate from the process-coordinated owned lifetime store.
+    Resource-bound children are expected to be destroyed when that server is retired
+    and recreated only after a fresh server is acquired.
     """
 
-    def __init__(self, server: AdbOwnedServer) -> None:
-        if not isinstance(server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
+    def __init__(self, server: AdbServer) -> None:
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
         self.server = server
         self.endpoint = server.endpoint
 

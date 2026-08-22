@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Lock, Thread, current_thread
 
-from adb.server.ownership import AdbOwnedServer
+from adb.server.identity import AdbServer
 from adb.supervision.model import AdbConfiguredTransportSupervisionPolicy
 from adb.supervision.signal import (
     AdbConfiguredTransportRecoveryExhausted,
@@ -65,14 +65,14 @@ class AdbConfiguredTransportSupervisor:
 
     def __init__(
         self,
-        server: AdbOwnedServer,
+        server: AdbServer,
         event_bus: EventBus,
         ensurer: AdbTransportEnsurer,
         *,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbOwnedServer):
-            raise TypeError("server must be AdbOwnedServer")
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -205,7 +205,7 @@ class AdbConfiguredTransportSupervisor:
                 thread.join()
 
     def _on_tracking_started(self, event: AdbDevicesTrackingStarted) -> None:
-        if event.server is not self.server:
+        if event.server != self.server:
             return
         with self._lock:
             if self._closed:
@@ -218,7 +218,7 @@ class AdbConfiguredTransportSupervisor:
                 registration.active_recovery_token = None
 
     def _on_snapshot_observed(self, event: AdbDevicesSnapshotObserved) -> None:
-        if event.server is not self.server:
+        if event.server != self.server:
             return
         publications: list[object] = []
         recovery_launch_requests: list[AdbConfiguredTransport] = []
@@ -245,7 +245,7 @@ class AdbConfiguredTransportSupervisor:
         self,
         event: AdbDevicesTrackingFailed | AdbDevicesTrackingStopped,
     ) -> None:
-        if event.server is not self.server:
+        if event.server != self.server:
             return
         with self._lock:
             if self._closed or not self._tracking_active:

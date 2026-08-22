@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from adb.server.ownership import AdbOwnedServer
+from adb.server.identity import AdbServer
 from adb.transport.inventory.model import AdbDevicesSnapshot, AdbTrackedDevice
 from adb.transport.inventory.reader import (
     AdbDevicesSnapshotReader,
@@ -20,7 +20,7 @@ class AdbTrackedDeviceLookup(Protocol):
 
     def find(
         self,
-        server: AdbOwnedServer,
+        server: AdbServer,
         selector: AdbTransportSelector,
     ) -> AdbTrackedDevice | None:
         ...
@@ -67,7 +67,7 @@ class SnapshotAdbTrackedDeviceLookup:
 
     def find(
         self,
-        server: AdbOwnedServer,
+        server: AdbServer,
         selector: AdbTransportSelector,
     ) -> AdbTrackedDevice | None:
         snapshot = self.snapshot_reader.read(server)
