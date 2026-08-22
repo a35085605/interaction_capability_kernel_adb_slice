@@ -7,8 +7,6 @@ from threading import Condition
 from adb.server.lifecycle.control.port import AdbServerController, AdbServerStart, AdbServerStop
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
-from adb.server.lifecycle.backend import AdbServerLifecycleBackend
-from adb.server.lifecycle.launch import AdbServerLauncher
 
 
 class AdbServerOwnership(str, Enum):
@@ -79,32 +77,6 @@ class _AdbServerRecord:
         self.ownership = ownership
 
 
-class _LifecycleBackendAdbServerController:
-    """Compatibility adapter from the former lifecycle backend boundary to controller results."""
-
-    def __init__(
-        self,
-        backend: AdbServerLifecycleBackend,
-        server_factory: Callable[[AdbServerEndpoint], AdbServer],
-    ) -> None:
-        self._backend = backend
-        self._server_factory = server_factory
-
-    def start(
-        self,
-        endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServerStart:
-        server = self._backend.create(endpoint, server_factory=self._server_factory)
-        if not isinstance(server, AdbServer):
-            raise TypeError("backend.create() must return AdbServer")
-        return AdbServerStart(server)
-
-    def stop(self, server: AdbServer) -> AdbServerStop:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
-        self._backend.close(server)
-        return AdbServerStop(server)
-
 
 class _AdbServerStoreStatus(str, Enum):
     ABSENT = "absent"
@@ -134,30 +106,18 @@ class _AdbServerLifetimeStore:
     The store owns only ADB-domain state: server identity, creation provenance, and retirement
     state. Exact process lifetime capabilities remain private behind ``AdbServerController``.
     Process singleton scope, exclusive mutation leases, epoch generation, and supervision policy
-    live above this store in ``adb.server.coordination``. ``launcher`` and ``backend`` constructor
-    paths remain compatibility inputs and are adapted to the controller boundary on first start.
+    live above this store in ``adb.server.coordination``.
     """
 
     def __init__(
         self,
-        launcher: AdbServerLauncher | None = None,
         *,
-        backend: AdbServerLifecycleBackend | None = None,
         controller: AdbServerController | None = None,
     ) -> None:
-        supplied = sum(value is not None for value in (launcher, backend, controller))
-        if supplied > 1:
-            raise TypeError("specify at most one of launcher, backend, or controller")
-        if launcher is not None and not isinstance(launcher, AdbServerLauncher):
-            raise TypeError("launcher must satisfy AdbServerLauncher")
-        if backend is not None and not isinstance(backend, AdbServerLifecycleBackend):
-            raise TypeError("backend must satisfy AdbServerLifecycleBackend")
         if controller is not None and not isinstance(controller, AdbServerController):
             raise TypeError("controller must satisfy AdbServerController")
 
         self._controller = controller
-        self._compat_launcher = launcher
-        self._compat_backend = backend
         self._condition = Condition()
         self._status = _AdbServerStoreStatus.ABSENT
         self._active_record: _AdbServerRecord | None = None
@@ -288,16 +248,11 @@ class _AdbServerLifetimeStore:
     ) -> AdbServerController:
         controller = self._controller
         if controller is None:
-            backend = self._compat_backend
-            if backend is not None:
-                controller = _LifecycleBackendAdbServerController(backend, server_factory)
-            else:
-                from adb.server.lifecycle.control.subprocess import SubprocessAdbServerController
+            from adb.server.lifecycle.control.adapter.subprocess import (
+                SubprocessAdbServerController,
+            )
 
-                controller = SubprocessAdbServerController(
-                    _server_factory=server_factory,
-                    _launcher=self._compat_launcher,
-                )
+            controller = SubprocessAdbServerController(_server_factory=server_factory)
             self._controller = controller
         return controller
 

@@ -11,12 +11,18 @@ from typing import Protocol
 from adb._internal.client import AdbServiceClient
 from adb._internal.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
-from adb.server.lifecycle.handle import AdbServerCloseError, AdbServerProcessLifetime
-from adb.server.lifecycle.launch import AdbServerLaunchError
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.identity import AdbServer, _AdbServerSequence
+from adb.server.lifecycle.control.port import (
+    AdbServerStart,
+    AdbServerStartError,
+    AdbServerStop,
+    AdbServerStopError,
+)
 from adb.server.status.reader import SmartSocketAdbServerStatusReader
 
 
+_ServerFactory = Callable[[AdbServerEndpoint], AdbServer]
 _MonotonicClock = Callable[[], float]
 _Sleeper = Callable[[float], None]
 _PopenFactory = Callable[..., subprocess.Popen[bytes]]
@@ -35,8 +41,8 @@ def _normalize_probe_interval(value: object) -> float:
     return normalized
 
 
-class _SubprocessAdbServerHandle:
-    """Exact foreground ADB server child-process lifetime retained by this backend."""
+class _SubprocessLifetime:
+    """Exact foreground ADB server child-process lifetime owned by this adapter."""
 
     def __init__(
         self,
@@ -46,15 +52,11 @@ class _SubprocessAdbServerHandle:
     ) -> None:
         if not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint")
-        self._endpoint = endpoint
+        self.endpoint = endpoint
         self._process = process
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._lock = Lock()
         self._closed = False
-
-    @property
-    def endpoint(self) -> AdbServerEndpoint:
-        return self._endpoint
 
     @property
     def active(self) -> bool:
@@ -73,7 +75,7 @@ class _SubprocessAdbServerHandle:
                 self._process.terminate()
             except OSError as exc:
                 if self._process.poll() is None:
-                    raise AdbServerCloseError(
+                    raise AdbServerStopError(
                         f"failed to terminate ADB server child process at {self.endpoint.host}:"
                         f"{self.endpoint.port}: {exc}"
                     ) from exc
@@ -85,28 +87,30 @@ class _SubprocessAdbServerHandle:
                     self._process.kill()
                 except OSError as exc:
                     if self._process.poll() is None:
-                        raise AdbServerCloseError(
+                        raise AdbServerStopError(
                             f"failed to kill ADB server child process at {self.endpoint.host}:"
                             f"{self.endpoint.port}: {exc}"
                         ) from exc
                 try:
                     self._process.wait(timeout=self._shutdown_timeout_seconds)
                 except subprocess.TimeoutExpired as exc:
-                    raise AdbServerCloseError(
+                    raise AdbServerStopError(
                         "ADB server child process did not terminate after kill"
                     ) from exc
 
             if self._process.poll() is None:
-                raise AdbServerCloseError("ADB server child-process termination was not confirmed")
+                raise AdbServerStopError(
+                    "ADB server child-process termination was not confirmed"
+                )
             self._closed = True
 
 
-class SubprocessAdbServerLauncher:
-    """Launch one foreground ADB server using a backend-owned listening socket.
+class SubprocessAdbServerController:
+    """Start and stop exact subprocess-backed ADB server lifetimes.
 
-    Endpoint selection is per launch. ``endpoint=None`` asks the OS for a fresh ephemeral
-    loopback endpoint; an explicit endpoint constrains only that launch. Cross-generation
-    endpoint continuity belongs to supervision policy, not to the launcher.
+    Native process creation, readiness probing, process handles, and exact teardown stay private
+    to this adapter. Public callers retain only :class:`AdbServer` identities; each identity is
+    fenced to the exact child-process lifetime created for that generation.
     """
 
     def __init__(
@@ -116,6 +120,7 @@ class SubprocessAdbServerLauncher:
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
         probe_interval_seconds: float = 0.05,
+        _server_factory: _ServerFactory | None = None,
         _popen_factory: _PopenFactory = subprocess.Popen,
         _resolver: _Resolver = socket.getaddrinfo,
         _socket_factory: _SocketFactory = socket.socket,
@@ -124,18 +129,25 @@ class SubprocessAdbServerLauncher:
         _status_reader: _ServerStatusReader | None = None,
         _socket_activation_supported: bool = os.name != "nt",
     ) -> None:
+        if _server_factory is None:
+            _server_factory = _AdbServerSequence().next
+        if not callable(_server_factory):
+            raise TypeError("_server_factory must be callable")
         if not isinstance(_socket_activation_supported, bool):
             raise TypeError("_socket_activation_supported must be a bool")
+
         self.executable = normalize_executable(executable)
         self.startup_timeout_seconds = normalize_timeout(startup_timeout_seconds)
         self.shutdown_timeout_seconds = normalize_timeout(shutdown_timeout_seconds)
         self.probe_interval_seconds = _normalize_probe_interval(probe_interval_seconds)
+        self._server_factory = _server_factory
         self._popen_factory = _popen_factory
         self._resolver = _resolver
         self._socket_factory = _socket_factory
         self._monotonic = _monotonic
         self._sleep = _sleep
         self._socket_activation_supported = _socket_activation_supported
+
         if _status_reader is None:
             read_timeout = min(0.25, self.startup_timeout_seconds)
             _status_reader = SmartSocketAdbServerStatusReader(
@@ -147,21 +159,72 @@ class SubprocessAdbServerLauncher:
         if not callable(getattr(_status_reader, "read", None)):
             raise TypeError("_status_reader must provide read()")
         self._status_reader = _status_reader
-        self._lock = Lock()
 
-    def launch(self, endpoint: AdbServerEndpoint | None = None) -> AdbServerProcessLifetime:
+        self._launch_lock = Lock()
+        self._lifetimes_lock = Lock()
+        self._lifetimes: dict[AdbServer, _SubprocessLifetime] = {}
+
+    def start(
+        self,
+        endpoint: AdbServerEndpoint | None = None,
+    ) -> AdbServerStart:
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint or None")
-        if not self._socket_activation_supported:
-            raise AdbServerLaunchError(
-                "ADB acceptfd socket activation is unavailable on this platform; "
-                "a platform-specific process-lifecycle backend is required"
+
+        lifetime = self._start_lifetime(endpoint)
+        try:
+            server = self._server_factory(lifetime.endpoint)
+            if not isinstance(server, AdbServer):
+                raise TypeError("_server_factory must return AdbServer")
+            if server.endpoint != lifetime.endpoint:
+                raise ValueError("server endpoint must match started process endpoint")
+            with self._lifetimes_lock:
+                if server in self._lifetimes:
+                    raise RuntimeError("server identity is already bound to a process lifetime")
+                self._lifetimes[server] = lifetime
+            return AdbServerStart(server)
+        except BaseException:
+            try:
+                lifetime.close()
+            except BaseException as stop_error:
+                raise AdbServerStartError(
+                    "ADB server start failed and its child process could not be stopped"
+                ) from stop_error
+            raise
+
+    def stop(self, server: AdbServer) -> AdbServerStop:
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
+
+        with self._lifetimes_lock:
+            lifetime = self._lifetimes.get(server)
+        if lifetime is None:
+            raise AdbServerStopError(
+                "no exact process lifetime is registered for the requested ADB server"
             )
 
-        with self._lock:
+        lifetime.close()
+
+        with self._lifetimes_lock:
+            current = self._lifetimes.get(server)
+            if current is lifetime:
+                del self._lifetimes[server]
+        return AdbServerStop(server)
+
+    def _start_lifetime(
+        self,
+        endpoint: AdbServerEndpoint | None,
+    ) -> _SubprocessLifetime:
+        if not self._socket_activation_supported:
+            raise AdbServerStartError(
+                "ADB acceptfd socket activation is unavailable on this platform; "
+                "a platform-specific server controller is required"
+            )
+
+        with self._launch_lock:
             reservation, resolved_endpoint = self._reserve_listener_locked(endpoint)
             process: subprocess.Popen[bytes] | None = None
-            handle: _SubprocessAdbServerHandle | None = None
+            lifetime: _SubprocessLifetime | None = None
             try:
                 fd = reservation.fileno()
                 process = self._popen_factory(
@@ -178,33 +241,34 @@ class SubprocessAdbServerLauncher:
                     close_fds=True,
                     pass_fds=(fd,),
                 )
-                handle = _SubprocessAdbServerHandle(
+                lifetime = _SubprocessLifetime(
                     resolved_endpoint,
                     process,
                     self.shutdown_timeout_seconds,
                 )
             except OSError as exc:
-                raise AdbServerLaunchError(
+                raise AdbServerStartError(
                     f"failed to launch ADB server child process: {exc}"
                 ) from exc
             finally:
                 reservation.close()
 
-            assert process is not None and handle is not None
+            assert process is not None and lifetime is not None
             try:
                 self._wait_until_ready(resolved_endpoint, process)
             except BaseException:
                 try:
-                    handle.close()
-                except AdbServerCloseError as close_exc:
-                    raise AdbServerLaunchError(
-                        "ADB server launch failed and its child process could not be closed"
+                    lifetime.close()
+                except AdbServerStopError as close_exc:
+                    raise AdbServerStartError(
+                        "ADB server start failed and its child process could not be stopped"
                     ) from close_exc
                 raise
-            return handle
+            return lifetime
 
     def _reserve_listener_locked(
-        self, endpoint: AdbServerEndpoint | None
+        self,
+        endpoint: AdbServerEndpoint | None,
     ) -> tuple[socket.socket, AdbServerEndpoint]:
         host = endpoint.host if endpoint is not None else "127.0.0.1"
         port = endpoint.port if endpoint is not None else 0
@@ -212,9 +276,13 @@ class SubprocessAdbServerLauncher:
         try:
             addresses = self._resolver(host, port, type=socket.SOCK_STREAM)
         except OSError as exc:
-            raise AdbServerLaunchError(f"failed to resolve ADB server bind address: {exc}") from exc
+            raise AdbServerStartError(
+                f"failed to resolve ADB server bind address: {exc}"
+            ) from exc
         if not addresses:
-            raise AdbServerLaunchError("ADB server bind address resolution returned no candidates")
+            raise AdbServerStartError(
+                "ADB server bind address resolution returned no candidates"
+            )
 
         failures: list[str] = []
         for address in addresses:
@@ -245,7 +313,7 @@ class SubprocessAdbServerLauncher:
                     pass
 
         detail = "; ".join(failures) or "no bind candidate succeeded"
-        raise AdbServerLaunchError(f"failed to reserve ADB server listener: {detail}")
+        raise AdbServerStartError(f"failed to reserve ADB server listener: {detail}")
 
     def _wait_until_ready(
         self,
@@ -257,7 +325,7 @@ class SubprocessAdbServerLauncher:
         while True:
             return_code = process.poll()
             if return_code is not None:
-                raise AdbServerLaunchError(
+                raise AdbServerStartError(
                     f"ADB server child process exited during startup with code {return_code}"
                 )
 
@@ -267,7 +335,7 @@ class SubprocessAdbServerLauncher:
                 last_error = exc
             else:
                 if process.poll() is not None:
-                    raise AdbServerLaunchError(
+                    raise AdbServerStartError(
                         "ADB server child process exited while startup readiness was being verified"
                     )
                 return
@@ -275,10 +343,10 @@ class SubprocessAdbServerLauncher:
             remaining = deadline - self._monotonic()
             if remaining <= 0.0:
                 suffix = f": {last_error}" if last_error is not None else ""
-                raise AdbServerLaunchError(
+                raise AdbServerStartError(
                     f"timed out waiting for created ADB server readiness{suffix}"
                 )
             self._sleep(min(self.probe_interval_seconds, remaining))
 
 
-__all__ = ["SubprocessAdbServerLauncher"]
+__all__ = ["SubprocessAdbServerController"]

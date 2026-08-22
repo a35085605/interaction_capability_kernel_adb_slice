@@ -36,7 +36,7 @@ from adb.server.ownership import (
     invalidate_process_adb_server,
 )
 from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
-from adb.server.lifecycle.control.subprocess import SubprocessAdbServerController
+from adb.server.lifecycle.control.adapter.subprocess import SubprocessAdbServerController
 
 __all__ = [
     "ANY_ADB_SERVER_TERMINATION_POLICY",
