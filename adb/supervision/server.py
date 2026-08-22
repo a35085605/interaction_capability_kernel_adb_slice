@@ -19,10 +19,10 @@ from adb.server.failure import (
 )
 from adb.server.coordination import (
     AdbServerUnavailableError,
-    _PROCESS_ADB_SERVER_COORDINATOR,
     _AdbServerCoordination,
     _AdbServerMutationLease,
 )
+from adb.server._process import _PROCESS_ADB_SERVER_COORDINATOR
 from adb.server.identity import AdbServer
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.signal import (

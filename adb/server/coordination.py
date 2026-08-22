@@ -6,7 +6,7 @@ from threading import Condition
 from typing import Protocol, runtime_checkable
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServer, _AdbServerSequence
+from adb.server.identity import AdbServer
 from adb.server.lifecycle.control.port import (
     AdbServerController,
     AdbServerStart,
@@ -84,21 +84,11 @@ class _ProcessAdbServerCoordinator:
     A mutation lease may span active -> absent -> fresh-server transitions during recovery.
     """
 
-    def __init__(
-        self,
-        controller: AdbServerController | None = None,
-        *,
-        server_sequence: _AdbServerSequence | None = None,
-    ) -> None:
-        if controller is not None and not isinstance(controller, AdbServerController):
+    def __init__(self, controller: AdbServerController) -> None:
+        if not isinstance(controller, AdbServerController):
             raise TypeError("controller must satisfy AdbServerController")
-        if server_sequence is None:
-            server_sequence = _AdbServerSequence()
-        elif not isinstance(server_sequence, _AdbServerSequence):
-            raise TypeError("server_sequence must be _AdbServerSequence")
 
         self._controller = controller
-        self._servers = server_sequence
         self._condition = Condition()
         self._active_server: AdbServer | None = None
         self._retired_servers: set[AdbServer] = set()
@@ -201,7 +191,7 @@ class _ProcessAdbServerCoordinator:
                 if server not in self._retired_servers:
                     raise RuntimeError("ADB server is not pending retired disposal")
 
-            stopped = self._require_controller().stop(server)
+            stopped = self._controller.stop(server)
             if not isinstance(stopped, AdbServerStop):
                 raise TypeError("controller.stop() must return AdbServerStop")
             if stopped.server != server:
@@ -225,7 +215,7 @@ class _ProcessAdbServerCoordinator:
             self._server_starting = True
 
         try:
-            started = self._controller_for().start(endpoint)
+            started = self._controller.start(endpoint)
             if not isinstance(started, AdbServerStart):
                 raise TypeError("controller.start() must return AdbServerStart")
             server = started.server
@@ -240,23 +230,6 @@ class _ProcessAdbServerCoordinator:
             self._server_starting = False
             self._condition.notify_all()
             return server
-
-    def _controller_for(self) -> AdbServerController:
-        controller = self._controller
-        if controller is None:
-            from adb.server.lifecycle.control.adapter.subprocess import (
-                SubprocessAdbServerController,
-            )
-
-            controller = SubprocessAdbServerController(_server_factory=self._servers.next)
-            self._controller = controller
-        return controller
-
-    def _require_controller(self) -> AdbServerController:
-        controller = self._controller
-        if controller is None:
-            raise RuntimeError("ADB server controller has not been initialized")
-        return controller
 
     @contextmanager
     def _mutation_scope(
@@ -308,9 +281,6 @@ class _ProcessAdbServerCoordinator:
     def _require_server_type(server: object) -> None:
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
-
-
-_PROCESS_ADB_SERVER_COORDINATOR = _ProcessAdbServerCoordinator()
 
 
 __all__ = ["AdbServerMutationReservedError", "AdbServerUnavailableError"]
