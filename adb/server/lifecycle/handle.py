@@ -2,11 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from adb.server.control import AdbServerControlError, AdbServerStopError
+from adb.server.control import AdbServerStopError
 from adb.server.endpoint import AdbServerEndpoint
-
-
-AdbServerNativeError = AdbServerControlError
 
 
 class AdbServerCloseError(AdbServerStopError):
@@ -34,14 +31,7 @@ class AdbServerProcessLifetime(Protocol):
         ...
 
 
-# Compatibility alias for callers of the former ADB-facing name.  The capability is now
-# explicitly documented as a process-backend implementation detail.
-AdbServerNativeHandle = AdbServerProcessLifetime
-
-
 __all__ = [
     "AdbServerCloseError",
-    "AdbServerNativeError",
-    "AdbServerNativeHandle",
     "AdbServerProcessLifetime",
 ]

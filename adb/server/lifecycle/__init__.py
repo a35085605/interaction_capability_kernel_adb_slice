@@ -10,8 +10,6 @@ from adb.server.lifecycle.backend import (
 )
 from adb.server.lifecycle.handle import (
     AdbServerCloseError,
-    AdbServerNativeError,
-    AdbServerNativeHandle,
     AdbServerProcessLifetime,
 )
 from adb.server.lifecycle.launch import AdbServerLaunchError, AdbServerLauncher
@@ -22,8 +20,6 @@ __all__ = [
     "AdbServerLaunchError",
     "AdbServerLauncher",
     "AdbServerLifecycleBackend",
-    "AdbServerNativeError",
-    "AdbServerNativeHandle",
     "AdbServerProcessLifetime",
     "LauncherAdbServerLifecycleBackend",
 ]
