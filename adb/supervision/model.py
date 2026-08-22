@@ -37,7 +37,7 @@ class AdbDevicesTrackingSupervisionPolicy:
 
     Tracking supervision deliberately owns no retry/backoff policy. A server-connection
     failure destroys the current tracker scope and requests upstream server reconciliation.
-    Fresh server ownership permits construction of a new tracker scope.
+    A fresh server permits construction of a new tracker scope.
     """
 
     episode_timeout_seconds: float = 10.0

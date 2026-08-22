@@ -69,10 +69,10 @@ AdbTransportConfiguration: TypeAlias = (
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransport:
-    """ADB-domain configuration for one transport independent of server ownership.
+    """ADB-domain configuration for one transport independent of server lifetime state.
 
     The nested transport configuration makes USB and TCP establishment semantics explicit while
-    keeping ``serial`` as the stable native selection key. Runtime server ownership and
+    keeping ``serial`` as the stable native selection key. Runtime server coordination and
     ``transport_id`` values remain fresh runtime facts rather than configured identity or implicit
     ensure-operation state.
     """

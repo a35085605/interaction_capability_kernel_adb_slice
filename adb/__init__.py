@@ -1,6 +1,6 @@
 """Host-side ADB native nouns and atomic read capabilities.
 
-ADB server endpoint control, server identity, lifecycle relationships, and process
+ADB server endpoint control, server identity, native lifecycle control, and process
 coordination are separate concepts. Pairing commands live under ``adb.pairing``; transport
 inventory and tracking live under ``adb.transport``; Android framework queries reached through
 ADB live under ``android.adb``.
@@ -20,25 +20,17 @@ from adb.errors import (
 )
 from adb.managed import AdbManagedRuntime, RegisteredTransport
 from adb.server import (
-    ANY_ADB_SERVER_TERMINATION_POLICY,
     AdbServerControlError,
     AdbServerController,
     AdbServer,
     AdbServerMutationReservedError,
-    AdbServerOwnership,
-    AdbServerOwnershipLostError,
-    AdbServerStaleOwnerError,
-    AdbServerTerminationPolicy,
     AdbServerStart,
     AdbServerStartError,
     AdbServerStatusReader,
     AdbServerStop,
     AdbServerStopError,
-    OWNED_ONLY_ADB_SERVER_TERMINATION_POLICY,
+    AdbServerUnavailableError,
     SubprocessAdbServerController,
-    acquire_process_adb_server,
-    close_process_adb_server,
-    invalidate_process_adb_server,
 )
 from adb.transport import (
     AdbConnectionState,
@@ -57,7 +49,6 @@ from adb.transport import (
 )
 
 __all__ = [
-    "ANY_ADB_SERVER_TERMINATION_POLICY",
     "AdbConnectionState",
     "AdbConnectionType",
     "AdbDeviceSerial",
@@ -71,16 +62,13 @@ __all__ = [
     "AdbServerControlError",
     "AdbServerController",
     "AdbServerMutationReservedError",
-    "AdbServerOwnership",
     "AdbServer",
-    "AdbServerOwnershipLostError",
-    "AdbServerStaleOwnerError",
-    "AdbServerTerminationPolicy",
     "AdbServerStart",
     "AdbServerStartError",
     "AdbServerStatusReader",
     "AdbServerStop",
     "AdbServerStopError",
+    "AdbServerUnavailableError",
     "AdbServiceError",
     "AdbTimeoutError",
     "AdbTrackedDevice",
@@ -95,10 +83,6 @@ __all__ = [
     "AdbTransportSelectionError",
     "AdbTransportSelector",
     "AdbTransportUnavailableError",
-    "OWNED_ONLY_ADB_SERVER_TERMINATION_POLICY",
     "RegisteredTransport",
     "SubprocessAdbServerController",
-    "acquire_process_adb_server",
-    "close_process_adb_server",
-    "invalidate_process_adb_server",
 ]

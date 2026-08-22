@@ -12,7 +12,7 @@ class AdbServer:
 
     ``endpoint`` answers where the service was reached for this epoch. ``epoch`` is a local
     monotonic fencing token used to reject delayed work and stale events. The identity makes no
-    claim about native process identity, OS handles, ADB ownership provenance, or termination
+    claim about native process identity, OS handles, coordination provenance, or termination
     capability.
     """
 

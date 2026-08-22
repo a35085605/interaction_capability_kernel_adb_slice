@@ -7,8 +7,8 @@ from adb.server.failure import AdbServerConnectionFailure
 from adb.server.identity import AdbServer
 from adb.supervision.model import AdbDevicesTrackingSupervisionPolicy
 from adb.server.signal import (
-    AdbServerOwnershipRetired,
-    AdbServerOwnershipRecovered,
+    AdbServerRetired,
+    AdbServerRecovered,
     AdbServerReconciliationRequested,
 )
 from adb.transport.inventory.start import (
@@ -60,8 +60,8 @@ def _project_server(server: AdbServer | None) -> AdbDevicesTrackingReadiness:
 class AdbDevicesTrackingSupervisor:
     """Maintain durable tracking intent by constructing single-use tracker scopes.
 
-    A tracker never crosses a terminal boundary. Server ownership loss destroys the current
-    tracker immediately. Fresh server ownership later permits a new tracker instance to be
+    A tracker never crosses a terminal boundary. Server retirement destroys the current
+    tracker immediately. A fresh server later permits a new tracker instance to be
     constructed and started. Tracking stop/failure follows the same rule: the old tracker is
     discarded rather than restarted.
 
@@ -292,7 +292,7 @@ class AdbDevicesTrackingSupervisor:
         assert tracker is not None
         tracker.close()
 
-    def _on_server_ownership_retired(self, event: AdbServerOwnershipRetired) -> None:
+    def _on_server_retired(self, event: AdbServerRetired) -> None:
         if event.endpoint != self.endpoint:
             return
         with self._lock:
@@ -317,7 +317,7 @@ class AdbDevicesTrackingSupervisor:
         if tracker is not None:
             tracker.close()
 
-    def _on_server_ownership_recovered(self, event: AdbServerOwnershipRecovered) -> None:
+    def _on_server_recovered(self, event: AdbServerRecovered) -> None:
         if event.endpoint != self.endpoint:
             return
         with self._lock:
@@ -448,12 +448,12 @@ class AdbDevicesTrackingSupervisor:
             self._bus.subscribe(AdbDevicesTrackingFailed, self._on_tracking_failed),
             self._bus.subscribe(AdbDevicesTrackingStopped, self._on_tracking_stopped),
             self._bus.subscribe(
-                AdbServerOwnershipRetired,
-                self._on_server_ownership_retired,
+                AdbServerRetired,
+                self._on_server_retired,
             ),
             self._bus.subscribe(
-                AdbServerOwnershipRecovered,
-                self._on_server_ownership_recovered,
+                AdbServerRecovered,
+                self._on_server_recovered,
             ),
         )
 

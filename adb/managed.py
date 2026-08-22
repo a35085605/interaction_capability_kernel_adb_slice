@@ -15,10 +15,10 @@ class RegisteredTransport(Protocol):
 
 
 class AdbManagedRuntime:
-    """Managed lifecycle rooted in one process-coordinated ADB-owned server lifetime.
+    """Managed lifecycle rooted in one process-coordinated managed ADB server lifetime.
 
     Managed composition deliberately does not accept a bare ``AdbServerEndpoint``. The
-    :class:`AdbServer` must originate from the process-coordinated ADB ownership store.
+    :class:`AdbServer` must originate from the process-wide ADB server coordinator.
     Resource-bound children are expected to be destroyed when that server is retired
     and recreated only after a fresh server is acquired.
     """
@@ -46,7 +46,7 @@ class AdbManagedRuntime:
     # ------------------------------------------------------------------
 
     def start_server(self, *, auto_recovery: bool = True) -> None:
-        """Establish managed running intent around the owned server."""
+        """Establish managed running intent around the managed server."""
         raise NotImplementedError
 
     def stop_server(self) -> None:
@@ -54,7 +54,7 @@ class AdbManagedRuntime:
         raise NotImplementedError
 
     def set_server_auto_recovery(self, enabled: bool) -> None:
-        """Enable or disable recreation after server ownership is invalidated."""
+        """Enable or disable recreation after the active server is retired."""
         raise NotImplementedError
 
     # ------------------------------------------------------------------

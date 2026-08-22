@@ -18,20 +18,20 @@ from adb.server.failure import (
     AdbServerProcessExitedFailure,
 )
 from adb.server.coordination import (
+    AdbServerUnavailableError,
     _PROCESS_ADB_SERVER_COORDINATOR,
     _AdbServerCoordination,
     _AdbServerMutationLease,
 )
 from adb.server.identity import AdbServer
-from adb.server.ownership import AdbServerOwnershipLostError
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.signal import (
     AdbServerRecoveryCycleId,
     AdbServerNativeCloseCompleted,
     AdbServerNativeCloseUnproven,
-    AdbServerOwnershipLost,
-    AdbServerOwnershipRecovered,
-    AdbServerOwnershipRetired,
+    AdbServerLost,
+    AdbServerRecovered,
+    AdbServerRetired,
     AdbServerReconciliationRequested,
     AdbServerRecoveryExhausted,
     AdbServerRecoveryRetryDue,
@@ -129,7 +129,7 @@ def _require_endpoint_policy(value: object) -> AdbServerEndpointPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerSupervisionPolicy:
-    """Recovery policy for reacquiring the process-coordinated ADB-owned server."""
+    """Recovery policy for reacquiring the process-coordinated managed ADB server."""
 
     retry_initial_seconds: float = 0.5
     retry_max_seconds: float = 30.0
@@ -174,17 +174,17 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 
 
 class AdbServerSupervisor:
-    """Maintain durable intent for active process-coordinated ADB ownership.
+    """Maintain durable intent for the active process-coordinated ADB server.
 
     The supervised resource itself does not cross a failure boundary. Terminal liveness
     evidence first retires the current :class:`AdbServer` and publishes
-    :class:`AdbServerOwnershipRetired`, so managed dependents can immediately tear down their
+    :class:`AdbServerRetired`, so managed dependents can immediately tear down their
     old server-bound scopes. Native close then proceeds privately. Endpoint continuity policy
     decides whether recovery reuses an endpoint and therefore waits for proven close, or lets the
     next server resolve an independent endpoint while retired teardown continues.
 
     Existing listeners never satisfy recovery because the lifecycle backend creates a fresh server
-    before the ADB ownership store records it as owned. Retry cycle IDs fence scheduled retry work only;
+    before the coordinator records it as active. Retry cycle IDs fence scheduled retry work only;
     each :class:`AdbServer` carries a separate server identity.
     """
 
@@ -273,8 +273,8 @@ class AdbServerSupervisor:
                     self.server = None
                     server = None
                 if server is None and not enabled:
-                    raise AdbServerOwnershipLostError(
-                        "cannot start supervision without an active owned server when recovery is disabled"
+                    raise AdbServerUnavailableError(
+                        "cannot start supervision without an active managed server when recovery is disabled"
                     )
                 self._desired_running = True
                 self._recovery_enabled = enabled
@@ -303,9 +303,9 @@ class AdbServerSupervisor:
                 self._scheduler.cancel(old_token)
 
     def set_recovery_enabled(self, enabled: bool) -> None:
-        """Enable or disable automatic ownership recovery.
+        """Enable or disable automatic server recovery.
 
-        Enabling recovery while managed ownership is already absent may start a recovery attempt
+        Enabling recovery while the managed server is already absent may start a recovery attempt
         immediately.
         """
 
@@ -344,15 +344,15 @@ class AdbServerSupervisor:
                 "failure must be AdbServerConnectionFailure or "
                 "AdbServerProcessExitedFailure"
             )
-        self._invalidate_owner_and_maybe_recover(failure)
+        self._retire_current_and_maybe_recover(failure)
 
     def close(self) -> None:
-        """Stop supervising without retiring or terminating the healthy current owned server.
+        """Stop supervising without retiring or terminating the healthy current server.
 
         Retired generations that have not yet handed teardown to a worker are adopted by close.
         Already-started teardown is joined before mutation authority is released. This makes the
         pending-to-started handoff atomic with respect to close, including when close is invoked
-        synchronously by an ownership-retirement event handler.
+        synchronously by a server-retirement event handler.
         """
 
         with self._mutation_lock:
@@ -381,7 +381,7 @@ class AdbServerSupervisor:
         finally:
             self._coordination.release_mutation_authority(self._mutation_lease)
 
-    def _invalidate_owner_and_maybe_recover(
+    def _retire_current_and_maybe_recover(
         self,
         failure: AdbServerLivenessFailure,
     ) -> None:
@@ -413,14 +413,14 @@ class AdbServerSupervisor:
         if retired_server is None:
             return
 
-        # Public ownership disappears before native close begins. Dependents use the neutral
+        # The public server lifetime retires before native close begins. Dependents use the neutral
         # retirement fact for teardown; loss remains separate failure evidence.
         try:
             self._bus.publish(
-                AdbServerOwnershipRetired(retired_server)
+                AdbServerRetired(retired_server)
             )
             self._bus.publish(
-                AdbServerOwnershipLost(
+                AdbServerLost(
                     retired_server,
                     failure,
                 )
@@ -524,7 +524,7 @@ class AdbServerSupervisor:
     ) -> None:
         active = current_thread()
         launch_failure: AdbServerLaunchFailure | None = None
-        recovered_event: AdbServerOwnershipRecovered | None = None
+        recovered_event: AdbServerRecovered | None = None
         retry_token: ScheduleToken | None = None
         try:
             with self._mutation_lock:
@@ -550,7 +550,7 @@ class AdbServerSupervisor:
                         self._cycle_id = None
                         self.server = recovered
                         self.endpoint = recovered.endpoint
-                        recovered_event = AdbServerOwnershipRecovered(recovered)
+                        recovered_event = AdbServerRecovered(recovered)
 
             if recovered_event is not None:
                 if retry_token is not None:
@@ -633,7 +633,7 @@ class AdbServerSupervisor:
             server = self.server
             if server is None or server != event.server:
                 return
-        self._invalidate_owner_and_maybe_recover(event.failure)
+        self._retire_current_and_maybe_recover(event.failure)
 
     def _on_retry_due(self, event: AdbServerRecoveryRetryDue) -> None:
         if event.endpoint != self.endpoint:

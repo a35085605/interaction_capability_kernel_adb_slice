@@ -84,7 +84,7 @@ class AdbServerReconciliationRequested(_ServerSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerOwnershipRetired(_ServerSignalProjection):
+class AdbServerRetired(_ServerSignalProjection):
     """Public fact that one server lifetime is irreversibly no longer usable."""
 
     server: AdbServer
@@ -94,7 +94,7 @@ class AdbServerOwnershipRetired(_ServerSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerOwnershipLost(_ServerSignalProjection):
+class AdbServerLost(_ServerSignalProjection):
     """Failure evidence explaining why one already-retired server lifetime was lost."""
 
     server: AdbServer
@@ -133,8 +133,8 @@ class AdbServerNativeCloseUnproven(_ServerSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerOwnershipRecovered(_ServerSignalProjection):
-    """Signal carrying the fresh usable ADB-owned server."""
+class AdbServerRecovered(_ServerSignalProjection):
+    """Signal carrying the fresh usable managed ADB server."""
 
     server: AdbServer
 
@@ -144,7 +144,7 @@ class AdbServerOwnershipRecovered(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryRetryDue:
-    """Signal delivered when one ADB-owned server recovery retry becomes due."""
+    """Signal delivered when one managed ADB server recovery retry becomes due."""
 
     endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId
@@ -162,7 +162,7 @@ class AdbServerRecoveryRetryDue:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryExhausted:
-    """Signal that fresh ADB-owned server creation exhausted its retry budget."""
+    """Signal that fresh managed ADB server creation exhausted its retry budget."""
 
     endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId
@@ -183,11 +183,11 @@ class AdbServerRecoveryExhausted:
 
 AdbServerSignal: TypeAlias = (
     AdbServerReconciliationRequested
-    | AdbServerOwnershipRetired
-    | AdbServerOwnershipLost
+    | AdbServerRetired
+    | AdbServerLost
     | AdbServerNativeCloseCompleted
     | AdbServerNativeCloseUnproven
-    | AdbServerOwnershipRecovered
+    | AdbServerRecovered
     | AdbServerRecoveryRetryDue
     | AdbServerRecoveryExhausted
 )
@@ -196,9 +196,9 @@ AdbServerSignal: TypeAlias = (
 __all__ = [
     "AdbServerNativeCloseCompleted",
     "AdbServerNativeCloseUnproven",
-    "AdbServerOwnershipLost",
-    "AdbServerOwnershipRecovered",
-    "AdbServerOwnershipRetired",
+    "AdbServerLost",
+    "AdbServerRecovered",
+    "AdbServerRetired",
     "AdbServerReconciliationRequested",
     "AdbServerRecoveryCycleId",
     "AdbServerRecoveryExhausted",

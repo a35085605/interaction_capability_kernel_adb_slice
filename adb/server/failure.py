@@ -59,7 +59,7 @@ class AdbServerProcessExitedFailure(_AdbServerFailure):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerLaunchFailure(_AdbServerFailure):
-    """Creation of one fresh ADB-owned server failed."""
+    """Creation of one fresh managed ADB server failed."""
 
 
 @dataclass(frozen=True, slots=True)
