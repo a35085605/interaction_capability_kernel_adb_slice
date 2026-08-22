@@ -9,7 +9,6 @@ from adb.server.lifecycle.launch import AdbServerLauncher
 
 
 _OWNER_CONSTRUCTION_TOKEN = object()
-_SUPERVISION_LEASE_CONSTRUCTION_TOKEN = object()
 
 
 class AdbServerOwnershipLostError(RuntimeError):
@@ -78,22 +77,6 @@ class _OwnedServerLifetime:
         self.native = native
 
 
-class _AdbServerSupervisionLease:
-    """Opaque authority proving exclusive supervision of one process owner."""
-
-    __slots__ = ()
-
-    def __init__(self, *, _token: object) -> None:
-        if _token is not _SUPERVISION_LEASE_CONSTRUCTION_TOKEN:
-            raise TypeError(
-                "ADB server supervision leases are created by the process ADB server owner"
-            )
-
-    @classmethod
-    def _new(cls) -> "_AdbServerSupervisionLease":
-        return cls(_token=_SUPERVISION_LEASE_CONSTRUCTION_TOKEN)
-
-
 class _DefaultAdbServerLauncher:
     """Lazily construct the concrete launcher after the ADB package graph is imported."""
 
@@ -137,8 +120,8 @@ class _ProcessAdbServerOwner:
 
     Public ownership and native teardown are deliberately separate. Retiring a generation
     irreversibly removes it from the public projection and moves its exact native handle into
-    retired-lifetime tracking. Fresh-generation endpoint continuity and close fencing are
-    supervision concerns rather than ownership invariants.
+    retired-lifetime tracking. Cross-generation endpoint continuity and close fencing are
+    deliberately outside this primitive.
     """
 
     def __init__(self, launcher: AdbServerLauncher | None = None) -> None:
@@ -152,47 +135,13 @@ class _ProcessAdbServerOwner:
         self._active_lifetime: _OwnedServerLifetime | None = None
         self._retired_lifetimes: dict[int, _RetiredServerLifetime] = {}
         self._generation = 0
-        self._supervision_lease: _AdbServerSupervisionLease | None = None
-
-    def claim_supervision(self, owner: AdbOwnedServer) -> _AdbServerSupervisionLease:
-        """Exclusively claim lifecycle supervision authority across server generations.
-
-        The claim is bound to this process owner rather than to one generation so a supervisor
-        can retain durable recovery intent while the active owner is temporarily absent. The
-        initial generation check and claim are serialized as one operation.
-        """
-
-        self._require_owner(owner)
-        with self._condition:
-            lifetime = self._active_lifetime
-            if (
-                self._status is not _ProcessAdbServerOwnerStatus.ACTIVE
-                or lifetime is None
-                or lifetime.owner is not owner
-            ):
-                raise ValueError("server must be the process owner's active generation")
-            if self._supervision_lease is not None:
-                raise RuntimeError("ADB server supervision authority is already claimed")
-            lease = _AdbServerSupervisionLease._new()
-            self._supervision_lease = lease
-            return lease
-
-    def release_supervision(self, lease: _AdbServerSupervisionLease) -> None:
-        """Release one exact supervision claim without changing native server ownership."""
-
-        if not isinstance(lease, _AdbServerSupervisionLease):
-            raise TypeError("lease must be _AdbServerSupervisionLease")
-        with self._condition:
-            if self._supervision_lease is not lease:
-                raise RuntimeError("ADB server supervision lease is not active")
-            self._supervision_lease = None
 
     def acquire(self, endpoint: AdbServerEndpoint | None = None) -> AdbOwnedServer:
         """Return the active generation or launch one fresh process-owned server.
 
         ``endpoint`` constrains only a newly launched generation. Retired native lifetimes remain
-        independently tracked until close is proven; cross-generation endpoint continuity is
-        intentionally owned by supervision rather than by this process owner.
+        independently tracked until close is proven; endpoint reuse constraints are not ownership
+        invariants.
         """
 
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
@@ -340,37 +289,44 @@ class _ProcessAdbServerOwner:
         )
 
 
-_PROCESS_ADB_SERVER_OWNER = _ProcessAdbServerOwner()
-
-
 def acquire_process_adb_server(
     endpoint: AdbServerEndpoint | None = None,
 ) -> AdbOwnedServer:
     """Acquire or create the single process-owned ADB server generation.
 
-    ``endpoint`` constrains only creation of a fresh generation.
+    ``endpoint`` constrains only creation of a fresh generation. When process mutation is
+    reserved, an already-active generation may still be observed but creating a fresh generation
+    is rejected for ordinary callers.
     """
 
-    return _PROCESS_ADB_SERVER_OWNER.acquire(endpoint)
+    from adb.server.control import _PROCESS_ADB_SERVER_CONTROL
+
+    return _PROCESS_ADB_SERVER_CONTROL.acquire(endpoint)
 
 
 def invalidate_process_adb_server(owner: AdbOwnedServer) -> bool:
     """Retire and dispose one owned generation after ownership loss.
 
     Disposal is retried when the exact generation was already retired but its native close
-    has not yet been proven.
+    has not yet been proven. The operation is rejected while process mutation is reserved by an
+    exclusive controller.
     """
 
-    return _PROCESS_ADB_SERVER_OWNER.invalidate(owner)
+    from adb.server.control import _PROCESS_ADB_SERVER_CONTROL
+
+    return _PROCESS_ADB_SERVER_CONTROL.invalidate(owner)
 
 
 def close_process_adb_server(owner: AdbOwnedServer) -> None:
     """Retire and close one exact owned generation through its private native handle.
 
     If the generation was already retired but remains tracked, this retries native close proof.
+    The operation is rejected while process mutation is reserved by an exclusive controller.
     """
 
-    _PROCESS_ADB_SERVER_OWNER.close(owner)
+    from adb.server.control import _PROCESS_ADB_SERVER_CONTROL
+
+    _PROCESS_ADB_SERVER_CONTROL.close(owner)
 
 
 __all__ = [

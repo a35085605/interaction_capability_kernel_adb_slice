@@ -9,6 +9,7 @@ from random import random
 from threading import Lock, Thread, current_thread
 from typing import TypeAlias
 
+from adb.server.lifecycle.handle import AdbServerCloseError
 from adb.server.lifecycle.launch import AdbServerLaunchError
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
@@ -17,12 +18,12 @@ from adb.server.failure import (
     AdbServerOwnershipLossFailure,
     AdbServerProcessExitedFailure,
 )
-from adb.server.ownership import (
-    AdbOwnedServer,
-    AdbServerOwnershipLostError,
-    _PROCESS_ADB_SERVER_OWNER,
-    _ProcessAdbServerOwner,
+from adb.server.control import (
+    _PROCESS_ADB_SERVER_CONTROL,
+    _AdbServerControl,
+    _AdbServerMutationLease,
 )
+from adb.server.ownership import AdbOwnedServer, AdbServerOwnershipLostError
 from adb.server.model import AdbServerEndpoint, AdbServerRecoveryCycleId
 from adb.server.signal import (
     AdbServerNativeCloseCompleted,
@@ -193,7 +194,7 @@ class AdbServerSupervisor:
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
         *,
-        _owner_manager: _ProcessAdbServerOwner = _PROCESS_ADB_SERVER_OWNER,
+        _control: _AdbServerControl = _PROCESS_ADB_SERVER_CONTROL,
         _random: _RandomSource = random,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
@@ -203,8 +204,8 @@ class AdbServerSupervisor:
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
             raise TypeError("event_bus must satisfy EventBus")
-        if not isinstance(_owner_manager, _ProcessAdbServerOwner):
-            raise TypeError("_owner_manager must be _ProcessAdbServerOwner")
+        if not isinstance(_control, _AdbServerControl):
+            raise TypeError("_control must satisfy _AdbServerControl")
         if not isinstance(scheduler, TemporalScheduler):
             raise TypeError("scheduler must satisfy TemporalScheduler")
         if not isinstance(policy, AdbServerSupervisionPolicy):
@@ -226,7 +227,7 @@ class AdbServerSupervisor:
         self.endpoint = server.endpoint
         self._pinned_endpoint = pinned_endpoint
         self._bus = event_bus
-        self._owner_manager = _owner_manager
+        self._control = _control
         self._scheduler = scheduler
         self._policy = policy
         self._random = _random
@@ -240,9 +241,12 @@ class AdbServerSupervisor:
         self._cycle_id: AdbServerRecoveryCycleId | None = None
         self._retry_token: ScheduleToken | None = None
         self._closing_generation: int | None = None
+        self._pending_retired_disposals: dict[int, AdbOwnedServer] = {}
         self._attempt_threads: set[Thread] = set()
         self._closed = False
-        self._supervision_lease = self._owner_manager.claim_supervision(server)
+        self._mutation_lease: _AdbServerMutationLease = (
+            self._control.claim_mutation_authority(server)
+        )
 
     @property
     def desired_running(self) -> bool:
@@ -264,7 +268,7 @@ class AdbServerSupervisor:
                 self._require_open()
                 old_token = self._invalidate_recovery_locked()
                 server = self.server
-                if server is not None and self._owner_manager.active_owner is not server:
+                if server is not None and self._control.active_owner is not server:
                     self.server = None
                     server = None
                 if server is None and not enabled:
@@ -344,8 +348,10 @@ class AdbServerSupervisor:
     def close(self) -> None:
         """Stop supervising without retiring or terminating the healthy current owner.
 
-        Already-started teardown for retired generations is allowed to finish before supervision
-        authority is released.
+        Retired generations that have not yet handed teardown to a worker are adopted by close.
+        Already-started teardown is joined before mutation authority is released. This makes the
+        pending-to-started handoff atomic with respect to close, including when close is invoked
+        synchronously by an ownership-retirement event handler.
         """
 
         with self._mutation_lock:
@@ -358,17 +364,21 @@ class AdbServerSupervisor:
                 subscriptions = self._subscriptions
                 self._subscriptions = ()
                 retry_token = self._invalidate_recovery_locked()
+                pending_retired = tuple(self._pending_retired_disposals.values())
+                self._pending_retired_disposals.clear()
                 attempt_threads = tuple(self._attempt_threads)
         try:
             for token in subscriptions:
                 self._bus.unsubscribe(token)
             if retry_token is not None:
                 self._scheduler.cancel(retry_token)
+            for server in pending_retired:
+                self._dispose_retired_server(server)
             for thread in attempt_threads:
                 if thread is not current_thread():
                     thread.join()
         finally:
-            self._owner_manager.release_supervision(self._supervision_lease)
+            self._control.release_mutation_authority(self._mutation_lease)
 
     def _invalidate_owner_and_maybe_recover(
         self,
@@ -385,12 +395,13 @@ class AdbServerSupervisor:
                 server = self.server
 
             if server is not None:
-                self._owner_manager.retire(server)
+                self._control.retire(server, lease=self._mutation_lease)
                 with self._lock:
                     self.server = None
                     if self._requires_retired_close_before_launch():
                         self._closing_generation = server.generation
                     retired_server = server
+                    self._pending_retired_disposals[server.generation] = server
                     if (
                         not self._requires_retired_close_before_launch()
                         and self._recovery_enabled
@@ -423,66 +434,73 @@ class AdbServerSupervisor:
                 self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
     def _launch_retired_disposal(self, server: AdbOwnedServer) -> None:
-        thread = self._thread_factory(
-            target=self._run_retired_disposal,
-            args=(server,),
-            name=(
-                "adb-owned-server-close-"
-                f"{server.endpoint.host}-{server.endpoint.port}-{server.generation}"
-            ),
-        )
-        with self._lock:
-            if self._closed and self._closing_generation != server.generation:
-                return
-            self._attempt_threads.add(thread)
-            try:
-                thread.start()
-            except BaseException:
-                self._attempt_threads.discard(thread)
-                raise
+        with self._mutation_lock:
+            with self._lock:
+                pending = self._pending_retired_disposals.get(server.generation)
+                if pending is not server:
+                    return
+                thread = self._thread_factory(
+                    target=self._run_retired_disposal,
+                    args=(server,),
+                    name=(
+                        "adb-owned-server-close-"
+                        f"{server.endpoint.host}-{server.endpoint.port}-{server.generation}"
+                    ),
+                )
+                self._attempt_threads.add(thread)
+                try:
+                    thread.start()
+                except BaseException:
+                    self._attempt_threads.discard(thread)
+                    raise
+                else:
+                    del self._pending_retired_disposals[server.generation]
 
     def _run_retired_disposal(self, server: AdbOwnedServer) -> None:
         active = current_thread()
         try:
-            try:
-                self._owner_manager.dispose_retired(server)
-            except Exception as exc:
-                self._bus.publish(
-                    AdbServerNativeCloseUnproven(
-                        server.endpoint,
-                        server.generation,
-                        AdbServerCloseUnprovenFailure(str(exc)),
-                    )
-                )
-                return
-
-            try:
-                self._bus.publish(
-                    AdbServerNativeCloseCompleted(
-                        server.endpoint,
-                        server.generation,
-                    )
-                )
-            finally:
-                launch_cycle: AdbServerRecoveryCycleId | None = None
-                with self._mutation_lock:
-                    with self._lock:
-                        if self._closing_generation == server.generation:
-                            self._closing_generation = None
-                        if (
-                            not self._closed
-                            and self._desired_running
-                            and self._recovery_enabled
-                            and self.server is None
-                            and self._closing_generation is None
-                            and self._cycle_id is None
-                        ):
-                            launch_cycle = self._new_recovery_cycle_locked()
-                if launch_cycle is not None:
-                    self._launch_recovery_attempt(launch_cycle, attempt_number=1)
+            self._dispose_retired_server(server)
         finally:
             with self._lock:
                 self._attempt_threads.discard(active)
+
+    def _dispose_retired_server(self, server: AdbOwnedServer) -> None:
+        try:
+            self._control.dispose_retired(server, lease=self._mutation_lease)
+        except AdbServerCloseError as exc:
+            self._bus.publish(
+                AdbServerNativeCloseUnproven(
+                    server.endpoint,
+                    server.generation,
+                    AdbServerCloseUnprovenFailure(str(exc)),
+                )
+            )
+            return
+
+        try:
+            self._bus.publish(
+                AdbServerNativeCloseCompleted(
+                    server.endpoint,
+                    server.generation,
+                )
+            )
+        finally:
+            launch_cycle: AdbServerRecoveryCycleId | None = None
+            with self._mutation_lock:
+                with self._lock:
+                    if self._closing_generation == server.generation:
+                        self._closing_generation = None
+                    if (
+                        not self._closed
+                        and self._desired_running
+                        and self._recovery_enabled
+                        and self.server is None
+                        and self._closing_generation is None
+                        and self._cycle_id is None
+                    ):
+                        launch_cycle = self._new_recovery_cycle_locked()
+            if launch_cycle is not None:
+                self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
     def _launch_recovery_attempt(
         self,
@@ -522,7 +540,10 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
                 try:
-                    recovered = self._owner_manager.acquire(self._recovery_launch_endpoint())
+                    recovered = self._control.acquire(
+                        self._recovery_launch_endpoint(),
+                        lease=self._mutation_lease,
+                    )
                 except AdbServerLaunchError as exc:
                     launch_failure = AdbServerLaunchFailure(str(exc))
                 else:

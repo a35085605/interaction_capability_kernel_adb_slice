@@ -1,5 +1,6 @@
 """Process-owned ADB server lifecycle, endpoint, failure, and status contracts."""
 
+from adb.server.control import AdbServerMutationReservedError
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
@@ -33,6 +34,7 @@ __all__ = [
     "AdbServerFailure",
     "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
+    "AdbServerMutationReservedError",
     "AdbServerOwnershipLossFailure",
     "AdbServerOwnershipLostError",
     "AdbServerProcessExitedFailure",

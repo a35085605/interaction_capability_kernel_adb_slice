@@ -20,6 +20,7 @@ from adb.errors import (
 )
 from adb.managed import AdbManagedRuntime, RegisteredTransport
 from adb.server import (
+    AdbServerMutationReservedError,
     AdbOwnedServer,
     AdbServerOwnershipLostError,
     AdbServerStaleOwnerError,
@@ -56,6 +57,7 @@ __all__ = [
     "AdbProtocolError",
     "AdbRemoteCommandError",
     "AdbServerConnectionError",
+    "AdbServerMutationReservedError",
     "AdbServerOwnershipLostError",
     "AdbServerStaleOwnerError",
     "AdbServerStatusReader",
