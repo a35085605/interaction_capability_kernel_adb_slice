@@ -1,12 +1,14 @@
-"""Process-owned ADB server lifecycle, endpoint, failure, and status contracts."""
+"""ADB server identity, control, lifecycle relationships, coordination, and status contracts."""
 
-from adb.server.control import AdbServerMutationReservedError
+from adb.server.control import AdbServerController, SubprocessAdbServerController
+from adb.server.coordination import AdbServerMutationReservedError
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
     AdbServerFailure,
     AdbServerLaunchFailure,
     AdbServerLifecycleFailure,
+    AdbServerLivenessFailure,
     AdbServerOwnershipLossFailure,
     AdbServerProcessExitedFailure,
     AdbServerProtocolFailure,
@@ -14,6 +16,7 @@ from adb.server.failure import (
     AdbServerServiceFailure,
     AdbServerTimeoutFailure,
 )
+from adb.server.identity import AdbServerIncarnation, AdbServerIncarnationId
 from adb.server.model import AdbServerEndpoint
 from adb.server.ownership import (
     AdbOwnedServer,
@@ -30,10 +33,14 @@ __all__ = [
     "AdbOwnedServer",
     "AdbServerCloseUnprovenFailure",
     "AdbServerConnectionFailure",
+    "AdbServerController",
     "AdbServerEndpoint",
     "AdbServerFailure",
+    "AdbServerIncarnation",
+    "AdbServerIncarnationId",
     "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
+    "AdbServerLivenessFailure",
     "AdbServerMutationReservedError",
     "AdbServerOwnershipLossFailure",
     "AdbServerOwnershipLostError",
@@ -46,6 +53,7 @@ __all__ = [
     "AdbServerStatusReader",
     "AdbServerTimeoutFailure",
     "AdbUsbBackend",
+    "SubprocessAdbServerController",
     "acquire_process_adb_server",
     "close_process_adb_server",
     "invalidate_process_adb_server",

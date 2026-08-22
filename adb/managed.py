@@ -18,9 +18,9 @@ class AdbManagedRuntime:
     """Managed lifecycle rooted in one process-owned ADB server lifetime.
 
     Managed composition deliberately does not accept a bare ``AdbServerEndpoint``. The
-    :class:`AdbOwnedServer` must originate from the process singleton owner. Resource-bound
-    children are expected to be destroyed when that owner is invalidated and recreated only
-    after a fresh owner is acquired.
+    :class:`AdbOwnedServer` must originate from the process-coordinated owned lifetime store.
+    Resource-bound children are expected to be destroyed when that owned incarnation is retired
+    and recreated only after a fresh owned incarnation is acquired.
     """
 
     def __init__(self, server: AdbOwnedServer) -> None:

@@ -7,7 +7,7 @@ from adb.server.model import AdbServerEndpoint
 
 
 class AdbServerLaunchError(AdbServerNativeError):
-    """A fresh process-owned native ADB server could not be launched."""
+    """A fresh owned native ADB server could not be launched."""
 
 
 @runtime_checkable

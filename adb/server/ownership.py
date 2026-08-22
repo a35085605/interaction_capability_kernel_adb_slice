@@ -3,12 +3,17 @@ from __future__ import annotations
 from enum import Enum
 from threading import Condition
 
+from adb.server.identity import (
+    AdbServerIncarnation,
+    AdbServerIncarnationId,
+    _AdbServerIncarnationSequence,
+)
 from adb.server.model import AdbServerEndpoint
 from adb.server.lifecycle.handle import AdbServerNativeHandle
 from adb.server.lifecycle.launch import AdbServerLauncher
 
 
-_OWNER_CONSTRUCTION_TOKEN = object()
+_OWNED_SERVER_CONSTRUCTION_TOKEN = object()
 
 
 class AdbServerOwnershipLostError(RuntimeError):
@@ -16,37 +21,34 @@ class AdbServerOwnershipLostError(RuntimeError):
 
 
 class AdbServerStaleOwnerError(AdbServerOwnershipLostError):
-    """An operation referenced an ADB server generation that is no longer current."""
+    """An ownership operation referenced an ADB server incarnation that is no longer current."""
 
 
 class AdbOwnedServer:
-    """Public identity of one exact process-owned ADB server generation.
+    """Owned relationship to one exact ADB server incarnation.
 
-    The native lifecycle handle is deliberately private to the process owner. Public consumers
-    only receive the immutable endpoint and monotonic process-local generation identifying the
-    currently usable ownership lifetime. Once that generation is retired it can never become
-    usable again.
+    Ownership means this process retains private exact-lifetime teardown authority. Incarnation
+    identity is a separate value and is exposed so consumers can fence delayed work without
+    treating generation itself as an ownership concept.
     """
 
-    __slots__ = ("_endpoint", "_generation")
+    __slots__ = ("_incarnation",)
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
-        generation: int,
+        incarnation: AdbServerIncarnation,
         *,
         _token: object,
     ) -> None:
-        if _token is not _OWNER_CONSTRUCTION_TOKEN:
-            raise TypeError("AdbOwnedServer values are created by the process ADB server owner")
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-        if isinstance(generation, bool) or not isinstance(generation, int):
-            raise TypeError("generation must be an integer")
-        if generation <= 0:
-            raise ValueError("generation must be greater than zero")
-        self._endpoint = endpoint
-        self._generation = generation
+        if _token is not _OWNED_SERVER_CONSTRUCTION_TOKEN:
+            raise TypeError("AdbOwnedServer values are created by the owned lifetime store")
+        if not isinstance(incarnation, AdbServerIncarnation):
+            raise TypeError("incarnation must be AdbServerIncarnation")
+        self._incarnation = incarnation
+
+    @classmethod
+    def _from_incarnation(cls, incarnation: AdbServerIncarnation) -> "AdbOwnedServer":
+        return cls(incarnation, _token=_OWNED_SERVER_CONSTRUCTION_TOKEN)
 
     @classmethod
     def _from_identity(
@@ -54,21 +56,32 @@ class AdbOwnedServer:
         endpoint: AdbServerEndpoint,
         generation: int,
     ) -> "AdbOwnedServer":
-        return cls(endpoint, generation, _token=_OWNER_CONSTRUCTION_TOKEN)
+        """Compatibility constructor for internal callers migrating to incarnation identity."""
+
+        return cls._from_incarnation(
+            AdbServerIncarnation(endpoint, AdbServerIncarnationId(generation))
+        )
+
+    @property
+    def incarnation(self) -> AdbServerIncarnation:
+        return self._incarnation
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
-        return self._endpoint
+        """Compatibility projection of :attr:`incarnation`."""
+
+        return self._incarnation.endpoint
 
     @property
     def generation(self) -> int:
-        """Process-local identity of this exact owned server lifetime."""
+        """Compatibility projection of the incarnation fencing generation."""
 
-        return self._generation
+        return self._incarnation.generation
+
 
 
 class _OwnedServerLifetime:
-    """Private native authority backing one public owned-server generation."""
+    """Private exact-lifetime authority backing one owned relationship."""
 
     __slots__ = ("owner", "native")
 
@@ -93,7 +106,7 @@ class _DefaultAdbServerLauncher:
         return delegate.launch(endpoint)
 
 
-class _ProcessAdbServerOwnerStatus(str, Enum):
+class _OwnedAdbServerStoreStatus(str, Enum):
     ABSENT = "absent"
     STARTING = "starting"
     ACTIVE = "active"
@@ -105,7 +118,7 @@ class _RetiredServerLifetimeStatus(str, Enum):
 
 
 class _RetiredServerLifetime:
-    """Private teardown state for one irreversibly retired generation."""
+    """Private teardown state for one irreversibly retired incarnation."""
 
     __slots__ = ("lifetime", "status", "close_failure")
 
@@ -115,48 +128,50 @@ class _RetiredServerLifetime:
         self.close_failure: BaseException | None = None
 
 
-class _ProcessAdbServerOwner:
-    """Serialize public ownership and private native ADB server lifetimes.
+class _OwnedAdbServerLifetimeStore:
+    """Serialize exact owned lifetimes without defining process mutation authority.
 
-    Public ownership and native teardown are deliberately separate. Retiring a generation
-    irreversibly removes it from the public projection and moves its exact native handle into
-    retired-lifetime tracking. Cross-generation endpoint continuity and close fencing are
-    deliberately outside this primitive.
+    This primitive owns native handles and retirement bookkeeping. Process singleton scope,
+    exclusive mutation leases, and supervision policy live above it in ``adb.server.coordination``.
     """
 
-    def __init__(self, launcher: AdbServerLauncher | None = None) -> None:
+    def __init__(
+        self,
+        launcher: AdbServerLauncher | None = None,
+        *,
+        incarnation_sequence: _AdbServerIncarnationSequence | None = None,
+    ) -> None:
         if launcher is None:
             launcher = _DefaultAdbServerLauncher()
         elif not isinstance(launcher, AdbServerLauncher):
             raise TypeError("launcher must satisfy AdbServerLauncher")
+        if incarnation_sequence is None:
+            incarnation_sequence = _AdbServerIncarnationSequence()
+        elif not isinstance(incarnation_sequence, _AdbServerIncarnationSequence):
+            raise TypeError("incarnation_sequence must be _AdbServerIncarnationSequence")
         self._launcher = launcher
+        self._incarnations = incarnation_sequence
         self._condition = Condition()
-        self._status = _ProcessAdbServerOwnerStatus.ABSENT
+        self._status = _OwnedAdbServerStoreStatus.ABSENT
         self._active_lifetime: _OwnedServerLifetime | None = None
-        self._retired_lifetimes: dict[int, _RetiredServerLifetime] = {}
-        self._generation = 0
+        self._retired_lifetimes: dict[AdbServerIncarnationId, _RetiredServerLifetime] = {}
 
     def acquire(self, endpoint: AdbServerEndpoint | None = None) -> AdbOwnedServer:
-        """Return the active generation or launch one fresh process-owned server.
-
-        ``endpoint`` constrains only a newly launched generation. Retired native lifetimes remain
-        independently tracked until close is proven; endpoint reuse constraints are not ownership
-        invariants.
-        """
+        """Return the active owned relationship or launch one fresh exact native lifetime."""
 
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint or None")
 
         with self._condition:
-            while self._status is _ProcessAdbServerOwnerStatus.STARTING:
+            while self._status is _OwnedAdbServerStoreStatus.STARTING:
                 self._condition.wait()
 
-            if self._status is _ProcessAdbServerOwnerStatus.ACTIVE:
+            if self._status is _OwnedAdbServerStoreStatus.ACTIVE:
                 assert self._active_lifetime is not None
                 return self._active_lifetime.owner
 
-            assert self._status is _ProcessAdbServerOwnerStatus.ABSENT
-            self._status = _ProcessAdbServerOwnerStatus.STARTING
+            assert self._status is _OwnedAdbServerStoreStatus.ABSENT
+            self._status = _OwnedAdbServerStoreStatus.STARTING
 
         try:
             native = self._launcher.launch(endpoint)
@@ -164,61 +179,53 @@ class _ProcessAdbServerOwner:
                 raise TypeError("launcher.launch() must return AdbServerNativeHandle")
         except BaseException:
             with self._condition:
-                self._status = _ProcessAdbServerOwnerStatus.ABSENT
+                self._status = _OwnedAdbServerStoreStatus.ABSENT
                 self._active_lifetime = None
                 self._condition.notify_all()
             raise
 
         with self._condition:
-            self._generation += 1
-            owner = AdbOwnedServer._from_identity(native.endpoint, self._generation)
+            incarnation = self._incarnations.next(native.endpoint)
+            owner = AdbOwnedServer._from_incarnation(incarnation)
             self._active_lifetime = _OwnedServerLifetime(owner, native)
-            self._status = _ProcessAdbServerOwnerStatus.ACTIVE
+            self._status = _OwnedAdbServerStoreStatus.ACTIVE
             self._condition.notify_all()
             return owner
 
     def retire(self, owner: AdbOwnedServer) -> bool:
-        """Irreversibly withdraw one generation from public ownership.
-
-        Retirement is non-blocking with respect to native process termination. The exact native
-        handle is retained in private retired-lifetime tracking until :meth:`dispose_retired`
-        proves termination.
-        """
+        """Irreversibly withdraw one owned incarnation from the active projection."""
 
         self._require_owner(owner)
         with self._condition:
-            retired = self._retired_lifetimes.get(owner.generation)
+            retired = self._retired_lifetimes.get(owner.incarnation.id)
             if retired is not None and retired.lifetime.owner is owner:
                 return False
 
             lifetime = self._active_lifetime
             if lifetime is None:
-                if owner.generation <= self._generation:
+                latest_id = self._incarnations.latest_id
+                if latest_id is not None and owner.incarnation.id <= latest_id:
                     return False
                 raise self._stale_owner_error(owner)
             if lifetime.owner is not owner:
-                if owner.generation < lifetime.owner.generation:
+                if owner.incarnation.id < lifetime.owner.incarnation.id:
                     return False
                 raise self._stale_owner_error(owner)
-            if self._status is not _ProcessAdbServerOwnerStatus.ACTIVE:
+            if self._status is not _OwnedAdbServerStoreStatus.ACTIVE:
                 raise self._stale_owner_error(owner)
 
             self._active_lifetime = None
-            self._retired_lifetimes[owner.generation] = _RetiredServerLifetime(lifetime)
-            self._status = _ProcessAdbServerOwnerStatus.ABSENT
+            self._retired_lifetimes[owner.incarnation.id] = _RetiredServerLifetime(lifetime)
+            self._status = _OwnedAdbServerStoreStatus.ABSENT
             self._condition.notify_all()
             return True
 
     def dispose_retired(self, owner: AdbOwnedServer) -> None:
-        """Prove native termination for one already-retired generation.
-
-        Failure leaves only that retired native lifetime as ``CLOSE_UNPROVEN``. A later call for
-        the same generation may retry close proof without affecting any newer active generation.
-        """
+        """Prove native termination for one already-retired owned incarnation."""
 
         self._require_owner(owner)
         with self._condition:
-            retired = self._retired_lifetimes.get(owner.generation)
+            retired = self._retired_lifetimes.get(owner.incarnation.id)
             if retired is None or retired.lifetime.owner is not owner:
                 raise self._stale_owner_error(owner)
             retired.status = _RetiredServerLifetimeStatus.CLOSING
@@ -229,7 +236,7 @@ class _ProcessAdbServerOwner:
             native.close()
         except BaseException as exc:
             with self._condition:
-                current = self._retired_lifetimes.get(owner.generation)
+                current = self._retired_lifetimes.get(owner.incarnation.id)
                 if current is retired:
                     retired.status = _RetiredServerLifetimeStatus.CLOSE_UNPROVEN
                     retired.close_failure = exc
@@ -237,17 +244,17 @@ class _ProcessAdbServerOwner:
             raise
 
         with self._condition:
-            current = self._retired_lifetimes.get(owner.generation)
+            current = self._retired_lifetimes.get(owner.incarnation.id)
             if current is retired:
-                del self._retired_lifetimes[owner.generation]
+                del self._retired_lifetimes[owner.incarnation.id]
                 self._condition.notify_all()
 
     def invalidate(self, owner: AdbOwnedServer) -> bool:
-        """Retire and synchronously dispose one generation after liveness loss."""
+        """Retire and synchronously dispose one owned incarnation after liveness loss."""
 
         retired_now = self.retire(owner)
         with self._condition:
-            retired = self._retired_lifetimes.get(owner.generation)
+            retired = self._retired_lifetimes.get(owner.incarnation.id)
             can_dispose = retired is not None and retired.lifetime.owner is owner
         if not can_dispose:
             return False
@@ -255,25 +262,31 @@ class _ProcessAdbServerOwner:
         return retired_now or can_dispose
 
     def close(self, owner: AdbOwnedServer) -> None:
-        """Retire and synchronously close one exact owned generation."""
+        """Retire and synchronously close one exact owned incarnation."""
 
         retired_now = self.retire(owner)
         if not retired_now:
             with self._condition:
-                retired = self._retired_lifetimes.get(owner.generation)
+                retired = self._retired_lifetimes.get(owner.incarnation.id)
                 if retired is None or retired.lifetime.owner is not owner:
                     raise self._stale_owner_error(owner)
         self.dispose_retired(owner)
 
     @property
-    def active_owner(self) -> AdbOwnedServer | None:
-        """Return the current public ownership projection without launching a generation."""
+    def active_server(self) -> AdbOwnedServer | None:
+        """Return the active owned relationship without launching a new lifetime."""
 
         with self._condition:
-            if self._status is not _ProcessAdbServerOwnerStatus.ACTIVE:
+            if self._status is not _OwnedAdbServerStoreStatus.ACTIVE:
                 return None
             assert self._active_lifetime is not None
             return self._active_lifetime.owner
+
+    @property
+    def active_owner(self) -> AdbOwnedServer | None:
+        """Compatibility alias for :attr:`active_server`."""
+
+        return self.active_server
 
     @staticmethod
     def _require_owner(owner: object) -> None:
@@ -282,51 +295,40 @@ class _ProcessAdbServerOwner:
 
     def _stale_owner_error(self, owner: AdbOwnedServer) -> AdbServerStaleOwnerError:
         lifetime = self._active_lifetime
-        current_generation = lifetime.owner.generation if lifetime is not None else None
+        current = lifetime.owner.incarnation if lifetime is not None else None
         return AdbServerStaleOwnerError(
-            "ADB server generation "
-            f"{owner.generation} is stale; current generation is {current_generation!r}"
+            f"ADB server incarnation {owner.incarnation!r} is stale; current incarnation is {current!r}"
         )
+
+
+# Private compatibility alias: the implementation is a lifetime store, not a process singleton.
+_ProcessAdbServerOwner = _OwnedAdbServerLifetimeStore
 
 
 def acquire_process_adb_server(
     endpoint: AdbServerEndpoint | None = None,
 ) -> AdbOwnedServer:
-    """Acquire or create the single process-owned ADB server generation.
+    """Acquire or create the process-coordinated owned ADB server lifetime."""
 
-    ``endpoint`` constrains only creation of a fresh generation. When process mutation is
-    reserved, an already-active generation may still be observed but creating a fresh generation
-    is rejected for ordinary callers.
-    """
+    from adb.server.coordination import _PROCESS_ADB_SERVER_COORDINATOR
 
-    from adb.server.control import _PROCESS_ADB_SERVER_CONTROL
-
-    return _PROCESS_ADB_SERVER_CONTROL.acquire(endpoint)
+    return _PROCESS_ADB_SERVER_COORDINATOR.acquire_owned(endpoint)
 
 
 def invalidate_process_adb_server(owner: AdbOwnedServer) -> bool:
-    """Retire and dispose one owned generation after ownership loss.
+    """Retire and dispose one owned incarnation after terminal liveness loss."""
 
-    Disposal is retried when the exact generation was already retired but its native close
-    has not yet been proven. The operation is rejected while process mutation is reserved by an
-    exclusive controller.
-    """
+    from adb.server.coordination import _PROCESS_ADB_SERVER_COORDINATOR
 
-    from adb.server.control import _PROCESS_ADB_SERVER_CONTROL
-
-    return _PROCESS_ADB_SERVER_CONTROL.invalidate(owner)
+    return _PROCESS_ADB_SERVER_COORDINATOR.invalidate_owned(owner)
 
 
 def close_process_adb_server(owner: AdbOwnedServer) -> None:
-    """Retire and close one exact owned generation through its private native handle.
+    """Retire and close one exact owned incarnation through its private native handle."""
 
-    If the generation was already retired but remains tracked, this retries native close proof.
-    The operation is rejected while process mutation is reserved by an exclusive controller.
-    """
+    from adb.server.coordination import _PROCESS_ADB_SERVER_COORDINATOR
 
-    from adb.server.control import _PROCESS_ADB_SERVER_CONTROL
-
-    _PROCESS_ADB_SERVER_CONTROL.close(owner)
+    _PROCESS_ADB_SERVER_COORDINATOR.close_owned(owner)
 
 
 __all__ = [

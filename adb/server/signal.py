@@ -7,24 +7,23 @@ from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
     AdbServerLaunchFailure,
-    AdbServerOwnershipLossFailure,
+    AdbServerLivenessFailure,
     AdbServerProcessExitedFailure,
 )
+from adb.server.identity import AdbServerIncarnation
 from adb.server.model import AdbServerEndpoint, AdbServerRecoveryCycleId
 from adb.server.ownership import AdbOwnedServer
 
 
-_OWNERSHIP_LOSS_FAILURE_TYPES = (
+_LIVENESS_FAILURE_TYPES = (
     AdbServerConnectionFailure,
     AdbServerProcessExitedFailure,
 )
 
 
-def _require_generation(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError("generation must be an integer")
-    if value <= 0:
-        raise ValueError("generation must be greater than zero")
+def _require_incarnation(value: object) -> AdbServerIncarnation:
+    if not isinstance(value, AdbServerIncarnation):
+        raise TypeError("incarnation must be AdbServerIncarnation")
     return value
 
 
@@ -34,18 +33,32 @@ def _require_endpoint(value: object) -> AdbServerEndpoint:
     return value
 
 
-@dataclass(frozen=True, slots=True)
-class AdbServerReconciliationRequested:
-    """Signal that terminal liveness evidence requires generation-fenced reconciliation."""
+class _IncarnationSignalProjection:
+    incarnation: AdbServerIncarnation
 
-    endpoint: AdbServerEndpoint
-    generation: int
-    failure: AdbServerOwnershipLossFailure
+    @property
+    def endpoint(self) -> AdbServerEndpoint:
+        """Compatibility projection of :attr:`incarnation`."""
+
+        return self.incarnation.endpoint
+
+    @property
+    def generation(self) -> int:
+        """Compatibility projection of :attr:`incarnation`."""
+
+        return self.incarnation.generation
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerReconciliationRequested(_IncarnationSignalProjection):
+    """Signal that terminal liveness evidence requires incarnation-fenced reconciliation."""
+
+    incarnation: AdbServerIncarnation
+    failure: AdbServerLivenessFailure
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
-        _require_generation(self.generation)
-        if not isinstance(self.failure, _OWNERSHIP_LOSS_FAILURE_TYPES):
+        _require_incarnation(self.incarnation)
+        if not isinstance(self.failure, _LIVENESS_FAILURE_TYPES):
             raise TypeError(
                 "failure must be AdbServerConnectionFailure or "
                 "AdbServerProcessExitedFailure"
@@ -53,29 +66,25 @@ class AdbServerReconciliationRequested:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerOwnershipRetired:
-    """Public fact that one owned generation is irreversibly no longer usable."""
+class AdbServerOwnershipRetired(_IncarnationSignalProjection):
+    """Public fact that one owned incarnation is irreversibly no longer usable."""
 
-    endpoint: AdbServerEndpoint
-    generation: int
+    incarnation: AdbServerIncarnation
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
-        _require_generation(self.generation)
+        _require_incarnation(self.incarnation)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerOwnershipLost:
-    """Failure evidence explaining why one already-retired generation lost ownership."""
+class AdbServerOwnershipLost(_IncarnationSignalProjection):
+    """Failure evidence explaining why one already-retired owned incarnation was lost."""
 
-    endpoint: AdbServerEndpoint
-    generation: int
-    failure: AdbServerOwnershipLossFailure
+    incarnation: AdbServerIncarnation
+    failure: AdbServerLivenessFailure
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
-        _require_generation(self.generation)
-        if not isinstance(self.failure, _OWNERSHIP_LOSS_FAILURE_TYPES):
+        _require_incarnation(self.incarnation)
+        if not isinstance(self.failure, _LIVENESS_FAILURE_TYPES):
             raise TypeError(
                 "failure must be AdbServerConnectionFailure or "
                 "AdbServerProcessExitedFailure"
@@ -83,35 +92,31 @@ class AdbServerOwnershipLost:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerNativeCloseCompleted:
-    """Private-lifecycle fact that native termination of a retired generation was proven."""
+class AdbServerNativeCloseCompleted(_IncarnationSignalProjection):
+    """Private-lifecycle fact that termination of a retired incarnation was proven."""
 
-    endpoint: AdbServerEndpoint
-    generation: int
+    incarnation: AdbServerIncarnation
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
-        _require_generation(self.generation)
+        _require_incarnation(self.incarnation)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerNativeCloseUnproven:
-    """Private-lifecycle fact that termination of a retired generation remains unproven."""
+class AdbServerNativeCloseUnproven(_IncarnationSignalProjection):
+    """Private-lifecycle fact that termination of a retired incarnation remains unproven."""
 
-    endpoint: AdbServerEndpoint
-    generation: int
+    incarnation: AdbServerIncarnation
     failure: AdbServerCloseUnprovenFailure
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
-        _require_generation(self.generation)
+        _require_incarnation(self.incarnation)
         if not isinstance(self.failure, AdbServerCloseUnprovenFailure):
             raise TypeError("failure must be AdbServerCloseUnprovenFailure")
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerOwnershipRecovered:
-    """Signal carrying the fresh usable process-owned ADB server generation."""
+    """Signal carrying the fresh usable process-owned ADB server incarnation."""
 
     server: AdbOwnedServer
 
@@ -120,12 +125,16 @@ class AdbServerOwnershipRecovered:
             raise TypeError("server must be AdbOwnedServer")
 
     @property
+    def incarnation(self) -> AdbServerIncarnation:
+        return self.server.incarnation
+
+    @property
     def endpoint(self) -> AdbServerEndpoint:
-        return self.server.endpoint
+        return self.incarnation.endpoint
 
     @property
     def generation(self) -> int:
-        return self.server.generation
+        return self.incarnation.generation
 
 
 @dataclass(frozen=True, slots=True)

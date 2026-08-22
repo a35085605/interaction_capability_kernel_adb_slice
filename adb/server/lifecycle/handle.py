@@ -6,7 +6,7 @@ from adb.server.model import AdbServerEndpoint
 
 
 class AdbServerNativeError(RuntimeError):
-    """Base error for process-owned native ADB server lifecycle failures."""
+    """Base error for exact native ADB server lifecycle failures."""
 
 
 class AdbServerCloseError(AdbServerNativeError):
@@ -18,7 +18,7 @@ class AdbServerNativeHandle(Protocol):
     """Exact native lifetime handle returned by one successful launch.
 
     The handle is the private authority for the exact native lifetime and its teardown. Public
-    ownership identity is assigned separately by the process owner. Implementations must never
+    incarnation identity and ownership relationship are assigned separately. Implementations must never
     represent a pre-existing ADB listener that was merely discovered by endpoint.
     """
 

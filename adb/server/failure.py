@@ -79,9 +79,11 @@ AdbServerLifecycleFailure: TypeAlias = (
     | AdbServerCloseUnprovenFailure
 )
 AdbServerFailure: TypeAlias = AdbServerRequestFailure | AdbServerLifecycleFailure
-AdbServerOwnershipLossFailure: TypeAlias = (
+AdbServerLivenessFailure: TypeAlias = (
     AdbServerConnectionFailure | AdbServerProcessExitedFailure
 )
+# Compatibility alias: liveness loss is evidence; ownership is one possible relationship.
+AdbServerOwnershipLossFailure: TypeAlias = AdbServerLivenessFailure
 
 
 __all__ = [
@@ -90,6 +92,7 @@ __all__ = [
     "AdbServerFailure",
     "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
+    "AdbServerLivenessFailure",
     "AdbServerOwnershipLossFailure",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",

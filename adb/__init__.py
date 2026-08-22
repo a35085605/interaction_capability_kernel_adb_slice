@@ -1,9 +1,9 @@
 """Host-side ADB native nouns and atomic read capabilities.
 
-Canonical ownership is noun-first around the process-owned ADB server, pairing
-relationship, and transports. Pairing commands live under ``adb.pairing``;
-transport inventory and tracking are owned by ``adb.transport``; Android
-framework queries reached through ADB live under ``android.adb``.
+ADB server endpoint control, incarnation identity, lifecycle relationships, and process
+coordination are separate concepts. Pairing commands live under ``adb.pairing``; transport
+inventory and tracking live under ``adb.transport``; Android framework queries reached through
+ADB live under ``android.adb``.
 """
 
 from adb.errors import (
@@ -20,11 +20,15 @@ from adb.errors import (
 )
 from adb.managed import AdbManagedRuntime, RegisteredTransport
 from adb.server import (
-    AdbServerMutationReservedError,
     AdbOwnedServer,
+    AdbServerController,
+    AdbServerIncarnation,
+    AdbServerIncarnationId,
+    AdbServerMutationReservedError,
     AdbServerOwnershipLostError,
     AdbServerStaleOwnerError,
     AdbServerStatusReader,
+    SubprocessAdbServerController,
     acquire_process_adb_server,
     close_process_adb_server,
     invalidate_process_adb_server,
@@ -57,7 +61,10 @@ __all__ = [
     "AdbProtocolError",
     "AdbRemoteCommandError",
     "AdbServerConnectionError",
+    "AdbServerController",
     "AdbServerMutationReservedError",
+    "AdbServerIncarnation",
+    "AdbServerIncarnationId",
     "AdbServerOwnershipLostError",
     "AdbServerStaleOwnerError",
     "AdbServerStatusReader",
@@ -76,6 +83,7 @@ __all__ = [
     "AdbTransportSelector",
     "AdbTransportUnavailableError",
     "RegisteredTransport",
+    "SubprocessAdbServerController",
     "acquire_process_adb_server",
     "close_process_adb_server",
     "invalidate_process_adb_server",

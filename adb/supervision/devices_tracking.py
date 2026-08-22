@@ -4,6 +4,7 @@ from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 
 from adb.server.failure import AdbServerConnectionFailure
+from adb.server.identity import AdbServerIncarnation, AdbServerIncarnationId
 from adb.server.ownership import AdbOwnedServer
 from adb.supervision.model import AdbDevicesTrackingSupervisionPolicy
 from adb.server.signal import (
@@ -103,8 +104,8 @@ class AdbDevicesTrackingSupervisor:
         self._tracker: AdbDevicesTrackingScope | None = None
         self._start: AdbDevicesTrackingStartOrchestrator | None = None
         self._tracking_active = False
-        self._server_generation: int | None = None
-        self._latest_server_generation = 0
+        self._server_incarnation: AdbServerIncarnation | None = None
+        self._latest_server_incarnation_id: AdbServerIncarnationId | None = None
         self._start_in_progress = False
         self._attempt_threads: set[Thread] = set()
         self._closed = False
@@ -136,12 +137,9 @@ class AdbDevicesTrackingSupervisor:
             self._ensure_subscriptions_locked()
             self._desired_tracking = True
             self._readiness = readiness
-            self._server_generation = server.generation if server is not None else None
+            self._server_incarnation = server.incarnation if server is not None else None
             if server is not None:
-                self._latest_server_generation = max(
-                    self._latest_server_generation,
-                    server.generation,
-                )
+                self._latest_server_incarnation_id = server.incarnation.id
             if readiness is not AdbDevicesTrackingReadiness.READY:
                 return False
             tracker, starter = self._create_tracker_locked()
@@ -174,20 +172,28 @@ class AdbDevicesTrackingSupervisor:
             self._require_open()
             if not self._desired_tracking:
                 return
-            generation = server.generation if server is not None else None
-            if generation is not None and generation < self._latest_server_generation:
+            incarnation = server.incarnation if server is not None else None
+            incarnation_id = incarnation.id if incarnation is not None else None
+            if (
+                incarnation_id is not None
+                and self._latest_server_incarnation_id is not None
+                and incarnation_id < self._latest_server_incarnation_id
+            ):
                 return
-            generation_changed = generation != self._server_generation
+            incarnation_changed = incarnation != self._server_incarnation
             if server is not None and server.endpoint != self.endpoint:
                 raise ValueError("recovered server endpoint does not match tracking endpoint")
             self.server = server
             self._readiness = readiness
-            self._server_generation = generation
-            if generation is not None:
-                self._latest_server_generation = max(self._latest_server_generation, generation)
+            self._server_incarnation = incarnation
+            if incarnation_id is not None and (
+                self._latest_server_incarnation_id is None
+                or incarnation_id > self._latest_server_incarnation_id
+            ):
+                self._latest_server_incarnation_id = incarnation_id
             if readiness is not AdbDevicesTrackingReadiness.READY:
                 tracker_to_close = self._detach_tracker_locked()
-            elif generation_changed and self._tracker is not None:
+            elif incarnation_changed and self._tracker is not None:
                 tracker_to_close = self._detach_tracker_locked()
             if (
                 readiness is AdbDevicesTrackingReadiness.READY
@@ -230,7 +236,7 @@ class AdbDevicesTrackingSupervisor:
             self._closed = True
             self._desired_tracking = False
             self._readiness = AdbDevicesTrackingReadiness.INDETERMINATE
-            self._server_generation = None
+            self._server_incarnation = None
             subscriptions = self._subscriptions
             self._subscriptions = ()
             tracker = self._detach_tracker_locked()
@@ -255,25 +261,24 @@ class AdbDevicesTrackingSupervisor:
         if event.server is not self.server:
             return
         request_server_reconciliation = False
-        generation: int | None = None
+        incarnation: AdbServerIncarnation | None = None
         with self._lock:
             if self._closed or self._tracker is None:
                 return
             tracker = self._detach_tracker_locked()
             if event.failure is AdbDevicesTrackingFailure.SERVER_CONNECTION:
                 self._readiness = AdbDevicesTrackingReadiness.WAITING_FOR_SERVER
-                generation = self._server_generation
+                incarnation = self._server_incarnation
                 request_server_reconciliation = (
-                    self._desired_tracking and generation is not None
+                    self._desired_tracking and incarnation is not None
                 )
         assert tracker is not None
         tracker.close()
         if request_server_reconciliation:
-            assert generation is not None
+            assert incarnation is not None
             self._bus.publish(
                 AdbServerReconciliationRequested(
-                    self.endpoint,
-                    generation,
+                    incarnation,
                     AdbServerConnectionFailure(event.diagnostic),
                 )
             )
@@ -294,15 +299,19 @@ class AdbDevicesTrackingSupervisor:
         with self._lock:
             if self._closed:
                 return
-            if event.generation < self._latest_server_generation:
+            if (
+                self._latest_server_incarnation_id is not None
+                and event.incarnation.id < self._latest_server_incarnation_id
+            ):
                 return
-            self._latest_server_generation = max(
-                self._latest_server_generation,
-                event.generation,
-            )
-            if self._server_generation != event.generation:
+            if (
+                self._latest_server_incarnation_id is None
+                or event.incarnation.id > self._latest_server_incarnation_id
+            ):
+                self._latest_server_incarnation_id = event.incarnation.id
+            if self._server_incarnation != event.incarnation:
                 return
-            self._server_generation = None
+            self._server_incarnation = None
             self.server = None
             self._readiness = AdbDevicesTrackingReadiness.WAITING_FOR_SERVER
             tracker = self._detach_tracker_locked()
@@ -315,7 +324,10 @@ class AdbDevicesTrackingSupervisor:
         with self._lock:
             if self._closed or not self._desired_tracking:
                 return
-            if event.generation <= self._latest_server_generation:
+            if (
+                self._latest_server_incarnation_id is not None
+                and event.incarnation.id <= self._latest_server_incarnation_id
+            ):
                 return
         self.reconcile(event.server)
 
@@ -363,7 +375,7 @@ class AdbDevicesTrackingSupervisor:
         result: AdbDevicesTrackingStartResult,
     ) -> bool:
         request_server_reconciliation = False
-        reconciliation_generation: int | None = None
+        reconciliation_incarnation: AdbServerIncarnation | None = None
         keep_tracker = False
         tracker_to_close: AdbDevicesTrackingScope | None = None
 
@@ -383,19 +395,18 @@ class AdbDevicesTrackingSupervisor:
                     is AdbDevicesTrackingFailure.SERVER_CONNECTION
                 ):
                     self._readiness = AdbDevicesTrackingReadiness.WAITING_FOR_SERVER
-                    reconciliation_generation = self._server_generation
-                    request_server_reconciliation = reconciliation_generation is not None
+                    reconciliation_incarnation = self._server_incarnation
+                    request_server_reconciliation = reconciliation_incarnation is not None
             if not keep_tracker:
                 tracker_to_close = self._detach_tracker_locked()
 
         if tracker_to_close is not None:
             tracker_to_close.close()
         if request_server_reconciliation:
-            assert reconciliation_generation is not None
+            assert reconciliation_incarnation is not None
             self._bus.publish(
                 AdbServerReconciliationRequested(
-                    self.endpoint,
-                    reconciliation_generation,
+                    reconciliation_incarnation,
                     AdbServerConnectionFailure(result.diagnostic),
                 )
             )
