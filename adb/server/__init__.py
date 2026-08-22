@@ -1,6 +1,13 @@
 """ADB server identity, control, lifecycle relationships, coordination, and status contracts."""
 
-from adb.server.control import AdbServerController, SubprocessAdbServerController
+from adb.server.control import (
+    AdbServerControlError,
+    AdbServerController,
+    AdbServerStart,
+    AdbServerStartError,
+    AdbServerStop,
+    AdbServerStopError,
+)
 from adb.server.coordination import AdbServerMutationReservedError
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
@@ -30,6 +37,7 @@ from adb.server.ownership import (
     invalidate_process_adb_server,
 )
 from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
+from adb.server.subprocess import SubprocessAdbServerController
 
 __all__ = [
     "ANY_ADB_SERVER_TERMINATION_POLICY",
@@ -37,6 +45,7 @@ __all__ = [
     "AdbMdnsBackend",
     "AdbServerCloseUnprovenFailure",
     "AdbServerConnectionFailure",
+    "AdbServerControlError",
     "AdbServerController",
     "AdbServerEndpoint",
     "AdbServerFailure",
@@ -52,6 +61,10 @@ __all__ = [
     "AdbServerRequestFailure",
     "AdbServerServiceFailure",
     "AdbServerStaleOwnerError",
+    "AdbServerStart",
+    "AdbServerStartError",
+    "AdbServerStop",
+    "AdbServerStopError",
     "AdbServerTerminationPolicy",
     "AdbServerStatus",
     "AdbServerStatusReader",

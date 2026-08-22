@@ -4,12 +4,10 @@ from collections.abc import Callable, Iterable
 from enum import Enum
 from threading import Condition
 
+from adb.server.control import AdbServerController, AdbServerStart, AdbServerStop
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
-from adb.server.lifecycle.backend import (
-    AdbServerLifecycleBackend,
-    LauncherAdbServerLifecycleBackend,
-)
+from adb.server.lifecycle.backend import AdbServerLifecycleBackend
 from adb.server.lifecycle.launch import AdbServerLauncher
 
 
@@ -18,9 +16,8 @@ class AdbServerOwnership(str, Enum):
 
     This value deliberately says nothing about OS/process handles or termination capability.
     ``OWNED`` means this coordination domain created the server and accepts lifecycle
-    responsibility for it. ``ADOPTED`` and ``UNKNOWN`` remain valid relationships even though a
-    raw :class:`~adb.server.control.AdbServerController` may still be technically capable of
-    issuing ``adb kill-server`` for them.
+    responsibility for it. ``ADOPTED`` and ``UNKNOWN`` remain valid relationships independent
+    of whether a concrete :class:`~adb.server.control.AdbServerController` can stop that identity.
     """
 
     OWNED = "owned"
@@ -82,20 +79,31 @@ class _AdbServerRecord:
         self.ownership = ownership
 
 
-class _DefaultAdbServerLauncher:
-    """Compatibility launcher used to build the default lifecycle backend lazily."""
+class _LifecycleBackendAdbServerController:
+    """Compatibility adapter from the former lifecycle backend boundary to controller results."""
 
-    def __init__(self) -> None:
-        self._delegate: AdbServerLauncher | None = None
+    def __init__(
+        self,
+        backend: AdbServerLifecycleBackend,
+        server_factory: Callable[[AdbServerEndpoint], AdbServer],
+    ) -> None:
+        self._backend = backend
+        self._server_factory = server_factory
 
-    def launch(self, endpoint: AdbServerEndpoint | None = None):
-        delegate = self._delegate
-        if delegate is None:
-            from adb.server.lifecycle.subprocess import SubprocessAdbServerLauncher
+    def start(
+        self,
+        endpoint: AdbServerEndpoint | None = None,
+    ) -> AdbServerStart:
+        server = self._backend.create(endpoint, server_factory=self._server_factory)
+        if not isinstance(server, AdbServer):
+            raise TypeError("backend.create() must return AdbServer")
+        return AdbServerStart(server)
 
-            delegate = SubprocessAdbServerLauncher()
-            self._delegate = delegate
-        return delegate.launch(endpoint)
+    def stop(self, server: AdbServer) -> AdbServerStop:
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
+        self._backend.close(server)
+        return AdbServerStop(server)
 
 
 class _AdbServerStoreStatus(str, Enum):
@@ -124,13 +132,10 @@ class _AdbServerLifetimeStore:
     """Serialize ADB-owned server identities without retaining OS/process handles.
 
     The store owns only ADB-domain state: server identity, creation provenance, and retirement
-    state. Exact process lifetime capabilities are retained behind ``AdbServerLifecycleBackend``.
+    state. Exact process lifetime capabilities remain private behind ``AdbServerController``.
     Process singleton scope, exclusive mutation leases, epoch generation, and supervision policy
-    live above this store in ``adb.server.coordination``.
-
-    ``launcher`` remains accepted as a compatibility construction path; it is immediately wrapped
-    by ``LauncherAdbServerLifecycleBackend`` so its process-lifetime capability never enters this
-    store.
+    live above this store in ``adb.server.coordination``. ``launcher`` and ``backend`` constructor
+    paths remain compatibility inputs and are adapted to the controller boundary on first start.
     """
 
     def __init__(
@@ -138,19 +143,21 @@ class _AdbServerLifetimeStore:
         launcher: AdbServerLauncher | None = None,
         *,
         backend: AdbServerLifecycleBackend | None = None,
+        controller: AdbServerController | None = None,
     ) -> None:
-        if launcher is not None and backend is not None:
-            raise TypeError("specify launcher or backend, not both")
-        if backend is None:
-            if launcher is None:
-                launcher = _DefaultAdbServerLauncher()
-            elif not isinstance(launcher, AdbServerLauncher):
-                raise TypeError("launcher must satisfy AdbServerLauncher")
-            backend = LauncherAdbServerLifecycleBackend(launcher)
-        elif not isinstance(backend, AdbServerLifecycleBackend):
+        supplied = sum(value is not None for value in (launcher, backend, controller))
+        if supplied > 1:
+            raise TypeError("specify at most one of launcher, backend, or controller")
+        if launcher is not None and not isinstance(launcher, AdbServerLauncher):
+            raise TypeError("launcher must satisfy AdbServerLauncher")
+        if backend is not None and not isinstance(backend, AdbServerLifecycleBackend):
             raise TypeError("backend must satisfy AdbServerLifecycleBackend")
+        if controller is not None and not isinstance(controller, AdbServerController):
+            raise TypeError("controller must satisfy AdbServerController")
 
-        self._backend = backend
+        self._controller = controller
+        self._compat_launcher = launcher
+        self._compat_backend = backend
         self._condition = Condition()
         self._status = _AdbServerStoreStatus.ABSENT
         self._active_record: _AdbServerRecord | None = None
@@ -181,9 +188,11 @@ class _AdbServerLifetimeStore:
             self._status = _AdbServerStoreStatus.STARTING
 
         try:
-            server = self._backend.create(endpoint, server_factory=server_factory)
-            if not isinstance(server, AdbServer):
-                raise TypeError("backend.create() must return AdbServer")
+            controller = self._controller_for(server_factory)
+            started = controller.start(endpoint)
+            if not isinstance(started, AdbServerStart):
+                raise TypeError("controller.start() must return AdbServerStart")
+            server = started.server
             record = _AdbServerRecord(server, AdbServerOwnership.OWNED)
         except BaseException:
             with self._condition:
@@ -221,7 +230,7 @@ class _AdbServerLifetimeStore:
             return True
 
     def dispose_retired(self, server: AdbServer) -> None:
-        """Ask the lifecycle backend to terminate one already-retired created server."""
+        """Ask the controller to stop one already-retired created server."""
 
         self._require_server(server)
         with self._condition:
@@ -232,7 +241,11 @@ class _AdbServerLifetimeStore:
             retired.close_failure = None
 
         try:
-            self._backend.close(server)
+            stopped = self._require_controller().stop(server)
+            if not isinstance(stopped, AdbServerStop):
+                raise TypeError("controller.stop() must return AdbServerStop")
+            if stopped.server != server:
+                raise ValueError("controller.stop() returned a different server identity")
         except BaseException as exc:
             with self._condition:
                 current = self._retired_records.get(server)
@@ -260,7 +273,7 @@ class _AdbServerLifetimeStore:
         return retired_now or can_dispose
 
     def close(self, server: AdbServer) -> None:
-        """Retire and synchronously close one process-coordinated created server."""
+        """Retire and synchronously stop one process-coordinated created server."""
 
         retired_now = self.retire(server)
         if not retired_now:
@@ -268,6 +281,31 @@ class _AdbServerLifetimeStore:
                 if server not in self._retired_records:
                     raise self._stale_server_error(server)
         self.dispose_retired(server)
+
+    def _controller_for(
+        self,
+        server_factory: Callable[[AdbServerEndpoint], AdbServer],
+    ) -> AdbServerController:
+        controller = self._controller
+        if controller is None:
+            backend = self._compat_backend
+            if backend is not None:
+                controller = _LifecycleBackendAdbServerController(backend, server_factory)
+            else:
+                from adb.server.subprocess import SubprocessAdbServerController
+
+                controller = SubprocessAdbServerController(
+                    _server_factory=server_factory,
+                    _launcher=self._compat_launcher,
+                )
+            self._controller = controller
+        return controller
+
+    def _require_controller(self) -> AdbServerController:
+        controller = self._controller
+        if controller is None:
+            raise RuntimeError("ADB server controller has not been initialized")
+        return controller
 
     @property
     def active_server(self) -> AdbServer | None:
@@ -315,8 +353,8 @@ class _AdbServerLifetimeStore:
         )
 
 
-# Compatibility names for private callers while the implementation moves from process ownership
-# to ADB-domain provenance plus a backend-owned process lifetime.
+# Compatibility names for private callers while process ownership is represented as
+# ADB-domain provenance plus controller-owned native lifetime state.
 _OwnedAdbServerLifetimeStore = _AdbServerLifetimeStore
 _ProcessAdbServerOwner = _AdbServerLifetimeStore
 
@@ -338,7 +376,7 @@ def invalidate_process_adb_server(server: AdbServer) -> bool:
 
 
 def close_process_adb_server(server: AdbServer) -> None:
-    """Retire and close one ADB-owned server through its lifecycle backend."""
+    """Retire and stop one ADB-owned server through its controller."""
 
     from adb.server.coordination import _PROCESS_ADB_SERVER_COORDINATOR
 

@@ -9,8 +9,7 @@ from random import random
 from threading import Lock, Thread, current_thread
 from typing import TypeAlias
 
-from adb.server.lifecycle.handle import AdbServerCloseError
-from adb.server.lifecycle.launch import AdbServerLaunchError
+from adb.server.control import AdbServerStartError, AdbServerStopError
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
@@ -464,7 +463,7 @@ class AdbServerSupervisor:
     def _dispose_retired_server(self, server: AdbServer) -> None:
         try:
             self._coordination.dispose_retired(server, lease=self._mutation_lease)
-        except AdbServerCloseError as exc:
+        except AdbServerStopError as exc:
             self._bus.publish(
                 AdbServerNativeCloseUnproven(
                     server,
@@ -537,7 +536,7 @@ class AdbServerSupervisor:
                         self._recovery_launch_endpoint(),
                         lease=self._mutation_lease,
                     )
-                except AdbServerLaunchError as exc:
+                except AdbServerStartError as exc:
                     launch_failure = AdbServerLaunchFailure(str(exc))
                 else:
                     expected_endpoint = self._recovery_launch_endpoint()

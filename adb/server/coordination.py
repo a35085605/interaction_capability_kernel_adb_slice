@@ -70,7 +70,7 @@ class _AdbServerCoordination(Protocol):
 class _ProcessAdbServerCoordinator:
     """Fence process-wide mutations independently from public server identity.
 
-    The ADB lifetime store retains identities and creation provenance while its lifecycle backend
+    The ADB lifetime store retains identities and creation provenance while its controller
     owns any exact process handles. This coordinator defines the singleton mutation domain, owns
     server epoch generation, and grants optional exclusive authority. A lease
     survives temporary absence of an active server so recovery cannot be raced by unrelated process

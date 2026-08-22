@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from adb.server.lifecycle.handle import AdbServerNativeError, AdbServerProcessLifetime
+from adb.server.control import AdbServerStartError
+from adb.server.lifecycle.handle import AdbServerProcessLifetime
 from adb.server.endpoint import AdbServerEndpoint
 
 
-class AdbServerLaunchError(AdbServerNativeError):
-    """Creation of one fresh native ADB server process failed."""
+class AdbServerLaunchError(AdbServerStartError):
+    """Compatibility error for failure to start one fresh native ADB server process."""
 
 
 @runtime_checkable

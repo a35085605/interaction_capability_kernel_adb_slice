@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from adb.server.control import AdbServerControlError, AdbServerStopError
 from adb.server.endpoint import AdbServerEndpoint
 
 
-class AdbServerNativeError(RuntimeError):
-    """Base error for backend-specific ADB server process lifecycle failures."""
+AdbServerNativeError = AdbServerControlError
 
 
-class AdbServerCloseError(AdbServerNativeError):
-    """A backend could not prove termination of one exact process lifetime."""
+class AdbServerCloseError(AdbServerStopError):
+    """Compatibility error for unproven exact process termination."""
 
 
 @runtime_checkable
