@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import Enum
 from threading import Condition
 
-from adb.server.identity import AdbServerIncarnation, _AdbServerIncarnationSequence
+from adb.server.identity import AdbServerIncarnation
 from adb.server.model import AdbServerEndpoint
 from adb.server.lifecycle.handle import AdbServerNativeHandle
 from adb.server.lifecycle.launch import AdbServerLauncher
@@ -28,23 +29,34 @@ class AdbOwnedServer:
     treating the epoch itself as an ownership concept.
     """
 
-    __slots__ = ("_incarnation",)
+    __slots__ = ("_incarnation", "_store_token")
 
     def __init__(
         self,
         incarnation: AdbServerIncarnation,
         *,
         _token: object,
+        _store_token: object,
     ) -> None:
         if _token is not _OWNED_SERVER_CONSTRUCTION_TOKEN:
             raise TypeError("AdbOwnedServer values are created by the owned lifetime store")
         if not isinstance(incarnation, AdbServerIncarnation):
             raise TypeError("incarnation must be AdbServerIncarnation")
         self._incarnation = incarnation
+        self._store_token = _store_token
 
     @classmethod
-    def _from_incarnation(cls, incarnation: AdbServerIncarnation) -> "AdbOwnedServer":
-        return cls(incarnation, _token=_OWNED_SERVER_CONSTRUCTION_TOKEN)
+    def _from_incarnation(
+        cls,
+        incarnation: AdbServerIncarnation,
+        *,
+        _store_token: object,
+    ) -> "AdbOwnedServer":
+        return cls(
+            incarnation,
+            _token=_OWNED_SERVER_CONSTRUCTION_TOKEN,
+            _store_token=_store_token,
+        )
 
     @property
     def incarnation(self) -> AdbServerIncarnation:
@@ -120,29 +132,35 @@ class _OwnedAdbServerLifetimeStore:
     def __init__(
         self,
         launcher: AdbServerLauncher | None = None,
-        *,
-        incarnation_sequence: _AdbServerIncarnationSequence | None = None,
     ) -> None:
         if launcher is None:
             launcher = _DefaultAdbServerLauncher()
         elif not isinstance(launcher, AdbServerLauncher):
             raise TypeError("launcher must satisfy AdbServerLauncher")
-        if incarnation_sequence is None:
-            incarnation_sequence = _AdbServerIncarnationSequence()
-        elif not isinstance(incarnation_sequence, _AdbServerIncarnationSequence):
-            raise TypeError("incarnation_sequence must be _AdbServerIncarnationSequence")
         self._launcher = launcher
-        self._incarnations = incarnation_sequence
+        self._store_token = object()
         self._condition = Condition()
         self._status = _OwnedAdbServerStoreStatus.ABSENT
         self._active_lifetime: _OwnedServerLifetime | None = None
-        self._retired_lifetimes: dict[int, _RetiredServerLifetime] = {}
+        self._retired_lifetimes: dict[AdbOwnedServer, _RetiredServerLifetime] = {}
 
-    def acquire(self, endpoint: AdbServerEndpoint | None = None) -> AdbOwnedServer:
-        """Return the active owned relationship or launch one fresh exact native lifetime."""
+    def acquire(
+        self,
+        endpoint: AdbServerEndpoint | None = None,
+        *,
+        incarnation_factory: Callable[[AdbServerEndpoint], AdbServerIncarnation],
+    ) -> AdbOwnedServer:
+        """Return the active owned relationship or launch one fresh exact native lifetime.
+
+        Incarnation identity is assigned by the caller's coordination domain only after a fresh
+        native lifetime has been launched successfully. This store retains exact-lifetime
+        ownership and teardown authority but does not own epoch generation.
+        """
 
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint or None")
+        if not callable(incarnation_factory):
+            raise TypeError("incarnation_factory must be callable")
 
         with self._condition:
             while self._status is _OwnedAdbServerStoreStatus.STARTING:
@@ -166,9 +184,32 @@ class _OwnedAdbServerLifetimeStore:
                 self._condition.notify_all()
             raise
 
+        try:
+            incarnation = incarnation_factory(native.endpoint)
+            if not isinstance(incarnation, AdbServerIncarnation):
+                raise TypeError("incarnation_factory must return AdbServerIncarnation")
+            if incarnation.endpoint != native.endpoint:
+                raise ValueError("incarnation endpoint must match launched native endpoint")
+            owner = AdbOwnedServer._from_incarnation(
+                incarnation,
+                _store_token=self._store_token,
+            )
+        except BaseException as incarnation_error:
+            try:
+                native.close()
+            except BaseException as close_error:
+                with self._condition:
+                    self._status = _OwnedAdbServerStoreStatus.ABSENT
+                    self._active_lifetime = None
+                    self._condition.notify_all()
+                raise close_error from incarnation_error
+            with self._condition:
+                self._status = _OwnedAdbServerStoreStatus.ABSENT
+                self._active_lifetime = None
+                self._condition.notify_all()
+            raise
+
         with self._condition:
-            incarnation = self._incarnations.next(native.endpoint)
-            owner = AdbOwnedServer._from_incarnation(incarnation)
             self._active_lifetime = _OwnedServerLifetime(owner, native)
             self._status = _OwnedAdbServerStoreStatus.ACTIVE
             self._condition.notify_all()
@@ -179,25 +220,23 @@ class _OwnedAdbServerLifetimeStore:
 
         self._require_owner(owner)
         with self._condition:
-            retired = self._retired_lifetimes.get(owner.incarnation.epoch)
-            if retired is not None and retired.lifetime.owner is owner:
+            if owner._store_token is not self._store_token:
+                raise self._stale_owner_error(owner)
+
+            retired = self._retired_lifetimes.get(owner)
+            if retired is not None:
                 return False
 
             lifetime = self._active_lifetime
             if lifetime is None:
-                latest_epoch = self._incarnations.latest_epoch
-                if latest_epoch is not None and owner.incarnation.epoch <= latest_epoch:
-                    return False
-                raise self._stale_owner_error(owner)
+                return False
             if lifetime.owner is not owner:
-                if owner.incarnation.epoch < lifetime.owner.incarnation.epoch:
-                    return False
-                raise self._stale_owner_error(owner)
+                return False
             if self._status is not _OwnedAdbServerStoreStatus.ACTIVE:
                 raise self._stale_owner_error(owner)
 
             self._active_lifetime = None
-            self._retired_lifetimes[owner.incarnation.epoch] = _RetiredServerLifetime(lifetime)
+            self._retired_lifetimes[owner] = _RetiredServerLifetime(lifetime)
             self._status = _OwnedAdbServerStoreStatus.ABSENT
             self._condition.notify_all()
             return True
@@ -207,7 +246,7 @@ class _OwnedAdbServerLifetimeStore:
 
         self._require_owner(owner)
         with self._condition:
-            retired = self._retired_lifetimes.get(owner.incarnation.epoch)
+            retired = self._retired_lifetimes.get(owner)
             if retired is None or retired.lifetime.owner is not owner:
                 raise self._stale_owner_error(owner)
             retired.status = _RetiredServerLifetimeStatus.CLOSING
@@ -218,7 +257,7 @@ class _OwnedAdbServerLifetimeStore:
             native.close()
         except BaseException as exc:
             with self._condition:
-                current = self._retired_lifetimes.get(owner.incarnation.epoch)
+                current = self._retired_lifetimes.get(owner)
                 if current is retired:
                     retired.status = _RetiredServerLifetimeStatus.CLOSE_UNPROVEN
                     retired.close_failure = exc
@@ -226,9 +265,9 @@ class _OwnedAdbServerLifetimeStore:
             raise
 
         with self._condition:
-            current = self._retired_lifetimes.get(owner.incarnation.epoch)
+            current = self._retired_lifetimes.get(owner)
             if current is retired:
-                del self._retired_lifetimes[owner.incarnation.epoch]
+                del self._retired_lifetimes[owner]
                 self._condition.notify_all()
 
     def invalidate(self, owner: AdbOwnedServer) -> bool:
@@ -236,7 +275,7 @@ class _OwnedAdbServerLifetimeStore:
 
         retired_now = self.retire(owner)
         with self._condition:
-            retired = self._retired_lifetimes.get(owner.incarnation.epoch)
+            retired = self._retired_lifetimes.get(owner)
             can_dispose = retired is not None and retired.lifetime.owner is owner
         if not can_dispose:
             return False
@@ -249,7 +288,7 @@ class _OwnedAdbServerLifetimeStore:
         retired_now = self.retire(owner)
         if not retired_now:
             with self._condition:
-                retired = self._retired_lifetimes.get(owner.incarnation.epoch)
+                retired = self._retired_lifetimes.get(owner)
                 if retired is None or retired.lifetime.owner is not owner:
                     raise self._stale_owner_error(owner)
         self.dispose_retired(owner)

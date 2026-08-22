@@ -42,10 +42,4 @@ class _AdbServerIncarnationSequence:
             self._latest_epoch += 1
             return AdbServerIncarnation(endpoint, self._latest_epoch)
 
-    @property
-    def latest_epoch(self) -> int | None:
-        with self._lock:
-            return None if self._latest_epoch == 0 else self._latest_epoch
-
-
 __all__ = ["AdbServerIncarnation"]

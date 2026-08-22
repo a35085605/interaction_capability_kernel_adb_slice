@@ -70,15 +70,26 @@ class _AdbServerCoordination(Protocol):
 class _ProcessAdbServerCoordinator:
     """Fence process-wide mutations independently from ownership identity.
 
-    The owned lifetime store retains exact native handles. This coordinator only defines the
-    singleton mutation domain and optional exclusive authority. A lease survives temporary
-    absence of an active server so recovery cannot be raced by unrelated process callers.
+    The owned lifetime store retains exact native handles. This coordinator defines the singleton
+    mutation domain, owns incarnation epoch generation, and grants optional exclusive authority.
+    A lease survives temporary absence of an active server so recovery cannot be raced by unrelated
+    process callers.
     """
 
-    def __init__(self, lifetimes: _OwnedAdbServerLifetimeStore) -> None:
+    def __init__(
+        self,
+        lifetimes: _OwnedAdbServerLifetimeStore,
+        *,
+        incarnation_sequence: _AdbServerIncarnationSequence | None = None,
+    ) -> None:
         if not isinstance(lifetimes, _OwnedAdbServerLifetimeStore):
             raise TypeError("lifetimes must be _OwnedAdbServerLifetimeStore")
+        if incarnation_sequence is None:
+            incarnation_sequence = _AdbServerIncarnationSequence()
+        elif not isinstance(incarnation_sequence, _AdbServerIncarnationSequence):
+            raise TypeError("incarnation_sequence must be _AdbServerIncarnationSequence")
         self._lifetimes = lifetimes
+        self._incarnations = incarnation_sequence
         self._condition = Condition()
         self._mutation_lease: _AdbServerMutationLease | None = None
         self._claim_pending = False
@@ -153,7 +164,10 @@ class _ProcessAdbServerCoordinator:
             return active
 
         with self._mutation_scope(lease):
-            return self._lifetimes.acquire(endpoint)
+            return self._lifetimes.acquire(
+                endpoint,
+                incarnation_factory=self._incarnations.next,
+            )
 
     def retire_owned(
         self,
@@ -279,10 +293,7 @@ class _ProcessAdbServerCoordinator:
             raise TypeError("lease must be _AdbServerMutationLease")
 
 
-_PROCESS_ADB_SERVER_INCARNATIONS = _AdbServerIncarnationSequence()
-_PROCESS_ADB_SERVER_LIFETIMES = _OwnedAdbServerLifetimeStore(
-    incarnation_sequence=_PROCESS_ADB_SERVER_INCARNATIONS
-)
+_PROCESS_ADB_SERVER_LIFETIMES = _OwnedAdbServerLifetimeStore()
 _PROCESS_ADB_SERVER_COORDINATOR = _ProcessAdbServerCoordinator(_PROCESS_ADB_SERVER_LIFETIMES)
 
 # Private compatibility aliases. Coordination, not control, owns these implementations.
