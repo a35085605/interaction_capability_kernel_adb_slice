@@ -4,7 +4,7 @@ from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 
 from adb.server.failure import AdbServerConnectionFailure
-from adb.server.identity import AdbServerIncarnation, AdbServerIncarnationId
+from adb.server.identity import AdbServerIncarnation
 from adb.server.ownership import AdbOwnedServer
 from adb.supervision.model import AdbDevicesTrackingSupervisionPolicy
 from adb.server.signal import (
@@ -66,7 +66,7 @@ class AdbDevicesTrackingSupervisor:
     constructed and started. Tracking stop/failure follows the same rule: the old tracker is
     discarded rather than restarted.
 
-    No tracker generation is required because only one tracker scope is current, and terminal
+    No tracker epoch counter is required because only one tracker scope is current, and terminal
     scopes are never reused. Background start orchestration may finish late, but its result is
     accepted only while the tracker object it started is still the current scope.
     """
@@ -105,7 +105,7 @@ class AdbDevicesTrackingSupervisor:
         self._start: AdbDevicesTrackingStartOrchestrator | None = None
         self._tracking_active = False
         self._server_incarnation: AdbServerIncarnation | None = None
-        self._latest_server_incarnation_id: AdbServerIncarnationId | None = None
+        self._latest_server_epoch: int | None = None
         self._start_in_progress = False
         self._attempt_threads: set[Thread] = set()
         self._closed = False
@@ -139,7 +139,7 @@ class AdbDevicesTrackingSupervisor:
             self._readiness = readiness
             self._server_incarnation = server.incarnation if server is not None else None
             if server is not None:
-                self._latest_server_incarnation_id = server.incarnation.id
+                self._latest_server_epoch = server.incarnation.epoch
             if readiness is not AdbDevicesTrackingReadiness.READY:
                 return False
             tracker, starter = self._create_tracker_locked()
@@ -158,7 +158,7 @@ class AdbDevicesTrackingSupervisor:
         return self._handle_start_result(tracker, result)
 
     def reconcile(self, server: AdbOwnedServer | None) -> None:
-        """Reconcile tracking intent against the current active owned server generation."""
+        """Reconcile tracking intent against the current active owned server incarnation."""
 
         readiness = _project_server_owner(server)
         tracker_to_close: AdbDevicesTrackingScope | None = None
@@ -173,11 +173,11 @@ class AdbDevicesTrackingSupervisor:
             if not self._desired_tracking:
                 return
             incarnation = server.incarnation if server is not None else None
-            incarnation_id = incarnation.id if incarnation is not None else None
+            epoch = incarnation.epoch if incarnation is not None else None
             if (
-                incarnation_id is not None
-                and self._latest_server_incarnation_id is not None
-                and incarnation_id < self._latest_server_incarnation_id
+                epoch is not None
+                and self._latest_server_epoch is not None
+                and epoch < self._latest_server_epoch
             ):
                 return
             incarnation_changed = incarnation != self._server_incarnation
@@ -186,11 +186,11 @@ class AdbDevicesTrackingSupervisor:
             self.server = server
             self._readiness = readiness
             self._server_incarnation = incarnation
-            if incarnation_id is not None and (
-                self._latest_server_incarnation_id is None
-                or incarnation_id > self._latest_server_incarnation_id
+            if epoch is not None and (
+                self._latest_server_epoch is None
+                or epoch > self._latest_server_epoch
             ):
-                self._latest_server_incarnation_id = incarnation_id
+                self._latest_server_epoch = epoch
             if readiness is not AdbDevicesTrackingReadiness.READY:
                 tracker_to_close = self._detach_tracker_locked()
             elif incarnation_changed and self._tracker is not None:
@@ -300,15 +300,15 @@ class AdbDevicesTrackingSupervisor:
             if self._closed:
                 return
             if (
-                self._latest_server_incarnation_id is not None
-                and event.incarnation.id < self._latest_server_incarnation_id
+                self._latest_server_epoch is not None
+                and event.incarnation.epoch < self._latest_server_epoch
             ):
                 return
             if (
-                self._latest_server_incarnation_id is None
-                or event.incarnation.id > self._latest_server_incarnation_id
+                self._latest_server_epoch is None
+                or event.incarnation.epoch > self._latest_server_epoch
             ):
-                self._latest_server_incarnation_id = event.incarnation.id
+                self._latest_server_epoch = event.incarnation.epoch
             if self._server_incarnation != event.incarnation:
                 return
             self._server_incarnation = None
@@ -325,8 +325,8 @@ class AdbDevicesTrackingSupervisor:
             if self._closed or not self._desired_tracking:
                 return
             if (
-                self._latest_server_incarnation_id is not None
-                and event.incarnation.id <= self._latest_server_incarnation_id
+                self._latest_server_epoch is not None
+                and event.incarnation.epoch <= self._latest_server_epoch
             ):
                 return
         self.reconcile(event.server)

@@ -127,7 +127,7 @@ class AdbTransportEnsurePolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportEnsureReadiness:
-    """Request bounded readiness verification against one owned server generation."""
+    """Request bounded readiness verification against one owned server incarnation."""
 
     server: AdbOwnedServer
     configuration: AdbConfiguredTransport
@@ -378,7 +378,7 @@ class _ReadinessEpisodeState:
 class AdbTransportEnsureOrchestrator:
     """Ensure one configured transport is ready within one deadline.
 
-    Long-lived inventory tracking, generation fencing, and recovery triggering belong to
+    Long-lived inventory tracking, incarnation epoch fencing, and recovery triggering belong to
     ``AdbConfiguredTransportSupervisor``. This orchestrator independently re-probes current
     inventory before acting, performs at most one supported establishment command, and polls
     fresh snapshots until readiness reaches a terminal state or the deadline expires.

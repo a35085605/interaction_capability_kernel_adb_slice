@@ -80,7 +80,7 @@ class AdbDevicesTrackingFailure(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStarted:
-    """Signal that the current tracker entered stream mode for one owned server generation."""
+    """Signal that the current tracker entered stream mode for one owned server incarnation."""
 
     server: AdbOwnedServer
 
@@ -92,8 +92,8 @@ class AdbDevicesTrackingStarted:
         return self.server.endpoint
 
     @property
-    def generation(self) -> int:
-        return self.server.generation
+    def epoch(self) -> int:
+        return self.server.epoch
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,8 +110,8 @@ class AdbDevicesTrackingStopped:
         return self.server.endpoint
 
     @property
-    def generation(self) -> int:
-        return self.server.generation
+    def epoch(self) -> int:
+        return self.server.epoch
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,8 +140,8 @@ class AdbDevicesTrackingFailed:
         return self.server.endpoint
 
     @property
-    def generation(self) -> int:
-        return self.server.generation
+    def epoch(self) -> int:
+        return self.server.epoch
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,8 +161,8 @@ class AdbDevicesSnapshotObserved:
         return self.server.endpoint
 
     @property
-    def generation(self) -> int:
-        return self.server.generation
+    def epoch(self) -> int:
+        return self.server.epoch
 
 
 AdbTransportSignal: TypeAlias = (

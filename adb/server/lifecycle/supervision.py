@@ -88,7 +88,7 @@ def _normalize_retry_configuration(
 
 @dataclass(frozen=True, slots=True)
 class AdbServerPerGenerationEndpoint:
-    """Let every recovered generation resolve its own endpoint independently."""
+    """Let every recovered incarnation resolve its own endpoint independently."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +98,7 @@ class AdbServerPinFirstResolvedEndpoint:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerFixedEndpoint:
-    """Require every supervised generation to use one explicitly configured endpoint."""
+    """Require every supervised incarnation to use one explicitly configured endpoint."""
 
     endpoint: AdbServerEndpoint
 
@@ -181,7 +181,7 @@ class AdbServerSupervisor:
     :class:`AdbServerOwnershipRetired`, so managed dependents can immediately tear down their
     old server-bound scopes. Native close then proceeds privately. Endpoint continuity policy
     decides whether recovery reuses an endpoint and therefore waits for proven close, or lets the
-    next generation resolve an independent endpoint while retired teardown continues.
+    next incarnation resolve an independent endpoint while retired teardown continues.
 
     Existing listeners never satisfy recovery because the owned lifetime store only accepts a
     native handle returned by its launcher. Retry cycle IDs fence scheduled retry work only;
@@ -216,7 +216,7 @@ class AdbServerSupervisor:
         if isinstance(endpoint_policy, AdbServerFixedEndpoint):
             if server.endpoint != endpoint_policy.endpoint:
                 raise ValueError(
-                    "fixed endpoint policy must match the initially supervised generation"
+                    "fixed endpoint policy must match the initially supervised incarnation"
                 )
             pinned_endpoint: AdbServerEndpoint | None = endpoint_policy.endpoint
         elif isinstance(endpoint_policy, AdbServerPinFirstResolvedEndpoint):
@@ -441,7 +441,7 @@ class AdbServerSupervisor:
                     args=(server,),
                     name=(
                         "adb-owned-server-close-"
-                        f"{server.endpoint.host}-{server.endpoint.port}-{server.generation}"
+                        f"{server.endpoint.host}-{server.endpoint.port}-{server.epoch}"
                     ),
                 )
                 self._attempt_threads.add(thread)

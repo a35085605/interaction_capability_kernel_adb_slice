@@ -43,10 +43,8 @@ class _IncarnationSignalProjection:
         return self.incarnation.endpoint
 
     @property
-    def generation(self) -> int:
-        """Compatibility projection of :attr:`incarnation`."""
-
-        return self.incarnation.generation
+    def epoch(self) -> int:
+        return self.incarnation.epoch
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,8 +131,8 @@ class AdbServerOwnershipRecovered:
         return self.incarnation.endpoint
 
     @property
-    def generation(self) -> int:
-        return self.incarnation.generation
+    def epoch(self) -> int:
+        return self.incarnation.epoch
 
 
 @dataclass(frozen=True, slots=True)

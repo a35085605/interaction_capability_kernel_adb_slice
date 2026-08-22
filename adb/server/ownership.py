@@ -3,11 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from threading import Condition
 
-from adb.server.identity import (
-    AdbServerIncarnation,
-    AdbServerIncarnationId,
-    _AdbServerIncarnationSequence,
-)
+from adb.server.identity import AdbServerIncarnation, _AdbServerIncarnationSequence
 from adb.server.model import AdbServerEndpoint
 from adb.server.lifecycle.handle import AdbServerNativeHandle
 from adb.server.lifecycle.launch import AdbServerLauncher
@@ -29,7 +25,7 @@ class AdbOwnedServer:
 
     Ownership means this process retains private exact-lifetime teardown authority. Incarnation
     identity is a separate value and is exposed so consumers can fence delayed work without
-    treating generation itself as an ownership concept.
+    treating the epoch itself as an ownership concept.
     """
 
     __slots__ = ("_incarnation",)
@@ -50,18 +46,6 @@ class AdbOwnedServer:
     def _from_incarnation(cls, incarnation: AdbServerIncarnation) -> "AdbOwnedServer":
         return cls(incarnation, _token=_OWNED_SERVER_CONSTRUCTION_TOKEN)
 
-    @classmethod
-    def _from_identity(
-        cls,
-        endpoint: AdbServerEndpoint,
-        generation: int,
-    ) -> "AdbOwnedServer":
-        """Compatibility constructor for internal callers migrating to incarnation identity."""
-
-        return cls._from_incarnation(
-            AdbServerIncarnation(endpoint, AdbServerIncarnationId(generation))
-        )
-
     @property
     def incarnation(self) -> AdbServerIncarnation:
         return self._incarnation
@@ -73,10 +57,8 @@ class AdbOwnedServer:
         return self._incarnation.endpoint
 
     @property
-    def generation(self) -> int:
-        """Compatibility projection of the incarnation fencing generation."""
-
-        return self._incarnation.generation
+    def epoch(self) -> int:
+        return self._incarnation.epoch
 
 
 
@@ -154,7 +136,7 @@ class _OwnedAdbServerLifetimeStore:
         self._condition = Condition()
         self._status = _OwnedAdbServerStoreStatus.ABSENT
         self._active_lifetime: _OwnedServerLifetime | None = None
-        self._retired_lifetimes: dict[AdbServerIncarnationId, _RetiredServerLifetime] = {}
+        self._retired_lifetimes: dict[int, _RetiredServerLifetime] = {}
 
     def acquire(self, endpoint: AdbServerEndpoint | None = None) -> AdbOwnedServer:
         """Return the active owned relationship or launch one fresh exact native lifetime."""
@@ -197,25 +179,25 @@ class _OwnedAdbServerLifetimeStore:
 
         self._require_owner(owner)
         with self._condition:
-            retired = self._retired_lifetimes.get(owner.incarnation.id)
+            retired = self._retired_lifetimes.get(owner.incarnation.epoch)
             if retired is not None and retired.lifetime.owner is owner:
                 return False
 
             lifetime = self._active_lifetime
             if lifetime is None:
-                latest_id = self._incarnations.latest_id
-                if latest_id is not None and owner.incarnation.id <= latest_id:
+                latest_epoch = self._incarnations.latest_epoch
+                if latest_epoch is not None and owner.incarnation.epoch <= latest_epoch:
                     return False
                 raise self._stale_owner_error(owner)
             if lifetime.owner is not owner:
-                if owner.incarnation.id < lifetime.owner.incarnation.id:
+                if owner.incarnation.epoch < lifetime.owner.incarnation.epoch:
                     return False
                 raise self._stale_owner_error(owner)
             if self._status is not _OwnedAdbServerStoreStatus.ACTIVE:
                 raise self._stale_owner_error(owner)
 
             self._active_lifetime = None
-            self._retired_lifetimes[owner.incarnation.id] = _RetiredServerLifetime(lifetime)
+            self._retired_lifetimes[owner.incarnation.epoch] = _RetiredServerLifetime(lifetime)
             self._status = _OwnedAdbServerStoreStatus.ABSENT
             self._condition.notify_all()
             return True
@@ -225,7 +207,7 @@ class _OwnedAdbServerLifetimeStore:
 
         self._require_owner(owner)
         with self._condition:
-            retired = self._retired_lifetimes.get(owner.incarnation.id)
+            retired = self._retired_lifetimes.get(owner.incarnation.epoch)
             if retired is None or retired.lifetime.owner is not owner:
                 raise self._stale_owner_error(owner)
             retired.status = _RetiredServerLifetimeStatus.CLOSING
@@ -236,7 +218,7 @@ class _OwnedAdbServerLifetimeStore:
             native.close()
         except BaseException as exc:
             with self._condition:
-                current = self._retired_lifetimes.get(owner.incarnation.id)
+                current = self._retired_lifetimes.get(owner.incarnation.epoch)
                 if current is retired:
                     retired.status = _RetiredServerLifetimeStatus.CLOSE_UNPROVEN
                     retired.close_failure = exc
@@ -244,9 +226,9 @@ class _OwnedAdbServerLifetimeStore:
             raise
 
         with self._condition:
-            current = self._retired_lifetimes.get(owner.incarnation.id)
+            current = self._retired_lifetimes.get(owner.incarnation.epoch)
             if current is retired:
-                del self._retired_lifetimes[owner.incarnation.id]
+                del self._retired_lifetimes[owner.incarnation.epoch]
                 self._condition.notify_all()
 
     def invalidate(self, owner: AdbOwnedServer) -> bool:
@@ -254,7 +236,7 @@ class _OwnedAdbServerLifetimeStore:
 
         retired_now = self.retire(owner)
         with self._condition:
-            retired = self._retired_lifetimes.get(owner.incarnation.id)
+            retired = self._retired_lifetimes.get(owner.incarnation.epoch)
             can_dispose = retired is not None and retired.lifetime.owner is owner
         if not can_dispose:
             return False
@@ -267,7 +249,7 @@ class _OwnedAdbServerLifetimeStore:
         retired_now = self.retire(owner)
         if not retired_now:
             with self._condition:
-                retired = self._retired_lifetimes.get(owner.incarnation.id)
+                retired = self._retired_lifetimes.get(owner.incarnation.epoch)
                 if retired is None or retired.lifetime.owner is not owner:
                     raise self._stale_owner_error(owner)
         self.dispose_retired(owner)

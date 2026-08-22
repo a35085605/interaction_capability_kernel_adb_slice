@@ -16,7 +16,7 @@ from adb.server.failure import (
     AdbServerServiceFailure,
     AdbServerTimeoutFailure,
 )
-from adb.server.identity import AdbServerIncarnation, AdbServerIncarnationId
+from adb.server.identity import AdbServerIncarnation
 from adb.server.model import AdbServerEndpoint
 from adb.server.ownership import (
     AdbOwnedServer,
@@ -37,7 +37,6 @@ __all__ = [
     "AdbServerEndpoint",
     "AdbServerFailure",
     "AdbServerIncarnation",
-    "AdbServerIncarnationId",
     "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",
