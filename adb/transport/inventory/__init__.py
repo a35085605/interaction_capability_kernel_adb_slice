@@ -1,6 +1,6 @@
 """ADB transport inventory reads, projections, and tracking."""
 
-from adb.transport.inventory.identity import (
+from adb.transport.inventory.tracking.identity import (
     AdbDevicesTrackingGenerationIssuer,
     AdbDevicesTrackingGenerationSequence,
     AdbDevicesTrackingScopeIdentity,
@@ -18,7 +18,7 @@ from adb.transport.inventory.resolution import (
     AdbConfiguredTransportResolutionStatus,
     resolve_configured_transport,
 )
-from adb.transport.inventory.tracker import (
+from adb.transport.inventory.tracking.tracker import (
     AdbDevicesTracker,
     AdbDevicesTrackingScope,
 )

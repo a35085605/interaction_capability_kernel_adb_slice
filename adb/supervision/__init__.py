@@ -1,9 +1,11 @@
-"""Long-lived ADB server, transport, and tracking supervision."""
+"""Compatibility façade for long-lived ADB supervision APIs."""
 
-from adb.supervision.configured_transport import AdbConfiguredTransportSupervisor
-from adb.supervision.devices_tracking import AdbDevicesTrackingSupervisor
-from adb.supervision.model import (
+from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
+from adb.transport.inventory.tracking.supervision.supervisor import AdbDevicesTrackingSupervisor
+from adb.transport.lifecycle.supervision.policy import (
     AdbConfiguredTransportSupervisionPolicy,
+)
+from adb.transport.inventory.tracking.supervision.policy import (
     AdbDevicesTrackingSupervisionPolicy,
 )
 from adb.server.lifecycle.provisioning import (
@@ -20,11 +22,13 @@ from adb.server.lifecycle.supervision import (
     AdbServerSupervisionPolicy,
     AdbServerSupervisor,
 )
-from adb.supervision.signal import (
+from adb.transport.lifecycle.supervision.signal import (
     AdbConfiguredTransportRecoveryExhausted,
     AdbConfiguredTransportResolutionChanged,
-    AdbSupervisionSignal,
+    AdbConfiguredTransportSupervisionSignal,
 )
+
+AdbSupervisionSignal = AdbConfiguredTransportSupervisionSignal
 
 __all__ = [
     "AdbConfiguredTransportRecoveryExhausted",

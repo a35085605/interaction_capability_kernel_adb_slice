@@ -1,6 +1,6 @@
-"""ADB transport lifecycle commands, establishment, and bounded readiness ensuring."""
+"""ADB transport lifecycle control, establishment, and bounded readiness ensuring."""
 
-from adb.transport.lifecycle.command import (
+from adb.transport.lifecycle.control.port import (
     AdbDeviceSideReconnect,
     AdbDeviceSideReconnector,
     AdbOfflineTransportsReconnect,

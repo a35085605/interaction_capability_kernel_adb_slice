@@ -1,4 +1,4 @@
-"""Compatibility exports for ADB transport lifecycle control operations and ports."""
+"""ADB transport lifecycle control contracts and subprocess adapters."""
 
 from adb.transport.lifecycle.control.port import (
     AdbDeviceSideReconnect,
@@ -13,6 +13,10 @@ from adb.transport.lifecycle.control.port import (
     AdbTransportReconnect,
     AdbTransportReconnector,
 )
+from adb.transport.lifecycle.control.subprocess import (
+    SubprocessAdbTransport,
+    SubprocessAdbTransportController,
+)
 
 __all__ = [
     "AdbDeviceSideReconnect",
@@ -26,4 +30,6 @@ __all__ = [
     "AdbTransportCommandOperation",
     "AdbTransportReconnect",
     "AdbTransportReconnector",
+    "SubprocessAdbTransport",
+    "SubprocessAdbTransportController",
 ]

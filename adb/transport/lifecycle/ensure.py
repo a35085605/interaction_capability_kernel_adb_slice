@@ -469,7 +469,7 @@ class AdbTransportEnsureOrchestrator:
         self,
         configuration: AdbConfiguredTransport,
     ) -> NativeAttemptResult:
-        from adb.transport.signal import AdbTransportCommandCompleted
+        from adb.transport.lifecycle.signal import AdbTransportCommandCompleted
 
         establisher = self._establisher
         if establisher is None or not establisher.supports(configuration):
@@ -491,7 +491,7 @@ class AdbTransportEnsureOrchestrator:
         episode: _ReadinessEpisodeState,
         status: AdbTransportEnsureStatus,
     ) -> AdbTransportEnsureResult:
-        from adb.transport.signal import AdbTransportEnsureCompleted
+        from adb.transport.lifecycle.signal import AdbTransportEnsureCompleted
 
         result = episode.result(status)
         self._publisher.publish(AdbTransportEnsureCompleted(result))

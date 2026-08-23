@@ -7,7 +7,7 @@ from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
 )
-from adb.transport.lifecycle.command import (
+from adb.transport.lifecycle.control.port import (
     AdbTcpConnect,
     AdbTcpConnector,
     AdbTransportCommandOperation,
