@@ -1,14 +1,12 @@
-"""ADB server identity, lifecycle, coordination, failure, and status contracts."""
+"""ADB server identity, lifecycle, failure, and status contracts."""
+
+from adb.server.availability import AdbServerUnavailableError
 
 from adb.server.lifecycle.control.port import (
     AdbServerControlError,
     AdbServerController,
     AdbServerStartError,
     AdbServerStopError,
-)
-from adb.server.coordination import (
-    AdbServerMutationReservedError,
-    AdbServerUnavailableError,
 )
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
@@ -40,7 +38,6 @@ __all__ = [
     "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",
-    "AdbServerMutationReservedError",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",
     "AdbServerRequestFailure",

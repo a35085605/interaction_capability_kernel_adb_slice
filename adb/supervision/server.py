@@ -9,7 +9,12 @@ from random import random
 from threading import Lock, Thread, current_thread
 from typing import TypeAlias
 
-from adb.server.lifecycle.control.port import AdbServerStartError, AdbServerStopError
+from adb.server.availability import AdbServerUnavailableError
+from adb.server.lifecycle.control.port import (
+    AdbServerController,
+    AdbServerStartError,
+    AdbServerStopError,
+)
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
@@ -17,12 +22,6 @@ from adb.server.failure import (
     AdbServerLivenessFailure,
     AdbServerProcessExitedFailure,
 )
-from adb.server.coordination import (
-    AdbServerUnavailableError,
-    _AdbServerCoordination,
-    _AdbServerMutationLease,
-)
-from adb.server._process import _PROCESS_ADB_SERVER_COORDINATOR
 from adb.server.identity import AdbServer
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.signal import (
@@ -179,22 +178,22 @@ class AdbServerSupervisor:
     def __init__(
         self,
         server: AdbServer,
+        controller: AdbServerController,
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
         *,
-        _coordination: _AdbServerCoordination = _PROCESS_ADB_SERVER_COORDINATOR,
         _random: _RandomSource = random,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
+        if not isinstance(controller, AdbServerController):
+            raise TypeError("controller must satisfy AdbServerController")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
             raise TypeError("event_bus must satisfy EventBus")
-        if not isinstance(_coordination, _AdbServerCoordination):
-            raise TypeError("_coordination must satisfy _AdbServerCoordination")
         if not isinstance(scheduler, TemporalScheduler):
             raise TypeError("scheduler must satisfy TemporalScheduler")
         if not isinstance(policy, AdbServerSupervisionPolicy):
@@ -216,7 +215,7 @@ class AdbServerSupervisor:
         self.endpoint = server.endpoint
         self._pinned_endpoint = pinned_endpoint
         self._bus = event_bus
-        self._coordination = _coordination
+        self._controller = controller
         self._scheduler = scheduler
         self._policy = policy
         self._random = _random
@@ -233,9 +232,6 @@ class AdbServerSupervisor:
         self._pending_retired_disposals: set[AdbServer] = set()
         self._attempt_threads: set[Thread] = set()
         self._closed = False
-        self._mutation_lease: _AdbServerMutationLease = (
-            self._coordination.claim_mutation_authority(server)
-        )
 
     @property
     def desired_running(self) -> bool:
@@ -257,9 +253,6 @@ class AdbServerSupervisor:
                 self._require_open()
                 old_token = self._invalidate_recovery_locked()
                 server = self.server
-                if server is not None and self._coordination.active_server != server:
-                    self.server = None
-                    server = None
                 if server is None and not enabled:
                     raise AdbServerUnavailableError(
                         "cannot start supervision without an active managed server when recovery is disabled"
@@ -349,18 +342,15 @@ class AdbServerSupervisor:
                 pending_retired = tuple(self._pending_retired_disposals)
                 self._pending_retired_disposals.clear()
                 attempt_threads = tuple(self._attempt_threads)
-        try:
-            for token in subscriptions:
-                self._bus.unsubscribe(token)
-            if retry_token is not None:
-                self._scheduler.cancel(retry_token)
-            for server in pending_retired:
-                self._dispose_retired_server(server)
-            for thread in attempt_threads:
-                if thread is not current_thread():
-                    thread.join()
-        finally:
-            self._coordination.release_mutation_authority(self._mutation_lease)
+        for token in subscriptions:
+            self._bus.unsubscribe(token)
+        if retry_token is not None:
+            self._scheduler.cancel(retry_token)
+        for server in pending_retired:
+            self._dispose_retired_server(server)
+        for thread in attempt_threads:
+            if thread is not current_thread():
+                thread.join()
 
     def _retire_current_and_maybe_recover(
         self,
@@ -377,7 +367,6 @@ class AdbServerSupervisor:
                 server = self.server
 
             if server is not None:
-                self._coordination.retire_server(server, lease=self._mutation_lease)
                 with self._lock:
                     self.server = None
                     if self._requires_retired_close_before_launch():
@@ -443,7 +432,7 @@ class AdbServerSupervisor:
 
     def _dispose_retired_server(self, server: AdbServer) -> None:
         try:
-            self._coordination.dispose_retired(server, lease=self._mutation_lease)
+            self._controller.stop(server)
         except AdbServerStopError as exc:
             self._bus.publish(
                 AdbServerNativeCloseUnproven(
@@ -513,13 +502,12 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
                 try:
-                    recovered = self._coordination.acquire_server(
-                        self._recovery_launch_endpoint(),
-                        lease=self._mutation_lease,
-                    )
+                    recovered = self._controller.provide(self._recovery_launch_endpoint())
                 except AdbServerStartError as exc:
                     launch_failure = AdbServerLaunchFailure(str(exc))
                 else:
+                    if not isinstance(recovered, AdbServer):
+                        raise TypeError("controller.provide() must return AdbServer")
                     expected_endpoint = self._recovery_launch_endpoint()
                     if expected_endpoint is not None and recovered.endpoint != expected_endpoint:
                         raise ValueError("endpoint-pinned server recovery changed endpoint")
