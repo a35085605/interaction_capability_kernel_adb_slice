@@ -7,7 +7,11 @@ from adb.server.lifecycle.control.errors import (
     AdbServerStartError,
     AdbServerStopError,
 )
-from adb.server.lifecycle.control.port import AdbServerController
+from adb.server.lifecycle.control.port import (
+    AdbServerController,
+    AdbServerProvider,
+    AdbServerStopper,
+)
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
@@ -32,6 +36,8 @@ __all__ = [
     "AdbServerConnectionFailure",
     "AdbServerControlError",
     "AdbServerController",
+    "AdbServerProvider",
+    "AdbServerStopper",
     "AdbServerEndpoint",
     "AdbServerEpochIssuer",
     "AdbServerEpochSequence",

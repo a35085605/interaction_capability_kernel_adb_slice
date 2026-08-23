@@ -1,12 +1,12 @@
-"""ADB server lifecycle supervision policy and orchestration."""
+"""ADB server lifecycle supervision retry policy and orchestration."""
 
-from adb.server.lifecycle.supervision.policy import (
+from adb.server.lifecycle.provisioning.policy import (
     AdbServerEndpointPolicy,
     AdbServerFixedEndpoint,
     AdbServerPerGenerationEndpoint,
     AdbServerPinFirstResolvedEndpoint,
-    AdbServerSupervisionPolicy,
 )
+from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.signal import AdbServerRecoveryCycleId
 

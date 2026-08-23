@@ -1,18 +1,15 @@
-"""Compatibility exports for ADB server provisioning and lifecycle supervision."""
+"""ADB server provisioning policy and endpoint-bound adapters."""
 
-from adb.server.lifecycle.provisioning import (
-    AdbServerControllerProvisioner,
+from adb.server.lifecycle.provisioning.policy import (
     AdbServerEndpointPolicy,
     AdbServerFixedEndpoint,
     AdbServerPerGenerationEndpoint,
     AdbServerPinFirstResolvedEndpoint,
-    AdbServerProvisioner,
     resolve_server_provisioning_endpoint,
 )
-from adb.server.lifecycle.supervision import (
-    AdbServerRecoveryCycleId,
-    AdbServerSupervisionPolicy,
-    AdbServerSupervisor,
+from adb.server.lifecycle.provisioning.provisioner import (
+    AdbServerControllerProvisioner,
+    AdbServerProvisioner,
 )
 
 __all__ = [
@@ -22,8 +19,5 @@ __all__ = [
     "AdbServerPerGenerationEndpoint",
     "AdbServerPinFirstResolvedEndpoint",
     "AdbServerProvisioner",
-    "AdbServerRecoveryCycleId",
-    "AdbServerSupervisionPolicy",
-    "AdbServerSupervisor",
     "resolve_server_provisioning_endpoint",
 ]

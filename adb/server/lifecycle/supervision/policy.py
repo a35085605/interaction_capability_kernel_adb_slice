@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import math
 from numbers import Real
-from typing import TypeAlias
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.lifecycle.provisioning.policy import (
+    AdbServerEndpointPolicy,
+    AdbServerFixedEndpoint,
+    AdbServerPerGenerationEndpoint,
+    AdbServerPinFirstResolvedEndpoint,
+)
 
 
 def _normalize_positive_seconds(value: object, *, field_name: str) -> float:
@@ -55,61 +59,16 @@ def _normalize_retry_configuration(
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerPerGenerationEndpoint:
-    """Let every recovered server resolve its own endpoint independently."""
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerPinFirstResolvedEndpoint:
-    """Pin the first server's resolved endpoint across later servers."""
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerFixedEndpoint:
-    """Require every supervised server to use one explicitly configured endpoint."""
-
-    endpoint: AdbServerEndpoint
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-
-
-AdbServerEndpointPolicy: TypeAlias = (
-    AdbServerPerGenerationEndpoint
-    | AdbServerPinFirstResolvedEndpoint
-    | AdbServerFixedEndpoint
-)
-
-
-def _require_endpoint_policy(value: object) -> AdbServerEndpointPolicy:
-    if not isinstance(
-        value,
-        (
-            AdbServerPerGenerationEndpoint,
-            AdbServerPinFirstResolvedEndpoint,
-            AdbServerFixedEndpoint,
-        ),
-    ):
-        raise TypeError("endpoint_policy must be an ADB server endpoint policy")
-    return value
-
-
-@dataclass(frozen=True, slots=True)
 class AdbServerSupervisionPolicy:
-    """Policy for ADB server recovery."""
+    """Retry policy for ADB server recovery supervision."""
 
     retry_initial_seconds: float = 0.5
     retry_max_seconds: float = 30.0
     retry_multiplier: float = 2.0
     retry_jitter_ratio: float = 0.2
     max_attempts: int | None = None
-    endpoint_policy: AdbServerEndpointPolicy = field(
-        default_factory=AdbServerPinFirstResolvedEndpoint
-    )
 
     def __post_init__(self) -> None:
-        endpoint_policy = _require_endpoint_policy(self.endpoint_policy)
         initial, maximum, multiplier, jitter, max_attempts = _normalize_retry_configuration(
             retry_initial_seconds=self.retry_initial_seconds,
             retry_max_seconds=self.retry_max_seconds,
@@ -117,7 +76,6 @@ class AdbServerSupervisionPolicy:
             retry_jitter_ratio=self.retry_jitter_ratio,
             max_attempts=self.max_attempts,
         )
-        object.__setattr__(self, "endpoint_policy", endpoint_policy)
         object.__setattr__(self, "retry_initial_seconds", initial)
         object.__setattr__(self, "retry_max_seconds", maximum)
         object.__setattr__(self, "retry_multiplier", multiplier)

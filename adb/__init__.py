@@ -16,6 +16,8 @@ from adb.managed import AdbManagedRuntime, RegisteredTransport
 from adb.server import (
     AdbServerControlError,
     AdbServerController,
+    AdbServerProvider,
+    AdbServerStopper,
     AdbServer,
     AdbServerEpochIssuer,
     AdbServerEpochSequence,
@@ -54,6 +56,8 @@ __all__ = [
     "AdbServerConnectionError",
     "AdbServerControlError",
     "AdbServerController",
+    "AdbServerProvider",
+    "AdbServerStopper",
     "AdbServer",
     "AdbServerEpochIssuer",
     "AdbServerEpochSequence",

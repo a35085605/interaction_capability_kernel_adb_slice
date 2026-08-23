@@ -7,12 +7,8 @@ from adb.server.identity import AdbServer
 
 
 @runtime_checkable
-class AdbServerController(Protocol):
-    """Provide usable ADB server lifetimes and make exact lifetimes unavailable.
-
-    Providing creates one fresh server lifetime. Stopping is keyed by server identity
-    so successive lifetimes may reuse an endpoint.
-    """
+class AdbServerProvider(Protocol):
+    """Provide fresh usable ADB server lifetimes."""
 
     def provide(
         self,
@@ -20,6 +16,11 @@ class AdbServerController(Protocol):
     ) -> AdbServer:
         """Provide one fresh usable ADB server lifetime."""
         ...
+
+
+@runtime_checkable
+class AdbServerStopper(Protocol):
+    """Make exact ADB server lifetimes unavailable."""
 
     def stop(
         self,
@@ -29,4 +30,9 @@ class AdbServerController(Protocol):
         ...
 
 
-__all__ = ["AdbServerController"]
+@runtime_checkable
+class AdbServerController(AdbServerProvider, AdbServerStopper, Protocol):
+    """Provide and stop ADB server lifetimes."""
+
+
+__all__ = ["AdbServerController", "AdbServerProvider", "AdbServerStopper"]

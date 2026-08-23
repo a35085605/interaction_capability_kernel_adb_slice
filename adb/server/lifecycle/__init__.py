@@ -1,3 +1,3 @@
-"""ADB server lifecycle control and supervision boundaries."""
+"""ADB server lifecycle control, provisioning, and supervision boundaries."""
 
 __all__: list[str] = []
