@@ -25,15 +25,12 @@ class AdbConfiguredTransportResolution:
     """Resolution of one configured transport against inventory evidence."""
 
     configuration: AdbConfiguredTransport
-    status: AdbConfiguredTransportResolutionStatus
     matches: tuple[AdbTrackedDevice, ...]
     type_mismatches: tuple[AdbTrackedDevice, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
-        if not isinstance(self.status, AdbConfiguredTransportResolutionStatus):
-            raise TypeError("status must be AdbConfiguredTransportResolutionStatus")
         if not isinstance(self.matches, tuple) or not all(
             isinstance(row, AdbTrackedDevice) for row in self.matches
         ):
@@ -65,17 +62,20 @@ class AdbConfiguredTransportResolution:
             for row in self.type_mismatches
         ):
             raise ValueError("type_mismatches must have a different connection type")
-        expected = (
-            AdbConfiguredTransportResolutionStatus.ABSENT
-            if not self.matches and not self.type_mismatches
-            else AdbConfiguredTransportResolutionStatus.TYPE_MISMATCH
-            if not self.matches
-            else AdbConfiguredTransportResolutionStatus.RESOLVED
-            if len(self.matches) == 1
-            else AdbConfiguredTransportResolutionStatus.AMBIGUOUS
-        )
-        if self.status is not expected:
-            raise ValueError("resolution status does not match resolution evidence")
+
+    @property
+    def status(self) -> AdbConfiguredTransportResolutionStatus:
+        """Classify the immutable resolution evidence."""
+
+        if not self.matches:
+            return (
+                AdbConfiguredTransportResolutionStatus.TYPE_MISMATCH
+                if self.type_mismatches
+                else AdbConfiguredTransportResolutionStatus.ABSENT
+            )
+        if len(self.matches) == 1:
+            return AdbConfiguredTransportResolutionStatus.RESOLVED
+        return AdbConfiguredTransportResolutionStatus.AMBIGUOUS
 
     @property
     def row(self) -> AdbTrackedDevice | None:
@@ -123,20 +123,10 @@ def resolve_configured_transport(
         if row.connection_type
         not in (configuration.expected_connection_type, AdbConnectionType.UNKNOWN)
     )
-    status = (
-        AdbConfiguredTransportResolutionStatus.ABSENT
-        if not matches and not type_mismatches
-        else AdbConfiguredTransportResolutionStatus.TYPE_MISMATCH
-        if not matches
-        else AdbConfiguredTransportResolutionStatus.RESOLVED
-        if len(matches) == 1
-        else AdbConfiguredTransportResolutionStatus.AMBIGUOUS
-    )
     return AdbConfiguredTransportResolution(
-        configuration,
-        status,
-        matches,
-        type_mismatches,
+        configuration=configuration,
+        matches=matches,
+        type_mismatches=type_mismatches,
     )
 
 
