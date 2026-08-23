@@ -17,6 +17,10 @@ from adb.transport.inventory.tracking.identity import (
     AdbDevicesTrackingGenerationSequence,
     AdbDevicesTrackingScopeIdentity,
 )
+from adb.transport.inventory.state import AdbDevicesInventoryState
+from adb.transport.inventory.tracking.publication import (
+    AdbDevicesStateBackedTrackingPublisher,
+)
 from adb.transport.inventory.tracking.tracker import (
     AdbDevicesTracker,
     AdbDevicesTrackingScope,
@@ -27,11 +31,14 @@ from adb.transport.inventory.tracking.signal import (
     AdbDevicesTrackingStarted,
     AdbDevicesTrackingStopped,
 )
-from eventing import EventBus, EventSubscriptionToken
+from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 
 _ThreadFactory = Callable[..., Thread]
-_TrackerFactory = Callable[[AdbDevicesTrackingScopeIdentity, EventBus], AdbDevicesTrackingScope]
+_TrackerFactory = Callable[
+    [AdbDevicesTrackingScopeIdentity, EventPublisher],
+    AdbDevicesTrackingScope,
+]
 _DEFAULT_GENERATION_ISSUER = AdbDevicesTrackingGenerationSequence()
 
 
@@ -55,6 +62,7 @@ class AdbDevicesTrackingSupervisor:
         event_bus: EventBus,
         policy: AdbDevicesTrackingSupervisionPolicy,
         *,
+        inventory_state: AdbDevicesInventoryState | None = None,
         _tracker_factory: _TrackerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
         _generation_issuer: AdbDevicesTrackingGenerationIssuer | None = None,
@@ -67,6 +75,12 @@ class AdbDevicesTrackingSupervisor:
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(policy, AdbDevicesTrackingSupervisionPolicy):
             raise TypeError("policy must be AdbDevicesTrackingSupervisionPolicy")
+        if inventory_state is None:
+            inventory_state = AdbDevicesInventoryState(server.endpoint)
+        if not isinstance(inventory_state, AdbDevicesInventoryState):
+            raise TypeError("inventory_state must be AdbDevicesInventoryState or None")
+        if inventory_state.endpoint != server.endpoint:
+            raise ValueError("inventory state endpoint does not match tracking endpoint")
         if _tracker_factory is not None and not callable(_tracker_factory):
             raise TypeError("_tracker_factory must be callable or None")
         if not callable(_thread_factory):
@@ -79,6 +93,11 @@ class AdbDevicesTrackingSupervisor:
         self.server: AdbServer | None = server
         self.endpoint = server.endpoint
         self._bus = event_bus
+        self._inventory = inventory_state
+        self._tracking_publisher = AdbDevicesStateBackedTrackingPublisher(
+            self._inventory,
+            self._bus,
+        )
         self._policy = policy
         self._tracker_factory = _tracker_factory
         self._thread_factory = _thread_factory
@@ -96,6 +115,12 @@ class AdbDevicesTrackingSupervisor:
 
         # Scope identity fences late signals across replacement trackers; object identity still
         # fences local background work tied to one concrete tracker instance.
+
+    @property
+    def inventory(self) -> AdbDevicesInventoryState:
+        """Shared current inventory committed before tracking events are published."""
+
+        return self._inventory
 
     @property
     def desired_tracking(self) -> bool:
@@ -420,11 +445,11 @@ class AdbDevicesTrackingSupervisor:
         tracker = (
             AdbDevicesTracker(
                 identity,
-                self._bus,
+                self._tracking_publisher,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
             )
             if factory is None
-            else factory(identity, self._bus)
+            else factory(identity, self._tracking_publisher)
         )
         if not isinstance(tracker, AdbDevicesTrackingScope):
             raise TypeError("tracker factory must return AdbDevicesTrackingScope")
@@ -436,6 +461,8 @@ class AdbDevicesTrackingSupervisor:
 
     def _detach_tracker_locked(self) -> AdbDevicesTrackingScope | None:
         tracker = self._tracker
+        if tracker is not None:
+            self._inventory.end_tracking(tracker.identity)
         self._tracker = None
         self._tracking_active = False
         self._start_in_progress = False

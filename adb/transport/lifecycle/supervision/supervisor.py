@@ -11,6 +11,11 @@ from adb.transport.lifecycle.supervision.signal import (
     AdbConfiguredTransportResolutionChanged,
 )
 from adb.transport.configuration import AdbConfiguredTransport
+from adb.transport.inventory.state import (
+    AdbDevicesInventoryState,
+    AdbDevicesInventoryView,
+    AdbDevicesInventoryWriter,
+)
 from adb.transport.inventory.tracking.identity import AdbDevicesTrackingScopeIdentity
 from adb.transport.inventory.resolution import (
     AdbConfiguredTransportResolution,
@@ -73,6 +78,7 @@ class AdbConfiguredTransportSupervisor:
         event_bus: EventBus,
         ensurer: AdbTransportEnsurer,
         *,
+        inventory: AdbDevicesInventoryView | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(server, AdbServer):
@@ -83,10 +89,23 @@ class AdbConfiguredTransportSupervisor:
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(ensurer, AdbTransportEnsurer):
             raise TypeError("ensurer must satisfy AdbTransportEnsurer")
+        owns_inventory = inventory is None
+        if inventory is None:
+            inventory = AdbDevicesInventoryState(server.endpoint)
+        if not isinstance(inventory, AdbDevicesInventoryView):
+            raise TypeError("inventory must satisfy AdbDevicesInventoryView or be None")
+        if inventory.endpoint != server.endpoint:
+            raise ValueError("inventory endpoint does not match configured transport endpoint")
         self.server: AdbServer | None = server
         self.endpoint = server.endpoint
         self._bus = event_bus
         self._ensurer = ensurer
+        self._inventory = inventory
+        self._inventory_writer: AdbDevicesInventoryWriter | None = (
+            inventory
+            if owns_inventory and isinstance(inventory, AdbDevicesInventoryWriter)
+            else None
+        )
         self._thread_factory = _thread_factory
         self._lock = Lock()
         self._registrations: dict[
@@ -97,12 +116,17 @@ class AdbConfiguredTransportSupervisor:
         self._tracking_active = False
         self._tracking_scope: AdbDevicesTrackingScopeIdentity | None = None
         self._latest_tracking_generation: int | None = None
-        self._latest_observation: AdbDevicesSnapshotObserved | None = None
         self._latest_server_epoch = server.epoch
         self._recovery_threads: set[Thread] = set()
         self._closed = False
 
         # Per-registration tokens fence late recovery results without coupling independent ensures.
+
+    @property
+    def inventory(self) -> AdbDevicesInventoryView:
+        """Current inventory used to seed newly registered transport projections."""
+
+        return self._inventory
 
     def start(self) -> None:
         with self._lock:
@@ -200,8 +224,12 @@ class AdbConfiguredTransportSupervisor:
                 )
             registration = _ConfiguredTransportRegistration(configuration, policy, enabled)
             self._registrations[configuration] = registration
-            observation = self._latest_observation if self._tracking_active else None
-            if observation is not None:
+            observation = (
+                self._inventory.current_observation
+                if self._tracking_active
+                else None
+            )
+            if observation is not None and observation.scope == self._tracking_scope:
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
                     observation,
@@ -274,11 +302,14 @@ class AdbConfiguredTransportSupervisor:
             subscriptions = self._subscriptions
             self._subscriptions = ()
             self._tracking_active = False
+            scope = self._tracking_scope
             self._tracking_scope = None
-            self._latest_observation = None
+            writer = self._inventory_writer
             threads = tuple(self._recovery_threads)
             self._recovery_threads.clear()
             self._registrations.clear()
+        if writer is not None and scope is not None:
+            writer.end_tracking(scope)
         for token in subscriptions:
             self._bus.unsubscribe(token)
         for thread in threads:
@@ -294,8 +325,11 @@ class AdbConfiguredTransportSupervisor:
                 and event.generation <= self._latest_tracking_generation
             ):
                 return
+            writer = self._inventory_writer
+            if writer is not None and not writer.begin_tracking(event.scope):
+                return
             self._latest_tracking_generation = event.generation
-            self._reset_scope_locked()
+            self._reset_scope_locked(clear_inventory=False)
             self._tracking_active = True
             self._tracking_scope = event.scope
 
@@ -310,7 +344,9 @@ class AdbConfiguredTransportSupervisor:
                 or event.scope != self._tracking_scope
             ):
                 return
-            self._latest_observation = event
+            writer = self._inventory_writer
+            if writer is not None and not writer.observe(event):
+                return
             for registration in self._registrations.values():
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
@@ -338,7 +374,10 @@ class AdbConfiguredTransportSupervisor:
                 or event.scope != self._tracking_scope
             ):
                 return
-            self._reset_scope_locked()
+            writer = self._inventory_writer
+            if writer is not None:
+                writer.end_tracking(event.scope)
+            self._reset_scope_locked(clear_inventory=False)
 
     def _project_registration_locked(
         self,
@@ -472,10 +511,12 @@ class AdbConfiguredTransportSupervisor:
             if launch_pending_recovery:
                 self._launch_recovery(configuration)
 
-    def _reset_scope_locked(self) -> None:
+    def _reset_scope_locked(self, *, clear_inventory: bool = True) -> None:
+        scope = self._tracking_scope
+        if clear_inventory and self._inventory_writer is not None and scope is not None:
+            self._inventory_writer.end_tracking(scope)
         self._tracking_active = False
         self._tracking_scope = None
-        self._latest_observation = None
         for registration in self._registrations.values():
             registration.resolution = None
             registration.recovery_pending = False

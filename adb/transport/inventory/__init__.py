@@ -13,6 +13,11 @@ from adb.transport.inventory.model import (
     AdbTrackedDevice,
 )
 from adb.transport.inventory.reader import AdbDevicesSnapshotReader
+from adb.transport.inventory.state import (
+    AdbDevicesInventoryState,
+    AdbDevicesInventoryView,
+    AdbDevicesInventoryWriter,
+)
 from adb.transport.inventory.resolution import (
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
@@ -28,6 +33,9 @@ __all__ = [
     "AdbConfiguredTransportResolutionStatus",
     "AdbConnectionState",
     "AdbConnectionType",
+    "AdbDevicesInventoryState",
+    "AdbDevicesInventoryView",
+    "AdbDevicesInventoryWriter",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotReader",
     "AdbDevicesTracker",
