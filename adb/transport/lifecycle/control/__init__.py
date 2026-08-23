@@ -13,10 +13,7 @@ from adb.transport.lifecycle.control.port import (
     AdbTransportReconnect,
     AdbTransportReconnector,
 )
-from adb.transport.lifecycle.control.subprocess import (
-    SubprocessAdbTransport,
-    SubprocessAdbTransportController,
-)
+from adb.transport.lifecycle.control.subprocess import SubprocessAdbTransportController
 
 __all__ = [
     "AdbDeviceSideReconnect",
@@ -30,6 +27,5 @@ __all__ = [
     "AdbTransportCommandOperation",
     "AdbTransportReconnect",
     "AdbTransportReconnector",
-    "SubprocessAdbTransport",
     "SubprocessAdbTransportController",
 ]

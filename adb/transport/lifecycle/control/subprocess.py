@@ -85,7 +85,4 @@ class SubprocessAdbTransportController:
         )
 
 
-SubprocessAdbTransport = SubprocessAdbTransportController
-
-
-__all__ = ["SubprocessAdbTransport", "SubprocessAdbTransportController"]
+__all__ = ["SubprocessAdbTransportController"]
