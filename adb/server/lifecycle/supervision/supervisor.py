@@ -10,7 +10,6 @@ from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerSt
 from adb.server.lifecycle.control.port import AdbServerController
 from adb.server.lifecycle.supervision.policy import (
     AdbServerFixedEndpoint,
-    AdbServerPerGenerationEndpoint,
     AdbServerPinFirstResolvedEndpoint,
     AdbServerSupervisionPolicy,
 )
@@ -239,8 +238,6 @@ class AdbServerSupervisor:
         failure: AdbServerLivenessFailure,
     ) -> None:
         retired_server: AdbServer | None = None
-        launch_cycle: AdbServerRecoveryCycleId | None = None
-
         with self._mutation_lock:
             with self._lock:
                 self._require_open()
@@ -251,16 +248,9 @@ class AdbServerSupervisor:
             if server is not None:
                 with self._lock:
                     self.server = None
-                    if self._requires_retired_close_before_launch():
-                        self._closing_server = server
+                    self._closing_server = server
                     retired_server = server
                     self._pending_retired_disposals.add(server)
-                    if (
-                        not self._requires_retired_close_before_launch()
-                        and self._recovery_enabled
-                        and self._cycle_id is None
-                    ):
-                        launch_cycle = self._new_recovery_cycle_locked()
 
         if retired_server is None:
             return
@@ -279,8 +269,6 @@ class AdbServerSupervisor:
             )
         finally:
             self._launch_retired_disposal(retired_server)
-            if launch_cycle is not None:
-                self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
     def _launch_retired_disposal(self, server: AdbServer) -> None:
         with self._mutation_lock:
@@ -526,12 +514,6 @@ class AdbServerSupervisor:
             and self.server is None
             and self._closing_server is None
             and self._cycle_id == cycle_id
-        )
-
-    def _requires_retired_close_before_launch(self) -> bool:
-        return not isinstance(
-            self._policy.endpoint_policy,
-            AdbServerPerGenerationEndpoint,
         )
 
     def _recovery_launch_endpoint(self) -> AdbServerEndpoint | None:
