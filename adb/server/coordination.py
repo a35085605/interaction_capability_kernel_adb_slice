@@ -7,11 +7,7 @@ from typing import Protocol, runtime_checkable
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
-from adb.server.lifecycle.control.port import (
-    AdbServerController,
-    AdbServerStart,
-    AdbServerStop,
-)
+from adb.server.lifecycle.control.port import AdbServerController
 
 
 _MUTATION_LEASE_CONSTRUCTION_TOKEN = object()
@@ -86,7 +82,7 @@ class _ProcessAdbServerCoordinator:
         self._condition = Condition()
         self._active_server: AdbServer | None = None
         self._retired_servers: set[AdbServer] = set()
-        self._server_starting = False
+        self._server_providing = False
         # A claimed lease remains valid across retire/acquire transitions until released.
         self._mutation_lease: _AdbServerMutationLease | None = None
         self._claim_pending = False
@@ -182,11 +178,7 @@ class _ProcessAdbServerCoordinator:
                 if server not in self._retired_servers:
                     raise RuntimeError("ADB server is not pending retired disposal")
 
-            stopped = self._controller.stop(server)
-            if not isinstance(stopped, AdbServerStop):
-                raise TypeError("controller.stop() must return AdbServerStop")
-            if stopped.server != server:
-                raise ValueError("controller.stop() returned a different server identity")
+            self._controller.stop(server)
 
             with self._condition:
                 self._retired_servers.discard(server)
@@ -199,26 +191,25 @@ class _ProcessAdbServerCoordinator:
 
     def _acquire_absent_server(self, endpoint: AdbServerEndpoint | None) -> AdbServer:
         with self._condition:
-            while self._server_starting:
+            while self._server_providing:
                 self._condition.wait()
             if self._active_server is not None:
                 return self._active_server
-            self._server_starting = True
+            self._server_providing = True
 
         try:
-            started = self._controller.start(endpoint)
-            if not isinstance(started, AdbServerStart):
-                raise TypeError("controller.start() must return AdbServerStart")
-            server = started.server
+            server = self._controller.provide(endpoint)
+            if not isinstance(server, AdbServer):
+                raise TypeError("controller.provide() must return AdbServer")
         except BaseException:
             with self._condition:
-                self._server_starting = False
+                self._server_providing = False
                 self._condition.notify_all()
             raise
 
         with self._condition:
             self._active_server = server
-            self._server_starting = False
+            self._server_providing = False
             self._condition.notify_all()
             return server
 

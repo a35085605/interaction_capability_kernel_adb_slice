@@ -13,16 +13,10 @@ from adb._internal.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, _AdbServerSequence
-from adb.server.lifecycle.control.port import (
-    AdbServerStart,
-    AdbServerStartError,
-    AdbServerStop,
-    AdbServerStopError,
-)
+from adb.server.lifecycle.control.port import AdbServerStartError, AdbServerStopError
 from adb.server.status.reader import SmartSocketAdbServerStatusReader
 
 
-_ServerFactory = Callable[[AdbServerEndpoint], AdbServer]
 _MonotonicClock = Callable[[], float]
 _Sleeper = Callable[[float], None]
 _PopenFactory = Callable[..., subprocess.Popen[bytes]]
@@ -106,7 +100,7 @@ class _SubprocessLifetime:
 
 
 class SubprocessAdbServerController:
-    """Start and stop subprocess-backed ADB server lifetimes."""
+    """Provide and stop subprocess-backed ADB server lifetimes."""
 
     def __init__(
         self,
@@ -115,7 +109,6 @@ class SubprocessAdbServerController:
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
         probe_interval_seconds: float = 0.05,
-        _server_factory: _ServerFactory | None = None,
         _popen_factory: _PopenFactory = subprocess.Popen,
         _resolver: _Resolver = socket.getaddrinfo,
         _socket_factory: _SocketFactory = socket.socket,
@@ -124,10 +117,6 @@ class SubprocessAdbServerController:
         _status_reader: _ServerStatusReader | None = None,
         _socket_activation_supported: bool = os.name != "nt",
     ) -> None:
-        if _server_factory is None:
-            _server_factory = _AdbServerSequence().next
-        if not callable(_server_factory):
-            raise TypeError("_server_factory must be callable")
         if not isinstance(_socket_activation_supported, bool):
             raise TypeError("_socket_activation_supported must be a bool")
 
@@ -135,7 +124,7 @@ class SubprocessAdbServerController:
         self.startup_timeout_seconds = normalize_timeout(startup_timeout_seconds)
         self.shutdown_timeout_seconds = normalize_timeout(shutdown_timeout_seconds)
         self.probe_interval_seconds = _normalize_probe_interval(probe_interval_seconds)
-        self._server_factory = _server_factory
+        self._server_sequence = _AdbServerSequence()
         self._popen_factory = _popen_factory
         self._resolver = _resolver
         self._socket_factory = _socket_factory
@@ -160,25 +149,21 @@ class SubprocessAdbServerController:
         # Process handles stay private; stop requests are resolved by AdbServer identity.
         self._lifetimes: dict[AdbServer, _SubprocessLifetime] = {}
 
-    def start(
+    def provide(
         self,
         endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServerStart:
+    ) -> AdbServer:
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint or None")
 
         lifetime = self._start_lifetime(endpoint)
         try:
-            server = self._server_factory(lifetime.endpoint)
-            if not isinstance(server, AdbServer):
-                raise TypeError("_server_factory must return AdbServer")
-            if server.endpoint != lifetime.endpoint:
-                raise ValueError("server endpoint must match started process endpoint")
+            server = self._server_sequence.next(lifetime.endpoint)
             with self._lifetimes_lock:
                 if server in self._lifetimes:
                     raise RuntimeError("server identity is already bound to a process lifetime")
                 self._lifetimes[server] = lifetime
-            return AdbServerStart(server)
+            return server
         except BaseException:
             try:
                 lifetime.close()
@@ -188,7 +173,7 @@ class SubprocessAdbServerController:
                 ) from stop_error
             raise
 
-    def stop(self, server: AdbServer) -> AdbServerStop:
+    def stop(self, server: AdbServer) -> None:
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
 
@@ -205,7 +190,6 @@ class SubprocessAdbServerController:
             current = self._lifetimes.get(server)
             if current is lifetime:
                 del self._lifetimes[server]
-        return AdbServerStop(server)
 
     def _start_lifetime(
         self,

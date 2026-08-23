@@ -3,9 +3,7 @@
 from adb.server.lifecycle.control.port import (
     AdbServerControlError,
     AdbServerController,
-    AdbServerStart,
     AdbServerStartError,
-    AdbServerStop,
     AdbServerStopError,
 )
 from adb.server.coordination import (
@@ -47,11 +45,9 @@ __all__ = [
     "AdbServerProtocolFailure",
     "AdbServerRequestFailure",
     "AdbServerServiceFailure",
-    "AdbServerStart",
     "AdbServerStartError",
     "AdbServerStatus",
     "AdbServerStatusReader",
-    "AdbServerStop",
     "AdbServerStopError",
     "AdbServerTimeoutFailure",
     "AdbServerUnavailableError",
