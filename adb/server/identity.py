@@ -25,18 +25,17 @@ class AdbServer:
             raise ValueError("epoch must be greater than zero")
 
 
-class _AdbServerSequence:
-    """Mint monotonically increasing ADB server epochs."""
+class AdbServerEpochSequence:
+    """Runtime-scoped logical clock for ADB server lifetimes."""
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._latest_epoch = 0
+        self._current = 0
 
-    def next(self, endpoint: AdbServerEndpoint) -> AdbServer:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+    def advance(self) -> int:
         with self._lock:
-            self._latest_epoch += 1
-            return AdbServer(endpoint, self._latest_epoch)
+            self._current += 1
+            return self._current
 
-__all__ = ["AdbServer"]
+
+__all__ = ["AdbServer", "AdbServerEpochSequence"]

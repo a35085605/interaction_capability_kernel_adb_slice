@@ -12,7 +12,7 @@ from adb._internal.client import AdbServiceClient
 from adb._internal.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServer, _AdbServerSequence
+from adb.server.identity import AdbServer, AdbServerEpochSequence
 from adb.server.lifecycle.control.port import AdbServerStartError, AdbServerStopError
 from adb.server.status.reader import SmartSocketAdbServerStatusReader
 
@@ -105,6 +105,7 @@ class SubprocessAdbServerController:
     def __init__(
         self,
         *,
+        server_epoch_sequence: AdbServerEpochSequence,
         executable: str = "adb",
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
@@ -117,6 +118,8 @@ class SubprocessAdbServerController:
         _status_reader: _ServerStatusReader | None = None,
         _socket_activation_supported: bool = os.name != "nt",
     ) -> None:
+        if not isinstance(server_epoch_sequence, AdbServerEpochSequence):
+            raise TypeError("server_epoch_sequence must be AdbServerEpochSequence")
         if not isinstance(_socket_activation_supported, bool):
             raise TypeError("_socket_activation_supported must be a bool")
 
@@ -124,7 +127,7 @@ class SubprocessAdbServerController:
         self.startup_timeout_seconds = normalize_timeout(startup_timeout_seconds)
         self.shutdown_timeout_seconds = normalize_timeout(shutdown_timeout_seconds)
         self.probe_interval_seconds = _normalize_probe_interval(probe_interval_seconds)
-        self._server_sequence = _AdbServerSequence()
+        self._server_epoch_sequence = server_epoch_sequence
         self._popen_factory = _popen_factory
         self._resolver = _resolver
         self._socket_factory = _socket_factory
@@ -158,7 +161,10 @@ class SubprocessAdbServerController:
 
         lifetime = self._start_lifetime(endpoint)
         try:
-            server = self._server_sequence.next(lifetime.endpoint)
+            server = AdbServer(
+                lifetime.endpoint,
+                self._server_epoch_sequence.advance(),
+            )
             with self._lifetimes_lock:
                 if server in self._lifetimes:
                     raise RuntimeError("server identity is already bound to a process lifetime")
