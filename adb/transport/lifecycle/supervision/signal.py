@@ -35,7 +35,7 @@ class AdbConfiguredTransportResolutionChanged:
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportRecoveryExhausted:
-    """Signal that automatic disappearance recovery ended unsatisfied."""
+    """Signal that automatic recovery after an observed disappearance ended unsatisfied."""
 
     configuration: AdbConfiguredTransport
     result: AdbTransportEnsureResult
@@ -46,10 +46,10 @@ class AdbConfiguredTransportRecoveryExhausted:
         if not isinstance(self.result, AdbTransportEnsureResult):
             raise TypeError("result must be AdbTransportEnsureResult")
         if self.result.operation.configuration != self.configuration:
-            raise ValueError("disappearance recovery result must match configured transport")
+            raise ValueError("recovery result must match configured transport")
         if self.result.status is AdbTransportEnsureStatus.SATISFIED:
             raise ValueError(
-                "disappearance recovery exhausted signal requires an unsatisfied result"
+                "recovery exhausted signal requires an unsatisfied result"
             )
 
 

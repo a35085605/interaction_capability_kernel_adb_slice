@@ -47,7 +47,7 @@ class _ConfiguredTransportRegistration:
     configuration: AdbConfiguredTransport
     policy: AdbConfiguredTransportSupervisionPolicy
     resolution: AdbConfiguredTransportResolution | None = None
-    disappearance_recovery_pending: bool = False
+    recovery_pending: bool = False
     active_recovery_thread: Thread | None = None
     active_recovery_token: object | None = None
 
@@ -124,7 +124,7 @@ class AdbConfiguredTransportSupervisor:
                 raise TypeError("ensurer supports_establishment() must return bool")
             if not establishment_supported:
                 raise ValueError(
-                    "automatic disappearance recovery is not supported for this configured transport"
+                    "automatic recovery after disappearance is not supported for this configured transport"
                 )
 
         publication: AdbConfiguredTransportResolutionChanged | None = None
@@ -222,7 +222,7 @@ class AdbConfiguredTransportSupervisor:
             self._latest_observation = None
             for registration in self._registrations.values():
                 registration.resolution = None
-                registration.disappearance_recovery_pending = False
+                registration.recovery_pending = False
                 registration.active_recovery_token = None
 
     def _on_snapshot_observed(self, event: AdbDevicesSnapshotObserved) -> None:
@@ -270,7 +270,7 @@ class AdbConfiguredTransportSupervisor:
             self._tracking_scope = None
             self._latest_observation = None
             for registration in self._registrations.values():
-                registration.disappearance_recovery_pending = False
+                registration.recovery_pending = False
                 registration.active_recovery_token = None
 
     def _project_registration_locked(
@@ -287,7 +287,7 @@ class AdbConfiguredTransportSupervisor:
         registration.resolution = current
 
         if current.status is not AdbConfiguredTransportResolutionStatus.ABSENT:
-            registration.disappearance_recovery_pending = False
+            registration.recovery_pending = False
             registration.active_recovery_token = None
 
         publication = (
@@ -305,7 +305,7 @@ class AdbConfiguredTransportSupervisor:
             and registration.policy.recovery_ensure_policy is not None
         )
         if recovery_launch_requested:
-            registration.disappearance_recovery_pending = True
+            registration.recovery_pending = True
             recovery_launch_requested = registration.active_recovery_thread is None
         return publication, recovery_launch_requested
 
@@ -316,7 +316,7 @@ class AdbConfiguredTransportSupervisor:
                 return
             if registration.active_recovery_thread is not None:
                 return
-            if not registration.disappearance_recovery_pending:
+            if not registration.recovery_pending:
                 return
             recovery_token = object()
             thread = self._thread_factory(
@@ -328,7 +328,7 @@ class AdbConfiguredTransportSupervisor:
                     f"{configuration.serial.value}"
                 ),
             )
-            registration.disappearance_recovery_pending = False
+            registration.recovery_pending = False
             registration.active_recovery_token = recovery_token
             registration.active_recovery_thread = thread
             try:
@@ -391,7 +391,7 @@ class AdbConfiguredTransportSupervisor:
                         registration.active_recovery_token = None
                     launch_pending_recovery = (
                         not self._closed
-                        and registration.disappearance_recovery_pending
+                        and registration.recovery_pending
                     )
             if launch_pending_recovery:
                 self._launch_recovery(configuration)

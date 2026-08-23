@@ -9,8 +9,8 @@ from adb.transport.configuration import AdbConfiguredTransport
 class RegisteredTransport(Protocol):
     """Registration for one configured transport."""
 
-    def set_disappearance_recovery_enabled(self, enabled: bool) -> None:
-        """Toggle recovery after an observed transport disappearance."""
+    def set_recovery_enabled(self, enabled: bool) -> None:
+        """Enable or disable automatic recovery after an observed transport disappearance."""
         ...
 
 
@@ -59,9 +59,9 @@ class AdbManagedRuntime:
         self,
         configuration: AdbConfiguredTransport,
         *,
-        recover_on_disappearance: bool = True,
+        recovery_enabled: bool = True,
     ) -> RegisteredTransport:
-        """Register transport tracking and optional disappearance recovery.
+        """Register transport tracking and optional automatic recovery.
 
         Registration does not establish an absent transport.
         """

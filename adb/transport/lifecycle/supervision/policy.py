@@ -7,7 +7,7 @@ from adb.transport.lifecycle.ensure import AdbTransportEnsurePolicy
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportSupervisionPolicy:
-    """Policy for configured-transport projection and optional disappearance recovery."""
+    """Policy for configured-transport projection and optional automatic recovery."""
 
     recovery_ensure_policy: AdbTransportEnsurePolicy | None = None
 
