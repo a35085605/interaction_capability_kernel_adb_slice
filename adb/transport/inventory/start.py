@@ -10,6 +10,7 @@ from threading import Condition
 from time import monotonic
 
 from adb.server.identity import AdbServer
+from adb.transport.inventory.identity import AdbDevicesTrackingScopeIdentity
 from adb.transport.inventory.tracker import AdbDevicesTrackingScope
 from adb.transport.signal import (
     AdbDevicesTrackingFailed,
@@ -79,19 +80,23 @@ class AdbDevicesTrackingStartPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStart:
-    """Request startup of a new tracker scope."""
+    """Request startup of one exact tracker scope."""
 
-    server: AdbServer
+    scope: AdbDevicesTrackingScopeIdentity
     readiness: AdbDevicesTrackingReadiness
     policy: AdbDevicesTrackingStartPolicy
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(self.scope, AdbDevicesTrackingScopeIdentity):
+            raise TypeError("scope must be AdbDevicesTrackingScopeIdentity")
         if not isinstance(self.readiness, AdbDevicesTrackingReadiness):
             raise TypeError("readiness must be AdbDevicesTrackingReadiness")
         if not isinstance(self.policy, AdbDevicesTrackingStartPolicy):
             raise TypeError("policy must be AdbDevicesTrackingStartPolicy")
+
+    @property
+    def server(self) -> AdbServer:
+        return self.scope.server
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,21 +146,24 @@ class AdbDevicesTrackingStartOrchestrator:
 
     def __init__(
         self,
-        server: AdbServer,
+        scope: AdbDevicesTrackingScopeIdentity,
         event_bus: EventBus,
         tracker: AdbDevicesTrackingScope,
         *,
         _monotonic: _MonotonicClock = monotonic,
     ) -> None:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(scope, AdbDevicesTrackingScopeIdentity):
+            raise TypeError("scope must be AdbDevicesTrackingScopeIdentity")
         if not callable(getattr(event_bus, "subscribe", None)) or not callable(
             getattr(event_bus, "unsubscribe", None)
         ):
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(tracker, AdbDevicesTrackingScope):
             raise TypeError("tracker must satisfy tracking scope")
-        self.server = server
+        if tracker.identity != scope:
+            raise ValueError("tracker identity does not match start scope")
+        self.scope = scope
+        self.server = scope.server
         self._bus = event_bus
         self._tracker = tracker
         self._monotonic = _monotonic
@@ -166,8 +174,8 @@ class AdbDevicesTrackingStartOrchestrator:
     ) -> AdbDevicesTrackingStartResult:
         if not isinstance(operation, AdbDevicesTrackingStart):
             raise TypeError("operation must be AdbDevicesTrackingStart")
-        if operation.server != self.server:
-            raise ValueError("operation server does not match tracker server")
+        if operation.scope != self.scope:
+            raise ValueError("operation scope does not match tracker scope")
         if operation.readiness is not AdbDevicesTrackingReadiness.READY:
             raise RuntimeError(
                 "transport-inventory tracking start requires READY server readiness"
@@ -178,8 +186,8 @@ class AdbDevicesTrackingStartOrchestrator:
         events: deque[object] = deque()
 
         def collect(event: object) -> None:
-            event_server = getattr(event, "server", None)
-            if event_server != self.server:
+            event_scope = getattr(event, "scope", None)
+            if event_scope != self.scope:
                 return
             with condition:
                 events.append(event)

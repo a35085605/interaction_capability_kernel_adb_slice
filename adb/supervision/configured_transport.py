@@ -11,6 +11,7 @@ from adb.supervision.signal import (
     AdbConfiguredTransportResolutionChanged,
 )
 from adb.transport.configuration import AdbConfiguredTransport
+from adb.transport.inventory.identity import AdbDevicesTrackingScopeIdentity
 from adb.transport.inventory.resolution import (
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
@@ -86,6 +87,8 @@ class AdbConfiguredTransportSupervisor:
         ] = {}
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._tracking_active = False
+        self._tracking_scope: AdbDevicesTrackingScopeIdentity | None = None
+        self._latest_tracking_generation: int | None = None
         self._latest_observation: AdbDevicesSnapshotObserved | None = None
         self._closed = False
 
@@ -188,6 +191,7 @@ class AdbConfiguredTransportSupervisor:
             subscriptions = self._subscriptions
             self._subscriptions = ()
             self._tracking_active = False
+            self._tracking_scope = None
             self._latest_observation = None
             threads = tuple(
                 registration.active_recovery_thread
@@ -207,7 +211,14 @@ class AdbConfiguredTransportSupervisor:
         with self._lock:
             if self._closed:
                 return
+            if (
+                self._latest_tracking_generation is not None
+                and event.generation <= self._latest_tracking_generation
+            ):
+                return
+            self._latest_tracking_generation = event.generation
             self._tracking_active = True
+            self._tracking_scope = event.scope
             self._latest_observation = None
             for registration in self._registrations.values():
                 registration.resolution = None
@@ -220,7 +231,11 @@ class AdbConfiguredTransportSupervisor:
         publications: list[object] = []
         recovery_launch_requests: list[AdbConfiguredTransport] = []
         with self._lock:
-            if self._closed or not self._tracking_active:
+            if (
+                self._closed
+                or not self._tracking_active
+                or event.scope != self._tracking_scope
+            ):
                 return
             self._latest_observation = event
             for registration in self._registrations.values():
@@ -245,9 +260,14 @@ class AdbConfiguredTransportSupervisor:
         if event.server != self.server:
             return
         with self._lock:
-            if self._closed or not self._tracking_active:
+            if (
+                self._closed
+                or not self._tracking_active
+                or event.scope != self._tracking_scope
+            ):
                 return
             self._tracking_active = False
+            self._tracking_scope = None
             self._latest_observation = None
             for registration in self._registrations.values():
                 registration.disappearance_recovery_pending = False

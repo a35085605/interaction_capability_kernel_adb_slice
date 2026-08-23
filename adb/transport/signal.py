@@ -6,6 +6,7 @@ from typing import TypeAlias
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
+from adb.transport.inventory.identity import AdbDevicesTrackingScopeIdentity
 from adb.transport.inventory.model import AdbDevicesSnapshot
 from adb.transport.lifecycle.command import (
     AdbDeviceSideReconnect,
@@ -19,9 +20,9 @@ from adb.transport.lifecycle.ensure import AdbTransportEnsureResult
 from native_attempt import NativeAttemptResult
 
 
-def _require_server(value: object) -> AdbServer:
-    if not isinstance(value, AdbServer):
-        raise TypeError("server must be AdbServer")
+def _require_scope(value: object) -> AdbDevicesTrackingScopeIdentity:
+    if not isinstance(value, AdbDevicesTrackingScopeIdentity):
+        raise TypeError("scope must be AdbDevicesTrackingScopeIdentity")
     return value
 
 
@@ -78,52 +79,56 @@ class AdbDevicesTrackingFailure(str, Enum):
     PROTOCOL = "protocol"
 
 
-@dataclass(frozen=True, slots=True)
-class AdbDevicesTrackingStarted:
-    """Signal that the current tracker entered stream mode for one server lifetime."""
+class _TrackingScopeSignalProjection:
+    scope: AdbDevicesTrackingScopeIdentity
 
-    server: AdbServer
-
-    def __post_init__(self) -> None:
-        _require_server(self.server)
+    @property
+    def server(self) -> AdbServer:
+        return self.scope.server
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
-        return self.server.endpoint
+        return self.scope.endpoint
 
     @property
     def epoch(self) -> int:
-        return self.server.epoch
+        return self.scope.epoch
+
+    @property
+    def generation(self) -> int:
+        return self.scope.generation
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesTrackingStopped:
-    """Signal that one server-bound tracker ended without implying transport disappearance."""
+class AdbDevicesTrackingStarted(_TrackingScopeSignalProjection):
+    """Signal that one exact tracker scope entered stream mode."""
 
-    server: AdbServer
+    scope: AdbDevicesTrackingScopeIdentity
 
     def __post_init__(self) -> None:
-        _require_server(self.server)
-
-    @property
-    def endpoint(self) -> AdbServerEndpoint:
-        return self.server.endpoint
-
-    @property
-    def epoch(self) -> int:
-        return self.server.epoch
+        _require_scope(self.scope)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesTrackingFailed:
-    """Signal that the current tracker failed without synthesizing server state."""
+class AdbDevicesTrackingStopped(_TrackingScopeSignalProjection):
+    """Signal that one exact tracker scope ended without implying transport disappearance."""
 
-    server: AdbServer
+    scope: AdbDevicesTrackingScopeIdentity
+
+    def __post_init__(self) -> None:
+        _require_scope(self.scope)
+
+
+@dataclass(frozen=True, slots=True)
+class AdbDevicesTrackingFailed(_TrackingScopeSignalProjection):
+    """Signal that one exact tracker scope failed without synthesizing server state."""
+
+    scope: AdbDevicesTrackingScopeIdentity
     failure: AdbDevicesTrackingFailure
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
-        _require_server(self.server)
+        _require_scope(self.scope)
         if not isinstance(self.failure, AdbDevicesTrackingFailure):
             raise TypeError("failure must be AdbDevicesTrackingFailure")
         object.__setattr__(
@@ -135,34 +140,18 @@ class AdbDevicesTrackingFailed:
             ),
         )
 
-    @property
-    def endpoint(self) -> AdbServerEndpoint:
-        return self.server.endpoint
-
-    @property
-    def epoch(self) -> int:
-        return self.server.epoch
-
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesSnapshotObserved:
-    """Signal carrying one complete snapshot emitted by the current tracker."""
+class AdbDevicesSnapshotObserved(_TrackingScopeSignalProjection):
+    """Signal carrying one complete snapshot emitted by one exact tracker scope."""
 
-    server: AdbServer
+    scope: AdbDevicesTrackingScopeIdentity
     snapshot: AdbDevicesSnapshot
 
     def __post_init__(self) -> None:
-        _require_server(self.server)
+        _require_scope(self.scope)
         if not isinstance(self.snapshot, AdbDevicesSnapshot):
             raise TypeError("snapshot must be AdbDevicesSnapshot")
-
-    @property
-    def endpoint(self) -> AdbServerEndpoint:
-        return self.server.endpoint
-
-    @property
-    def epoch(self) -> int:
-        return self.server.epoch
 
 
 AdbTransportSignal: TypeAlias = (

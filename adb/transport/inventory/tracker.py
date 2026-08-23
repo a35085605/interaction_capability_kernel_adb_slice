@@ -10,6 +10,7 @@ from adb.errors import (
     AdbServiceError,
 )
 from adb.server.identity import AdbServer
+from adb.transport.inventory.identity import AdbDevicesTrackingScopeIdentity
 from adb.transport.inventory.source import AdbTrackDevicesSession, AdbTrackDevicesSource
 from adb.transport.signal import (
     AdbDevicesSnapshotObserved,
@@ -40,6 +41,9 @@ class AdbDevicesTrackingScope(Protocol):
     """Single-use transport-inventory tracking scope."""
 
     @property
+    def identity(self) -> AdbDevicesTrackingScopeIdentity: ...
+
+    @property
     def active(self) -> bool: ...
 
     def start(self) -> None: ...
@@ -48,7 +52,7 @@ class AdbDevicesTrackingScope(Protocol):
 
 
 class AdbDevicesTracker:
-    """Track one transport-inventory stream.
+    """Track one transport-inventory stream for one exact tracking scope.
 
     A tracker is single-use. Stop or failure is terminal; ``close`` closes the source and
     joins the worker before returning.
@@ -56,18 +60,19 @@ class AdbDevicesTracker:
 
     def __init__(
         self,
-        server: AdbServer,
+        identity: AdbDevicesTrackingScopeIdentity,
         publisher: EventPublisher,
         *,
         _source_factory: _SourceFactory = _default_source_factory,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(identity, AdbDevicesTrackingScopeIdentity):
+            raise TypeError("identity must be AdbDevicesTrackingScopeIdentity")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
-        self.server = server
-        self.endpoint = server.endpoint
+        self.identity = identity
+        self.server = identity.server
+        self.endpoint = identity.endpoint
         self._publisher = publisher
         self._source_factory = _source_factory
         self._thread_factory = _thread_factory
@@ -98,7 +103,8 @@ class AdbDevicesTracker:
                 args=(source,),
                 name=(
                     "adb-track-devices-"
-                    f"{self.endpoint.host}-{self.endpoint.port}"
+                    f"{self.endpoint.host}-{self.endpoint.port}-"
+                    f"{self.server.epoch}-{self.identity.generation}"
                 ),
             )
             self._started = True
@@ -126,37 +132,37 @@ class AdbDevicesTracker:
             thread.join()
 
     def _run(self, source: AdbTrackDevicesSource) -> None:
-        server = self.server
+        scope = self.identity
         session: AdbTrackDevicesSession | None = None
         terminal: object | None = None
         try:
             session = source.open()
             if session is None:
-                terminal = AdbDevicesTrackingStopped(server)
+                terminal = AdbDevicesTrackingStopped(scope)
             elif self._can_publish_from(source):
-                self._publisher.publish(AdbDevicesTrackingStarted(server))
+                self._publisher.publish(AdbDevicesTrackingStarted(scope))
                 for snapshot in session.snapshots():
                     if not self._can_publish_from(source):
                         break
                     self._publisher.publish(
-                        AdbDevicesSnapshotObserved(server, snapshot)
+                        AdbDevicesSnapshotObserved(scope, snapshot)
                     )
-                terminal = AdbDevicesTrackingStopped(server)
+                terminal = AdbDevicesTrackingStopped(scope)
         except AdbServerConnectionError as exc:
             terminal = AdbDevicesTrackingFailed(
-                server,
+                scope,
                 AdbDevicesTrackingFailure.SERVER_CONNECTION,
                 str(exc),
             )
         except AdbServiceError as exc:
             terminal = AdbDevicesTrackingFailed(
-                server,
+                scope,
                 AdbDevicesTrackingFailure.SERVICE,
                 str(exc),
             )
         except AdbProtocolError as exc:
             terminal = AdbDevicesTrackingFailed(
-                server,
+                scope,
                 AdbDevicesTrackingFailure.PROTOCOL,
                 str(exc),
             )
