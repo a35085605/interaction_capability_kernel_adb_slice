@@ -33,10 +33,11 @@ class AdbConfiguredTransportSupervisionPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingSupervisionPolicy:
-    """Policy for one bounded transport-inventory tracker start.
+    """Policy for establishing transport-inventory tracker scopes.
 
-    Tracking supervision does not retry failed starts; server connection failures request
-    server reconciliation.
+    ``episode_timeout_seconds`` now bounds the source connection and ADB service handshake
+    directly. Tracking supervision does not retry failed starts; server connection failures
+    request server reconciliation.
     """
 
     episode_timeout_seconds: float = 10.0
@@ -47,7 +48,7 @@ class AdbDevicesTrackingSupervisionPolicy:
             "episode_timeout_seconds",
             _normalize_positive_seconds(
                 self.episode_timeout_seconds,
-                field_name="ADB tracking-start episode timeout",
+                field_name="ADB tracking startup timeout",
             ),
         )
 

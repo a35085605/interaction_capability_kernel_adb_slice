@@ -26,10 +26,6 @@ _SourceFactory = Callable[[AdbServer], AdbTrackDevicesSource]
 _ThreadFactory = Callable[..., Thread]
 
 
-def _default_source_factory(server: AdbServer) -> AdbTrackDevicesSource:
-    return AdbTrackDevicesSource(server)
-
-
 def _default_thread_factory(*args, **kwargs) -> Thread:
     thread = Thread(*args, **kwargs)
     thread.daemon = True
@@ -54,25 +50,32 @@ class AdbDevicesTrackingScope(Protocol):
 class AdbDevicesTracker:
     """Track one transport-inventory stream for one exact tracking scope.
 
-    A tracker is single-use. Stop or failure is terminal; ``close`` closes the source and
-    joins the worker before returning.
+    ``start`` establishes stream mode before returning, then hands the established session to
+    the worker. A tracker is single-use. Stop or failure is terminal; ``close`` closes the source
+    and joins the worker before returning.
     """
 
     def __init__(
         self,
         identity: AdbDevicesTrackingScopeIdentity,
         publisher: EventPublisher,
+        startup_timeout_seconds: float = 5.0,
         *,
-        _source_factory: _SourceFactory = _default_source_factory,
+        _source_factory: _SourceFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(identity, AdbDevicesTrackingScopeIdentity):
             raise TypeError("identity must be AdbDevicesTrackingScopeIdentity")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
+        if _source_factory is not None and not callable(_source_factory):
+            raise TypeError("_source_factory must be callable or None")
+        if not callable(_thread_factory):
+            raise TypeError("_thread_factory must be callable")
         self.identity = identity
         self.server = identity.server
         self.endpoint = identity.endpoint
+        self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
         self._source_factory = _source_factory
         self._thread_factory = _thread_factory
@@ -88,36 +91,64 @@ class AdbDevicesTracker:
             return not self._closed and self._active_thread is not None
 
     def start(self) -> None:
-        """Start this single-use tracker."""
+        """Establish this single-use tracker and return only after stream mode is entered."""
 
         with self._lock:
             if self._closed:
                 raise RuntimeError("ADB devices tracker is closed")
             if self._started:
                 raise RuntimeError("ADB devices tracker is single-use and already started")
-            source = self._source_factory(self.server)
-            if not isinstance(source, AdbTrackDevicesSource):
-                raise TypeError("source factory must return AdbTrackDevicesSource")
+            source = self._create_source()
+            self._started = True
+            self._active_source = source
+
+        try:
+            session = source.open()
+        except BaseException:
+            self._abort_start(source)
+            raise
+
+        if session is None:
+            self._abort_start(source)
+            raise RuntimeError(
+                "ADB devices tracker was closed before tracking stream mode was entered"
+            )
+
+        try:
             thread = self._thread_factory(
                 target=self._run,
-                args=(source,),
+                args=(source, session),
                 name=(
                     "adb-track-devices-"
                     f"{self.endpoint.host}-{self.endpoint.port}-"
                     f"{self.server.epoch}-{self.identity.generation}"
                 ),
             )
-            self._started = True
-            self._active_source = source
-            self._active_thread = thread
-            try:
-                thread.start()
-            except BaseException:
-                self._active_source = None
-                self._active_thread = None
-                self._closed = True
-                source.close()
-                raise
+        except BaseException:
+            session.close()
+            self._abort_start(source)
+            raise
+
+        try:
+            with self._lock:
+                if self._closed or self._active_source is not source:
+                    if self._active_source is source:
+                        self._active_source = None
+                    raise RuntimeError(
+                        "ADB devices tracker was closed before its worker could start"
+                    )
+                self._active_thread = thread
+                try:
+                    thread.start()
+                except BaseException:
+                    self._active_thread = None
+                    self._active_source = None
+                    self._closed = True
+                    raise
+        except BaseException:
+            session.close()
+            source.close()
+            raise
 
     def close(self) -> None:
         """Destroy this tracker scope and wait for its worker to stop."""
@@ -131,15 +162,37 @@ class AdbDevicesTracker:
         if thread is not None and thread is not current_thread():
             thread.join()
 
-    def _run(self, source: AdbTrackDevicesSource) -> None:
+    def _create_source(self) -> AdbTrackDevicesSource:
+        factory = self._source_factory
+        source = (
+            AdbTrackDevicesSource(
+                self.server,
+                startup_timeout_seconds=self.startup_timeout_seconds,
+            )
+            if factory is None
+            else factory(self.server)
+        )
+        if not isinstance(source, AdbTrackDevicesSource):
+            raise TypeError("source factory must return AdbTrackDevicesSource")
+        return source
+
+    def _abort_start(self, source: AdbTrackDevicesSource) -> None:
+        with self._lock:
+            if self._active_source is source:
+                self._active_source = None
+            self._active_thread = None
+            self._closed = True
+        source.close()
+
+    def _run(
+        self,
+        source: AdbTrackDevicesSource,
+        session: AdbTrackDevicesSession,
+    ) -> None:
         scope = self.identity
-        session: AdbTrackDevicesSession | None = None
         terminal: object | None = None
         try:
-            session = source.open()
-            if session is None:
-                terminal = AdbDevicesTrackingStopped(scope)
-            elif self._can_publish_from(source):
+            if self._can_publish_from(source):
                 self._publisher.publish(AdbDevicesTrackingStarted(scope))
                 for snapshot in session.snapshots():
                     if not self._can_publish_from(source):
@@ -167,10 +220,7 @@ class AdbDevicesTracker:
                 str(exc),
             )
         finally:
-            if session is not None:
-                session.close()
-            else:
-                source.close()
+            session.close()
             publish_terminal = self._mark_terminal(source)
 
         if terminal is not None and publish_terminal:
