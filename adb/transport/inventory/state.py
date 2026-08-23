@@ -3,7 +3,6 @@ from __future__ import annotations
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
-from adb.server.endpoint import AdbServerEndpoint
 from adb.transport.inventory.model import AdbDevicesSnapshot
 from adb.transport.inventory.tracking.identity import AdbDevicesTrackingScopeIdentity
 from adb.transport.inventory.tracking.signal import AdbDevicesSnapshotObserved
@@ -15,10 +14,7 @@ def _scope_order(scope: AdbDevicesTrackingScopeIdentity) -> tuple[int, int]:
 
 @runtime_checkable
 class AdbDevicesInventoryView(Protocol):
-    """Read-only current transport-inventory projection for one ADB endpoint."""
-
-    @property
-    def endpoint(self) -> AdbServerEndpoint: ...
+    """Read-only current transport-inventory projection for one runtime."""
 
     @property
     def active_scope(self) -> AdbDevicesTrackingScopeIdentity | None: ...
@@ -34,9 +30,6 @@ class AdbDevicesInventoryView(Protocol):
 class AdbDevicesInventoryWriter(Protocol):
     """Commit one exact tracking scope into the current inventory projection."""
 
-    @property
-    def endpoint(self) -> AdbServerEndpoint: ...
-
     def begin_tracking(self, scope: AdbDevicesTrackingScopeIdentity) -> bool: ...
 
     def observe(self, observation: AdbDevicesSnapshotObserved) -> bool: ...
@@ -45,26 +38,19 @@ class AdbDevicesInventoryWriter(Protocol):
 
 
 class AdbDevicesInventoryState(AdbDevicesInventoryView, AdbDevicesInventoryWriter):
-    """Thread-safe current inventory state for one managed ADB endpoint.
+    """Thread-safe current inventory state for one runtime.
 
     The state is scoped to the newest accepted tracking lifetime. A new scope clears the prior
     current observation, and ending that exact scope clears current inventory entirely. Late
     writes from older server epochs or tracker generations are rejected rather than resurrecting
-    stale inventory.
+    stale inventory. Successive accepted scopes may belong to servers at different endpoints.
     """
 
-    def __init__(self, endpoint: AdbServerEndpoint) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-        self._endpoint = endpoint
+    def __init__(self) -> None:
         self._lock = Lock()
         self._active_scope: AdbDevicesTrackingScopeIdentity | None = None
         self._latest_scope: AdbDevicesTrackingScopeIdentity | None = None
         self._current_observation: AdbDevicesSnapshotObserved | None = None
-
-    @property
-    def endpoint(self) -> AdbServerEndpoint:
-        return self._endpoint
 
     @property
     def active_scope(self) -> AdbDevicesTrackingScopeIdentity | None:
@@ -83,7 +69,7 @@ class AdbDevicesInventoryState(AdbDevicesInventoryView, AdbDevicesInventoryWrite
             return None if observation is None else observation.snapshot
 
     def begin_tracking(self, scope: AdbDevicesTrackingScopeIdentity) -> bool:
-        self._require_scope_endpoint(scope)
+        self._require_scope(scope)
         with self._lock:
             if self._active_scope == scope:
                 return True
@@ -98,7 +84,7 @@ class AdbDevicesInventoryState(AdbDevicesInventoryView, AdbDevicesInventoryWrite
     def observe(self, observation: AdbDevicesSnapshotObserved) -> bool:
         if not isinstance(observation, AdbDevicesSnapshotObserved):
             raise TypeError("observation must be AdbDevicesSnapshotObserved")
-        self._require_scope_endpoint(observation.scope)
+        self._require_scope(observation.scope)
         with self._lock:
             if observation.scope != self._active_scope:
                 return False
@@ -106,7 +92,7 @@ class AdbDevicesInventoryState(AdbDevicesInventoryView, AdbDevicesInventoryWrite
             return True
 
     def end_tracking(self, scope: AdbDevicesTrackingScopeIdentity) -> bool:
-        self._require_scope_endpoint(scope)
+        self._require_scope(scope)
         with self._lock:
             if scope != self._active_scope:
                 return False
@@ -114,11 +100,10 @@ class AdbDevicesInventoryState(AdbDevicesInventoryView, AdbDevicesInventoryWrite
             self._current_observation = None
             return True
 
-    def _require_scope_endpoint(self, scope: AdbDevicesTrackingScopeIdentity) -> None:
+    @staticmethod
+    def _require_scope(scope: AdbDevicesTrackingScopeIdentity) -> None:
         if not isinstance(scope, AdbDevicesTrackingScopeIdentity):
             raise TypeError("scope must be AdbDevicesTrackingScopeIdentity")
-        if scope.endpoint != self._endpoint:
-            raise ValueError("tracking scope endpoint does not match inventory endpoint")
 
 
 __all__ = [

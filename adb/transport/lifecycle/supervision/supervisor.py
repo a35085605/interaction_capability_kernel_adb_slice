@@ -67,9 +67,10 @@ class _ConfiguredTransportRegistration:
 class AdbConfiguredTransportSupervisor:
     """Project runtime-scoped registrations across server and tracker lifetimes.
 
-    Registrations are long-lived and survive replacement of the current ``AdbServer``.
-    Each new server/tracker scope starts a fresh observation baseline; prior resolutions
-    never create disappearance events in the replacement scope.
+    Registrations are long-lived and survive replacement of the current ``AdbServer``, including
+    replacements that use a different endpoint. Each new server/tracker scope starts a fresh
+    observation baseline; prior resolutions never create disappearance events in the replacement
+    scope. The supplied event bus is the runtime correlation boundary.
     """
 
     def __init__(
@@ -91,13 +92,10 @@ class AdbConfiguredTransportSupervisor:
             raise TypeError("ensurer must satisfy AdbTransportEnsurer")
         owns_inventory = inventory is None
         if inventory is None:
-            inventory = AdbDevicesInventoryState(server.endpoint)
+            inventory = AdbDevicesInventoryState()
         if not isinstance(inventory, AdbDevicesInventoryView):
             raise TypeError("inventory must satisfy AdbDevicesInventoryView or be None")
-        if inventory.endpoint != server.endpoint:
-            raise ValueError("inventory endpoint does not match configured transport endpoint")
         self.server: AdbServer | None = server
-        self.endpoint = server.endpoint
         self._bus = event_bus
         self._ensurer = ensurer
         self._inventory = inventory
@@ -154,10 +152,6 @@ class AdbConfiguredTransportSupervisor:
         with self._lock:
             if self._closed:
                 raise RuntimeError("configured transport supervisor is closed")
-            if server is not None and server.endpoint != self.endpoint:
-                raise ValueError(
-                    "recovered server endpoint does not match configured transport endpoint"
-                )
             if server is not None and server.epoch < self._latest_server_epoch:
                 return
             if (

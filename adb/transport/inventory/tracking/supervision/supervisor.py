@@ -52,8 +52,9 @@ class AdbDevicesTrackingSupervisor:
     """Maintain desired transport-inventory tracking with single-use tracker scopes.
 
     Terminal tracker or server events discard the current scope; a fresh server creates a
-    new tracker. Tracker startup is a direct capability call: a successful ``start`` return means
-    stream mode was established for that exact scope.
+    new tracker, even when the replacement server uses a different endpoint. Tracker startup is
+    a direct capability call: a successful ``start`` return means stream mode was established
+    for that exact scope. The supplied event bus is the runtime correlation boundary.
     """
 
     def __init__(
@@ -76,11 +77,9 @@ class AdbDevicesTrackingSupervisor:
         if not isinstance(policy, AdbDevicesTrackingSupervisionPolicy):
             raise TypeError("policy must be AdbDevicesTrackingSupervisionPolicy")
         if inventory_state is None:
-            inventory_state = AdbDevicesInventoryState(server.endpoint)
+            inventory_state = AdbDevicesInventoryState()
         if not isinstance(inventory_state, AdbDevicesInventoryState):
             raise TypeError("inventory_state must be AdbDevicesInventoryState or None")
-        if inventory_state.endpoint != server.endpoint:
-            raise ValueError("inventory state endpoint does not match tracking endpoint")
         if _tracker_factory is not None and not callable(_tracker_factory):
             raise TypeError("_tracker_factory must be callable or None")
         if not callable(_thread_factory):
@@ -91,7 +90,6 @@ class AdbDevicesTrackingSupervisor:
             raise TypeError("_generation_issuer must satisfy AdbDevicesTrackingGenerationIssuer")
 
         self.server: AdbServer | None = server
-        self.endpoint = server.endpoint
         self._bus = event_bus
         self._inventory = inventory_state
         self._tracking_publisher = AdbDevicesStateBackedTrackingPublisher(
@@ -178,8 +176,6 @@ class AdbDevicesTrackingSupervisor:
             ):
                 return
             server_changed = server_identity != self._server_identity
-            if server is not None and server.endpoint != self.endpoint:
-                raise ValueError("recovered server endpoint does not match tracking endpoint")
             self.server = server
             self._server_identity = server_identity
             if epoch is not None and (
@@ -202,7 +198,7 @@ class AdbDevicesTrackingSupervisor:
                     args=(tracker,),
                     name=(
                         "adb-tracking-reconciliation-"
-                        f"{self.endpoint.host}-{self.endpoint.port}"
+                        f"{server.endpoint.host}-{server.endpoint.port}-{server.epoch}"
                     ),
                 )
                 self._start_in_progress = True
@@ -288,8 +284,6 @@ class AdbDevicesTrackingSupervisor:
         tracker.close()
 
     def _on_server_retired(self, event: AdbServerRetired) -> None:
-        if event.endpoint != self.endpoint:
-            return
         with self._lock:
             if self._closed:
                 return
@@ -312,8 +306,6 @@ class AdbDevicesTrackingSupervisor:
             tracker.close()
 
     def _on_server_recovered(self, event: AdbServerRecovered) -> None:
-        if event.endpoint != self.endpoint:
-            return
         with self._lock:
             if self._closed or not self._desired_tracking:
                 return

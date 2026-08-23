@@ -49,12 +49,6 @@ def _require_server(value: object) -> AdbServer:
     return value
 
 
-def _require_endpoint(value: object) -> AdbServerEndpoint:
-    if not isinstance(value, AdbServerEndpoint):
-        raise TypeError("endpoint must be AdbServerEndpoint")
-    return value
-
-
 class _ServerSignalProjection:
     server: AdbServer
 
@@ -146,12 +140,10 @@ class AdbServerRecovered(_ServerSignalProjection):
 class AdbServerRecoveryRetryDue:
     """Signal delivered when one ADB server recovery retry is due."""
 
-    endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId
     attempt_number: int
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
         if not isinstance(self.cycle_id, AdbServerRecoveryCycleId):
             raise TypeError("cycle_id must be AdbServerRecoveryCycleId")
         if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
@@ -164,13 +156,11 @@ class AdbServerRecoveryRetryDue:
 class AdbServerRecoveryExhausted:
     """Signal that ADB server recovery exhausted its retry budget."""
 
-    endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId
     attempts: int
     failure: AdbServerLaunchFailure
 
     def __post_init__(self) -> None:
-        _require_endpoint(self.endpoint)
         if not isinstance(self.cycle_id, AdbServerRecoveryCycleId):
             raise TypeError("cycle_id must be AdbServerRecoveryCycleId")
         if isinstance(self.attempts, bool) or not isinstance(self.attempts, int):

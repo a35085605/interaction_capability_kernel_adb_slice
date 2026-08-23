@@ -50,7 +50,7 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 
 
 class AdbServerSupervisor:
-    """Maintain desired ADB server availability and recover it according to policy."""
+    """Maintain desired ADB server availability across successive server lifetimes."""
 
     def __init__(
         self,
@@ -80,7 +80,6 @@ class AdbServerSupervisor:
             raise TypeError("policy must be AdbServerSupervisionPolicy")
 
         self.server: AdbServer | None = server
-        self.endpoint = server.endpoint
         self._bus = event_bus
         self._stopper = stopper
         self._provisioner = provisioner
@@ -331,7 +330,7 @@ class AdbServerSupervisor:
             args=(cycle_id, attempt_number),
             name=(
                 "adb-server-recovery-"
-                f"{self.endpoint.host}-{self.endpoint.port}-{attempt_number}"
+                f"{cycle_id.value[:12]}-{attempt_number}"
             ),
         )
         with self._lock:
@@ -372,7 +371,6 @@ class AdbServerSupervisor:
                         self._retry_token = None
                         self._cycle_id = None
                         self.server = recovered
-                        self.endpoint = recovered.endpoint
                         recovered_event = AdbServerRecovered(recovered)
 
             if recovered_event is not None:
@@ -405,7 +403,6 @@ class AdbServerSupervisor:
             self._end_recovery_cycle(cycle_id)
             self._bus.publish(
                 AdbServerRecoveryExhausted(
-                    self.endpoint,
                     cycle_id,
                     attempt_number,
                     failure,
@@ -416,7 +413,6 @@ class AdbServerSupervisor:
         next_attempt = attempt_number + 1
         delay_seconds = self._retry_delay(attempt_number)
         retry_event = AdbServerRecoveryRetryDue(
-            self.endpoint,
             cycle_id,
             next_attempt,
         )
@@ -450,8 +446,6 @@ class AdbServerSupervisor:
         self,
         event: AdbServerReconciliationRequested,
     ) -> None:
-        if event.endpoint != self.endpoint:
-            return
         with self._lock:
             server = self.server
             if server is None or server != event.server:
@@ -459,8 +453,6 @@ class AdbServerSupervisor:
         self._retire_current_and_maybe_recover(event.failure)
 
     def _on_retry_due(self, event: AdbServerRecoveryRetryDue) -> None:
-        if event.endpoint != self.endpoint:
-            return
         with self._lock:
             if not self._recovery_is_current_locked(event.cycle_id):
                 return

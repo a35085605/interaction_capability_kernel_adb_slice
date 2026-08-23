@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from threading import RLock
 
+from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
 from adb.transport.configuration import AdbConfiguredTransport
 
@@ -70,21 +71,28 @@ class RegisteredTransport:
 
 
 class AdbManagedRuntime:
-    """Manage one ADB endpoint across successive server lifetimes.
+    """Manage successive ADB server lifetimes within one runtime.
 
     The runtime is the long-lived owner of configured-transport registrations.  ``server`` is
-    only the current :class:`AdbServer` lifetime and may therefore be replaced, or become
-    ``None`` while no usable server lifetime is active.  Registrations are independent of that
-    replacement and persist until explicitly removed or until the runtime is closed.
+    only the current :class:`AdbServer` lifetime and may therefore be replaced, move to a
+    different endpoint, or become ``None`` while no usable server lifetime is active.
+    Registrations are independent of those replacements and persist until explicitly removed
+    or until the runtime is closed.
     """
 
     def __init__(self, server: AdbServer) -> None:
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
         self.server: AdbServer | None = server
-        self.endpoint = server.endpoint
         self._registration_lock = RLock()
         self._registrations: dict[AdbConfiguredTransport, RegisteredTransport] = {}
+
+    @property
+    def current_endpoint(self) -> AdbServerEndpoint | None:
+        """Endpoint of the current server lifetime, if one is active."""
+
+        server = self.server
+        return None if server is None else server.endpoint
 
     # ------------------------------------------------------------------
     # Runtime lifecycle
@@ -107,7 +115,7 @@ class AdbManagedRuntime:
     # ------------------------------------------------------------------
 
     def start_server(self, *, auto_recovery: bool = True) -> None:
-        """Declare that this runtime endpoint should have an active ADB server lifetime."""
+        """Declare that this runtime should have an active ADB server lifetime."""
         raise NotImplementedError
 
     def stop_server(self) -> None:
