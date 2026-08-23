@@ -18,6 +18,7 @@ from adb.server.failure import (
     AdbServerProcessExitedFailure,
 )
 from adb.server.identity import AdbServer
+from adb.server.state import AdbServerState, AdbServerStateView
 from adb.server.signal import (
     AdbServerRecoveryCycleId,
     AdbServerNativeCloseCompleted,
@@ -50,11 +51,15 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 
 
 class AdbServerSupervisor:
-    """Maintain desired ADB server availability across successive server lifetimes."""
+    """Maintain desired ADB server availability across successive server lifetimes.
+
+    Current-lifetime truth is committed to ``AdbServerState``; this supervisor owns only
+    desired-running intent and reconciliation/recovery automation around that state.
+    """
 
     def __init__(
         self,
-        server: AdbServer,
+        server: AdbServer | AdbServerState,
         stopper: AdbServerStopper,
         provisioner: AdbServerProvisioner,
         event_bus: EventBus,
@@ -64,8 +69,14 @@ class AdbServerSupervisor:
         _random: _RandomSource = random,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if isinstance(server, AdbServerState):
+            server_state = server
+        elif isinstance(server, AdbServer):
+            server_state = AdbServerState(server)
+        else:
+            raise TypeError("server must be AdbServer or AdbServerState")
+        if server_state.current is None:
+            raise ValueError("server state must have an active initial server")
         if not isinstance(stopper, AdbServerStopper):
             raise TypeError("stopper must satisfy AdbServerStopper")
         if not isinstance(provisioner, AdbServerProvisioner):
@@ -79,7 +90,7 @@ class AdbServerSupervisor:
         if not isinstance(policy, AdbServerSupervisionPolicy):
             raise TypeError("policy must be AdbServerSupervisionPolicy")
 
-        self.server: AdbServer | None = server
+        self._server_state = server_state
         self._bus = event_bus
         self._stopper = stopper
         self._provisioner = provisioner
@@ -99,6 +110,18 @@ class AdbServerSupervisor:
         self._pending_retired_disposals: set[AdbServer] = set()
         self._attempt_threads: set[Thread] = set()
         self._closed = False
+
+    @property
+    def server(self) -> AdbServer | None:
+        """Current server lifetime from the runtime authoritative state."""
+
+        return self._server_state.current
+
+    @property
+    def server_state(self) -> AdbServerStateView:
+        """Read-only authoritative state used by this supervisor."""
+
+        return self._server_state
 
     @property
     def desired_running(self) -> bool:
@@ -227,13 +250,12 @@ class AdbServerSupervisor:
         with self._mutation_lock:
             with self._lock:
                 self._require_open()
-                if not self._desired_running:
-                    return
                 server = self.server
 
             if server is not None:
                 with self._lock:
-                    self.server = None
+                    if not self._server_state.retire(server):
+                        return
                     self._closing_server = server
                     retired_server = server
                     self._pending_retired_disposals.add(server)
@@ -367,10 +389,11 @@ class AdbServerSupervisor:
                     with self._lock:
                         if not self._recovery_is_current_locked(cycle_id):
                             return
+                        if not self._server_state.activate(recovered):
+                            return
                         retry_token = self._retry_token
                         self._retry_token = None
                         self._cycle_id = None
-                        self.server = recovered
                         recovered_event = AdbServerRecovered(recovered)
 
             if recovered_event is not None:

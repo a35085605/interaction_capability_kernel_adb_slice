@@ -70,14 +70,15 @@ class AdbConfiguredTransportSupervisor:
     Registrations are long-lived and survive replacement of the current ``AdbServer``, including
     replacements that use a different endpoint. Each new server/tracker scope starts a fresh
     observation baseline; prior resolutions never create disappearance events in the replacement
-    scope. The supplied event bus is the runtime correlation boundary.
+    scope. The supplied event bus is the runtime correlation boundary.  The ensurer is optional
+    when registrations are projection-only and no recovery ensure policy is configured.
     """
 
     def __init__(
         self,
         server: AdbServer,
         event_bus: EventBus,
-        ensurer: AdbTransportEnsurer,
+        ensurer: AdbTransportEnsurer | None,
         *,
         inventory: AdbDevicesInventoryView | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
@@ -88,8 +89,8 @@ class AdbConfiguredTransportSupervisor:
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
             raise TypeError("event_bus must satisfy EventBus")
-        if not isinstance(ensurer, AdbTransportEnsurer):
-            raise TypeError("ensurer must satisfy AdbTransportEnsurer")
+        if ensurer is not None and not isinstance(ensurer, AdbTransportEnsurer):
+            raise TypeError("ensurer must satisfy AdbTransportEnsurer or be None")
         owns_inventory = inventory is None
         if inventory is None:
             inventory = AdbDevicesInventoryState()
@@ -191,7 +192,10 @@ class AdbConfiguredTransportSupervisor:
         if enabled and policy.recovery_ensure_policy is None:
             raise ValueError("automatic recovery requires a recovery ensure policy")
         if policy.recovery_ensure_policy is not None:
-            establishment_supported = self._ensurer.supports_establishment(configuration)
+            ensurer = self._ensurer
+            if ensurer is None:
+                raise ValueError("automatic recovery requires a configured transport ensurer")
+            establishment_supported = ensurer.supports_establishment(configuration)
             if not isinstance(establishment_supported, bool):
                 raise TypeError("ensurer supports_establishment() must return bool")
             if not establishment_supported:
@@ -461,7 +465,10 @@ class AdbConfiguredTransportSupervisor:
                     return
                 ensure_policy = registration.policy.recovery_ensure_policy
             assert ensure_policy is not None
-            result = self._ensurer.ensure(
+            ensurer = self._ensurer
+            if ensurer is None:
+                raise RuntimeError("configured transport recovery has no ensurer")
+            result = ensurer.ensure(
                 AdbTransportEnsureReadiness(server, configuration, ensure_policy),
             )
             if not isinstance(result, AdbTransportEnsureResult):

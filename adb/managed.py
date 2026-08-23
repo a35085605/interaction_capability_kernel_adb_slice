@@ -4,6 +4,7 @@ from threading import RLock
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
+from adb.server.state import AdbServerState, AdbServerStateView
 from adb.transport.configuration import AdbConfiguredTransport
 
 
@@ -80,12 +81,28 @@ class AdbManagedRuntime:
     or until the runtime is closed.
     """
 
-    def __init__(self, server: AdbServer) -> None:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
-        self.server: AdbServer | None = server
+    def __init__(self, server: AdbServer | AdbServerState) -> None:
+        if isinstance(server, AdbServerState):
+            server_state = server
+        elif isinstance(server, AdbServer):
+            server_state = AdbServerState(server)
+        else:
+            raise TypeError("server must be AdbServer or AdbServerState")
+        self._server_state = server_state
         self._registration_lock = RLock()
         self._registrations: dict[AdbConfiguredTransport, RegisteredTransport] = {}
+
+    @property
+    def server(self) -> AdbServer | None:
+        """Authoritative current ADB server lifetime for this runtime."""
+
+        return self._server_state.current
+
+    @property
+    def server_state(self) -> AdbServerStateView:
+        """Read-only authoritative server-state projection for this runtime."""
+
+        return self._server_state
 
     @property
     def current_endpoint(self) -> AdbServerEndpoint | None:
