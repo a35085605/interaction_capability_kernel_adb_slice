@@ -21,7 +21,7 @@ from adb.server.failure import (
     AdbServerServiceFailure,
     AdbServerTimeoutFailure,
 )
-from adb.server.identity import AdbServer, AdbServerEpochSequence
+from adb.server.identity import AdbServer, AdbServerEpochIssuer, AdbServerEpochSequence
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
 from adb.server.lifecycle.control.adapter.subprocess import SubprocessAdbServerController
@@ -33,6 +33,7 @@ __all__ = [
     "AdbServerControlError",
     "AdbServerController",
     "AdbServerEndpoint",
+    "AdbServerEpochIssuer",
     "AdbServerEpochSequence",
     "AdbServerFailure",
     "AdbServer",

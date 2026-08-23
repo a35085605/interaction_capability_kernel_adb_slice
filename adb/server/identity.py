@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import Lock
+from typing import Protocol, runtime_checkable
 
 from adb.server.endpoint import AdbServerEndpoint
 
@@ -25,17 +26,25 @@ class AdbServer:
             raise ValueError("epoch must be greater than zero")
 
 
+@runtime_checkable
+class AdbServerEpochIssuer(Protocol):
+    """Issue epochs for successive ADB server lifetimes within one runtime."""
+
+    def issue(self) -> int:
+        ...
+
+
 class AdbServerEpochSequence:
-    """Runtime-scoped logical clock for ADB server lifetimes."""
+    """Runtime-scoped monotonically increasing ADB server epoch issuer."""
 
     def __init__(self) -> None:
         self._lock = Lock()
         self._current = 0
 
-    def advance(self) -> int:
+    def issue(self) -> int:
         with self._lock:
             self._current += 1
             return self._current
 
 
-__all__ = ["AdbServer", "AdbServerEpochSequence"]
+__all__ = ["AdbServer", "AdbServerEpochIssuer", "AdbServerEpochSequence"]
