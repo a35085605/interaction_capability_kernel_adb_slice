@@ -42,7 +42,7 @@ class AdbTransportEstablisher(Protocol):
 
 
 class AdbTcpTransportEstablisher:
-    """Establish an absent TCP transport with exactly one ``adb connect`` attempt."""
+    """Establish an absent TCP transport with one ``adb connect`` attempt."""
 
     def __init__(self, connector: AdbTcpConnector) -> None:
         if not callable(getattr(connector, "connect", None)):

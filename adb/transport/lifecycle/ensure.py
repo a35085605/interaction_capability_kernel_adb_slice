@@ -243,11 +243,10 @@ class AdbTransportEnsureResult:
 
 @runtime_checkable
 class AdbTransportEnsurer(Protocol):
-    """Ensure bounded readiness and declare supported establishment routes.
+    """Ensure bounded transport readiness and report supported establishment.
 
-    Ensuring owns fresh snapshot probing and bounded verification, not long-lived transport
-    tracking. Implementations used by transport supervision must support concurrent
-    ``ensure`` calls for different configured transports.
+    Implementations used by supervision must support concurrent ensures for different
+    configured transports.
     """
 
     def supports_establishment(
@@ -270,7 +269,7 @@ _Sleeper = Callable[[float], None]
 
 @dataclass(slots=True)
 class _ReadinessEpisodeState:
-    """Pure mutable state and snapshot decisions for one readiness ensure operation."""
+    """Mutable state for one readiness ensure operation."""
 
     operation: AdbTransportEnsureReadiness
     attempts: list[NativeAttemptResult] = field(default_factory=list)
@@ -376,12 +375,10 @@ class _ReadinessEpisodeState:
 
 
 class AdbTransportEnsureOrchestrator:
-    """Ensure one configured transport is ready within one deadline.
+    """Ensure one configured transport reaches a terminal readiness state before a deadline.
 
-    Long-lived inventory tracking, server epoch fencing, and recovery triggering belong to
-    ``AdbConfiguredTransportSupervisor``. This orchestrator independently re-probes current
-    inventory before acting, performs at most one supported establishment command, and polls
-    fresh snapshots until readiness reaches a terminal state or the deadline expires.
+    The orchestrator probes fresh inventory, may perform one supported establishment attempt,
+    and polls until a terminal state or timeout.
     """
 
     def __init__(

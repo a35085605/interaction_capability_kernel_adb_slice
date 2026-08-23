@@ -1,4 +1,4 @@
-"""ADB transport inventory facts, reads, projections, and single-use tracking."""
+"""ADB transport inventory reads, projections, and tracking."""
 
 from adb.transport.inventory.lookup import AdbTrackedDeviceLookup
 from adb.transport.inventory.model import (

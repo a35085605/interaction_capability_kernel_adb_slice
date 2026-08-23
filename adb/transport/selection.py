@@ -16,7 +16,7 @@ def _normalize_required_text(value: object, *, field_name: str) -> str:
 
 @dataclass(frozen=True, slots=True, order=True)
 class AdbDeviceSerial:
-    """Native ADB device serial used for deterministic transport selection."""
+    """ADB device serial used for transport selection."""
 
     value: str
 
@@ -32,11 +32,9 @@ class AdbDeviceSerial:
 
 
 class AdbTransportId(int):
-    """ADB-server-local native transport identity.
+    """ADB-server-local transport identity.
 
-    Transport IDs are positive runtime identities allocated by one ADB server. They are
-    integers on the native protocol, so the type intentionally subclasses ``int`` while
-    preserving a distinct constructor for public APIs and selectors.
+    Transport IDs are positive integers allocated by one ADB server.
     """
 
     def __new__(cls, value: object) -> "AdbTransportId":
@@ -54,10 +52,9 @@ class AdbTransportId(int):
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportBySerial:
-    """Select the transport directly by its native ADB serial.
+    """Select a transport by its ADB serial.
 
-    This selector is passed through to native ADB serial-selection mechanisms. It does not
-    require an inventory snapshot and does not imply conversion to ``AdbTransportById``.
+    Selection does not require inventory lookup or conversion to a transport ID.
     """
 
     serial: AdbDeviceSerial
@@ -69,7 +66,7 @@ class AdbTransportBySerial:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportById:
-    """Select one exact ADB-server-local runtime transport identity."""
+    """Select a transport by its server-local transport ID."""
 
     transport_id: AdbTransportId
 

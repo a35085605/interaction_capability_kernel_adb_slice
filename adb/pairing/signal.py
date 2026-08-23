@@ -12,7 +12,7 @@ AdbPairingCommandOperation: TypeAlias = AdbWirelessPair
 
 @dataclass(frozen=True, slots=True)
 class AdbPairingCommandCompleted:
-    """Signal carrying the result of one atomic ADB pairing command attempt."""
+    """Signal carrying one ADB pairing attempt result."""
 
     operation: AdbPairingCommandOperation
     result: NativeAttemptResult

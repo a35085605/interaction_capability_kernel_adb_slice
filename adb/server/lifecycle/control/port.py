@@ -8,7 +8,7 @@ from adb.server.identity import AdbServer
 
 
 class AdbServerControlError(RuntimeError):
-    """Base error for native ADB server start/stop controller failures."""
+    """Base error for ADB server controller failures."""
 
 
 class AdbServerStartError(AdbServerControlError):
@@ -36,7 +36,7 @@ class AdbServerStart:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerStop:
-    """Successful proven stop of one ADB server identity."""
+    """Evidence that one ADB server was stopped."""
 
     server: AdbServer
 
@@ -51,14 +51,9 @@ class AdbServerStop:
 
 @runtime_checkable
 class AdbServerController(Protocol):
-    """Start and stop ADB server lifetimes behind one native control boundary.
+    """Start and stop ADB server lifetimes.
 
-    ``start`` is the ADB-facing operation.  A concrete controller may implement it by
-    launching and retaining an exact native child-process lifetime, by delegating to another
-    platform backend, or by any other mechanism that can return a fresh :class:`AdbServer`.
-
-    ``stop`` is fenced by :class:`AdbServer` identity rather than endpoint so a controller can
-    distinguish different generations that happened to reuse the same listening address.
+    Stopping is keyed by server identity so successive lifetimes may reuse an endpoint.
     """
 
     def start(

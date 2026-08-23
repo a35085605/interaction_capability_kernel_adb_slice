@@ -58,16 +58,10 @@ def _project_server(server: AdbServer | None) -> AdbDevicesTrackingReadiness:
 
 
 class AdbDevicesTrackingSupervisor:
-    """Maintain durable tracking intent by constructing single-use tracker scopes.
+    """Maintain desired transport-inventory tracking with single-use tracker scopes.
 
-    A tracker never crosses a terminal boundary. Server retirement destroys the current
-    tracker immediately. A fresh server later permits a new tracker instance to be
-    constructed and started. Tracking stop/failure follows the same rule: the old tracker is
-    discarded rather than restarted.
-
-    No tracker epoch counter is required because only one tracker scope is current, and terminal
-    scopes are never reused. Background start orchestration may finish late, but its result is
-    accepted only while the tracker object it started is still the current scope.
+    Terminal tracker or server events discard the current scope; a fresh server creates a
+    new tracker.
     """
 
     def __init__(
@@ -109,6 +103,9 @@ class AdbDevicesTrackingSupervisor:
         self._attempt_threads: set[Thread] = set()
         self._closed = False
 
+        # Tracker identity fences late background start results; terminal scopes are never
+        # reused.
+
     @property
     def desired_tracking(self) -> bool:
         with self._lock:
@@ -125,7 +122,7 @@ class AdbDevicesTrackingSupervisor:
             return self._tracking_active
 
     def start(self) -> bool:
-        """Declare durable intent and start a fresh tracker for the initial server."""
+        """Declare tracking intent and start a tracker for the current server."""
 
         server = self.server
         readiness = _project_server(server)

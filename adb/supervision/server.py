@@ -129,7 +129,7 @@ def _require_endpoint_policy(value: object) -> AdbServerEndpointPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerSupervisionPolicy:
-    """Recovery policy for reacquiring the process-coordinated managed ADB server."""
+    """Policy for ADB server recovery."""
 
     retry_initial_seconds: float = 0.5
     retry_max_seconds: float = 30.0
@@ -174,19 +174,7 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 
 
 class AdbServerSupervisor:
-    """Maintain durable intent for the active process-coordinated ADB server.
-
-    The supervised resource itself does not cross a failure boundary. Terminal liveness
-    evidence first retires the current :class:`AdbServer` and publishes
-    :class:`AdbServerRetired`, so managed dependents can immediately tear down their
-    old server-bound scopes. Native close then proceeds privately. Endpoint continuity policy
-    decides whether recovery reuses an endpoint and therefore waits for proven close, or lets the
-    next server resolve an independent endpoint while retired teardown continues.
-
-    Existing listeners never satisfy recovery because the lifecycle backend creates a fresh server
-    before the coordinator records it as active. Retry cycle IDs fence scheduled retry work only;
-    each :class:`AdbServer` carries a separate server identity.
-    """
+    """Maintain desired ADB server availability and recover it according to policy."""
 
     def __init__(
         self,
@@ -260,7 +248,7 @@ class AdbServerSupervisor:
             return self._recovery_enabled
 
     def start(self, *, recovery_enabled: bool) -> None:
-        """Arm managed intent around the current server or its future recreation."""
+        """Declare that the ADB server should be running, optionally with recovery."""
 
         enabled = _require_bool(recovery_enabled, field_name="recovery_enabled")
         launch_cycle: AdbServerRecoveryCycleId | None = None
@@ -291,7 +279,7 @@ class AdbServerSupervisor:
             self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
     def stop(self) -> None:
-        """Disarm managed intent without terminating any native ADB server."""
+        """Clear running intent without terminating the current server."""
 
         with self._mutation_lock:
             with self._lock:
@@ -305,8 +293,7 @@ class AdbServerSupervisor:
     def set_recovery_enabled(self, enabled: bool) -> None:
         """Enable or disable automatic server recovery.
 
-        Enabling recovery while the managed server is already absent may start a recovery attempt
-        immediately.
+        Enabling recovery while the server is absent may start recovery immediately.
         """
 
         normalized = _require_bool(enabled, field_name="enabled")
@@ -334,7 +321,7 @@ class AdbServerSupervisor:
             self._launch_recovery_attempt(launch_cycle, attempt_number=1)
 
     def reconcile(self, failure: AdbServerLivenessFailure) -> None:
-        """Retire the current server from terminal liveness evidence and reconcile intent."""
+        """Retire the current server after terminal liveness failure and reconcile desired state."""
 
         if not isinstance(
             failure,
@@ -347,13 +334,7 @@ class AdbServerSupervisor:
         self._retire_current_and_maybe_recover(failure)
 
     def close(self) -> None:
-        """Stop supervising without retiring or terminating the healthy current server.
-
-        Retired generations that have not yet handed teardown to a worker are adopted by close.
-        Already-started teardown is joined before mutation authority is released. This makes the
-        pending-to-started handoff atomic with respect to close, including when close is invoked
-        synchronously by a server-retirement event handler.
-        """
+        """Stop supervision without terminating the current healthy server."""
 
         with self._mutation_lock:
             with self._lock:

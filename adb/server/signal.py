@@ -69,7 +69,7 @@ class _ServerSignalProjection:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerReconciliationRequested(_ServerSignalProjection):
-    """Signal that terminal liveness evidence requires server-fenced reconciliation."""
+    """Request reconciliation after terminal server liveness failure."""
 
     server: AdbServer
     failure: AdbServerLivenessFailure
@@ -85,7 +85,7 @@ class AdbServerReconciliationRequested(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRetired(_ServerSignalProjection):
-    """Public fact that one server lifetime is irreversibly no longer usable."""
+    """One ADB server lifetime is no longer usable."""
 
     server: AdbServer
 
@@ -111,7 +111,7 @@ class AdbServerLost(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerNativeCloseCompleted(_ServerSignalProjection):
-    """Private-lifecycle fact that termination of a retired server was proven."""
+    """Termination of a retired ADB server was proven."""
 
     server: AdbServer
 
@@ -121,7 +121,7 @@ class AdbServerNativeCloseCompleted(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerNativeCloseUnproven(_ServerSignalProjection):
-    """Private-lifecycle fact that termination of a retired server remains unproven."""
+    """Termination of a retired ADB server remains unproven."""
 
     server: AdbServer
     failure: AdbServerCloseUnprovenFailure
@@ -134,7 +134,7 @@ class AdbServerNativeCloseUnproven(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecovered(_ServerSignalProjection):
-    """Signal carrying the fresh usable managed ADB server."""
+    """Signal carrying the recovered ADB server."""
 
     server: AdbServer
 
@@ -144,7 +144,7 @@ class AdbServerRecovered(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryRetryDue:
-    """Signal delivered when one managed ADB server recovery retry becomes due."""
+    """Signal delivered when one ADB server recovery retry is due."""
 
     endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId
@@ -162,7 +162,7 @@ class AdbServerRecoveryRetryDue:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryExhausted:
-    """Signal that fresh managed ADB server creation exhausted its retry budget."""
+    """Signal that ADB server recovery exhausted its retry budget."""
 
     endpoint: AdbServerEndpoint
     cycle_id: AdbServerRecoveryCycleId

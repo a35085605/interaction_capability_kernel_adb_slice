@@ -22,7 +22,7 @@ class AdbServerMutationReservedError(RuntimeError):
 
 
 class AdbServerUnavailableError(RuntimeError):
-    """The coordination domain has no currently usable managed ADB server lifetime."""
+    """No usable ADB server is currently available."""
 
 
 class _AdbServerMutationLease:
@@ -41,7 +41,7 @@ class _AdbServerMutationLease:
 
 @runtime_checkable
 class _AdbServerCoordination(Protocol):
-    """Process coordination port consumed by higher-level lifecycle policy."""
+    """Internal contract for process-wide ADB server coordination."""
 
     def claim_mutation_authority(
         self,
@@ -76,13 +76,7 @@ class _AdbServerCoordination(Protocol):
 
 
 class _ProcessAdbServerCoordinator:
-    """Own process-wide ADB server identity state and mutation fencing.
-
-    The coordinator tracks the active and not-yet-disposed retired server identities, owns local
-    epoch generation, and grants optional exclusive mutation authority. Exact native process
-    handles and termination capability remain private to the configured ``AdbServerController``.
-    A mutation lease may span active -> absent -> fresh-server transitions during recovery.
-    """
+    """Coordinate process-wide ADB server identity and mutation authority."""
 
     def __init__(self, controller: AdbServerController) -> None:
         if not isinstance(controller, AdbServerController):
@@ -93,6 +87,7 @@ class _ProcessAdbServerCoordinator:
         self._active_server: AdbServer | None = None
         self._retired_servers: set[AdbServer] = set()
         self._server_starting = False
+        # A claimed lease remains valid across retire/acquire transitions until released.
         self._mutation_lease: _AdbServerMutationLease | None = None
         self._claim_pending = False
         self._release_pending = False
@@ -103,12 +98,7 @@ class _ProcessAdbServerCoordinator:
         self,
         expected_current: AdbServer | None = None,
     ) -> _AdbServerMutationLease:
-        """Reserve mutations after fencing against the expected current server.
-
-        ``expected_current`` gives claim CAS-like semantics: after already-admitted ordinary
-        mutations drain, the claim succeeds only if that server is still current. Once granted,
-        the lease may span active -> absent -> fresh-server transitions during recovery.
-        """
+        """Reserve mutation authority for the expected current server, if any."""
 
         if expected_current is not None and not isinstance(expected_current, AdbServer):
             raise TypeError("expected_current must be AdbServer or None")
@@ -117,6 +107,7 @@ class _ProcessAdbServerCoordinator:
                 raise RuntimeError("ADB server mutation authority is already claimed")
             self._claim_pending = True
             try:
+                # Check expected_current only after previously admitted mutations drain.
                 while self._unleased_mutations_in_flight:
                     self._condition.wait()
                 if expected_current is not None and self._active_server != expected_current:

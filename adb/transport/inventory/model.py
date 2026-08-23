@@ -63,16 +63,11 @@ def _normalize_open_enum(
 
 @dataclass(frozen=True, slots=True)
 class AdbTrackedDevice:
-    """One observed row from AOSP ``adb_host.proto.Device``.
+    """One observed AOSP ``adb_host.proto.Device`` inventory row.
 
-    This wire-aligned value describes one server-tracked ADB transport in an
-    inventory snapshot. It is not an independently identified device entity and
-    does not own a separate lifecycle or command surface. ``transport_id`` is the
-    native server-local transport identity when non-zero; zero means that native
-    identity is unavailable in the observed row.
-
-    Known enum numbers are exposed as the matching ``IntEnum`` member. Unknown
-    future proto3 enum numbers are preserved as raw integers.
+    The row is observation data, not a stable device identity. ``transport_id`` is
+    server-local when non-zero; zero means unavailable. Unknown enum values are preserved as
+    integers.
     """
 
     serial: str = ""

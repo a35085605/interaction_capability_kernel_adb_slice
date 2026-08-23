@@ -58,7 +58,7 @@ class AdbTrackDevicesSession:
             return
 
     def close(self) -> None:
-        """Close this stream session without introducing retry or recovery policy."""
+        """Close this stream session."""
 
         if self._closed:
             return
@@ -67,10 +67,9 @@ class AdbTrackDevicesSession:
 
 
 class AdbTrackDevicesSource:
-    """Blocking ``host:track-devices-proto-binary`` transport-inventory source.
+    """Blocking ``host:track-devices-proto-binary`` inventory source.
 
-    Each payload is the binary serialization of AOSP ``adb.proto.Devices``.
-    The source does not retry or reconnect automatically.
+    Payloads are AOSP ``adb_host.proto.Devices`` messages. The source does not retry or reconnect.
     """
 
     def __init__(

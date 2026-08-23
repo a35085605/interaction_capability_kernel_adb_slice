@@ -45,7 +45,7 @@ def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
 
 
 class AdbDevicesTrackingReadiness(str, Enum):
-    """Whether fresh upstream server evidence permits constructing a tracker scope."""
+    """Whether server state permits starting a tracker."""
 
     READY = "ready"
     WAITING_FOR_SERVER = "waiting_for_server"
@@ -53,7 +53,7 @@ class AdbDevicesTrackingReadiness(str, Enum):
 
 
 class AdbDevicesTrackingStartStatus(str, Enum):
-    """Terminal status of one bounded single-use tracker start episode."""
+    """Terminal status of one bounded tracker start."""
 
     SATISFIED = "satisfied"
     FAILED = "failed"
@@ -62,7 +62,7 @@ class AdbDevicesTrackingStartStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStartPolicy:
-    """Bound one transport-inventory tracker start episode after readiness."""
+    """Timeout policy for one tracker start."""
 
     timeout_seconds: float
 
@@ -79,7 +79,7 @@ class AdbDevicesTrackingStartPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStart:
-    """Request startup of one freshly constructed tracker scope."""
+    """Request startup of a new tracker scope."""
 
     server: AdbServer
     readiness: AdbDevicesTrackingReadiness
@@ -96,7 +96,7 @@ class AdbDevicesTrackingStart:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStartResult:
-    """Evidence from one bounded single-use tracker start episode."""
+    """Result of one bounded tracker start."""
 
     operation: AdbDevicesTrackingStart
     status: AdbDevicesTrackingStartStatus
@@ -127,16 +127,16 @@ class AdbDevicesTrackingStartResult:
 
     @property
     def attempts(self) -> tuple[NativeAttemptResult, ...]:
-        """Tracking start performs no native server mutation attempts."""
+        """Tracking start performs no ADB server mutation attempts."""
 
         return ()
 
 
 class AdbDevicesTrackingStartOrchestrator:
-    """Start one freshly constructed tracker after server readiness.
+    """Start a new tracker after server readiness.
 
-    The tracker is single-use. Satisfaction requires ``AdbDevicesTrackingStarted`` evidence;
-    failure, stop, or timeout leaves teardown/recomposition to the caller.
+    Success requires ``AdbDevicesTrackingStarted``; failure, stop, or timeout leaves
+    replacement to the caller.
     """
 
     def __init__(

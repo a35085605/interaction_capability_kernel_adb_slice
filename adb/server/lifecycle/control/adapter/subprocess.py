@@ -42,7 +42,7 @@ def _normalize_probe_interval(value: object) -> float:
 
 
 class _SubprocessLifetime:
-    """Exact foreground ADB server child-process lifetime owned by this adapter."""
+    """Owned foreground ADB server child process."""
 
     def __init__(
         self,
@@ -106,12 +106,7 @@ class _SubprocessLifetime:
 
 
 class SubprocessAdbServerController:
-    """Start and stop exact subprocess-backed ADB server lifetimes.
-
-    Native process creation, readiness probing, process handles, and exact teardown stay private
-    to this adapter. Public callers retain only :class:`AdbServer` identities; each identity is
-    fenced to the exact child-process lifetime created for that generation.
-    """
+    """Start and stop subprocess-backed ADB server lifetimes."""
 
     def __init__(
         self,
@@ -162,6 +157,7 @@ class SubprocessAdbServerController:
 
         self._launch_lock = Lock()
         self._lifetimes_lock = Lock()
+        # Process handles stay private; stop requests are resolved by AdbServer identity.
         self._lifetimes: dict[AdbServer, _SubprocessLifetime] = {}
 
     def start(

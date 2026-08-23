@@ -48,11 +48,10 @@ class AdbDevicesTrackingScope(Protocol):
 
 
 class AdbDevicesTracker:
-    """Track one transport-inventory stream for one tracker lifetime.
+    """Track one transport-inventory stream.
 
-    A tracker instance is single-use. Natural stop/failure is terminal, and explicit close is
-    a teardown barrier: it closes the source and joins the worker before returning. Restarting
-    tracking therefore requires constructing a fresh :class:`AdbDevicesTracker`.
+    A tracker is single-use. Stop or failure is terminal; ``close`` closes the source and
+    joins the worker before returning.
     """
 
     def __init__(
@@ -84,7 +83,7 @@ class AdbDevicesTracker:
             return not self._closed and self._active_thread is not None
 
     def start(self) -> None:
-        """Start this tracker exactly once."""
+        """Start this single-use tracker."""
 
         with self._lock:
             if self._closed:

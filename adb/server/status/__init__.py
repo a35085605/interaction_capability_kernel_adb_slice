@@ -1,4 +1,4 @@
-"""ADB server status facts and atomic read contracts."""
+"""ADB server status facts and read contracts."""
 
 from adb.server.status.model import (
     AdbMdnsBackend,

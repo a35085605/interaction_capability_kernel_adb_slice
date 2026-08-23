@@ -16,7 +16,7 @@ from adb.transport.selection import (
 
 
 class AdbTrackedDeviceLookup(Protocol):
-    """Find one observed transport row from a fresh complete inventory snapshot."""
+    """Find one transport row in a fresh inventory snapshot."""
 
     def find(
         self,
@@ -53,7 +53,7 @@ def find_tracked_device(
 
 
 class SnapshotAdbTrackedDeviceLookup:
-    """Derived single-row lookup over a fresh complete transport-inventory snapshot."""
+    """Single-row lookup over fresh transport-inventory snapshots."""
 
     def __init__(
         self,

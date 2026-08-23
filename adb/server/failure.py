@@ -17,7 +17,7 @@ def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class _AdbServerFailure:
-    """Immutable evidence from one specific ADB server failure boundary."""
+    """Evidence of an ADB server failure."""
 
     diagnostic: str | None = None
 
@@ -54,17 +54,17 @@ class AdbServerServiceFailure(_AdbServerFailure):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerProcessExitedFailure(_AdbServerFailure):
-    """The backend-observed exact ADB server process lifetime exited."""
+    """The observed ADB server process exited."""
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerLaunchFailure(_AdbServerFailure):
-    """Creation of one fresh managed ADB server failed."""
+    """Starting a fresh ADB server failed."""
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerCloseUnprovenFailure(_AdbServerFailure):
-    """Exact backend termination of one created ADB server could not be proven."""
+    """Termination of the requested ADB server could not be proven."""
 
 
 AdbServerRequestFailure: TypeAlias = (

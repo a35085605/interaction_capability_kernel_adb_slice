@@ -22,12 +22,7 @@ class AdbConfiguredTransportResolutionStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportResolution:
-    """Pure projection of one configured transport into inventory evidence.
-
-    The result separates rows matching both serial and configured connection type from rows that
-    reuse the serial with a different known connection type. It does not construct an
-    ``AdbTransportById`` selector or otherwise change how commands select the transport.
-    """
+    """Resolution of one configured transport against inventory evidence."""
 
     configuration: AdbConfiguredTransport
     status: AdbConfiguredTransportResolutionStatus
@@ -95,12 +90,10 @@ def resolve_configured_transport(
     configuration: AdbConfiguredTransport,
     snapshot: AdbDevicesSnapshot,
 ) -> AdbConfiguredTransportResolution:
-    """Locate the configured serial and transport kind in fresh inventory evidence.
+    """Resolve a configured transport against a fresh inventory snapshot.
 
-    This lookup supports readiness presence/state evaluation only. It does not translate the
-    serial into a transport-id selector and does not participate in native serial selection.
-    Exact USB/SOCKET evidence is preferred; UNKNOWN connection types are accepted only when no
-    exact row is available for compatibility with older ADB servers.
+    Exact USB/SOCKET matches are preferred; UNKNOWN connection types are used only when no
+    exact match exists for compatibility with older ADB servers.
     """
 
     if not isinstance(configuration, AdbConfiguredTransport):

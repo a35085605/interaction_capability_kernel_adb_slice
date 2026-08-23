@@ -18,7 +18,7 @@ def _normalize_positive_seconds(value: object, *, field_name: str) -> float:
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportSupervisionPolicy:
-    """Projection with optional recovery after an observed in-scope disappearance."""
+    """Policy for configured-transport projection and optional disappearance recovery."""
 
     recovery_ensure_policy: AdbTransportEnsurePolicy | None = None
 
@@ -33,11 +33,10 @@ class AdbConfiguredTransportSupervisionPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingSupervisionPolicy:
-    """Bound one single-use transport-inventory tracker start episode.
+    """Policy for one bounded transport-inventory tracker start.
 
-    Tracking supervision deliberately owns no retry/backoff policy. A server-connection
-    failure destroys the current tracker scope and requests upstream server reconciliation.
-    A fresh server permits construction of a new tracker scope.
+    Tracking supervision does not retry failed starts; server connection failures request
+    server reconciliation.
     """
 
     episode_timeout_seconds: float = 10.0

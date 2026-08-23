@@ -1,3 +1,3 @@
-"""ADB wireless-debugging pairing command ownership."""
+"""ADB wireless-debugging pairing commands."""
 
 __all__: list[str] = []

@@ -38,7 +38,7 @@ def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportCommandCompleted:
-    """Signal carrying the result of one atomic ADB transport command attempt."""
+    """Signal carrying one ADB transport command result."""
 
     operation: AdbTransportCommandOperation
     result: NativeAttemptResult
@@ -71,7 +71,7 @@ class AdbTransportEnsureCompleted:
 
 
 class AdbDevicesTrackingFailure(str, Enum):
-    """Typed reason one single-use transport-inventory tracker terminated abnormally."""
+    """Reason a transport-inventory tracker terminated abnormally."""
 
     SERVER_CONNECTION = "server_connection"
     SERVICE = "service"

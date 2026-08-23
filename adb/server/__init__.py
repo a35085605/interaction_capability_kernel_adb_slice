@@ -1,4 +1,4 @@
-"""ADB server identity, native control, coordination, failure, and status contracts."""
+"""ADB server identity, lifecycle, coordination, failure, and status contracts."""
 
 from adb.server.lifecycle.control.port import (
     AdbServerControlError,

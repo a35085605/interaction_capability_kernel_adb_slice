@@ -63,11 +63,7 @@ class ShellV2Result:
 
 
 class AdbServiceClient:
-    """Private smart-socket client used by typed kernel adapters.
-
-    This class deliberately stays under ``adb._internal``. Public kernel capabilities
-    expose typed inspectors and commands rather than an unrestricted shell executor.
-    """
+    """Private ADB smart-socket client."""
 
     def __init__(
         self,

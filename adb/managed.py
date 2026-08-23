@@ -7,7 +7,7 @@ from adb.transport.configuration import AdbConfiguredTransport
 
 
 class RegisteredTransport(Protocol):
-    """One configured transport registration managed by the ADB runtime."""
+    """Registration for one configured transport."""
 
     def set_disappearance_recovery_enabled(self, enabled: bool) -> None:
         """Toggle recovery after an observed transport disappearance."""
@@ -15,13 +15,7 @@ class RegisteredTransport(Protocol):
 
 
 class AdbManagedRuntime:
-    """Managed lifecycle rooted in one process-coordinated managed ADB server lifetime.
-
-    Managed composition deliberately does not accept a bare ``AdbServerEndpoint``. The
-    :class:`AdbServer` must originate from the process-wide ADB server coordinator.
-    Resource-bound children are expected to be destroyed when that server is retired
-    and recreated only after a fresh server is acquired.
-    """
+    """Manage ADB server and transport lifecycle for one server identity."""
 
     def __init__(self, server: AdbServer) -> None:
         if not isinstance(server, AdbServer):
@@ -34,11 +28,11 @@ class AdbManagedRuntime:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Start the managed runtime infrastructure."""
+        """Start runtime infrastructure."""
         raise NotImplementedError
 
     def close(self) -> None:
-        """Stop managing runtime resources without terminating the process ADB server."""
+        """Release runtime resources without stopping the current ADB server."""
         raise NotImplementedError
 
     # ------------------------------------------------------------------
@@ -46,11 +40,11 @@ class AdbManagedRuntime:
     # ------------------------------------------------------------------
 
     def start_server(self, *, auto_recovery: bool = True) -> None:
-        """Establish managed running intent around the managed server."""
+        """Declare that the ADB server should be running."""
         raise NotImplementedError
 
     def stop_server(self) -> None:
-        """Disarm managed server intent without issuing native termination."""
+        """Clear running intent without terminating the ADB server."""
         raise NotImplementedError
 
     def set_server_auto_recovery(self, enabled: bool) -> None:
@@ -67,15 +61,14 @@ class AdbManagedRuntime:
         *,
         recover_on_disappearance: bool = True,
     ) -> RegisteredTransport:
-        """Register transport tracking and optional post-resolution disappearance recovery.
+        """Register transport tracking and optional disappearance recovery.
 
-        Registration does not establish a transport that is absent from its first observed
-        snapshot. Initial presence/readiness establishment is a separate explicit operation.
+        Registration does not establish an absent transport.
         """
         raise NotImplementedError
 
     def remove_transport(self, transport: RegisteredTransport) -> None:
-        """Release one managed transport registration."""
+        """Remove one transport registration."""
         raise NotImplementedError
 
 

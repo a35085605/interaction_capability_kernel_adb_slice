@@ -20,7 +20,7 @@ def _normalize_feature(value: object) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportFeatures:
-    """Open ADB transport feature set advertised by one selected transport."""
+    """Features advertised by one selected ADB transport."""
 
     features: frozenset[str] = field(default_factory=frozenset)
 
@@ -35,7 +35,7 @@ class AdbTransportFeatures:
 
 
 class AdbTransportFeaturesReader(Protocol):
-    """Read feature facts for one deterministically selected ADB transport."""
+    """Read features for one selected ADB transport."""
 
     def read(
         self,

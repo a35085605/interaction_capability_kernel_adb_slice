@@ -8,12 +8,9 @@ from adb.server.endpoint import AdbServerEndpoint
 
 @dataclass(frozen=True, slots=True)
 class AdbServer:
-    """Coordinator-local reference to one ADB server lifetime epoch.
+    """Identity for one ADB server lifetime.
 
-    ``endpoint`` answers where the service was reached for this epoch. ``epoch`` is a local
-    monotonic fencing token used to reject delayed work and stale events. The identity makes no
-    claim about native process identity, OS handles, coordination provenance, or termination
-    capability.
+    The epoch distinguishes successive server lifetimes.
     """
 
     endpoint: AdbServerEndpoint
@@ -29,7 +26,7 @@ class AdbServer:
 
 
 class _AdbServerSequence:
-    """Mint monotonic server epochs for one local coordination domain."""
+    """Mint monotonically increasing ADB server epochs."""
 
     def __init__(self) -> None:
         self._lock = Lock()

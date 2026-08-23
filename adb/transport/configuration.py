@@ -47,9 +47,9 @@ class AdbUsbTransportConfiguration:
 class AdbTcpTransportConfiguration:
     """Configuration for one serial-selected TCP ADB transport.
 
-    ``serial`` remains the persistent selection and inventory-resolution identity. ``address``
-    is only the explicit endpoint supplied to ``adb connect`` when readiness ensuring observes the
-    configured serial as absent; the address need not equal the serial later reported by ADB.
+    ``serial`` identifies the transport for selection and inventory; ``address`` is used only
+    for ``adb connect`` when the serial is absent. The reported serial may differ from the
+    connect address.
     """
 
     serial: AdbDeviceSerial
@@ -69,12 +69,9 @@ AdbTransportConfiguration: TypeAlias = (
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransport:
-    """ADB-domain configuration for one transport independent of server lifetime state.
+    """Server-independent configuration for one ADB transport.
 
-    The nested transport configuration makes USB and TCP establishment semantics explicit while
-    keeping ``serial`` as the stable native selection key. Runtime server coordination and
-    ``transport_id`` values remain fresh runtime facts rather than configured identity or implicit
-    ensure-operation state.
+    The serial is the stable selection identity; transport IDs are server-local runtime facts.
     """
 
     transport: AdbTransportConfiguration

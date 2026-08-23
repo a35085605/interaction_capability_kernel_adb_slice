@@ -62,7 +62,7 @@ class AdbDeviceSideReconnect:
 
 @dataclass(frozen=True, slots=True)
 class AdbOfflineTransportsReconnect:
-    """Request one ADB reconnect-offline native attempt."""
+    """Request one ``adb reconnect offline`` attempt."""
 
 
 class AdbTcpConnector(Protocol):

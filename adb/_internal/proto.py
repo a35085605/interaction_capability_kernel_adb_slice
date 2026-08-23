@@ -33,7 +33,7 @@ _SERVER_STRING_FIELDS = {
 
 
 class ProtoReader:
-    """Minimal protobuf wire reader for the AOSP adb_host.proto payloads we own."""
+    """Minimal protobuf wire reader for AOSP ``adb_host.proto`` payloads."""
 
     def __init__(self, payload: bytes) -> None:
         if not isinstance(payload, bytes):

@@ -1,10 +1,4 @@
-"""Host-side ADB native nouns and atomic read capabilities.
-
-ADB server endpoint control, server identity, native lifecycle control, and process
-coordination are separate concepts. Pairing commands live under ``adb.pairing``; transport
-inventory and tracking live under ``adb.transport``; Android framework queries reached through
-ADB live under ``android.adb``.
-"""
+"""Host-side ADB server, transport, and protocol capabilities."""
 
 from adb.errors import (
     AdbError,

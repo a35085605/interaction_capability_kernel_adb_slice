@@ -52,15 +52,10 @@ class _ConfiguredTransportRegistration:
 
 
 class AdbConfiguredTransportSupervisor:
-    """Long-lived configured-transport projection across disposable tracker scopes.
+    """Project configured transports across successive tracker scopes.
 
-    The current tracker is the sole projection authority while it is alive. Every
-    ``AdbDevicesTrackingStarted`` event begins a fresh baseline: cached per-registration
-    resolutions are cleared, so an absence in a newly created tracker never becomes a
-    disappearance edge from the destroyed tracker that preceded it.
-
-    Integer tracking generations are unnecessary because tracker scopes are not reused.
-    Recovery tokens remain private concurrency fences for independent transport ensure work.
+    Each new tracker starts a fresh baseline; prior resolutions do not create
+    disappearance events in the new scope.
     """
 
     def __init__(
@@ -93,6 +88,8 @@ class AdbConfiguredTransportSupervisor:
         self._tracking_active = False
         self._latest_observation: AdbDevicesSnapshotObserved | None = None
         self._closed = False
+
+        # Per-registration tokens fence late recovery results without coupling independent ensures.
 
     def start(self) -> None:
         with self._lock:
