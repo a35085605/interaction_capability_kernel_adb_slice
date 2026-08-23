@@ -13,7 +13,7 @@ from adb._internal.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, AdbServerEpochIssuer
-from adb.server.lifecycle.control.port import AdbServerStartError, AdbServerStopError
+from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
 from adb.server.status.reader import SmartSocketAdbServerStatusReader
 
 

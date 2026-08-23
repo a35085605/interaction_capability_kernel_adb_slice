@@ -1,11 +1,11 @@
-"""ADB server lifecycle control contracts."""
+"""ADB server lifecycle control contracts and typed control errors."""
 
-from adb.server.lifecycle.control.port import (
+from adb.server.lifecycle.control.errors import (
     AdbServerControlError,
-    AdbServerController,
     AdbServerStartError,
     AdbServerStopError,
 )
+from adb.server.lifecycle.control.port import AdbServerController
 
 __all__ = [
     "AdbServerControlError",

@@ -10,11 +10,8 @@ from threading import Lock, Thread, current_thread
 from typing import TypeAlias
 
 from adb.server.availability import AdbServerUnavailableError
-from adb.server.lifecycle.control.port import (
-    AdbServerController,
-    AdbServerStartError,
-    AdbServerStopError,
-)
+from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
+from adb.server.lifecycle.control.port import AdbServerController
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,

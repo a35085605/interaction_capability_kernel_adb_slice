@@ -1,0 +1,152 @@
+diff --git a/adb/server/__init__.py b/adb/server/__init__.py
+index d236a93f12c0839ef6c7c423d2e8637b4be41297..e699fa4a567a4beef3dd473e05c9d8ae3dc92c82 100644
+--- a/adb/server/__init__.py
++++ b/adb/server/__init__.py
+@@ -2,12 +2,12 @@
+ 
+ from adb.server.availability import AdbServerUnavailableError
+ 
+-from adb.server.lifecycle.control.port import (
++from adb.server.lifecycle.control.errors import (
+     AdbServerControlError,
+-    AdbServerController,
+     AdbServerStartError,
+     AdbServerStopError,
+ )
++from adb.server.lifecycle.control.port import AdbServerController
+ from adb.server.failure import (
+     AdbServerCloseUnprovenFailure,
+     AdbServerConnectionFailure,
+@@ -24,7 +24,7 @@ from adb.server.failure import (
+ from adb.server.identity import AdbServer, AdbServerEpochIssuer, AdbServerEpochSequence
+ from adb.server.endpoint import AdbServerEndpoint
+ from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
+-from adb.server.lifecycle.control.adapter.subprocess import SubprocessAdbServerController
++from adb.server.lifecycle.control.subprocess import SubprocessAdbServerController
+ 
+ __all__ = [
+     "AdbMdnsBackend",
+diff --git a/adb/server/lifecycle/control/__init__.py b/adb/server/lifecycle/control/__init__.py
+index eb144e2533f515e53460a02ea26d5a1034494aad..8cdf0e764f385b40ac53c94e790ef603432ecf54 100644
+--- a/adb/server/lifecycle/control/__init__.py
++++ b/adb/server/lifecycle/control/__init__.py
+@@ -1,11 +1,11 @@
+-"""ADB server lifecycle control contracts."""
++"""ADB server lifecycle control contracts and typed control errors."""
+ 
+-from adb.server.lifecycle.control.port import (
++from adb.server.lifecycle.control.errors import (
+     AdbServerControlError,
+-    AdbServerController,
+     AdbServerStartError,
+     AdbServerStopError,
+ )
++from adb.server.lifecycle.control.port import AdbServerController
+ 
+ __all__ = [
+     "AdbServerControlError",
+diff --git a/adb/server/lifecycle/control/adapter/__init__.py b/adb/server/lifecycle/control/adapter/__init__.py
+deleted file mode 100644
+index 2a7721d75a816e1d956dd77af9e78700977a36e2..0000000000000000000000000000000000000000
+--- a/adb/server/lifecycle/control/adapter/__init__.py
++++ /dev/null
+@@ -1,5 +0,0 @@
+-"""Concrete ADB server lifecycle control adapters."""
+-
+-from adb.server.lifecycle.control.adapter.subprocess import SubprocessAdbServerController
+-
+-__all__ = ["SubprocessAdbServerController"]
+diff --git a/adb/server/lifecycle/control/errors.py b/adb/server/lifecycle/control/errors.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..ca28176614512d85a8fe30191736dd72fea6da29
+--- /dev/null
++++ b/adb/server/lifecycle/control/errors.py
+@@ -0,0 +1,20 @@
++"""Typed failures exposed by the ADB server lifecycle control boundary."""
++
++
++class AdbServerControlError(RuntimeError):
++    """Base error for ADB server controller failures."""
++
++
++class AdbServerStartError(AdbServerControlError):
++    """A controller could not establish one fresh usable ADB server lifetime."""
++
++
++class AdbServerStopError(AdbServerControlError):
++    """A controller could not prove the requested ADB server lifetime unavailable."""
++
++
++__all__ = [
++    "AdbServerControlError",
++    "AdbServerStartError",
++    "AdbServerStopError",
++]
+diff --git a/adb/server/lifecycle/control/port.py b/adb/server/lifecycle/control/port.py
+index 74680bf15d5a6fe3945f8087fddd38e2880312b6..a52e3669604a5602a4241e38030d1064dd56ddd0 100644
+--- a/adb/server/lifecycle/control/port.py
++++ b/adb/server/lifecycle/control/port.py
+@@ -6,18 +6,6 @@ from adb.server.endpoint import AdbServerEndpoint
+ from adb.server.identity import AdbServer
+ 
+ 
+-class AdbServerControlError(RuntimeError):
+-    """Base error for ADB server controller failures."""
+-
+-
+-class AdbServerStartError(AdbServerControlError):
+-    """A controller could not establish one fresh usable ADB server lifetime."""
+-
+-
+-class AdbServerStopError(AdbServerControlError):
+-    """A controller could not prove the requested ADB server lifetime unavailable."""
+-
+-
+ @runtime_checkable
+ class AdbServerController(Protocol):
+     """Provide usable ADB server lifetimes and make exact lifetimes unavailable.
+@@ -41,9 +29,4 @@ class AdbServerController(Protocol):
+         ...
+ 
+ 
+-__all__ = [
+-    "AdbServerControlError",
+-    "AdbServerController",
+-    "AdbServerStartError",
+-    "AdbServerStopError",
+-]
++__all__ = ["AdbServerController"]
+diff --git a/adb/server/lifecycle/control/adapter/subprocess.py b/adb/server/lifecycle/control/subprocess.py
+similarity index 99%
+rename from adb/server/lifecycle/control/adapter/subprocess.py
+rename to adb/server/lifecycle/control/subprocess.py
+index fd11dcc6b5bcf522eaf4b9434b200821812a2abb..878a60d1eaf65ed2acb4922a488072b539a10124 100644
+--- a/adb/server/lifecycle/control/adapter/subprocess.py
++++ b/adb/server/lifecycle/control/subprocess.py
+@@ -13,7 +13,7 @@ from adb._internal.subprocess import normalize_executable, normalize_timeout
+ from adb.errors import AdbError
+ from adb.server.endpoint import AdbServerEndpoint
+ from adb.server.identity import AdbServer, AdbServerEpochIssuer
+-from adb.server.lifecycle.control.port import AdbServerStartError, AdbServerStopError
++from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
+ from adb.server.status.reader import SmartSocketAdbServerStatusReader
+ 
+ 
+diff --git a/adb/supervision/server.py b/adb/supervision/server.py
+index d6904fc5fe087967911fa7af71ee22f4c0f0b6c2..2ee036b82abe88f55763d191a0c45d70e250fe87 100644
+--- a/adb/supervision/server.py
++++ b/adb/supervision/server.py
+@@ -10,11 +10,8 @@ from threading import Lock, Thread, current_thread
+ from typing import TypeAlias
+ 
+ from adb.server.availability import AdbServerUnavailableError
+-from adb.server.lifecycle.control.port import (
+-    AdbServerController,
+-    AdbServerStartError,
+-    AdbServerStopError,
+-)
++from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
++from adb.server.lifecycle.control.port import AdbServerController
+ from adb.server.failure import (
+     AdbServerCloseUnprovenFailure,
+     AdbServerConnectionFailure,

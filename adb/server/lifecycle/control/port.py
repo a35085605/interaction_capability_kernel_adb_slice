@@ -6,18 +6,6 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
 
 
-class AdbServerControlError(RuntimeError):
-    """Base error for ADB server controller failures."""
-
-
-class AdbServerStartError(AdbServerControlError):
-    """A controller could not establish one fresh usable ADB server lifetime."""
-
-
-class AdbServerStopError(AdbServerControlError):
-    """A controller could not prove the requested ADB server lifetime unavailable."""
-
-
 @runtime_checkable
 class AdbServerController(Protocol):
     """Provide usable ADB server lifetimes and make exact lifetimes unavailable.
@@ -41,9 +29,4 @@ class AdbServerController(Protocol):
         ...
 
 
-__all__ = [
-    "AdbServerControlError",
-    "AdbServerController",
-    "AdbServerStartError",
-    "AdbServerStopError",
-]
+__all__ = ["AdbServerController"]
