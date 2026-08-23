@@ -6,7 +6,7 @@ from adb.supervision.model import (
     AdbConfiguredTransportSupervisionPolicy,
     AdbDevicesTrackingSupervisionPolicy,
 )
-from adb.supervision.server import (
+from adb.server.lifecycle.supervision import (
     AdbServerEndpointPolicy,
     AdbServerFixedEndpoint,
     AdbServerPerGenerationEndpoint,
