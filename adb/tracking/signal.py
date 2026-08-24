@@ -7,12 +7,12 @@ from typing import TypeAlias
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
 from adb.tracking.model import AdbDevicesSnapshot
-from adb.tracking.identity import AdbDevicesTracking
+from adb.tracking.identity import AdbDevicesTrackingScope
 
 
-def _require_scope(value: object) -> AdbDevicesTracking:
-    if not isinstance(value, AdbDevicesTracking):
-        raise TypeError("scope must be AdbDevicesTracking")
+def _require_scope(value: object) -> AdbDevicesTrackingScope:
+    if not isinstance(value, AdbDevicesTrackingScope):
+        raise TypeError("scope must be AdbDevicesTrackingScope")
     return value
 
 
@@ -36,7 +36,7 @@ class AdbDevicesTrackingFailure(str, Enum):
 
 
 class _TrackingScopeSignalProjection:
-    scope: AdbDevicesTracking
+    scope: AdbDevicesTrackingScope
 
     @property
     def server(self) -> AdbServer:
@@ -59,7 +59,7 @@ class _TrackingScopeSignalProjection:
 class AdbDevicesTrackingStarted(_TrackingScopeSignalProjection):
     """Signal that one exact tracker scope entered stream mode."""
 
-    scope: AdbDevicesTracking
+    scope: AdbDevicesTrackingScope
 
     def __post_init__(self) -> None:
         _require_scope(self.scope)
@@ -69,7 +69,7 @@ class AdbDevicesTrackingStarted(_TrackingScopeSignalProjection):
 class AdbDevicesTrackingStopped(_TrackingScopeSignalProjection):
     """Signal that one exact tracker scope ended without implying transport disappearance."""
 
-    scope: AdbDevicesTracking
+    scope: AdbDevicesTrackingScope
 
     def __post_init__(self) -> None:
         _require_scope(self.scope)
@@ -79,7 +79,7 @@ class AdbDevicesTrackingStopped(_TrackingScopeSignalProjection):
 class AdbDevicesTrackingFailed(_TrackingScopeSignalProjection):
     """Signal that one exact tracker scope failed without synthesizing server state."""
 
-    scope: AdbDevicesTracking
+    scope: AdbDevicesTrackingScope
     failure: AdbDevicesTrackingFailure
     diagnostic: str | None = None
 
@@ -101,7 +101,7 @@ class AdbDevicesTrackingFailed(_TrackingScopeSignalProjection):
 class AdbDevicesSnapshotObserved(_TrackingScopeSignalProjection):
     """Signal carrying one complete snapshot emitted by one exact tracker scope."""
 
-    scope: AdbDevicesTracking
+    scope: AdbDevicesTrackingScope
     snapshot: AdbDevicesSnapshot
 
     def __post_init__(self) -> None:

@@ -20,7 +20,7 @@ from adb.tracking.state import (
     AdbDevicesView,
     AdbDevicesWriter,
 )
-from adb.tracking.identity import AdbDevicesTracking
+from adb.tracking.identity import AdbDevicesTrackingScope
 from adb.transport.resolution import (
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
@@ -110,7 +110,7 @@ class AdbConfiguredTransportSupervisor:
         ] = {}
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._tracking_active = False
-        self._tracking_scope: AdbDevicesTracking | None = None
+        self._tracking_scope: AdbDevicesTrackingScope | None = None
         self._latest_tracking_generation: int | None = None
         self._latest_server_epoch = server.epoch
         self._recovery_threads: set[Thread] = set()

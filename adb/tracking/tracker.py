@@ -10,7 +10,7 @@ from adb.errors import (
     AdbServiceError,
 )
 from adb.server.identity import AdbServer
-from adb.tracking.identity import AdbDevicesTracking
+from adb.tracking.identity import AdbDevicesTrackingScope
 from adb.tracking.source import AdbTrackDevicesSession, AdbTrackDevicesSource
 from adb.tracking.signal import (
     AdbDevicesSnapshotObserved,
@@ -37,7 +37,7 @@ class AdbDevicesTracker(Protocol):
     """Single-use ADB devices tracker."""
 
     @property
-    def identity(self) -> AdbDevicesTracking: ...
+    def identity(self) -> AdbDevicesTrackingScope: ...
 
     @property
     def active(self) -> bool: ...
@@ -57,15 +57,15 @@ class SmartSocketAdbDevicesTracker:
 
     def __init__(
         self,
-        identity: AdbDevicesTracking,
+        identity: AdbDevicesTrackingScope,
         publisher: EventPublisher,
         startup_timeout_seconds: float = 5.0,
         *,
         _source_factory: _SourceFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(identity, AdbDevicesTracking):
-            raise TypeError("identity must be AdbDevicesTracking")
+        if not isinstance(identity, AdbDevicesTrackingScope):
+            raise TypeError("identity must be AdbDevicesTrackingScope")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
         if _source_factory is not None and not callable(_source_factory):

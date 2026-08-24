@@ -15,7 +15,7 @@ from adb.server.signal import (
 from adb.tracking.identity import (
     AdbDevicesTrackingGenerationIssuer,
     AdbDevicesTrackingGenerationSequence,
-    AdbDevicesTracking,
+    AdbDevicesTrackingScope,
 )
 from adb.tracking.state import AdbDevicesState
 from adb.tracking.publication import (
@@ -36,7 +36,7 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 _ThreadFactory = Callable[..., Thread]
 _TrackerFactory = Callable[
-    [AdbDevicesTracking, EventPublisher],
+    [AdbDevicesTrackingScope, EventPublisher],
     AdbDevicesTracker,
 ]
 _DEFAULT_GENERATION_ISSUER = AdbDevicesTrackingGenerationSequence()
@@ -131,7 +131,7 @@ class AdbDevicesTrackingSupervisor:
             return self._tracking_active
 
     @property
-    def tracking_scope(self) -> AdbDevicesTracking | None:
+    def tracking_scope(self) -> AdbDevicesTrackingScope | None:
         with self._lock:
             return None if self._tracker is None else self._tracker.identity
 
@@ -429,7 +429,7 @@ class AdbDevicesTrackingSupervisor:
         server = self.server
         if server is None:
             raise RuntimeError("cannot create tracker without an active server")
-        identity = AdbDevicesTracking(
+        identity = AdbDevicesTrackingScope(
             server,
             self._generation_issuer.issue(),
         )

@@ -9,7 +9,7 @@ from adb.server.identity import AdbServer
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesTracking:
+class AdbDevicesTrackingScope:
     """One track-devices lifetime.
 
     The generation distinguishes successive tracker scopes bound to the same ADB server
@@ -59,7 +59,7 @@ class AdbDevicesTrackingGenerationSequence:
 
 
 __all__ = [
-    "AdbDevicesTracking",
+    "AdbDevicesTrackingScope",
     "AdbDevicesTrackingGenerationIssuer",
     "AdbDevicesTrackingGenerationSequence",
 ]
