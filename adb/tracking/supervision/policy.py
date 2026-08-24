@@ -16,7 +16,7 @@ def _normalize_positive_seconds(value: object, *, field_name: str) -> float:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingSupervisionPolicy:
-    """Policy for establishing track-devices tracker scopes.
+    """Policy for establishing track-devices observation streams.
 
     ``episode_timeout_seconds`` bounds the source connection and ADB service handshake
     directly. Tracking supervision does not retry failed starts; server connection failures

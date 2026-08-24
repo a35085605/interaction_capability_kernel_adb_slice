@@ -7,12 +7,11 @@ from typing import TypeAlias
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch
 from adb.tracking.model import AdbDevicesSnapshot
-from adb.tracking.identity import AdbDevicesTrackingScope, DevicesTrackingEpoch
 
 
-def _require_scope(value: object) -> AdbDevicesTrackingScope:
-    if not isinstance(value, AdbDevicesTrackingScope):
-        raise TypeError("scope must be AdbDevicesTrackingScope")
+def _require_server(value: object) -> AdbServer:
+    if not isinstance(value, AdbServer):
+        raise TypeError("server must be AdbServer")
     return value
 
 
@@ -35,56 +34,48 @@ class AdbDevicesTrackingFailure(str, Enum):
     PROTOCOL = "protocol"
 
 
-class _TrackingScopeSignalProjection:
-    scope: AdbDevicesTrackingScope
-
-    @property
-    def server(self) -> AdbServer:
-        return self.scope.server
+class _TrackingServerSignalProjection:
+    server: AdbServer
 
     @property
     def server_endpoint(self) -> AdbServerEndpoint:
-        return self.scope.server_endpoint
+        return self.server.endpoint
 
     @property
     def server_epoch(self) -> ServerEpoch:
-        return self.scope.server_epoch
-
-    @property
-    def epoch(self) -> DevicesTrackingEpoch:
-        return self.scope.epoch
+        return self.server.epoch
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesTrackingStarted(_TrackingScopeSignalProjection):
-    """Signal that one exact tracker scope entered stream mode."""
+class AdbDevicesTrackingStarted(_TrackingServerSignalProjection):
+    """Signal that device tracking entered stream mode for one server lifetime."""
 
-    scope: AdbDevicesTrackingScope
+    server: AdbServer
 
     def __post_init__(self) -> None:
-        _require_scope(self.scope)
+        _require_server(self.server)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesTrackingStopped(_TrackingScopeSignalProjection):
-    """Signal that one exact tracker scope ended without implying transport disappearance."""
+class AdbDevicesTrackingStopped(_TrackingServerSignalProjection):
+    """Signal that device tracking ended without implying transport disappearance."""
 
-    scope: AdbDevicesTrackingScope
+    server: AdbServer
 
     def __post_init__(self) -> None:
-        _require_scope(self.scope)
+        _require_server(self.server)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesTrackingFailed(_TrackingScopeSignalProjection):
-    """Signal that one exact tracker scope failed without synthesizing server state."""
+class AdbDevicesTrackingFailed(_TrackingServerSignalProjection):
+    """Signal that device tracking failed without synthesizing server state."""
 
-    scope: AdbDevicesTrackingScope
+    server: AdbServer
     failure: AdbDevicesTrackingFailure
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
-        _require_scope(self.scope)
+        _require_server(self.server)
         if not isinstance(self.failure, AdbDevicesTrackingFailure):
             raise TypeError("failure must be AdbDevicesTrackingFailure")
         object.__setattr__(
@@ -98,14 +89,14 @@ class AdbDevicesTrackingFailed(_TrackingScopeSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesSnapshotObserved(_TrackingScopeSignalProjection):
-    """Signal carrying one complete snapshot emitted by one exact tracker scope."""
+class AdbDevicesSnapshotObserved(_TrackingServerSignalProjection):
+    """Signal carrying one complete snapshot observed from one server lifetime."""
 
-    scope: AdbDevicesTrackingScope
+    server: AdbServer
     snapshot: AdbDevicesSnapshot
 
     def __post_init__(self) -> None:
-        _require_scope(self.scope)
+        _require_server(self.server)
         if not isinstance(self.snapshot, AdbDevicesSnapshot):
             raise TypeError("snapshot must be AdbDevicesSnapshot")
 

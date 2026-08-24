@@ -10,7 +10,6 @@ from adb.errors import (
     AdbServiceError,
 )
 from adb.server.identity import AdbServer
-from adb.tracking.identity import AdbDevicesTrackingScope
 from adb.tracking.source import AdbTrackDevicesSession, AdbTrackDevicesSource
 from adb.tracking.signal import (
     AdbDevicesSnapshotObserved,
@@ -34,10 +33,10 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 @runtime_checkable
 class AdbDevicesTracker(Protocol):
-    """Single-use ADB devices tracker."""
+    """Single-use ADB devices tracker for one server lifetime."""
 
     @property
-    def identity(self) -> AdbDevicesTrackingScope: ...
+    def server(self) -> AdbServer: ...
 
     @property
     def active(self) -> bool: ...
@@ -48,7 +47,7 @@ class AdbDevicesTracker(Protocol):
 
 
 class SmartSocketAdbDevicesTracker:
-    """Track one smart-socket track-devices stream for one exact tracking lifetime.
+    """Track one smart-socket track-devices stream for one server lifetime.
 
     ``start`` establishes the stream and synchronously publishes its initial complete snapshot
     before returning. Subsequent snapshots are consumed by the worker. A tracker is single-use.
@@ -57,24 +56,23 @@ class SmartSocketAdbDevicesTracker:
 
     def __init__(
         self,
-        identity: AdbDevicesTrackingScope,
+        server: AdbServer,
         publisher: EventPublisher,
         startup_timeout_seconds: float = 5.0,
         *,
         _source_factory: _SourceFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(identity, AdbDevicesTrackingScope):
-            raise TypeError("identity must be AdbDevicesTrackingScope")
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
         if _source_factory is not None and not callable(_source_factory):
             raise TypeError("_source_factory must be callable or None")
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
-        self.identity = identity
-        self.server = identity.server
-        self.endpoint = identity.server_endpoint
+        self.server = server
+        self.endpoint = server.endpoint
         self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
         self._source_factory = _source_factory
@@ -122,8 +120,7 @@ class SmartSocketAdbDevicesTracker:
                 args=(source, session, startup_complete, startup_errors),
                 name=(
                     "adb-track-devices-"
-                    f"{self.endpoint.host}-{self.endpoint.port}-"
-                    f"{self.server.epoch}-{self.identity.epoch}"
+                    f"{self.endpoint.host}-{self.endpoint.port}-{self.server.epoch}"
                 ),
             )
         except BaseException:
@@ -159,7 +156,7 @@ class SmartSocketAdbDevicesTracker:
             raise startup_errors[0]
 
     def close(self) -> None:
-        """Destroy this tracker scope and wait for its worker to stop."""
+        """Destroy this tracker and wait for its worker to stop."""
 
         with self._lock:
             source = self._active_source
@@ -199,7 +196,7 @@ class SmartSocketAdbDevicesTracker:
         startup_complete: Event,
         startup_errors: list[BaseException],
     ) -> None:
-        scope = self.identity
+        server = self.server
         terminal: object | None = None
         startup_succeeded = False
         try:
@@ -208,9 +205,9 @@ class SmartSocketAdbDevicesTracker:
                     "ADB devices tracker was closed before its initial snapshot was published"
                 )
 
-            self._publisher.publish(AdbDevicesTrackingStarted(scope))
+            self._publisher.publish(AdbDevicesTrackingStarted(server))
             self._publisher.publish(
-                AdbDevicesSnapshotObserved(scope, session.initial_snapshot)
+                AdbDevicesSnapshotObserved(server, session.initial_snapshot)
             )
             startup_succeeded = True
             startup_complete.set()
@@ -219,13 +216,13 @@ class SmartSocketAdbDevicesTracker:
                 if not self._can_publish_from(source):
                     break
                 self._publisher.publish(
-                    AdbDevicesSnapshotObserved(scope, snapshot)
+                    AdbDevicesSnapshotObserved(server, snapshot)
                 )
-            terminal = AdbDevicesTrackingStopped(scope)
+            terminal = AdbDevicesTrackingStopped(server)
         except AdbServerConnectionError as exc:
             if startup_succeeded:
                 terminal = AdbDevicesTrackingFailed(
-                    scope,
+                    server,
                     AdbDevicesTrackingFailure.SERVER_CONNECTION,
                     str(exc),
                 )
@@ -234,7 +231,7 @@ class SmartSocketAdbDevicesTracker:
         except AdbServiceError as exc:
             if startup_succeeded:
                 terminal = AdbDevicesTrackingFailed(
-                    scope,
+                    server,
                     AdbDevicesTrackingFailure.SERVICE,
                     str(exc),
                 )
@@ -243,7 +240,7 @@ class SmartSocketAdbDevicesTracker:
         except AdbProtocolError as exc:
             if startup_succeeded:
                 terminal = AdbDevicesTrackingFailed(
-                    scope,
+                    server,
                     AdbDevicesTrackingFailure.PROTOCOL,
                     str(exc),
                 )

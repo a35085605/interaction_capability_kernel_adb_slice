@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 
-from adb.epoch import EpochIssuer
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from adb.server.failure import AdbServerConnectionFailure
 from adb.server.identity import AdbServer, ServerEpoch
@@ -12,11 +11,6 @@ from adb.server.signal import (
     AdbServerRetired,
     AdbServerRecovered,
     AdbServerReconciliationRequested,
-)
-from adb.tracking.identity import (
-    AdbDevicesTrackingScope,
-    DevicesTrackingEpoch,
-    DevicesTrackingEpochSequence,
 )
 from adb.tracking.state import AdbDevicesSnapshotState
 from adb.tracking.publication import (
@@ -36,10 +30,7 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 
 _ThreadFactory = Callable[..., Thread]
-_TrackerFactory = Callable[
-    [AdbDevicesTrackingScope, EventPublisher],
-    AdbDevicesTracker,
-]
+_TrackerFactory = Callable[[AdbServer, EventPublisher], AdbDevicesTracker]
 
 
 def _default_thread_factory(*args, **kwargs) -> Thread:
@@ -51,10 +42,10 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 class AdbDevicesTrackingSupervisor:
     """Maintain desired track-devices with single-use trackers.
 
-    Terminal tracker or server events discard the current scope; a fresh server creates a
+    Terminal tracker or server events discard the current tracker; a fresh server creates a
     new tracker, even when the replacement server uses a different endpoint. Tracker startup is
     a direct capability call: a successful ``start`` return means stream mode was established
-    for that exact scope. The supplied event bus is the runtime correlation boundary.
+    for the current server lifetime.
     """
 
     def __init__(
@@ -66,7 +57,6 @@ class AdbDevicesTrackingSupervisor:
         snapshot_state: AdbDevicesSnapshotState | None = None,
         _tracker_factory: _TrackerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
-        _epoch_issuer: EpochIssuer[DevicesTrackingEpoch] | None = None,
     ) -> None:
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
@@ -84,10 +74,6 @@ class AdbDevicesTrackingSupervisor:
             raise TypeError("_tracker_factory must be callable or None")
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
-        if _epoch_issuer is None:
-            _epoch_issuer = DevicesTrackingEpochSequence()
-        if not isinstance(_epoch_issuer, EpochIssuer):
-            raise TypeError("_epoch_issuer must satisfy EpochIssuer")
 
         self.server: AdbServer | None = server
         self._bus = event_bus
@@ -99,7 +85,6 @@ class AdbDevicesTrackingSupervisor:
         self._policy = policy
         self._tracker_factory = _tracker_factory
         self._thread_factory = _thread_factory
-        self._epoch_issuer = _epoch_issuer
         self._lock = Lock()
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._desired_tracking = False
@@ -110,9 +95,6 @@ class AdbDevicesTrackingSupervisor:
         self._start_in_progress = False
         self._attempt_threads: set[Thread] = set()
         self._closed = False
-
-        # Scope identity fences late signals across replacement trackers; object identity still
-        # fences local background work tied to one concrete tracker instance.
 
     @property
     def devices(self) -> AdbDevicesSnapshotState:
@@ -129,11 +111,6 @@ class AdbDevicesTrackingSupervisor:
     def tracking_active(self) -> bool:
         with self._lock:
             return self._tracking_active
-
-    @property
-    def tracking_scope(self) -> AdbDevicesTrackingScope | None:
-        with self._lock:
-            return None if self._tracker is None else self._tracker.identity
 
     def start(self) -> bool:
         """Declare tracking intent and establish a tracker for the current server."""
@@ -245,7 +222,7 @@ class AdbDevicesTrackingSupervisor:
                 self._closed
                 or not self._desired_tracking
                 or tracker is None
-                or event.scope != tracker.identity
+                or event.server != tracker.server
             ):
                 return
             self._tracking_active = True
@@ -255,7 +232,7 @@ class AdbDevicesTrackingSupervisor:
         server: AdbServer | None = None
         with self._lock:
             current = self._tracker
-            if self._closed or current is None or event.scope != current.identity:
+            if self._closed or current is None or event.server != current.server:
                 return
             tracker = self._detach_tracker_locked()
             if event.failure is AdbDevicesTrackingFailure.SERVER_CONNECTION:
@@ -277,7 +254,7 @@ class AdbDevicesTrackingSupervisor:
     def _on_tracking_stopped(self, event: AdbDevicesTrackingStopped) -> None:
         with self._lock:
             current = self._tracker
-            if self._closed or current is None or event.scope != current.identity:
+            if self._closed or current is None or event.server != current.server:
                 return
             tracker = self._detach_tracker_locked()
         assert tracker is not None
@@ -388,7 +365,7 @@ class AdbDevicesTrackingSupervisor:
                 started
                 and not self._closed
                 and self._desired_tracking
-                and self._server_identity == tracker.identity.server
+                and self._server_identity == tracker.server
                 and tracker.active
             )
             if keep_tracker:
@@ -408,7 +385,7 @@ class AdbDevicesTrackingSupervisor:
             assert failure is not None
             self._bus.publish(
                 AdbDevicesTrackingFailed(
-                    tracker.identity,
+                    tracker.server,
                     failure,
                     diagnostic,
                 )
@@ -429,24 +406,20 @@ class AdbDevicesTrackingSupervisor:
         server = self.server
         if server is None:
             raise RuntimeError("cannot create tracker without an active server")
-        identity = AdbDevicesTrackingScope(
-            server,
-            self._epoch_issuer.issue(),
-        )
         factory = self._tracker_factory
         tracker = (
             SmartSocketAdbDevicesTracker(
-                identity,
+                server,
                 self._tracking_publisher,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
             )
             if factory is None
-            else factory(identity, self._tracking_publisher)
+            else factory(server, self._tracking_publisher)
         )
         if not isinstance(tracker, AdbDevicesTracker):
             raise TypeError("tracker factory must return AdbDevicesTracker")
-        if tracker.identity != identity:
-            raise ValueError("tracker factory returned a mismatched tracking identity")
+        if tracker.server != server:
+            raise ValueError("tracker factory returned a mismatched server lifetime")
         self._tracker = tracker
         self._tracking_active = False
         return tracker
@@ -454,7 +427,7 @@ class AdbDevicesTrackingSupervisor:
     def _detach_tracker_locked(self) -> AdbDevicesTracker | None:
         tracker = self._tracker
         if tracker is not None:
-            self._tracking_publisher.end_tracking(tracker.identity)
+            self._tracking_publisher.end_tracking(tracker.server)
         self._tracker = None
         self._tracking_active = False
         self._start_in_progress = False

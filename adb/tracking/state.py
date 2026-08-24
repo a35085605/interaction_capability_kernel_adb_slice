@@ -18,8 +18,8 @@ class AdbDevicesSnapshotRevision:
     """One committed runtime device snapshot with snapshot-local identity.
 
     ``epoch`` advances for every accepted snapshot observation. ``server_epoch`` identifies
-    the ADB server data world the snapshot belongs to. Tracking-session identity is deliberately
-    absent: ``DevicesTrackingEpoch`` is correlation for producers, not snapshot state identity.
+    the ADB server data world the snapshot belongs to. Observation-channel identity is
+    deliberately absent from committed snapshot state.
     """
 
     server_epoch: ServerEpoch
@@ -68,13 +68,12 @@ class AdbDevicesSnapshotWriter(Protocol):
 class AdbDevicesSnapshotState(AdbDevicesSnapshotView, AdbDevicesSnapshotWriter):
     """Thread-safe authoritative current device snapshot for one runtime.
 
-    The state deliberately stores no tracker-session identity. ``DevicesTrackingEpoch`` is used
-    upstream to fence stale producer signals before they reach this state. Every accepted
+    The state deliberately stores no tracker-session or connection identity. Every accepted
     snapshot receives a fresh runtime-scoped ``AdbDevicesSnapshotEpoch`` even when its value is
     equal to the previous snapshot.
 
-    Moving to a newer ``ServerEpoch`` invalidates the prior server-local snapshot. Re-entering
-    the same server epoch, such as through a replacement tracker, preserves the last snapshot.
+    Moving to a newer ``ServerEpoch`` invalidates the prior server-local snapshot. Re-observing
+    the same server epoch preserves the last snapshot until a newer observation is committed.
     Writes from older server epochs are rejected.
     """
 

@@ -3,9 +3,6 @@
 from adb.tracking.identity import (
     AdbDevicesSnapshotEpoch,
     AdbDevicesSnapshotEpochSequence,
-    AdbDevicesTrackingScope,
-    DevicesTrackingEpoch,
-    DevicesTrackingEpochSequence,
 )
 from adb.tracking.lookup import AdbTrackedDeviceLookup
 from adb.tracking.model import (
@@ -45,11 +42,8 @@ __all__ = [
     "AdbDevicesSnapshotView",
     "AdbDevicesSnapshotWriter",
     "AdbDevicesTracker",
-    "AdbDevicesTrackingScope",
     "AdbDevicesTrackingFailed",
     "AdbDevicesTrackingFailure",
-    "DevicesTrackingEpoch",
-    "DevicesTrackingEpochSequence",
     "SmartSocketAdbDevicesTracker",
     "AdbDevicesTrackingSignal",
     "AdbDevicesTrackingStarted",

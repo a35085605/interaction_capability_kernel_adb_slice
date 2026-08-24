@@ -20,7 +20,6 @@ from adb.tracking.state import (
     AdbDevicesSnapshotView,
     AdbDevicesSnapshotWriter,
 )
-from adb.tracking.identity import AdbDevicesTrackingScope, DevicesTrackingEpoch
 from adb.tracking.model import AdbDevicesSnapshot
 from adb.transport.resolution import (
     AdbConfiguredTransportResolution,
@@ -65,10 +64,10 @@ class AdbConfiguredTransportSupervisor:
     """Project and reconcile runtime-scoped registrations from device observations.
 
     Registrations are long-lived and survive replacement of the current ``AdbServer``, including
-    replacements that use a different endpoint. Tracking epochs are observation-session
-    correlation only: replacing a tracker within one server epoch does not reset transport
-    resolution or invalidate recovery work. Server replacement does. USB registrations are
-    projection-only; an optional TCP ensurer reconciles currently absent TCP transports.
+    replacements that use a different endpoint. Re-establishing observation within one server
+    lifetime does not reset transport resolution or invalidate recovery work; server replacement
+    does. USB registrations are projection-only; an optional TCP ensurer reconciles currently
+    absent TCP transports.
     """
 
     def __init__(
@@ -110,8 +109,6 @@ class AdbConfiguredTransportSupervisor:
         ] = {}
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._tracking_active = False
-        self._tracking_scope: AdbDevicesTrackingScope | None = None
-        self._latest_tracking_epoch: DevicesTrackingEpoch | None = None
         self._latest_server_epoch = server.epoch
         self._recovery_threads: set[Thread] = set()
         self._closed = False
@@ -261,7 +258,6 @@ class AdbConfiguredTransportSupervisor:
             subscriptions = self._subscriptions
             self._subscriptions = ()
             self._tracking_active = False
-            self._tracking_scope = None
             threads = tuple(self._recovery_threads)
             self._recovery_threads.clear()
             self._registrations.clear()
@@ -275,17 +271,10 @@ class AdbConfiguredTransportSupervisor:
         with self._lock:
             if self._closed or event.server != self.server:
                 return
-            if (
-                self._latest_tracking_epoch is not None
-                and event.epoch <= self._latest_tracking_epoch
-            ):
-                return
             writer = self._devices_writer
             if writer is not None and not writer.advance_server(event.server_epoch):
                 return
-            self._latest_tracking_epoch = event.epoch
             self._tracking_active = True
-            self._tracking_scope = event.scope
 
     def _on_snapshot_observed(self, event: AdbDevicesSnapshotObserved) -> None:
         publications: list[object] = []
@@ -295,7 +284,6 @@ class AdbConfiguredTransportSupervisor:
                 self._closed
                 or event.server != self.server
                 or not self._tracking_active
-                or event.scope != self._tracking_scope
             ):
                 return
             writer = self._devices_writer
@@ -325,11 +313,9 @@ class AdbConfiguredTransportSupervisor:
                 self._closed
                 or event.server != self.server
                 or not self._tracking_active
-                or event.scope != self._tracking_scope
             ):
                 return
             self._tracking_active = False
-            self._tracking_scope = None
 
     def _project_registration_locked(
         self,
@@ -461,8 +447,6 @@ class AdbConfiguredTransportSupervisor:
 
     def _reset_server_lifetime_locked(self) -> None:
         self._tracking_active = False
-        self._tracking_scope = None
-        self._latest_tracking_epoch = None
         for registration in self._registrations.values():
             registration.resolution = None
             registration.active_recovery_token = None

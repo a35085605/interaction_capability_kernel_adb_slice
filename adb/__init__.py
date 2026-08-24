@@ -50,8 +50,6 @@ from adb.tracking import (
     AdbDevicesSnapshotState,
     AdbDevicesSnapshotView,
     AdbDevicesSnapshotWriter,
-    DevicesTrackingEpoch,
-    DevicesTrackingEpochSequence,
     AdbTrackedDevice,
     AdbTrackedDeviceLookup,
 )
@@ -72,8 +70,6 @@ __all__ = [
     "AdbConnectionState",
     "AdbConnectionType",
     "AdbDeviceSerial",
-    "DevicesTrackingEpoch",
-    "DevicesTrackingEpochSequence",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotEpoch",
     "AdbDevicesSnapshotEpochSequence",
