@@ -50,9 +50,8 @@ class AdbDevicesTrackingSupervisor:
 
     Terminal controller or server events discard the current controller; a fresh server creates a
     new controller, even when the replacement server uses a different endpoint. Controller startup
-    is
-    a direct capability call: a successful ``start`` return means stream mode was established
-    for the current server lifetime.
+    is a direct capability call: a successful ``start`` return means stream mode was established
+    and its initial snapshot was published for the current server lifetime.
     """
 
     def __init__(
@@ -154,7 +153,7 @@ class AdbDevicesTrackingSupervisor:
 
         if server is not None and not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer or None")
-        controller_to_close: AdbDevicesTrackingController | None = None
+        controller_to_stop: AdbDevicesTrackingController | None = None
         launch: tuple[Thread, AdbDevicesTrackingController] | None = None
 
         with self._lock:
@@ -178,9 +177,9 @@ class AdbDevicesTrackingSupervisor:
             ):
                 self._latest_server_epoch = epoch
             if server is None:
-                controller_to_close = self._detach_controller_locked()
+                controller_to_stop = self._detach_controller_locked()
             elif server_changed and self._controller is not None:
-                controller_to_close = self._detach_controller_locked()
+                controller_to_stop = self._detach_controller_locked()
             if (
                 server is not None
                 and self._controller is None
@@ -199,8 +198,8 @@ class AdbDevicesTrackingSupervisor:
                 self._attempt_threads.add(thread)
                 launch = (thread, controller)
 
-        if controller_to_close is not None:
-            controller_to_close.close()
+        if controller_to_stop is not None:
+            controller_to_stop.stop()
         if launch is not None:
             thread, controller = launch
             try:
@@ -210,7 +209,7 @@ class AdbDevicesTrackingSupervisor:
                     self._attempt_threads.discard(thread)
                     if self._controller is controller:
                         self._detach_controller_locked()
-                controller.close()
+                controller.stop()
                 raise
 
     def close(self) -> None:
@@ -227,7 +226,7 @@ class AdbDevicesTrackingSupervisor:
         for token in subscriptions:
             self._bus.unsubscribe(token)
         if controller is not None:
-            controller.close()
+            controller.stop()
         for thread in attempt_threads:
             if thread is not current_thread():
                 thread.join()
@@ -258,7 +257,7 @@ class AdbDevicesTrackingSupervisor:
                     self._desired_tracking and server is not None
                 )
         assert controller is not None
-        controller.close()
+        controller.stop()
         if request_server_reconciliation:
             assert server is not None
             self._bus.publish(
@@ -275,7 +274,7 @@ class AdbDevicesTrackingSupervisor:
                 return
             controller = self._detach_controller_locked()
         assert controller is not None
-        controller.close()
+        controller.stop()
 
     def _on_server_retired(self, event: AdbServerRetired) -> None:
         with self._lock:
@@ -297,7 +296,7 @@ class AdbDevicesTrackingSupervisor:
             self.server = None
             controller = self._detach_controller_locked()
         if controller is not None:
-            controller.close()
+            controller.stop()
 
     def _on_server_recovered(self, event: AdbServerRecovered) -> None:
         with self._lock:
@@ -352,12 +351,12 @@ class AdbDevicesTrackingSupervisor:
         except RuntimeError:
             return self._complete_start_attempt(controller, started=False)
         except BaseException:
-            controller_to_close: AdbDevicesTrackingController | None = None
+            controller_to_stop: AdbDevicesTrackingController | None = None
             with self._lock:
                 if self._controller is controller:
-                    controller_to_close = self._detach_controller_locked()
-            if controller_to_close is not None:
-                controller_to_close.close()
+                    controller_to_stop = self._detach_controller_locked()
+            if controller_to_stop is not None:
+                controller_to_stop.stop()
             raise
         return self._complete_start_attempt(controller, started=True)
 
@@ -371,7 +370,7 @@ class AdbDevicesTrackingSupervisor:
     ) -> bool:
         request_server_reconciliation = False
         reconciliation_server: AdbServer | None = None
-        controller_to_close: AdbDevicesTrackingController | None = None
+        controller_to_stop: AdbDevicesTrackingController | None = None
         publish_failure = False
 
         with self._lock:
@@ -388,7 +387,7 @@ class AdbDevicesTrackingSupervisor:
             if keep_controller:
                 self._tracking_active = True
             else:
-                controller_to_close = self._detach_controller_locked()
+                controller_to_stop = self._detach_controller_locked()
                 publish_failure = failure is not None
                 if failure is AdbDevicesTrackingFailure.SERVER_CONNECTION:
                     reconciliation_server = self._server_identity
@@ -396,8 +395,8 @@ class AdbDevicesTrackingSupervisor:
                         self._desired_tracking and reconciliation_server is not None
                     )
 
-        if controller_to_close is not None:
-            controller_to_close.close()
+        if controller_to_stop is not None:
+            controller_to_stop.stop()
         if publish_failure:
             assert failure is not None
             self._bus.publish(

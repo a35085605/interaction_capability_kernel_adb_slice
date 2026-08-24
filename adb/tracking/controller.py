@@ -39,26 +39,32 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 @runtime_checkable
 class AdbDevicesTrackingController(Protocol):
-    """Single-use controller for ADB devices tracking within one server lifetime."""
+    """Control one devices-tracking lifetime for one ADB server lifetime."""
 
     @property
-    def server(self) -> AdbServer: ...
+    def server(self) -> AdbServer:
+        ...
 
     @property
-    def active(self) -> bool: ...
+    def active(self) -> bool:
+        ...
 
-    def start(self) -> None: ...
+    def start(self) -> AdbDevicesSnapshot:
+        """Establish tracking and return its initial complete snapshot."""
+        ...
 
-    def close(self) -> None: ...
+    def stop(self) -> None:
+        """Stop tracking and return after its worker has terminated."""
+        ...
 
 
 class SmartSocketAdbDevicesTrackingController:
     """Control one smart-socket track-devices stream for one server lifetime.
 
-    ``start`` establishes the stream and synchronously publishes its initial complete snapshot
-    before returning. Subsequent snapshots are consumed by the worker. A controller is single-use.
-    Stop or failure is terminal; ``close`` closes the device tracker and joins the worker before
-    returning.
+    ``start`` establishes the stream, synchronously publishes its initial complete snapshot,
+    and returns that snapshot. Subsequent snapshots are consumed by the worker. A controller is
+    single-use. Stop or failure is terminal; ``stop`` closes the device tracker and joins the
+    worker before returning.
     """
 
     def __init__(
@@ -99,12 +105,12 @@ class SmartSocketAdbDevicesTrackingController:
         with self._lock:
             return not self._closed and self._active_thread is not None
 
-    def start(self) -> None:
-        """Start this tracking controller and return after its initial snapshot is published."""
+    def start(self) -> AdbDevicesSnapshot:
+        """Establish tracking and return its initial complete snapshot."""
 
         with self._lock:
             if self._closed:
-                raise RuntimeError("ADB devices tracking controller is closed")
+                raise RuntimeError("ADB devices tracking controller is stopped")
             if self._started:
                 raise RuntimeError(
                     "ADB devices tracking controller is single-use and already started"
@@ -122,16 +128,23 @@ class SmartSocketAdbDevicesTrackingController:
         if stream is None:
             self._abort_start(device_tracker)
             raise RuntimeError(
-                "ADB devices tracking controller was closed before its initial snapshot "
+                "ADB devices tracking controller was stopped before its initial snapshot "
                 "was established"
             )
 
         startup_complete = Event()
+        startup_snapshots: list[AdbDevicesSnapshot] = []
         startup_errors: list[BaseException] = []
         try:
             thread = self._thread_factory(
                 target=self._run,
-                args=(device_tracker, stream, startup_complete, startup_errors),
+                args=(
+                    device_tracker,
+                    stream,
+                    startup_complete,
+                    startup_snapshots,
+                    startup_errors,
+                ),
                 name=(
                     "adb-track-devices-"
                     f"{self.endpoint.host}-{self.endpoint.port}-{self.server.epoch}"
@@ -148,7 +161,7 @@ class SmartSocketAdbDevicesTrackingController:
                     if self._active_device_tracker is device_tracker:
                         self._active_device_tracker = None
                     raise RuntimeError(
-                        "ADB devices tracking controller was closed before its worker could start"
+                        "ADB devices tracking controller was stopped before its worker could start"
                     )
                 self._active_thread = thread
                 try:
@@ -168,9 +181,14 @@ class SmartSocketAdbDevicesTrackingController:
             if thread is not current_thread():
                 thread.join()
             raise startup_errors[0]
+        if len(startup_snapshots) != 1:
+            raise RuntimeError(
+                "ADB devices tracking controller did not produce exactly one initial snapshot"
+            )
+        return startup_snapshots[0]
 
-    def close(self) -> None:
-        """Close this tracking controller and wait for its worker to stop."""
+    def stop(self) -> None:
+        """Stop tracking and return after its worker has terminated."""
 
         with self._lock:
             device_tracker = self._active_device_tracker
@@ -208,6 +226,7 @@ class SmartSocketAdbDevicesTrackingController:
         device_tracker: AdbDeviceTracker,
         stream: AdbDeviceTrackerStream,
         startup_complete: Event,
+        startup_snapshots: list[AdbDevicesSnapshot],
         startup_errors: list[BaseException],
     ) -> None:
         server = self.server
@@ -216,17 +235,19 @@ class SmartSocketAdbDevicesTrackingController:
         try:
             if not self._can_publish_from(device_tracker):
                 raise RuntimeError(
-                    "ADB devices tracking controller was closed before its initial snapshot "
+                    "ADB devices tracking controller was stopped before its initial snapshot "
                     "was published"
                 )
 
             self._publisher.publish(AdbDevicesTrackingStarted(server))
+            initial_snapshot = self._snapshot(stream.initial_record)
             self._publisher.publish(
                 AdbDevicesSnapshotObserved(
                     server,
-                    self._snapshot(stream.initial_record),
+                    initial_snapshot,
                 )
             )
+            startup_snapshots.append(initial_snapshot)
             startup_succeeded = True
             startup_complete.set()
 
