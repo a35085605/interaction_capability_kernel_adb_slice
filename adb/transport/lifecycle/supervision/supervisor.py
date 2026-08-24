@@ -10,25 +10,29 @@ from adb.transport.lifecycle.supervision.signal import (
     AdbConfiguredTransportRecoveryExhausted,
     AdbConfiguredTransportResolutionChanged,
 )
-from adb.transport.configuration import AdbConfiguredTransport
-from adb.transport.inventory.state import (
-    AdbDevicesInventoryState,
-    AdbDevicesInventoryView,
-    AdbDevicesInventoryWriter,
+from adb.transport.configuration import (
+    AdbConfiguredTransport,
+    AdbTcpTransportConfiguration,
+    AdbUsbTransportConfiguration,
 )
-from adb.transport.inventory.tracking.identity import AdbDevicesTrackingScopeIdentity
-from adb.transport.inventory.resolution import (
+from adb.tracking.state import (
+    AdbDevicesState,
+    AdbDevicesView,
+    AdbDevicesWriter,
+)
+from adb.tracking.identity import AdbDevicesTrackingScopeIdentity
+from adb.transport.resolution import (
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
     resolve_configured_transport,
 )
 from adb.transport.lifecycle.ensure import (
-    AdbTransportEnsureReadiness,
-    AdbTransportEnsureResult,
-    AdbTransportEnsureStatus,
-    AdbTransportEnsurer,
+    AdbTcpTransportEnsureReadiness,
+    AdbTcpTransportEnsureResult,
+    AdbTcpTransportEnsureStatus,
+    AdbTcpTransportEnsurer,
 )
-from adb.transport.inventory.tracking.signal import (
+from adb.tracking.signal import (
     AdbDevicesSnapshotObserved,
     AdbDevicesTrackingFailed,
     AdbDevicesTrackingStarted,
@@ -63,17 +67,17 @@ class AdbConfiguredTransportSupervisor:
     Registrations are long-lived and survive replacement of the current ``AdbServer``, including
     replacements that use a different endpoint. Each new server/tracker scope starts a fresh
     observation baseline; prior resolutions never create disappearance events in the replacement
-    scope. The supplied event bus is the runtime correlation boundary.  The ensurer is optional
-    when registrations are projection-only and no recovery ensure policy is configured.
+    scope. The supplied event bus is the runtime correlation boundary. USB registrations are
+    projection-only; an optional TCP ensurer may actively recover disappeared TCP transports.
     """
 
     def __init__(
         self,
         server: AdbServer,
         event_bus: EventBus,
-        ensurer: AdbTransportEnsurer | None,
+        tcp_ensurer: AdbTcpTransportEnsurer | None,
         *,
-        inventory: AdbDevicesInventoryView | None = None,
+        devices: AdbDevicesView | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(server, AdbServer):
@@ -82,20 +86,20 @@ class AdbConfiguredTransportSupervisor:
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
             raise TypeError("event_bus must satisfy EventBus")
-        if ensurer is not None and not isinstance(ensurer, AdbTransportEnsurer):
-            raise TypeError("ensurer must satisfy AdbTransportEnsurer or be None")
-        owns_inventory = inventory is None
-        if inventory is None:
-            inventory = AdbDevicesInventoryState()
-        if not isinstance(inventory, AdbDevicesInventoryView):
-            raise TypeError("inventory must satisfy AdbDevicesInventoryView or be None")
+        if tcp_ensurer is not None and not isinstance(tcp_ensurer, AdbTcpTransportEnsurer):
+            raise TypeError("tcp_ensurer must satisfy AdbTcpTransportEnsurer or be None")
+        owns_devices = devices is None
+        if devices is None:
+            devices = AdbDevicesState()
+        if not isinstance(devices, AdbDevicesView):
+            raise TypeError("devices must satisfy AdbDevicesView or be None")
         self.server: AdbServer | None = server
         self._bus = event_bus
-        self._ensurer = ensurer
-        self._inventory = inventory
-        self._inventory_writer: AdbDevicesInventoryWriter | None = (
-            inventory
-            if owns_inventory and isinstance(inventory, AdbDevicesInventoryWriter)
+        self._tcp_ensurer = tcp_ensurer
+        self._devices = devices
+        self._devices_writer: AdbDevicesWriter | None = (
+            devices
+            if owns_devices and isinstance(devices, AdbDevicesWriter)
             else None
         )
         self._thread_factory = _thread_factory
@@ -115,10 +119,10 @@ class AdbConfiguredTransportSupervisor:
         # Per-registration tokens fence late recovery results without coupling independent ensures.
 
     @property
-    def inventory(self) -> AdbDevicesInventoryView:
-        """Current inventory used to seed newly registered transport projections."""
+    def devices(self) -> AdbDevicesView:
+        """Current tracked-devices state used to seed newly registered transport projections."""
 
-        return self._inventory
+        return self._devices
 
     def start(self) -> None:
         with self._lock:
@@ -175,17 +179,18 @@ class AdbConfiguredTransportSupervisor:
             policy = AdbConfiguredTransportSupervisionPolicy()
         if not isinstance(policy, AdbConfiguredTransportSupervisionPolicy):
             raise TypeError("policy must be AdbConfiguredTransportSupervisionPolicy")
-        if policy.recovery_ensure_policy is not None:
-            ensurer = self._ensurer
-            if ensurer is None:
-                raise ValueError("automatic recovery requires a configured transport ensurer")
-            establishment_supported = ensurer.supports_establishment(configuration)
-            if not isinstance(establishment_supported, bool):
-                raise TypeError("ensurer supports_establishment() must return bool")
-            if not establishment_supported:
-                raise ValueError(
-                    "automatic recovery after disappearance is not supported for this configured transport"
-                )
+        match configuration.transport:
+            case AdbUsbTransportConfiguration():
+                if policy.tcp_recovery_ensure_policy is not None:
+                    raise ValueError("USB configured transports cannot enable TCP recovery")
+            case AdbTcpTransportConfiguration():
+                if (
+                    policy.tcp_recovery_ensure_policy is not None
+                    and self._tcp_ensurer is None
+                ):
+                    raise ValueError("TCP automatic recovery requires a TCP transport ensurer")
+            case _:
+                raise TypeError("unsupported configured transport type")
 
         publication: AdbConfiguredTransportResolutionChanged | None = None
         recovery_launch_requested = False
@@ -207,7 +212,7 @@ class AdbConfiguredTransportSupervisor:
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
             observation = (
-                self._inventory.current_observation
+                self._devices.current_observation
                 if self._tracking_active
                 else None
             )
@@ -257,7 +262,7 @@ class AdbConfiguredTransportSupervisor:
             self._tracking_active = False
             scope = self._tracking_scope
             self._tracking_scope = None
-            writer = self._inventory_writer
+            writer = self._devices_writer
             threads = tuple(self._recovery_threads)
             self._recovery_threads.clear()
             self._registrations.clear()
@@ -278,11 +283,11 @@ class AdbConfiguredTransportSupervisor:
                 and event.generation <= self._latest_tracking_generation
             ):
                 return
-            writer = self._inventory_writer
+            writer = self._devices_writer
             if writer is not None and not writer.begin_tracking(event.scope):
                 return
             self._latest_tracking_generation = event.generation
-            self._reset_scope_locked(clear_inventory=False)
+            self._reset_scope_locked(clear_devices=False)
             self._tracking_active = True
             self._tracking_scope = event.scope
 
@@ -297,7 +302,7 @@ class AdbConfiguredTransportSupervisor:
                 or event.scope != self._tracking_scope
             ):
                 return
-            writer = self._inventory_writer
+            writer = self._devices_writer
             if writer is not None and not writer.observe(event):
                 return
             for registration in self._registrations.values():
@@ -327,10 +332,10 @@ class AdbConfiguredTransportSupervisor:
                 or event.scope != self._tracking_scope
             ):
                 return
-            writer = self._inventory_writer
+            writer = self._devices_writer
             if writer is not None:
                 writer.end_tracking(event.scope)
-            self._reset_scope_locked(clear_inventory=False)
+            self._reset_scope_locked(clear_devices=False)
 
     def _project_registration_locked(
         self,
@@ -359,10 +364,16 @@ class AdbConfiguredTransportSupervisor:
             and previous.status is AdbConfiguredTransportResolutionStatus.RESOLVED
             and current.status is AdbConfiguredTransportResolutionStatus.ABSENT
         )
-        recovery_launch_requested = (
-            recoverable_disappearance
-            and registration.policy.recovery_ensure_policy is not None
-        )
+        match registration.configuration.transport:
+            case AdbUsbTransportConfiguration():
+                recovery_launch_requested = False
+            case AdbTcpTransportConfiguration():
+                recovery_launch_requested = (
+                    recoverable_disappearance
+                    and registration.policy.tcp_recovery_ensure_policy is not None
+                )
+            case _:
+                raise TypeError("unsupported configured transport type")
         if recovery_launch_requested:
             registration.recovery_pending = True
             recovery_launch_requested = registration.active_recovery_thread is None
@@ -382,11 +393,7 @@ class AdbConfiguredTransportSupervisor:
             thread = self._thread_factory(
                 target=self._run_recovery,
                 args=(configuration, server, recovery_token),
-                name=(
-                    "adb-transport-recovery-"
-                    f"{configuration.expected_connection_type.name.lower()}-"
-                    f"{configuration.serial.value}"
-                ),
+                name=f"adb-tcp-transport-recovery-{configuration.serial.value}",
             )
             registration.recovery_pending = False
             registration.active_recovery_token = recovery_token
@@ -417,16 +424,16 @@ class AdbConfiguredTransportSupervisor:
                     or registration.active_recovery_token is not recovery_token
                 ):
                     return
-                ensure_policy = registration.policy.recovery_ensure_policy
+                ensure_policy = registration.policy.tcp_recovery_ensure_policy
             assert ensure_policy is not None
-            ensurer = self._ensurer
+            ensurer = self._tcp_ensurer
             if ensurer is None:
-                raise RuntimeError("configured transport recovery has no ensurer")
+                raise RuntimeError("TCP configured transport recovery has no ensurer")
             result = ensurer.ensure(
-                AdbTransportEnsureReadiness(server, configuration, ensure_policy),
+                AdbTcpTransportEnsureReadiness(server, configuration, ensure_policy),
             )
-            if not isinstance(result, AdbTransportEnsureResult):
-                raise TypeError("ensurer must return AdbTransportEnsureResult")
+            if not isinstance(result, AdbTcpTransportEnsureResult):
+                raise TypeError("TCP ensurer must return AdbTcpTransportEnsureResult")
             if result.operation.configuration != configuration:
                 raise ValueError(
                     "ensure result configuration does not match supervised transport"
@@ -443,7 +450,7 @@ class AdbConfiguredTransportSupervisor:
                 )
             if not result_is_current:
                 return
-            if result.status is not AdbTransportEnsureStatus.SATISFIED:
+            if result.status is not AdbTcpTransportEnsureStatus.SATISFIED:
                 self._bus.publish(
                     AdbConfiguredTransportRecoveryExhausted(configuration, result)
                 )
@@ -466,10 +473,10 @@ class AdbConfiguredTransportSupervisor:
             if launch_pending_recovery:
                 self._launch_recovery(configuration)
 
-    def _reset_scope_locked(self, *, clear_inventory: bool = True) -> None:
+    def _reset_scope_locked(self, *, clear_devices: bool = True) -> None:
         scope = self._tracking_scope
-        if clear_inventory and self._inventory_writer is not None and scope is not None:
-            self._inventory_writer.end_tracking(scope)
+        if clear_devices and self._devices_writer is not None and scope is not None:
+            self._devices_writer.end_tracking(scope)
         self._tracking_active = False
         self._tracking_scope = None
         for registration in self._registrations.values():

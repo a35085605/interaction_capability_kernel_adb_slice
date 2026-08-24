@@ -54,7 +54,7 @@ class AdbTransportId(int):
 class AdbTransportBySerial:
     """Select a transport by its ADB serial.
 
-    Selection does not require inventory lookup or conversion to a transport ID.
+    Selection does not require tracked-devices lookup or conversion to a transport ID.
     """
 
     serial: AdbDeviceSerial

@@ -11,7 +11,7 @@ from adb.transport.lifecycle.control.port import (
     AdbTransportCommandOperation,
     AdbTransportReconnect,
 )
-from adb.transport.lifecycle.ensure import AdbTransportEnsureResult
+from adb.transport.lifecycle.ensure import AdbTcpTransportEnsureResult
 from native_attempt import NativeAttemptResult
 
 
@@ -39,24 +39,24 @@ class AdbTransportCommandCompleted:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportEnsureCompleted:
-    """Signal carrying terminal evidence from one transport-readiness ensure operation."""
+class AdbTcpTransportEnsureCompleted:
+    """Signal carrying terminal evidence from one TCP transport ensure operation."""
 
-    result: AdbTransportEnsureResult
+    result: AdbTcpTransportEnsureResult
 
     def __post_init__(self) -> None:
-        if not isinstance(self.result, AdbTransportEnsureResult):
-            raise TypeError("result must be AdbTransportEnsureResult")
+        if not isinstance(self.result, AdbTcpTransportEnsureResult):
+            raise TypeError("result must be AdbTcpTransportEnsureResult")
 
 
 AdbTransportLifecycleSignal: TypeAlias = (
-    AdbTransportCommandCompleted | AdbTransportEnsureCompleted
+    AdbTransportCommandCompleted | AdbTcpTransportEnsureCompleted
 )
 
 
 __all__ = [
+    "AdbTcpTransportEnsureCompleted",
     "AdbTransportCommandCompleted",
     "AdbTransportCommandOperation",
-    "AdbTransportEnsureCompleted",
     "AdbTransportLifecycleSignal",
 ]

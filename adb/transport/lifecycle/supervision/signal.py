@@ -3,11 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from adb.transport.configuration import AdbConfiguredTransport
-from adb.transport.inventory.resolution import AdbConfiguredTransportResolution
+from adb.transport.configuration import (
+    AdbConfiguredTransport,
+    AdbTcpTransportConfiguration,
+)
+from adb.transport.resolution import AdbConfiguredTransportResolution
 from adb.transport.lifecycle.ensure import (
-    AdbTransportEnsureResult,
-    AdbTransportEnsureStatus,
+    AdbTcpTransportEnsureResult,
+    AdbTcpTransportEnsureStatus,
 )
 
 
@@ -35,19 +38,21 @@ class AdbConfiguredTransportResolutionChanged:
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportRecoveryExhausted:
-    """Signal that automatic recovery after an observed disappearance ended unsatisfied."""
+    """Signal that TCP recovery after an observed disappearance ended unsatisfied."""
 
     configuration: AdbConfiguredTransport
-    result: AdbTransportEnsureResult
+    result: AdbTcpTransportEnsureResult
 
     def __post_init__(self) -> None:
         if not isinstance(self.configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
-        if not isinstance(self.result, AdbTransportEnsureResult):
-            raise TypeError("result must be AdbTransportEnsureResult")
+        if not isinstance(self.configuration.transport, AdbTcpTransportConfiguration):
+            raise ValueError("recovery exhausted signals require a TCP configuration")
+        if not isinstance(self.result, AdbTcpTransportEnsureResult):
+            raise TypeError("result must be AdbTcpTransportEnsureResult")
         if self.result.operation.configuration != self.configuration:
             raise ValueError("recovery result must match configured transport")
-        if self.result.status is AdbTransportEnsureStatus.SATISFIED:
+        if self.result.status is AdbTcpTransportEnsureStatus.SATISFIED:
             raise ValueError(
                 "recovery exhausted signal requires an unsatisfied result"
             )

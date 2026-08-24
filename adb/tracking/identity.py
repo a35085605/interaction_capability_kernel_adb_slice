@@ -10,7 +10,7 @@ from adb.server.identity import AdbServer
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingScopeIdentity:
-    """Identity for one transport-inventory tracking lifetime.
+    """Identity for one track-devices lifetime.
 
     The generation distinguishes successive tracker scopes bound to the same ADB server
     lifetime. A scope identity is therefore stable for all signals emitted by one tracker and
@@ -39,7 +39,7 @@ class AdbDevicesTrackingScopeIdentity:
 
 @runtime_checkable
 class AdbDevicesTrackingGenerationIssuer(Protocol):
-    """Issue generations for successive transport-inventory tracker scopes."""
+    """Issue generations for successive track-devices tracker scopes."""
 
     def issue(self) -> int:
         ...

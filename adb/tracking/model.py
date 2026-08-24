@@ -63,7 +63,7 @@ def _normalize_open_enum(
 
 @dataclass(frozen=True, slots=True)
 class AdbTrackedDevice:
-    """One observed AOSP ``adb_host.proto.Device`` inventory row.
+    """One observed AOSP ``adb_host.proto.Device`` track-devices row.
 
     The row is observation data, not a stable device identity. ``transport_id`` is
     server-local when non-zero; zero means unavailable. Unknown enum values are preserved as
@@ -141,7 +141,7 @@ class AdbTrackedDevice:
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesSnapshot:
-    """Complete AOSP ``adb_host.proto.Devices`` transport-inventory snapshot."""
+    """Complete AOSP ``adb_host.proto.Devices`` track-devices snapshot."""
 
     devices: tuple[AdbTrackedDevice, ...] = field(default_factory=tuple)
 

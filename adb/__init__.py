@@ -1,4 +1,4 @@
-"""Host-side ADB server, transport, and protocol capabilities."""
+"""Host-side ADB server, tracking, transport, and protocol capabilities."""
 
 from adb.errors import (
     AdbError,
@@ -38,17 +38,19 @@ from adb.server import (
     AdbServerUnavailableError,
     SubprocessAdbServerController,
 )
-from adb.transport import (
+from adb.tracking import (
     AdbConnectionState,
     AdbConnectionType,
-    AdbDeviceSerial,
-    AdbDevicesInventoryState,
-    AdbDevicesInventoryView,
-    AdbDevicesInventoryWriter,
     AdbDevicesSnapshot,
     AdbDevicesSnapshotReader,
+    AdbDevicesState,
+    AdbDevicesView,
+    AdbDevicesWriter,
     AdbTrackedDevice,
     AdbTrackedDeviceLookup,
+)
+from adb.transport import (
+    AdbDeviceSerial,
     AdbTransportById,
     AdbTransportBySerial,
     AdbTransportFeatures,
@@ -64,9 +66,9 @@ __all__ = [
     "AdbConnectionState",
     "AdbConnectionType",
     "AdbDeviceSerial",
-    "AdbDevicesInventoryState",
-    "AdbDevicesInventoryView",
-    "AdbDevicesInventoryWriter",
+    "AdbDevicesState",
+    "AdbDevicesView",
+    "AdbDevicesWriter",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotReader",
     "AdbError",

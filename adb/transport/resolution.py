@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from adb.transport.configuration import AdbConfiguredTransport
-from adb.transport.inventory.model import (
+from adb.tracking.model import (
     AdbConnectionType,
     AdbDevicesSnapshot,
     AdbTrackedDevice,
@@ -12,7 +12,7 @@ from adb.transport.inventory.model import (
 
 
 class AdbConfiguredTransportResolutionStatus(str, Enum):
-    """How one configured transport identity appears in one complete inventory snapshot."""
+    """How one configured transport identity appears in one complete track-devices snapshot."""
 
     ABSENT = "absent"
     RESOLVED = "resolved"
@@ -22,7 +22,7 @@ class AdbConfiguredTransportResolutionStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportResolution:
-    """Resolution of one configured transport against inventory evidence."""
+    """Resolution of one configured transport against track-devices evidence."""
 
     configuration: AdbConfiguredTransport
     matches: tuple[AdbTrackedDevice, ...]
@@ -90,7 +90,7 @@ def resolve_configured_transport(
     configuration: AdbConfiguredTransport,
     snapshot: AdbDevicesSnapshot,
 ) -> AdbConfiguredTransportResolution:
-    """Resolve a configured transport against a fresh inventory snapshot.
+    """Resolve a configured transport against a fresh track-devices snapshot.
 
     Exact USB/SOCKET matches are preferred; UNKNOWN connection types are used only when no
     exact match exists for compatibility with older ADB servers.

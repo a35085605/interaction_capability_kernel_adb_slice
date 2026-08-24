@@ -11,22 +11,22 @@ from typing import Protocol, runtime_checkable
 from adb.errors import AdbError
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
-from adb.transport.configuration import AdbConfiguredTransport
-from adb.transport.inventory.model import (
+from adb.transport.configuration import (
+    AdbConfiguredTransport,
+    AdbTcpTransportConfiguration,
+)
+from adb.tracking.model import (
     AdbConnectionState,
     AdbConnectionType,
     AdbDevicesSnapshot,
     AdbTrackedDevice,
 )
-from adb.transport.inventory.reader import AdbDevicesSnapshotReader
-from adb.transport.inventory.resolution import (
+from adb.tracking.reader import AdbDevicesSnapshotReader
+from adb.transport.resolution import (
     AdbConfiguredTransportResolutionStatus,
     resolve_configured_transport,
 )
-from adb.transport.lifecycle.establishment import (
-    AdbTransportEstablisher,
-    AdbTransportEstablishmentAttempt,
-)
+from adb.transport.lifecycle.control.port import AdbTcpConnect, AdbTcpConnector
 from adb.transport.selection import AdbDeviceSerial
 from eventing import EventPublisher
 from native_attempt import NativeAttemptResult, NativeAttemptStatus
@@ -80,7 +80,7 @@ def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportEnsurePolicy:
+class AdbTcpTransportEnsurePolicy:
     """Polling policy for one bounded transport-readiness ensure operation.
 
     States not listed as acceptable or blocked remain waiting states. This preserves future
@@ -98,7 +98,7 @@ class AdbTransportEnsurePolicy:
             "timeout_seconds",
             _normalize_positive_seconds(
                 self.timeout_seconds,
-                field_name="ADB transport ensure timeout",
+                field_name="ADB TCP transport ensure timeout",
             ),
         )
         acceptable = _normalize_states(
@@ -120,26 +120,28 @@ class AdbTransportEnsurePolicy:
             "probe_interval_seconds",
             _normalize_positive_seconds(
                 self.probe_interval_seconds,
-                field_name="ADB transport ensure probe interval",
+                field_name="ADB TCP transport ensure probe interval",
             ),
         )
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportEnsureReadiness:
+class AdbTcpTransportEnsureReadiness:
     """Request bounded readiness verification against one server lifetime."""
 
     server: AdbServer
     configuration: AdbConfiguredTransport
-    policy: AdbTransportEnsurePolicy
+    policy: AdbTcpTransportEnsurePolicy
 
     def __post_init__(self) -> None:
         if not isinstance(self.server, AdbServer):
             raise TypeError("server must be AdbServer")
         if not isinstance(self.configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
-        if not isinstance(self.policy, AdbTransportEnsurePolicy):
-            raise TypeError("policy must be AdbTransportEnsurePolicy")
+        if not isinstance(self.configuration.transport, AdbTcpTransportConfiguration):
+            raise ValueError("TCP ensure requires an AdbTcpTransportConfiguration")
+        if not isinstance(self.policy, AdbTcpTransportEnsurePolicy):
+            raise TypeError("policy must be AdbTcpTransportEnsurePolicy")
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
@@ -150,7 +152,7 @@ class AdbTransportEnsureReadiness:
         return self.configuration.serial
 
 
-class AdbTransportEnsureStatus(str, Enum):
+class AdbTcpTransportEnsureStatus(str, Enum):
     """Terminal status of one transport-readiness ensure operation."""
 
     SATISFIED = "satisfied"
@@ -161,14 +163,14 @@ class AdbTransportEnsureStatus(str, Enum):
     TYPE_MISMATCH = "type_mismatch"
 
 
-class AdbTransportReadinessSatisfaction(str, Enum):
+class AdbTcpTransportReadinessSatisfaction(str, Enum):
     """How the final readiness condition became satisfied."""
 
     ALREADY_SATISFIED = "already_satisfied"
     ACHIEVED = "achieved"
 
 
-class AdbTransportPresenceSatisfaction(str, Enum):
+class AdbTcpTransportPresenceSatisfaction(str, Enum):
     """When polling first found the configured binding during one episode."""
 
     ALREADY_PRESENT = "already_present"
@@ -176,32 +178,32 @@ class AdbTransportPresenceSatisfaction(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportEnsureResult:
+class AdbTcpTransportEnsureResult:
     """Terminal polling evidence without collapsing command success into readiness."""
 
-    operation: AdbTransportEnsureReadiness
-    status: AdbTransportEnsureStatus
-    satisfaction: AdbTransportReadinessSatisfaction | None
-    presence_satisfaction: AdbTransportPresenceSatisfaction | None
+    operation: AdbTcpTransportEnsureReadiness
+    status: AdbTcpTransportEnsureStatus
+    satisfaction: AdbTcpTransportReadinessSatisfaction | None
+    presence_satisfaction: AdbTcpTransportPresenceSatisfaction | None
     attempts: tuple[NativeAttemptResult, ...]
     final_snapshot: AdbDevicesSnapshot | None = None
     final_row: AdbTrackedDevice | None = None
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.operation, AdbTransportEnsureReadiness):
-            raise TypeError("operation must be AdbTransportEnsureReadiness")
-        if not isinstance(self.status, AdbTransportEnsureStatus):
-            raise TypeError("status must be AdbTransportEnsureStatus")
+        if not isinstance(self.operation, AdbTcpTransportEnsureReadiness):
+            raise TypeError("operation must be AdbTcpTransportEnsureReadiness")
+        if not isinstance(self.status, AdbTcpTransportEnsureStatus):
+            raise TypeError("status must be AdbTcpTransportEnsureStatus")
         if self.satisfaction is not None and not isinstance(
-            self.satisfaction, AdbTransportReadinessSatisfaction
+            self.satisfaction, AdbTcpTransportReadinessSatisfaction
         ):
-            raise TypeError("satisfaction must be AdbTransportReadinessSatisfaction or None")
+            raise TypeError("satisfaction must be AdbTcpTransportReadinessSatisfaction or None")
         if self.presence_satisfaction is not None and not isinstance(
-            self.presence_satisfaction, AdbTransportPresenceSatisfaction
+            self.presence_satisfaction, AdbTcpTransportPresenceSatisfaction
         ):
             raise TypeError(
-                "presence_satisfaction must be AdbTransportPresenceSatisfaction or None"
+                "presence_satisfaction must be AdbTcpTransportPresenceSatisfaction or None"
             )
         if not isinstance(self.attempts, tuple) or not all(
             isinstance(attempt, NativeAttemptResult) for attempt in self.attempts
@@ -228,11 +230,11 @@ class AdbTransportEnsureResult:
             "diagnostic",
             _normalize_optional_text(
                 self.diagnostic,
-                field_name="ADB transport ensure diagnostic",
+                field_name="ADB TCP transport ensure diagnostic",
             ),
         )
 
-        if self.status is AdbTransportEnsureStatus.SATISFIED:
+        if self.status is AdbTcpTransportEnsureStatus.SATISFIED:
             if self.satisfaction is None or self.final_row is None:
                 raise ValueError("satisfied ensure requires satisfaction and final_row")
             if self.final_row.state not in self.operation.policy.acceptable_states:
@@ -242,24 +244,17 @@ class AdbTransportEnsureResult:
 
 
 @runtime_checkable
-class AdbTransportEnsurer(Protocol):
-    """Ensure bounded transport readiness and report supported establishment.
+class AdbTcpTransportEnsurer(Protocol):
+    """Ensure bounded readiness for configured TCP transports.
 
     Implementations used by supervision must support concurrent ensures for different
-    configured transports.
+    configured TCP transports.
     """
-
-    def supports_establishment(
-        self,
-        configuration: AdbConfiguredTransport,
-    ) -> bool:
-        """Return whether absence can trigger an active establishment attempt."""
-        ...
 
     def ensure(
         self,
-        operation: AdbTransportEnsureReadiness,
-    ) -> AdbTransportEnsureResult:
+        operation: AdbTcpTransportEnsureReadiness,
+    ) -> AdbTcpTransportEnsureResult:
         ...
 
 
@@ -271,19 +266,19 @@ _Sleeper = Callable[[float], None]
 class _ReadinessEpisodeState:
     """Mutable state for one readiness ensure operation."""
 
-    operation: AdbTransportEnsureReadiness
+    operation: AdbTcpTransportEnsureReadiness
     attempts: list[NativeAttemptResult] = field(default_factory=list)
-    presence: AdbTransportPresenceSatisfaction | None = None
-    satisfaction: AdbTransportReadinessSatisfaction | None = None
+    presence: AdbTcpTransportPresenceSatisfaction | None = None
+    satisfaction: AdbTcpTransportReadinessSatisfaction | None = None
     final_snapshot: AdbDevicesSnapshot | None = None
     final_row: AdbTrackedDevice | None = None
     diagnostic: str | None = None
     probes_attempted: int = 0
-    establishment_attempted: bool = False
+    connect_attempted: bool = False
     latest_resolution_status: AdbConfiguredTransportResolutionStatus | None = None
 
     @property
-    def policy(self) -> AdbTransportEnsurePolicy:
+    def policy(self) -> AdbTcpTransportEnsurePolicy:
         return self.operation.policy
 
     def record_probe_failure(self, error: AdbError) -> None:
@@ -294,7 +289,7 @@ class _ReadinessEpisodeState:
     def evaluate_snapshot(
         self,
         snapshot: AdbDevicesSnapshot,
-    ) -> AdbTransportEnsureStatus | None:
+    ) -> AdbTcpTransportEnsureStatus | None:
         initial = self.probes_attempted == 0
         self.probes_attempted += 1
         self.final_snapshot = snapshot
@@ -307,10 +302,10 @@ class _ReadinessEpisodeState:
 
         if resolution.status is AdbConfiguredTransportResolutionStatus.AMBIGUOUS:
             self.final_row = None
-            return AdbTransportEnsureStatus.AMBIGUOUS
+            return AdbTcpTransportEnsureStatus.AMBIGUOUS
         if resolution.status is AdbConfiguredTransportResolutionStatus.TYPE_MISMATCH:
             self.final_row = None
-            return AdbTransportEnsureStatus.TYPE_MISMATCH
+            return AdbTcpTransportEnsureStatus.TYPE_MISMATCH
         if resolution.status is AdbConfiguredTransportResolutionStatus.ABSENT:
             self.final_row = None
             return None
@@ -320,50 +315,50 @@ class _ReadinessEpisodeState:
         self.final_row = row
         if self.presence is None:
             self.presence = (
-                AdbTransportPresenceSatisfaction.ALREADY_PRESENT
+                AdbTcpTransportPresenceSatisfaction.ALREADY_PRESENT
                 if initial
-                else AdbTransportPresenceSatisfaction.OBSERVED
+                else AdbTcpTransportPresenceSatisfaction.OBSERVED
             )
 
         if row.state in self.policy.acceptable_states:
             self.satisfaction = (
-                AdbTransportReadinessSatisfaction.ALREADY_SATISFIED
+                AdbTcpTransportReadinessSatisfaction.ALREADY_SATISFIED
                 if initial
-                else AdbTransportReadinessSatisfaction.ACHIEVED
+                else AdbTcpTransportReadinessSatisfaction.ACHIEVED
             )
-            return AdbTransportEnsureStatus.SATISFIED
+            return AdbTcpTransportEnsureStatus.SATISFIED
         if row.state in self.policy.blocked_states:
-            return AdbTransportEnsureStatus.BLOCKED
+            return AdbTcpTransportEnsureStatus.BLOCKED
         return None
 
     @property
-    def should_attempt_establishment(self) -> bool:
+    def should_attempt_connect(self) -> bool:
         return (
             self.latest_resolution_status
             is AdbConfiguredTransportResolutionStatus.ABSENT
             and self.presence is None
-            and not self.establishment_attempted
+            and not self.connect_attempted
         )
 
-    def record_establishment(self, attempt: NativeAttemptResult) -> None:
-        self.establishment_attempted = True
+    def record_connect(self, attempt: NativeAttemptResult) -> None:
+        self.connect_attempted = True
         self.attempts.append(attempt)
 
-    def deadline_status(self) -> AdbTransportEnsureStatus:
+    def deadline_status(self) -> AdbTcpTransportEnsureStatus:
         if self.attempts and self.attempts[-1].status is NativeAttemptStatus.FAILED:
-            return AdbTransportEnsureStatus.FAILED
-        return AdbTransportEnsureStatus.TIMED_OUT
+            return AdbTcpTransportEnsureStatus.FAILED
+        return AdbTcpTransportEnsureStatus.TIMED_OUT
 
     def result(
         self,
-        status: AdbTransportEnsureStatus,
-    ) -> AdbTransportEnsureResult:
-        return AdbTransportEnsureResult(
+        status: AdbTcpTransportEnsureStatus,
+    ) -> AdbTcpTransportEnsureResult:
+        return AdbTcpTransportEnsureResult(
             operation=self.operation,
             status=status,
             satisfaction=(
                 self.satisfaction
-                if status is AdbTransportEnsureStatus.SATISFIED
+                if status is AdbTcpTransportEnsureStatus.SATISFIED
                 else None
             ),
             presence_satisfaction=self.presence,
@@ -374,20 +369,20 @@ class _ReadinessEpisodeState:
         )
 
 
-class AdbTransportEnsureOrchestrator:
-    """Ensure one configured transport reaches a terminal readiness state before a deadline.
+class AdbTcpTransportEnsureOrchestrator:
+    """Ensure one configured TCP transport reaches readiness before a deadline.
 
-    The orchestrator probes fresh inventory, may perform one supported establishment attempt,
-    and polls until a terminal state or timeout.
+    The orchestrator probes a fresh tracked-devices snapshot, performs at most one ``adb connect`` attempt
+    while the TCP transport is absent, and polls until a terminal state or timeout.
     """
 
     def __init__(
         self,
         server: AdbServer,
         snapshot_reader: AdbDevicesSnapshotReader,
+        connector: AdbTcpConnector,
         publisher: EventPublisher,
         *,
-        establisher: AdbTransportEstablisher | None = None,
         _monotonic: _MonotonicClock = monotonic,
         _sleep: _Sleeper = sleep,
     ) -> None:
@@ -395,43 +390,24 @@ class AdbTransportEnsureOrchestrator:
             raise TypeError("server must be AdbServer")
         if not callable(getattr(snapshot_reader, "read", None)):
             raise TypeError("snapshot_reader must provide read()")
+        if not callable(getattr(connector, "connect", None)):
+            raise TypeError("connector must provide connect()")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
-        if establisher is not None and not isinstance(
-            establisher,
-            AdbTransportEstablisher,
-        ):
-            raise TypeError(
-                "establisher must satisfy AdbTransportEstablisher or be None"
-            )
         self.server = server
         self.endpoint = server.endpoint
         self._snapshot_reader = snapshot_reader
+        self._connector = connector
         self._publisher = publisher
-        self._establisher = establisher
         self._monotonic = _monotonic
         self._sleep = _sleep
 
-    def supports_establishment(
-        self,
-        configuration: AdbConfiguredTransport,
-    ) -> bool:
-        if not isinstance(configuration, AdbConfiguredTransport):
-            raise TypeError("configuration must be AdbConfiguredTransport")
-        establisher = self._establisher
-        if establisher is None:
-            return False
-        supported = establisher.supports(configuration)
-        if not isinstance(supported, bool):
-            raise TypeError("establisher supports() must return bool")
-        return supported
-
     def ensure(
         self,
-        operation: AdbTransportEnsureReadiness,
-    ) -> AdbTransportEnsureResult:
-        if not isinstance(operation, AdbTransportEnsureReadiness):
-            raise TypeError("operation must be AdbTransportEnsureReadiness")
+        operation: AdbTcpTransportEnsureReadiness,
+    ) -> AdbTcpTransportEnsureResult:
+        if not isinstance(operation, AdbTcpTransportEnsureReadiness):
+            raise TypeError("operation must be AdbTcpTransportEnsureReadiness")
         if operation.server != self.server:
             raise ValueError("operation server does not match ensure orchestrator server")
 
@@ -449,15 +425,10 @@ class AdbTransportEnsureOrchestrator:
                 if terminal is not None:
                     return self._complete(episode, terminal)
 
-                if (
-                    episode.should_attempt_establishment
-                    and self.supports_establishment(operation.configuration)
-                ):
-                    episode.record_establishment(
-                        self._establish(operation.configuration)
-                    )
-                    # Match server ensure semantics: verify once immediately after the command,
-                    # even when the command consumed the remaining deadline.
+                if episode.should_attempt_connect:
+                    episode.record_connect(self._connect(operation.configuration))
+                    # Verify once immediately after ``adb connect``, even when the command
+                    # consumed the remaining deadline.
                     continue
 
             remaining = deadline - self._monotonic()
@@ -465,46 +436,41 @@ class AdbTransportEnsureOrchestrator:
                 return self._complete(episode, episode.deadline_status())
             self._sleep(min(policy.probe_interval_seconds, remaining))
 
-    def _establish(
+    def _connect(
         self,
         configuration: AdbConfiguredTransport,
     ) -> NativeAttemptResult:
         from adb.transport.lifecycle.signal import AdbTransportCommandCompleted
 
-        establisher = self._establisher
-        if establisher is None or not establisher.supports(configuration):
-            raise RuntimeError(
-                "configured transport has no active establishment route"
-            )
-        attempt = establisher.establish(configuration)
-        if not isinstance(attempt, AdbTransportEstablishmentAttempt):
-            raise TypeError(
-                "establisher must return AdbTransportEstablishmentAttempt"
-            )
-        self._publisher.publish(
-            AdbTransportCommandCompleted(attempt.operation, attempt.result)
-        )
-        return attempt.result
+        transport = configuration.transport
+        if not isinstance(transport, AdbTcpTransportConfiguration):
+            raise ValueError("TCP ensure requires an AdbTcpTransportConfiguration")
+        operation = AdbTcpConnect(transport.address)
+        result = self._connector.connect(operation)
+        if not isinstance(result, NativeAttemptResult):
+            raise TypeError("connector must return NativeAttemptResult")
+        self._publisher.publish(AdbTransportCommandCompleted(operation, result))
+        return result
 
     def _complete(
         self,
         episode: _ReadinessEpisodeState,
-        status: AdbTransportEnsureStatus,
-    ) -> AdbTransportEnsureResult:
-        from adb.transport.lifecycle.signal import AdbTransportEnsureCompleted
+        status: AdbTcpTransportEnsureStatus,
+    ) -> AdbTcpTransportEnsureResult:
+        from adb.transport.lifecycle.signal import AdbTcpTransportEnsureCompleted
 
         result = episode.result(status)
-        self._publisher.publish(AdbTransportEnsureCompleted(result))
+        self._publisher.publish(AdbTcpTransportEnsureCompleted(result))
         return result
 
 
 __all__ = [
-    "AdbTransportEnsurePolicy",
-    "AdbTransportEnsureReadiness",
-    "AdbTransportEnsureResult",
-    "AdbTransportEnsureOrchestrator",
-    "AdbTransportEnsureStatus",
-    "AdbTransportEnsurer",
-    "AdbTransportPresenceSatisfaction",
-    "AdbTransportReadinessSatisfaction",
+    "AdbTcpTransportEnsurePolicy",
+    "AdbTcpTransportEnsureReadiness",
+    "AdbTcpTransportEnsureResult",
+    "AdbTcpTransportEnsureOrchestrator",
+    "AdbTcpTransportEnsureStatus",
+    "AdbTcpTransportEnsurer",
+    "AdbTcpTransportPresenceSatisfaction",
+    "AdbTcpTransportReadinessSatisfaction",
 ]

@@ -7,7 +7,7 @@ import socket
 from threading import Lock
 from time import monotonic
 
-from adb.transport.inventory.model import AdbDevicesSnapshot
+from adb.tracking.model import AdbDevicesSnapshot
 from adb._internal.framing import encode_service, parse_hex_length
 from adb._internal.proto import parse_devices_snapshot
 from adb.errors import (
@@ -67,7 +67,7 @@ class AdbTrackDevicesSession:
 
 
 class AdbTrackDevicesSource:
-    """Blocking ``host:track-devices-proto-binary`` inventory source.
+    """Blocking ``host:track-devices-proto-binary`` source.
 
     Payloads are AOSP ``adb_host.proto.Devices`` messages. The source does not retry or reconnect.
     """

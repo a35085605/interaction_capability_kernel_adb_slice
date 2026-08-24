@@ -117,8 +117,8 @@ class AdbManagedRuntime:
 
         The returned handle is long-lived and survives successive ``AdbServer`` lifetimes.
         Adding a registration observes the current tracker baseline when one exists, but does
-        not establish an already-absent transport.  Automatic recovery only applies to a
-        disappearance observed after a resolved baseline.
+        not actively recover an already-absent transport. TCP automatic recovery only applies
+        to a disappearance observed after a resolved baseline; USB remains projection-only.
         """
 
         if not isinstance(configuration, AdbConfiguredTransport):

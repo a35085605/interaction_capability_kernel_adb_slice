@@ -10,9 +10,9 @@ from adb.errors import (
     AdbServiceError,
 )
 from adb.server.identity import AdbServer
-from adb.transport.inventory.tracking.identity import AdbDevicesTrackingScopeIdentity
-from adb.transport.inventory.tracking.source import AdbTrackDevicesSession, AdbTrackDevicesSource
-from adb.transport.inventory.tracking.signal import (
+from adb.tracking.identity import AdbDevicesTrackingScopeIdentity
+from adb.tracking.source import AdbTrackDevicesSession, AdbTrackDevicesSource
+from adb.tracking.signal import (
     AdbDevicesSnapshotObserved,
     AdbDevicesTrackingFailed,
     AdbDevicesTrackingFailure,
@@ -34,7 +34,7 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 @runtime_checkable
 class AdbDevicesTrackingScope(Protocol):
-    """Single-use transport-inventory tracking scope."""
+    """Single-use track-devices scope."""
 
     @property
     def identity(self) -> AdbDevicesTrackingScopeIdentity: ...
@@ -48,7 +48,7 @@ class AdbDevicesTrackingScope(Protocol):
 
 
 class AdbDevicesTracker:
-    """Track one transport-inventory stream for one exact tracking scope.
+    """Track one track-devices stream for one exact tracking scope.
 
     ``start`` establishes stream mode before returning, then hands the established session to
     the worker. A tracker is single-use. Stop or failure is terminal; ``close`` closes the source

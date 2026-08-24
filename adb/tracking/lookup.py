@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Protocol
 
 from adb.server.identity import AdbServer
-from adb.transport.inventory.model import AdbDevicesSnapshot, AdbTrackedDevice
-from adb.transport.inventory.reader import (
+from adb.tracking.model import AdbDevicesSnapshot, AdbTrackedDevice
+from adb.tracking.reader import (
     AdbDevicesSnapshotReader,
     SmartSocketAdbDevicesSnapshotReader,
 )
@@ -16,7 +16,7 @@ from adb.transport.selection import (
 
 
 class AdbTrackedDeviceLookup(Protocol):
-    """Find one transport row in a fresh inventory snapshot."""
+    """Find one transport row in a fresh track-devices snapshot."""
 
     def find(
         self,
@@ -30,7 +30,7 @@ def find_tracked_device(
     snapshot: AdbDevicesSnapshot,
     selector: AdbTransportSelector,
 ) -> AdbTrackedDevice | None:
-    """Derive one observed transport row from a complete ADB inventory snapshot."""
+    """Derive one observed transport row from a complete ADB track-devices snapshot."""
 
     if not isinstance(snapshot, AdbDevicesSnapshot):
         raise TypeError("snapshot must be AdbDevicesSnapshot")
@@ -48,12 +48,12 @@ def find_tracked_device(
         raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")
 
     if len(matches) > 1:
-        raise ValueError("ADB transport selector matched multiple inventory rows")
+        raise ValueError("ADB transport selector matched multiple tracked-device rows")
     return matches[0] if matches else None
 
 
 class SnapshotAdbTrackedDeviceLookup:
-    """Single-row lookup over fresh transport-inventory snapshots."""
+    """Single-row lookup over fresh track-devices snapshots."""
 
     def __init__(
         self,

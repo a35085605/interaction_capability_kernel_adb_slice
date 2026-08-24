@@ -11,14 +11,14 @@ from adb.server.lifecycle.control.subprocess import SubprocessAdbServerControlle
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerState
-from adb.transport.inventory.state import AdbDevicesInventoryState
-from adb.transport.inventory.tracking.supervision.policy import (
+from adb.tracking.state import AdbDevicesState
+from adb.tracking.supervision.policy import (
     AdbDevicesTrackingSupervisionPolicy,
 )
-from adb.transport.inventory.tracking.supervision.supervisor import (
+from adb.tracking.supervision.supervisor import (
     AdbDevicesTrackingSupervisor,
 )
-from adb.transport.lifecycle.ensure import AdbTransportEnsurer
+from adb.transport.lifecycle.ensure import AdbTcpTransportEnsurer
 from adb.transport.lifecycle.supervision.policy import (
     AdbConfiguredTransportSupervisionPolicy,
 )
@@ -43,7 +43,7 @@ class _BootstrapCore:
     controller: AdbServerController
     provisioning_endpoint: AdbServerEndpoint | None
     server_state: AdbServerState
-    inventory_state: AdbDevicesInventoryState
+    devices_state: AdbDevicesState
     initial_server: AdbServer
 
 
@@ -52,7 +52,7 @@ class AdbRuntimeBootstrap:
 
     Bootstrap owns implementation/configuration decisions but does not remain a second runtime
     container.  Each build receives a fresh runtime-scoped epoch issuer, controller graph,
-    authoritative server state, and inventory state.
+    authoritative server state, and tracked-devices state.
     """
 
     def __init__(
@@ -116,7 +116,7 @@ class AdbRuntimeBootstrap:
         try:
             return self._build_runtime(
                 core.server_state,
-                core.inventory_state,
+                core.devices_state,
                 transport_supervision_policy=self._transport_supervision_policy,
             )
         except BaseException:
@@ -128,7 +128,7 @@ class AdbRuntimeBootstrap:
         *,
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
-        transport_ensurer: AdbTransportEnsurer | None = None,
+        tcp_transport_ensurer: AdbTcpTransportEnsurer | None = None,
         track_devices: bool = True,
         configured_transports: bool = True,
     ) -> AdbRuntime:
@@ -144,19 +144,12 @@ class AdbRuntimeBootstrap:
             raise TypeError("configured_transports must be bool")
         if configured_transports and not track_devices:
             raise ValueError("configured transport supervision requires device tracking")
-        recovery_policy = self._transport_supervision_policy.recovery_ensure_policy
-        if (
-            configured_transports
-            and recovery_policy is not None
-            and not isinstance(transport_ensurer, AdbTransportEnsurer)
+        if tcp_transport_ensurer is not None and not isinstance(
+            tcp_transport_ensurer, AdbTcpTransportEnsurer
         ):
             raise TypeError(
-                "transport_ensurer must satisfy AdbTransportEnsurer when configured transport recovery is enabled"
+                "tcp_transport_ensurer must satisfy AdbTcpTransportEnsurer or be None"
             )
-        if transport_ensurer is not None and not isinstance(
-            transport_ensurer, AdbTransportEnsurer
-        ):
-            raise TypeError("transport_ensurer must satisfy AdbTransportEnsurer or be None")
 
         core = self._build_core()
         try:
@@ -175,7 +168,7 @@ class AdbRuntimeBootstrap:
                     core.initial_server,
                     event_bus,
                     self._tracking_supervision_policy,
-                    inventory_state=core.inventory_state,
+                    devices_state=core.devices_state,
                 )
                 if track_devices
                 else None
@@ -184,15 +177,15 @@ class AdbRuntimeBootstrap:
                 AdbConfiguredTransportSupervisor(
                     core.initial_server,
                     event_bus,
-                    transport_ensurer,
-                    inventory=core.inventory_state,
+                    tcp_transport_ensurer,
+                    devices=core.devices_state,
                 )
                 if configured_transports
                 else None
             )
             return self._build_runtime(
                 core.server_state,
-                core.inventory_state,
+                core.devices_state,
                 event_bus=event_bus,
                 server_supervisor=server_supervisor,
                 tracking_supervisor=tracking_supervisor,
@@ -223,7 +216,7 @@ class AdbRuntimeBootstrap:
                 controller=controller,
                 provisioning_endpoint=provisioning_endpoint,
                 server_state=AdbServerState(initial_server),
-                inventory_state=AdbDevicesInventoryState(),
+                devices_state=AdbDevicesState(),
                 initial_server=initial_server,
             )
         except BaseException:

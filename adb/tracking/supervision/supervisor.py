@@ -6,26 +6,26 @@ from threading import Lock, Thread, current_thread
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from adb.server.failure import AdbServerConnectionFailure
 from adb.server.identity import AdbServer
-from adb.transport.inventory.tracking.supervision.policy import AdbDevicesTrackingSupervisionPolicy
+from adb.tracking.supervision.policy import AdbDevicesTrackingSupervisionPolicy
 from adb.server.signal import (
     AdbServerRetired,
     AdbServerRecovered,
     AdbServerReconciliationRequested,
 )
-from adb.transport.inventory.tracking.identity import (
+from adb.tracking.identity import (
     AdbDevicesTrackingGenerationIssuer,
     AdbDevicesTrackingGenerationSequence,
     AdbDevicesTrackingScopeIdentity,
 )
-from adb.transport.inventory.state import AdbDevicesInventoryState
-from adb.transport.inventory.tracking.publication import (
+from adb.tracking.state import AdbDevicesState
+from adb.tracking.publication import (
     AdbDevicesStateBackedTrackingPublisher,
 )
-from adb.transport.inventory.tracking.tracker import (
+from adb.tracking.tracker import (
     AdbDevicesTracker,
     AdbDevicesTrackingScope,
 )
-from adb.transport.inventory.tracking.signal import (
+from adb.tracking.signal import (
     AdbDevicesTrackingFailed,
     AdbDevicesTrackingFailure,
     AdbDevicesTrackingStarted,
@@ -49,7 +49,7 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 
 class AdbDevicesTrackingSupervisor:
-    """Maintain desired transport-inventory tracking with single-use tracker scopes.
+    """Maintain desired track-devices with single-use tracker scopes.
 
     Terminal tracker or server events discard the current scope; a fresh server creates a
     new tracker, even when the replacement server uses a different endpoint. Tracker startup is
@@ -63,7 +63,7 @@ class AdbDevicesTrackingSupervisor:
         event_bus: EventBus,
         policy: AdbDevicesTrackingSupervisionPolicy,
         *,
-        inventory_state: AdbDevicesInventoryState | None = None,
+        devices_state: AdbDevicesState | None = None,
         _tracker_factory: _TrackerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
         _generation_issuer: AdbDevicesTrackingGenerationIssuer | None = None,
@@ -76,10 +76,10 @@ class AdbDevicesTrackingSupervisor:
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(policy, AdbDevicesTrackingSupervisionPolicy):
             raise TypeError("policy must be AdbDevicesTrackingSupervisionPolicy")
-        if inventory_state is None:
-            inventory_state = AdbDevicesInventoryState()
-        if not isinstance(inventory_state, AdbDevicesInventoryState):
-            raise TypeError("inventory_state must be AdbDevicesInventoryState or None")
+        if devices_state is None:
+            devices_state = AdbDevicesState()
+        if not isinstance(devices_state, AdbDevicesState):
+            raise TypeError("devices_state must be AdbDevicesState or None")
         if _tracker_factory is not None and not callable(_tracker_factory):
             raise TypeError("_tracker_factory must be callable or None")
         if not callable(_thread_factory):
@@ -91,9 +91,9 @@ class AdbDevicesTrackingSupervisor:
 
         self.server: AdbServer | None = server
         self._bus = event_bus
-        self._inventory = inventory_state
+        self._devices = devices_state
         self._tracking_publisher = AdbDevicesStateBackedTrackingPublisher(
-            self._inventory,
+            self._devices,
             self._bus,
         )
         self._policy = policy
@@ -115,10 +115,10 @@ class AdbDevicesTrackingSupervisor:
         # fences local background work tied to one concrete tracker instance.
 
     @property
-    def inventory(self) -> AdbDevicesInventoryState:
-        """Shared current inventory committed before tracking events are published."""
+    def devices(self) -> AdbDevicesState:
+        """Shared current tracked-devices state committed before tracking events are published."""
 
-        return self._inventory
+        return self._devices
 
     @property
     def desired_tracking(self) -> bool:
@@ -142,7 +142,7 @@ class AdbDevicesTrackingSupervisor:
         with self._lock:
             self._require_open()
             if self._desired_tracking:
-                raise RuntimeError("transport-inventory tracking supervisor is already started")
+                raise RuntimeError("track-devices supervisor is already started")
             self._ensure_subscriptions_locked()
             self._desired_tracking = True
             self._server_identity = server
@@ -454,7 +454,7 @@ class AdbDevicesTrackingSupervisor:
     def _detach_tracker_locked(self) -> AdbDevicesTrackingScope | None:
         tracker = self._tracker
         if tracker is not None:
-            self._inventory.end_tracking(tracker.identity)
+            self._devices.end_tracking(tracker.identity)
         self._tracker = None
         self._tracking_active = False
         self._start_in_progress = False
@@ -479,7 +479,7 @@ class AdbDevicesTrackingSupervisor:
 
     def _require_open(self) -> None:
         if self._closed:
-            raise RuntimeError("transport-inventory tracking supervisor is closed")
+            raise RuntimeError("track-devices supervisor is closed")
 
 
 __all__ = ["AdbDevicesTrackingSupervisor"]

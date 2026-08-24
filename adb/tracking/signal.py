@@ -6,8 +6,8 @@ from typing import TypeAlias
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
-from adb.transport.inventory.model import AdbDevicesSnapshot
-from adb.transport.inventory.tracking.identity import AdbDevicesTrackingScopeIdentity
+from adb.tracking.model import AdbDevicesSnapshot
+from adb.tracking.identity import AdbDevicesTrackingScopeIdentity
 
 
 def _require_scope(value: object) -> AdbDevicesTrackingScopeIdentity:
@@ -28,7 +28,7 @@ def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
 
 
 class AdbDevicesTrackingFailure(str, Enum):
-    """Reason a transport-inventory tracker terminated abnormally."""
+    """Reason a track-devices tracker terminated abnormally."""
 
     SERVER_CONNECTION = "server_connection"
     SERVICE = "service"
@@ -92,7 +92,7 @@ class AdbDevicesTrackingFailed(_TrackingScopeSignalProjection):
             "diagnostic",
             _normalize_optional_text(
                 self.diagnostic,
-                field_name="ADB transport-inventory tracking diagnostic",
+                field_name="ADB track-devices diagnostic",
             ),
         )
 

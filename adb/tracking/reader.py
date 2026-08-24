@@ -4,14 +4,14 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
 from adb.server.identity import AdbServer
-from adb.transport.inventory.model import AdbDevicesSnapshot
+from adb.tracking.model import AdbDevicesSnapshot
 
 if TYPE_CHECKING:
     from adb._internal.client import AdbServiceClient
 
 
 class AdbDevicesSnapshotReader(Protocol):
-    """Read the current complete ADB transport-inventory snapshot."""
+    """Read the current complete ADB track-devices snapshot."""
 
     def read(self, server: AdbServer) -> AdbDevicesSnapshot:
         ...
@@ -27,7 +27,7 @@ def _default_client_factory(server: AdbServer) -> AdbServiceClient:
 
 
 class SmartSocketAdbDevicesSnapshotReader:
-    """One-shot inventory snapshot reader from the first protobuf tracker frame."""
+    """One-shot track-devices snapshot reader from the first protobuf tracker frame."""
 
     _SERVICE = "host:track-devices-proto-binary"
 

@@ -3,9 +3,9 @@ from __future__ import annotations
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
-from adb.transport.inventory.model import AdbDevicesSnapshot
-from adb.transport.inventory.tracking.identity import AdbDevicesTrackingScopeIdentity
-from adb.transport.inventory.tracking.signal import AdbDevicesSnapshotObserved
+from adb.tracking.model import AdbDevicesSnapshot
+from adb.tracking.identity import AdbDevicesTrackingScopeIdentity
+from adb.tracking.signal import AdbDevicesSnapshotObserved
 
 
 def _scope_order(scope: AdbDevicesTrackingScopeIdentity) -> tuple[int, int]:
@@ -13,8 +13,8 @@ def _scope_order(scope: AdbDevicesTrackingScopeIdentity) -> tuple[int, int]:
 
 
 @runtime_checkable
-class AdbDevicesInventoryView(Protocol):
-    """Read-only current transport-inventory projection for one runtime."""
+class AdbDevicesView(Protocol):
+    """Read-only current tracked-devices projection for one runtime."""
 
     @property
     def active_scope(self) -> AdbDevicesTrackingScopeIdentity | None: ...
@@ -27,8 +27,8 @@ class AdbDevicesInventoryView(Protocol):
 
 
 @runtime_checkable
-class AdbDevicesInventoryWriter(Protocol):
-    """Commit one exact tracking scope into the current inventory projection."""
+class AdbDevicesWriter(Protocol):
+    """Commit one exact tracking scope into the current tracked-devices projection."""
 
     def begin_tracking(self, scope: AdbDevicesTrackingScopeIdentity) -> bool: ...
 
@@ -37,13 +37,13 @@ class AdbDevicesInventoryWriter(Protocol):
     def end_tracking(self, scope: AdbDevicesTrackingScopeIdentity) -> bool: ...
 
 
-class AdbDevicesInventoryState(AdbDevicesInventoryView, AdbDevicesInventoryWriter):
-    """Thread-safe current inventory state for one runtime.
+class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
+    """Thread-safe current tracked-devices state for one runtime.
 
     The state is scoped to the newest accepted tracking lifetime. A new scope clears the prior
-    current observation, and ending that exact scope clears current inventory entirely. Late
+    current observation, and ending that exact scope clears current tracked devices entirely. Late
     writes from older server epochs or tracker generations are rejected rather than resurrecting
-    stale inventory. Successive accepted scopes may belong to servers at different endpoints.
+    stale tracked-device state. Successive accepted scopes may belong to servers at different endpoints.
     """
 
     def __init__(self) -> None:
@@ -107,7 +107,7 @@ class AdbDevicesInventoryState(AdbDevicesInventoryView, AdbDevicesInventoryWrite
 
 
 __all__ = [
-    "AdbDevicesInventoryState",
-    "AdbDevicesInventoryView",
-    "AdbDevicesInventoryWriter",
+    "AdbDevicesState",
+    "AdbDevicesView",
+    "AdbDevicesWriter",
 ]

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, TypeAlias
 from adb.transport.selection import AdbDeviceSerial
 
 if TYPE_CHECKING:
-    from adb.transport.inventory.model import AdbConnectionType
+    from adb.tracking.model import AdbConnectionType
 
 
 def _normalize_required_text(value: object, *, field_name: str) -> str:
@@ -47,7 +47,7 @@ class AdbUsbTransportConfiguration:
 class AdbTcpTransportConfiguration:
     """Configuration for one serial-selected TCP ADB transport.
 
-    ``serial`` identifies the transport for selection and inventory; ``address`` is used only
+    ``serial`` identifies the transport for selection and tracking; ``address`` is used only
     for ``adb connect`` when the serial is absent. The reported serial may differ from the
     connect address.
     """
@@ -85,7 +85,7 @@ class AdbConfiguredTransport:
 
     @property
     def serial(self) -> AdbDeviceSerial:
-        """Persistent selection and inventory-resolution identity for this transport."""
+        """Persistent selection and tracking-resolution identity for this transport."""
 
         return self.transport.serial
 
@@ -101,7 +101,7 @@ class AdbConfiguredTransport:
     def expected_connection_type(self) -> AdbConnectionType:
         """Observed ADB connection type required by this configured transport."""
 
-        from adb.transport.inventory.model import AdbConnectionType
+        from adb.tracking.model import AdbConnectionType
 
         if isinstance(self.transport, AdbUsbTransportConfiguration):
             return AdbConnectionType.USB

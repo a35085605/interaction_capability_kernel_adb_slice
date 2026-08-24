@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from adb.transport.inventory.model import (
+from adb.tracking.model import (
     AdbConnectionState,
     AdbConnectionType,
     AdbDevicesSnapshot,

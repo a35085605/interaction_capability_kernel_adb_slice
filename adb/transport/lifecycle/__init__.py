@@ -1,4 +1,4 @@
-"""ADB transport lifecycle control, establishment, and bounded readiness ensuring."""
+"""ADB transport lifecycle control and bounded TCP readiness ensuring."""
 
 from adb.transport.lifecycle.control.port import (
     AdbDeviceSideReconnect,
@@ -14,19 +14,14 @@ from adb.transport.lifecycle.control.port import (
     AdbTransportReconnector,
 )
 from adb.transport.lifecycle.ensure import (
-    AdbTransportEnsureOrchestrator,
-    AdbTransportEnsurePolicy,
-    AdbTransportEnsureReadiness,
-    AdbTransportEnsureResult,
-    AdbTransportEnsureStatus,
-    AdbTransportEnsurer,
-    AdbTransportPresenceSatisfaction,
-    AdbTransportReadinessSatisfaction,
-)
-from adb.transport.lifecycle.establishment import (
-    AdbTcpTransportEstablisher,
-    AdbTransportEstablisher,
-    AdbTransportEstablishmentAttempt,
+    AdbTcpTransportEnsureOrchestrator,
+    AdbTcpTransportEnsurePolicy,
+    AdbTcpTransportEnsureReadiness,
+    AdbTcpTransportEnsureResult,
+    AdbTcpTransportEnsureStatus,
+    AdbTcpTransportEnsurer,
+    AdbTcpTransportPresenceSatisfaction,
+    AdbTcpTransportReadinessSatisfaction,
 )
 
 __all__ = [
@@ -38,18 +33,15 @@ __all__ = [
     "AdbTcpConnector",
     "AdbTcpDisconnect",
     "AdbTcpDisconnector",
-    "AdbTcpTransportEstablisher",
+    "AdbTcpTransportEnsureOrchestrator",
+    "AdbTcpTransportEnsurePolicy",
+    "AdbTcpTransportEnsureReadiness",
+    "AdbTcpTransportEnsureResult",
+    "AdbTcpTransportEnsureStatus",
+    "AdbTcpTransportEnsurer",
+    "AdbTcpTransportPresenceSatisfaction",
+    "AdbTcpTransportReadinessSatisfaction",
     "AdbTransportCommandOperation",
-    "AdbTransportEnsureOrchestrator",
-    "AdbTransportEnsurePolicy",
-    "AdbTransportEnsureReadiness",
-    "AdbTransportEnsureResult",
-    "AdbTransportEnsureStatus",
-    "AdbTransportEnsurer",
-    "AdbTransportEstablisher",
-    "AdbTransportEstablishmentAttempt",
-    "AdbTransportPresenceSatisfaction",
-    "AdbTransportReadinessSatisfaction",
     "AdbTransportReconnect",
     "AdbTransportReconnector",
 ]

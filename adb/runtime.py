@@ -7,8 +7,8 @@ from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
 from adb.server.state import AdbServerState
 from adb.transport.configuration import AdbConfiguredTransport
-from adb.transport.inventory.state import AdbDevicesInventoryState, AdbDevicesInventoryView
-from adb.transport.inventory.tracking.supervision.supervisor import AdbDevicesTrackingSupervisor
+from adb.tracking.state import AdbDevicesState, AdbDevicesView
+from adb.tracking.supervision.supervisor import AdbDevicesTrackingSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
 from eventing import EventBus, EventSubscriptionToken
@@ -25,7 +25,7 @@ class AdbRuntime(AdbManagedRuntime):
     def __init__(
         self,
         server_state: AdbServerState,
-        inventory_state: AdbDevicesInventoryState,
+        devices_state: AdbDevicesState,
         *,
         event_bus: EventBus | None = None,
         server_supervisor: AdbServerSupervisor | None = None,
@@ -35,8 +35,8 @@ class AdbRuntime(AdbManagedRuntime):
     ) -> None:
         if not isinstance(server_state, AdbServerState):
             raise TypeError("server_state must be AdbServerState")
-        if not isinstance(inventory_state, AdbDevicesInventoryState):
-            raise TypeError("inventory_state must be AdbDevicesInventoryState")
+        if not isinstance(devices_state, AdbDevicesState):
+            raise TypeError("devices_state must be AdbDevicesState")
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if server_supervisor is not None and not isinstance(
@@ -73,13 +73,13 @@ class AdbRuntime(AdbManagedRuntime):
             raise ValueError("supervised runtime components require an event bus")
         if server_supervisor is not None and server_supervisor.server_state is not server_state:
             raise ValueError("server supervisor must share the runtime server state")
-        if tracking_supervisor is not None and tracking_supervisor.inventory is not inventory_state:
-            raise ValueError("tracking supervisor must share the runtime inventory state")
-        if transport_supervisor is not None and transport_supervisor.inventory is not inventory_state:
-            raise ValueError("transport supervisor must share the runtime inventory state")
+        if tracking_supervisor is not None and tracking_supervisor.devices is not devices_state:
+            raise ValueError("tracking supervisor must share the runtime tracked-devices state")
+        if transport_supervisor is not None and transport_supervisor.devices is not devices_state:
+            raise ValueError("transport supervisor must share the runtime tracked-devices state")
 
         super().__init__(server_state)
-        self._inventory_state = inventory_state
+        self._devices_state = devices_state
         self._event_bus = event_bus
         self._server_supervisor = server_supervisor
         self._tracking_supervisor = tracking_supervisor
@@ -93,10 +93,10 @@ class AdbRuntime(AdbManagedRuntime):
         self._closed = False
 
     @property
-    def devices(self) -> AdbDevicesInventoryView:
-        """Read-only current device inventory for this runtime."""
+    def devices(self) -> AdbDevicesView:
+        """Read-only current tracked-devices projection for this runtime."""
 
-        return self._inventory_state
+        return self._devices_state
 
     @property
     def started(self) -> bool:

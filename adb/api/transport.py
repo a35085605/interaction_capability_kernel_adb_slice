@@ -46,6 +46,8 @@ class AdbConfiguredTransportRegistration:
         if self.type is AdbConfiguredTransportType.USB:
             if self.connect_address is not None:
                 raise ValueError("USB configured transport must not have connect_address")
+            if self.policy.tcp_recovery_ensure_policy is not None:
+                raise ValueError("USB configured transport cannot enable TCP recovery")
             return
 
         if self.connect_address is None:
