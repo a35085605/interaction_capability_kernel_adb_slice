@@ -6,7 +6,7 @@ from enum import Enum
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.model import (
     AdbConnectionType,
-    AdbDevicesSnapshot,
+    AdbDevicesRecord,
     AdbTrackedDevice,
 )
 
@@ -88,9 +88,9 @@ class AdbConfiguredTransportResolution:
 
 def resolve_configured_transport(
     configuration: AdbConfiguredTransport,
-    snapshot: AdbDevicesSnapshot,
+    record: AdbDevicesRecord,
 ) -> AdbConfiguredTransportResolution:
-    """Resolve a configured transport against a fresh track-devices snapshot.
+    """Resolve a configured transport against a complete track-devices record.
 
     Exact USB/SOCKET matches are preferred; UNKNOWN connection types are used only when no
     exact match exists for compatibility with older ADB servers.
@@ -98,11 +98,11 @@ def resolve_configured_transport(
 
     if not isinstance(configuration, AdbConfiguredTransport):
         raise TypeError("configuration must be AdbConfiguredTransport")
-    if not isinstance(snapshot, AdbDevicesSnapshot):
-        raise TypeError("snapshot must be AdbDevicesSnapshot")
+    if not isinstance(record, AdbDevicesRecord):
+        raise TypeError("record must be AdbDevicesRecord")
 
     serial_matches = tuple(
-        row for row in snapshot.devices if row.serial == configuration.serial.value
+        row for row in record.devices if row.serial == configuration.serial.value
     )
     exact_matches = tuple(
         row

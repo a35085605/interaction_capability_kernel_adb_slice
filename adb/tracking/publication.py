@@ -16,9 +16,9 @@ from eventing import EventPublisher
 class AdbDevicesSnapshotStateBackedTrackingPublisher:
     """Commit tracking observations into snapshot state before publication.
 
-    Tracking signals are correlated by the ``AdbServer`` lifetime they observe. Snapshot state
-    owns its independent ``AdbDevicesSnapshotEpoch`` revision sequence and rejects writes from
-    older server epochs.
+    Tracking signals are correlated by the ``AdbServer`` lifetime they observe. Snapshot
+    identity is assigned by the tracker before publication; snapshot state rejects stale snapshot
+    identities and writes from older server epochs.
     """
 
     def __init__(
@@ -71,7 +71,7 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
         with self._lock:
             if event.server != self._active_server:
                 return False
-            return self._devices.observe(event.server_epoch, event.snapshot) is not None
+            return self._devices.observe(event.server_epoch, event.snapshot)
 
     @staticmethod
     def _require_server(server: AdbServer) -> None:

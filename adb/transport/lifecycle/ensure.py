@@ -15,10 +15,10 @@ from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
 )
+from adb.tracking.snapshot.identity import AdbDevicesSnapshot
 from adb.tracking.snapshot.model import (
     AdbConnectionState,
     AdbConnectionType,
-    AdbDevicesSnapshot,
     AdbTrackedDevice,
 )
 from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
@@ -216,7 +216,10 @@ class AdbTcpTransportEnsureResult:
         if self.final_row is not None and not isinstance(self.final_row, AdbTrackedDevice):
             raise TypeError("final_row must be AdbTrackedDevice or None")
         if self.final_row is not None:
-            if self.final_snapshot is None or self.final_row not in self.final_snapshot.devices:
+            if (
+                self.final_snapshot is None
+                or self.final_row not in self.final_snapshot.record.devices
+            ):
                 raise ValueError("final_row must belong to final_snapshot")
             if self.final_row.serial != self.operation.serial.value:
                 raise ValueError("final_row serial must match ensure operation")
@@ -296,7 +299,7 @@ class _ReadinessEpisodeState:
 
         resolution = resolve_configured_transport(
             self.operation.configuration,
-            snapshot,
+            snapshot.record,
         )
         self.latest_resolution_status = resolution.status
 

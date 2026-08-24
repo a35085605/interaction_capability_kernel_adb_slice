@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 
+from adb.epoch import EpochIssuer
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from adb.server.failure import AdbServerConnectionFailure
 from adb.server.identity import AdbServer, ServerEpoch
@@ -12,6 +13,7 @@ from adb.server.signal import (
     AdbServerRecovered,
     AdbServerReconciliationRequested,
 )
+from adb.tracking.snapshot.identity import AdbDevicesSnapshotEpoch
 from adb.tracking.snapshot.state import AdbDevicesSnapshotState
 from adb.tracking.publication import (
     AdbDevicesSnapshotStateBackedTrackingPublisher,
@@ -30,7 +32,10 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 
 _ThreadFactory = Callable[..., Thread]
-_TrackerFactory = Callable[[AdbServer, EventPublisher], AdbDevicesTracker]
+_TrackerFactory = Callable[
+    [AdbServer, EventPublisher, EpochIssuer[AdbDevicesSnapshotEpoch]],
+    AdbDevicesTracker,
+]
 
 
 def _default_thread_factory(*args, **kwargs) -> Thread:
@@ -54,6 +59,7 @@ class AdbDevicesTrackingSupervisor:
         event_bus: EventBus,
         policy: AdbDevicesTrackingSupervisionPolicy,
         *,
+        devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch],
         snapshot_state: AdbDevicesSnapshotState | None = None,
         _tracker_factory: _TrackerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
@@ -66,6 +72,8 @@ class AdbDevicesTrackingSupervisor:
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(policy, AdbDevicesTrackingSupervisionPolicy):
             raise TypeError("policy must be AdbDevicesTrackingSupervisionPolicy")
+        if not isinstance(devices_snapshot_epoch_issuer, EpochIssuer):
+            raise TypeError("devices_snapshot_epoch_issuer must satisfy EpochIssuer")
         if snapshot_state is None:
             snapshot_state = AdbDevicesSnapshotState()
         if not isinstance(snapshot_state, AdbDevicesSnapshotState):
@@ -83,6 +91,7 @@ class AdbDevicesTrackingSupervisor:
             self._bus,
         )
         self._policy = policy
+        self._devices_snapshot_epoch_issuer = devices_snapshot_epoch_issuer
         self._tracker_factory = _tracker_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
@@ -412,9 +421,14 @@ class AdbDevicesTrackingSupervisor:
                 server,
                 self._tracking_publisher,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
+                devices_snapshot_epoch_issuer=self._devices_snapshot_epoch_issuer,
             )
             if factory is None
-            else factory(server, self._tracking_publisher)
+            else factory(
+                server,
+                self._tracking_publisher,
+                self._devices_snapshot_epoch_issuer,
+            )
         )
         if not isinstance(tracker, AdbDevicesTracker):
             raise TypeError("tracker factory must return AdbDevicesTracker")

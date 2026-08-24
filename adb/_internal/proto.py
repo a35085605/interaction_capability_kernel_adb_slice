@@ -3,7 +3,7 @@ from __future__ import annotations
 from adb.tracking.snapshot.model import (
     AdbConnectionState,
     AdbConnectionType,
-    AdbDevicesSnapshot,
+    AdbDevicesRecord,
     AdbTrackedDevice,
 )
 from adb.errors import AdbProtocolError
@@ -179,7 +179,7 @@ def _decode_device(payload: bytes) -> AdbTrackedDevice:
     return AdbTrackedDevice(**values)
 
 
-def parse_devices_snapshot(payload: bytes) -> AdbDevicesSnapshot:
+def parse_devices_record(payload: bytes) -> AdbDevicesRecord:
     reader = ProtoReader(payload)
     devices: list[AdbTrackedDevice] = []
 
@@ -194,7 +194,7 @@ def parse_devices_snapshot(payload: bytes) -> AdbDevicesSnapshot:
             continue
         reader.skip(wire_type)
 
-    return AdbDevicesSnapshot(tuple(devices))
+    return AdbDevicesRecord(tuple(devices))
 
 
 def parse_server_status(payload: bytes) -> AdbServerStatus:
@@ -248,4 +248,4 @@ def parse_server_status(payload: bytes) -> AdbServerStatus:
     return AdbServerStatus(**values)
 
 
-__all__ = ["parse_devices_snapshot", "parse_server_status"]
+__all__ = ["parse_devices_record", "parse_server_status"]

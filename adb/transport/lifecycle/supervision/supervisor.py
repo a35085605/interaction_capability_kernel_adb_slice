@@ -20,7 +20,7 @@ from adb.tracking.snapshot.state import (
     AdbDevicesSnapshotView,
     AdbDevicesSnapshotWriter,
 )
-from adb.tracking.snapshot.model import AdbDevicesSnapshot
+from adb.tracking.snapshot.model import AdbDevicesRecord
 from adb.transport.resolution import (
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
@@ -208,16 +208,16 @@ class AdbConfiguredTransportSupervisor:
                 )
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
-            revision = self._devices.current if self._tracking_active else None
+            snapshot = self._devices.current if self._tracking_active else None
             server = self.server
             if (
-                revision is not None
+                snapshot is not None
                 and server is not None
-                and revision.server_epoch == server.epoch
+                and self._devices.server_epoch == server.epoch
             ):
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
-                    revision.snapshot,
+                    snapshot.record,
                 )
 
         if publication is not None:
@@ -287,12 +287,12 @@ class AdbConfiguredTransportSupervisor:
             ):
                 return
             writer = self._devices_writer
-            if writer is not None and writer.observe(event.server_epoch, event.snapshot) is None:
+            if writer is not None and not writer.observe(event.server_epoch, event.snapshot):
                 return
             for registration in self._registrations.values():
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
-                    event.snapshot,
+                    event.snapshot.record,
                 )
                 if publication is not None:
                     publications.append(publication)
@@ -320,12 +320,12 @@ class AdbConfiguredTransportSupervisor:
     def _project_registration_locked(
         self,
         registration: _ConfiguredTransportRegistration,
-        snapshot: AdbDevicesSnapshot,
+        record: AdbDevicesRecord,
     ) -> tuple[AdbConfiguredTransportResolutionChanged | None, bool]:
         previous = registration.resolution
         current = resolve_configured_transport(
             registration.configuration,
-            snapshot,
+            record,
         )
         changed = previous != current
         registration.resolution = current

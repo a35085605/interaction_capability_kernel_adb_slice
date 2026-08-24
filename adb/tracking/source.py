@@ -7,9 +7,9 @@ import socket
 from threading import Lock
 from time import monotonic
 
-from adb.tracking.snapshot.model import AdbDevicesSnapshot
+from adb.tracking.snapshot.model import AdbDevicesRecord
 from adb._internal.framing import encode_service, parse_hex_length
-from adb._internal.proto import parse_devices_snapshot
+from adb._internal.proto import parse_devices_record
 from adb.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
@@ -34,38 +34,38 @@ def _normalize_startup_timeout(value: object) -> float:
     return timeout
 
 
-def _parse_snapshot(payload: bytes) -> AdbDevicesSnapshot:
-    return parse_devices_snapshot(payload)
+def _parse_record(payload: bytes) -> AdbDevicesRecord:
+    return parse_devices_record(payload)
 
 
 class AdbTrackDevicesSession:
     """One established blocking track-devices stream session.
 
-    ``initial_snapshot`` is the first complete snapshot read while the source is still under its
-    startup deadline. ``snapshots`` yields only subsequent stream observations.
+    ``initial_record`` is the first complete record read while the source is still under its
+    startup deadline. ``records`` yields only subsequent stream observations.
     """
 
     def __init__(
         self,
         source: "AdbTrackDevicesSource",
         session_socket: socket.socket,
-        initial_snapshot: AdbDevicesSnapshot,
+        initial_record: AdbDevicesRecord,
     ) -> None:
-        if not isinstance(initial_snapshot, AdbDevicesSnapshot):
-            raise TypeError("initial_snapshot must be AdbDevicesSnapshot")
+        if not isinstance(initial_record, AdbDevicesRecord):
+            raise TypeError("initial_record must be AdbDevicesRecord")
         self._source = source
         self._socket = session_socket
-        self.initial_snapshot = initial_snapshot
+        self.initial_record = initial_record
         self._closed = False
 
-    def snapshots(self) -> Iterator[AdbDevicesSnapshot]:
-        """Yield complete snapshots until the session closes or tracking fails."""
+    def records(self) -> Iterator[AdbDevicesRecord]:
+        """Yield complete records until the session closes or tracking fails."""
 
         if self._closed:
             return
         try:
             while True:
-                yield _parse_snapshot(self._source._read_frame(self._socket))
+                yield _parse_record(self._source._read_frame(self._socket))
         except _SourceClosed:
             return
 
@@ -122,7 +122,7 @@ class AdbTrackDevicesSource:
                 pass
 
     def open(self) -> AdbTrackDevicesSession | None:
-        """Establish one tracker stream and synchronously read its initial snapshot."""
+        """Establish one tracker stream and synchronously read its initial record."""
 
         if not self._acquire_session():
             return None
@@ -131,14 +131,14 @@ class AdbTrackDevicesSource:
         try:
             session_socket, deadline = self._connect()
             self._handshake(session_socket, deadline)
-            initial_snapshot = _parse_snapshot(
+            initial_record = _parse_record(
                 self._read_frame(session_socket, deadline=deadline)
             )
             self._enter_stream_mode(session_socket)
             return AdbTrackDevicesSession(
                 self,
                 session_socket,
-                initial_snapshot,
+                initial_record,
             )
         except _SourceClosed:
             self._release_session(session_socket)

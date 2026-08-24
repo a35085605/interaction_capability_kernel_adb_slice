@@ -3,11 +3,9 @@ from __future__ import annotations
 from typing import Protocol
 
 from adb.server.identity import AdbServer
-from adb.tracking.snapshot.model import AdbDevicesSnapshot, AdbTrackedDevice
-from adb.tracking.snapshot.reader import (
-    AdbDevicesSnapshotReader,
-    SmartSocketAdbDevicesSnapshotReader,
-)
+from adb.tracking.snapshot.identity import AdbDevicesSnapshot
+from adb.tracking.snapshot.model import AdbDevicesRecord, AdbTrackedDevice
+from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
 from adb.transport.selection import (
     AdbTransportById,
     AdbTransportBySerial,
@@ -27,21 +25,21 @@ class AdbTrackedDeviceLookup(Protocol):
 
 
 def find_tracked_device(
-    snapshot: AdbDevicesSnapshot,
+    record: AdbDevicesRecord,
     selector: AdbTransportSelector,
 ) -> AdbTrackedDevice | None:
-    """Derive one observed transport row from a complete ADB track-devices snapshot."""
+    """Derive one observed transport row from a complete ADB devices record."""
 
-    if not isinstance(snapshot, AdbDevicesSnapshot):
-        raise TypeError("snapshot must be AdbDevicesSnapshot")
+    if not isinstance(record, AdbDevicesRecord):
+        raise TypeError("record must be AdbDevicesRecord")
     if isinstance(selector, AdbTransportBySerial):
         matches = [
-            device for device in snapshot.devices if device.serial == selector.serial.value
+            device for device in record.devices if device.serial == selector.serial.value
         ]
     elif isinstance(selector, AdbTransportById):
         matches = [
             device
-            for device in snapshot.devices
+            for device in record.devices
             if device.transport_id == selector.transport_id
         ]
     else:
@@ -53,14 +51,9 @@ def find_tracked_device(
 
 
 class SnapshotAdbTrackedDeviceLookup:
-    """Single-row lookup over fresh track-devices snapshots."""
+    """Single-row lookup over freshly identified track-devices snapshots."""
 
-    def __init__(
-        self,
-        snapshot_reader: AdbDevicesSnapshotReader | None = None,
-    ) -> None:
-        if snapshot_reader is None:
-            snapshot_reader = SmartSocketAdbDevicesSnapshotReader()
+    def __init__(self, snapshot_reader: AdbDevicesSnapshotReader) -> None:
         if not callable(getattr(snapshot_reader, "read", None)):
             raise TypeError("snapshot_reader must provide read()")
         self.snapshot_reader = snapshot_reader
@@ -73,7 +66,7 @@ class SnapshotAdbTrackedDeviceLookup:
         snapshot = self.snapshot_reader.read(server)
         if not isinstance(snapshot, AdbDevicesSnapshot):
             raise TypeError("snapshot reader must return AdbDevicesSnapshot")
-        return find_tracked_device(snapshot, selector)
+        return find_tracked_device(snapshot.record, selector)
 
 
 __all__ = [

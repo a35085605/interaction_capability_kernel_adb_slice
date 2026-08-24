@@ -140,8 +140,8 @@ class AdbTrackedDevice:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesSnapshot:
-    """Complete AOSP ``adb_host.proto.Devices`` track-devices snapshot."""
+class AdbDevicesRecord:
+    """Complete AOSP ``adb_host.proto.Devices`` track-devices record."""
 
     devices: tuple[AdbTrackedDevice, ...] = field(default_factory=tuple)
 
@@ -156,6 +156,6 @@ class AdbDevicesSnapshot:
 __all__ = [
     "AdbConnectionState",
     "AdbConnectionType",
-    "AdbDevicesSnapshot",
+    "AdbDevicesRecord",
     "AdbTrackedDevice",
 ]

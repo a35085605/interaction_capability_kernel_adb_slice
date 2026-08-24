@@ -12,6 +12,10 @@ from adb.server.lifecycle.control.subprocess import SubprocessAdbServerControlle
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerState
+from adb.tracking.snapshot.identity import (
+    AdbDevicesSnapshotEpoch,
+    AdbDevicesSnapshotEpochSequence,
+)
 from adb.tracking.snapshot.state import AdbDevicesSnapshotState
 from adb.tracking.supervision.policy import (
     AdbDevicesTrackingSupervisionPolicy,
@@ -45,6 +49,7 @@ class _BootstrapCore:
     provisioning_endpoint: AdbServerEndpoint | None
     server_state: AdbServerState
     snapshot_state: AdbDevicesSnapshotState
+    devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch]
     initial_server: AdbServer
 
 
@@ -169,6 +174,7 @@ class AdbRuntimeBootstrap:
                     core.initial_server,
                     event_bus,
                     self._tracking_supervision_policy,
+                    devices_snapshot_epoch_issuer=core.devices_snapshot_epoch_issuer,
                     snapshot_state=core.snapshot_state,
                 )
                 if track_devices
@@ -201,8 +207,9 @@ class AdbRuntimeBootstrap:
         return AdbRuntime(*args, **kwargs)
 
     def _build_core(self) -> _BootstrapCore:
-        issuer = ServerEpochSequence()
-        controller = self._server_controller_factory(issuer)
+        server_epoch_issuer = ServerEpochSequence()
+        devices_snapshot_epoch_issuer = AdbDevicesSnapshotEpochSequence()
+        controller = self._server_controller_factory(server_epoch_issuer)
         if not isinstance(controller, AdbServerController):
             raise TypeError("server controller factory must return AdbServerController")
 
@@ -218,6 +225,7 @@ class AdbRuntimeBootstrap:
                 provisioning_endpoint=provisioning_endpoint,
                 server_state=AdbServerState(initial_server),
                 snapshot_state=AdbDevicesSnapshotState(),
+                devices_snapshot_epoch_issuer=devices_snapshot_epoch_issuer,
                 initial_server=initial_server,
             )
         except BaseException:
