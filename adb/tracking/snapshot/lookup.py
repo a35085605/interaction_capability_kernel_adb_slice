@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Protocol
 
 from adb.server.identity import AdbServer
-from adb.tracking.model import AdbDevicesSnapshot, AdbTrackedDevice
-from adb.tracking.reader import (
+from adb.tracking.snapshot.model import AdbDevicesSnapshot, AdbTrackedDevice
+from adb.tracking.snapshot.reader import (
     AdbDevicesSnapshotReader,
     SmartSocketAdbDevicesSnapshotReader,
 )

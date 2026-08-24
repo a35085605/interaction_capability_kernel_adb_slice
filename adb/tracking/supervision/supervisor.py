@@ -12,7 +12,7 @@ from adb.server.signal import (
     AdbServerRecovered,
     AdbServerReconciliationRequested,
 )
-from adb.tracking.state import AdbDevicesSnapshotState
+from adb.tracking.snapshot.state import AdbDevicesSnapshotState
 from adb.tracking.publication import (
     AdbDevicesSnapshotStateBackedTrackingPublisher,
 )

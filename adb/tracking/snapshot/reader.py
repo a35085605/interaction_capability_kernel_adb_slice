@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
 from adb.server.identity import AdbServer
-from adb.tracking.model import AdbDevicesSnapshot
+from adb.tracking.snapshot.model import AdbDevicesSnapshot
 
 if TYPE_CHECKING:
     from adb._internal.client import AdbServiceClient

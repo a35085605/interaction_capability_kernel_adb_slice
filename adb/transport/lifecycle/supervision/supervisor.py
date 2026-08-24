@@ -15,12 +15,12 @@ from adb.transport.configuration import (
     AdbTcpTransportConfiguration,
     AdbUsbTransportConfiguration,
 )
-from adb.tracking.state import (
+from adb.tracking.snapshot.state import (
     AdbDevicesSnapshotState,
     AdbDevicesSnapshotView,
     AdbDevicesSnapshotWriter,
 )
-from adb.tracking.model import AdbDevicesSnapshot
+from adb.tracking.snapshot.model import AdbDevicesSnapshot
 from adb.transport.resolution import (
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,

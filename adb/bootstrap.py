@@ -12,7 +12,7 @@ from adb.server.lifecycle.control.subprocess import SubprocessAdbServerControlle
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerState
-from adb.tracking.state import AdbDevicesSnapshotState
+from adb.tracking.snapshot.state import AdbDevicesSnapshotState
 from adb.tracking.supervision.policy import (
     AdbDevicesTrackingSupervisionPolicy,
 )

@@ -7,7 +7,7 @@ import socket
 from threading import Lock
 from time import monotonic
 
-from adb.tracking.model import AdbDevicesSnapshot
+from adb.tracking.snapshot.model import AdbDevicesSnapshot
 from adb._internal.framing import encode_service, parse_hex_length
 from adb._internal.proto import parse_devices_snapshot
 from adb.errors import (

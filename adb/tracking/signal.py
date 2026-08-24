@@ -6,7 +6,7 @@ from typing import TypeAlias
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch
-from adb.tracking.model import AdbDevicesSnapshot
+from adb.tracking.snapshot.model import AdbDevicesSnapshot
 
 
 def _require_server(value: object) -> AdbServer:

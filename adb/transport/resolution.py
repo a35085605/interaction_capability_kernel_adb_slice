@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from adb.transport.configuration import AdbConfiguredTransport
-from adb.tracking.model import (
+from adb.tracking.snapshot.model import (
     AdbConnectionType,
     AdbDevicesSnapshot,
     AdbTrackedDevice,

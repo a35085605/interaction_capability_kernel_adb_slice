@@ -3,7 +3,7 @@ from __future__ import annotations
 from threading import Lock
 
 from adb.server.identity import AdbServer
-from adb.tracking.state import AdbDevicesSnapshotWriter
+from adb.tracking.snapshot.state import AdbDevicesSnapshotWriter
 from adb.tracking.signal import (
     AdbDevicesSnapshotObserved,
     AdbDevicesTrackingFailed,

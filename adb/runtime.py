@@ -7,7 +7,7 @@ from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
 from adb.server.state import AdbServerState
 from adb.transport.configuration import AdbConfiguredTransport
-from adb.tracking.state import AdbDevicesSnapshotState, AdbDevicesSnapshotView
+from adb.tracking.snapshot.state import AdbDevicesSnapshotState, AdbDevicesSnapshotView
 from adb.tracking.supervision.supervisor import AdbDevicesTrackingSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor

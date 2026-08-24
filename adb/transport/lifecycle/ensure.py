@@ -15,13 +15,13 @@ from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
 )
-from adb.tracking.model import (
+from adb.tracking.snapshot.model import (
     AdbConnectionState,
     AdbConnectionType,
     AdbDevicesSnapshot,
     AdbTrackedDevice,
 )
-from adb.tracking.reader import AdbDevicesSnapshotReader
+from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
 from adb.transport.resolution import (
     AdbConfiguredTransportResolutionStatus,
     resolve_configured_transport,

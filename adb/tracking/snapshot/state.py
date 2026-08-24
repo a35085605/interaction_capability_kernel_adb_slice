@@ -6,11 +6,11 @@ from typing import Protocol, runtime_checkable
 
 from adb.epoch import EpochIssuer
 from adb.server.identity import ServerEpoch
-from adb.tracking.identity import (
+from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshotEpoch,
     AdbDevicesSnapshotEpochSequence,
 )
-from adb.tracking.model import AdbDevicesSnapshot
+from adb.tracking.snapshot.model import AdbDevicesSnapshot
 
 
 @dataclass(frozen=True, slots=True)
