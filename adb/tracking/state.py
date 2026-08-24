@@ -4,12 +4,12 @@ from threading import Lock
 from typing import Protocol, runtime_checkable
 
 from adb.tracking.model import AdbDevicesSnapshot
-from adb.tracking.identity import AdbDevicesTrackingScopeIdentity
+from adb.tracking.identity import AdbDevicesTracking
 from adb.tracking.signal import AdbDevicesSnapshotObserved
 
 
-def _scope_order(scope: AdbDevicesTrackingScopeIdentity) -> tuple[int, int]:
-    return scope.epoch, scope.generation
+def _scope_order(scope: AdbDevicesTracking) -> tuple[int, int]:
+    return scope.server_epoch, scope.generation
 
 
 @runtime_checkable
@@ -17,7 +17,7 @@ class AdbDevicesView(Protocol):
     """Read-only current tracked-devices projection for one runtime."""
 
     @property
-    def active_scope(self) -> AdbDevicesTrackingScopeIdentity | None: ...
+    def active_scope(self) -> AdbDevicesTracking | None: ...
 
     @property
     def current_observation(self) -> AdbDevicesSnapshotObserved | None: ...
@@ -30,11 +30,11 @@ class AdbDevicesView(Protocol):
 class AdbDevicesWriter(Protocol):
     """Commit one exact tracking scope into the current tracked-devices projection."""
 
-    def begin_tracking(self, scope: AdbDevicesTrackingScopeIdentity) -> bool: ...
+    def begin_tracking(self, scope: AdbDevicesTracking) -> bool: ...
 
     def observe(self, observation: AdbDevicesSnapshotObserved) -> bool: ...
 
-    def end_tracking(self, scope: AdbDevicesTrackingScopeIdentity) -> bool: ...
+    def end_tracking(self, scope: AdbDevicesTracking) -> bool: ...
 
 
 class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
@@ -48,12 +48,12 @@ class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._active_scope: AdbDevicesTrackingScopeIdentity | None = None
-        self._latest_scope: AdbDevicesTrackingScopeIdentity | None = None
+        self._active_scope: AdbDevicesTracking | None = None
+        self._latest_scope: AdbDevicesTracking | None = None
         self._current_observation: AdbDevicesSnapshotObserved | None = None
 
     @property
-    def active_scope(self) -> AdbDevicesTrackingScopeIdentity | None:
+    def active_scope(self) -> AdbDevicesTracking | None:
         with self._lock:
             return self._active_scope
 
@@ -68,7 +68,7 @@ class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
             observation = self._current_observation
             return None if observation is None else observation.snapshot
 
-    def begin_tracking(self, scope: AdbDevicesTrackingScopeIdentity) -> bool:
+    def begin_tracking(self, scope: AdbDevicesTracking) -> bool:
         self._require_scope(scope)
         with self._lock:
             if self._active_scope == scope:
@@ -91,7 +91,7 @@ class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
             self._current_observation = observation
             return True
 
-    def end_tracking(self, scope: AdbDevicesTrackingScopeIdentity) -> bool:
+    def end_tracking(self, scope: AdbDevicesTracking) -> bool:
         self._require_scope(scope)
         with self._lock:
             if scope != self._active_scope:
@@ -101,9 +101,9 @@ class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
             return True
 
     @staticmethod
-    def _require_scope(scope: AdbDevicesTrackingScopeIdentity) -> None:
-        if not isinstance(scope, AdbDevicesTrackingScopeIdentity):
-            raise TypeError("scope must be AdbDevicesTrackingScopeIdentity")
+    def _require_scope(scope: AdbDevicesTracking) -> None:
+        if not isinstance(scope, AdbDevicesTracking):
+            raise TypeError("scope must be AdbDevicesTracking")
 
 
 __all__ = [

@@ -9,12 +9,12 @@ from adb.server.identity import AdbServer
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesTrackingScopeIdentity:
-    """Identity for one track-devices lifetime.
+class AdbDevicesTracking:
+    """One track-devices lifetime.
 
     The generation distinguishes successive tracker scopes bound to the same ADB server
-    lifetime. A scope identity is therefore stable for all signals emitted by one tracker and
-    changes whenever supervision creates a replacement tracker.
+    lifetime. A tracking lifetime is therefore stable for all signals emitted by one tracker
+    and changes whenever supervision creates a replacement tracker.
     """
 
     server: AdbServer
@@ -29,11 +29,11 @@ class AdbDevicesTrackingScopeIdentity:
             raise ValueError("generation must be greater than zero")
 
     @property
-    def endpoint(self) -> AdbServerEndpoint:
+    def server_endpoint(self) -> AdbServerEndpoint:
         return self.server.endpoint
 
     @property
-    def epoch(self) -> int:
+    def server_epoch(self) -> int:
         return self.server.epoch
 
 
@@ -59,7 +59,7 @@ class AdbDevicesTrackingGenerationSequence:
 
 
 __all__ = [
+    "AdbDevicesTracking",
     "AdbDevicesTrackingGenerationIssuer",
     "AdbDevicesTrackingGenerationSequence",
-    "AdbDevicesTrackingScopeIdentity",
 ]

@@ -1,9 +1,9 @@
 """ADB track-devices observations, state, and streaming lifetimes."""
 
 from adb.tracking.identity import (
+    AdbDevicesTracking,
     AdbDevicesTrackingGenerationIssuer,
     AdbDevicesTrackingGenerationSequence,
-    AdbDevicesTrackingScopeIdentity,
 )
 from adb.tracking.lookup import AdbTrackedDeviceLookup
 from adb.tracking.model import (
@@ -33,12 +33,12 @@ __all__ = [
     "AdbDevicesSnapshotReader",
     "AdbDevicesState",
     "AdbDevicesTracker",
+    "AdbDevicesTracking",
     "AdbDevicesTrackingFailed",
     "AdbDevicesTrackingFailure",
     "AdbDevicesTrackingGenerationIssuer",
     "AdbDevicesTrackingGenerationSequence",
     "AdbDevicesTrackingScope",
-    "AdbDevicesTrackingScopeIdentity",
     "AdbDevicesTrackingSignal",
     "AdbDevicesTrackingStarted",
     "AdbDevicesTrackingStopped",

@@ -10,7 +10,7 @@ from adb.errors import (
     AdbServiceError,
 )
 from adb.server.identity import AdbServer
-from adb.tracking.identity import AdbDevicesTrackingScopeIdentity
+from adb.tracking.identity import AdbDevicesTracking
 from adb.tracking.source import AdbTrackDevicesSession, AdbTrackDevicesSource
 from adb.tracking.signal import (
     AdbDevicesSnapshotObserved,
@@ -37,7 +37,7 @@ class AdbDevicesTrackingScope(Protocol):
     """Single-use track-devices scope."""
 
     @property
-    def identity(self) -> AdbDevicesTrackingScopeIdentity: ...
+    def identity(self) -> AdbDevicesTracking: ...
 
     @property
     def active(self) -> bool: ...
@@ -57,15 +57,15 @@ class AdbDevicesTracker:
 
     def __init__(
         self,
-        identity: AdbDevicesTrackingScopeIdentity,
+        identity: AdbDevicesTracking,
         publisher: EventPublisher,
         startup_timeout_seconds: float = 5.0,
         *,
         _source_factory: _SourceFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(identity, AdbDevicesTrackingScopeIdentity):
-            raise TypeError("identity must be AdbDevicesTrackingScopeIdentity")
+        if not isinstance(identity, AdbDevicesTracking):
+            raise TypeError("identity must be AdbDevicesTracking")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
         if _source_factory is not None and not callable(_source_factory):
@@ -74,7 +74,7 @@ class AdbDevicesTracker:
             raise TypeError("_thread_factory must be callable")
         self.identity = identity
         self.server = identity.server
-        self.endpoint = identity.endpoint
+        self.endpoint = identity.server_endpoint
         self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
         self._source_factory = _source_factory
