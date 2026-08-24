@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from threading import Lock, Thread, current_thread
+from threading import Event, Lock, Thread, current_thread
 from typing import Protocol, runtime_checkable
 
 from adb.errors import (
@@ -50,9 +50,9 @@ class AdbDevicesTracker(Protocol):
 class SmartSocketAdbDevicesTracker:
     """Track one smart-socket track-devices stream for one exact tracking lifetime.
 
-    ``start`` establishes stream mode before returning, then hands the established session to
-    the worker. A tracker is single-use. Stop or failure is terminal; ``close`` closes the source
-    and joins the worker before returning.
+    ``start`` establishes the stream and synchronously publishes its initial complete snapshot
+    before returning. Subsequent snapshots are consumed by the worker. A tracker is single-use.
+    Stop or failure is terminal; ``close`` closes the source and joins the worker before returning.
     """
 
     def __init__(
@@ -91,7 +91,7 @@ class SmartSocketAdbDevicesTracker:
             return not self._closed and self._active_thread is not None
 
     def start(self) -> None:
-        """Establish this single-use tracker and return only after stream mode is entered."""
+        """Establish this tracker and return after its initial snapshot is published."""
 
         with self._lock:
             if self._closed:
@@ -111,13 +111,15 @@ class SmartSocketAdbDevicesTracker:
         if session is None:
             self._abort_start(source)
             raise RuntimeError(
-                "ADB devices tracker was closed before tracking stream mode was entered"
+                "ADB devices tracker was closed before its initial snapshot was established"
             )
 
+        startup_complete = Event()
+        startup_errors: list[BaseException] = []
         try:
             thread = self._thread_factory(
                 target=self._run,
-                args=(source, session),
+                args=(source, session, startup_complete, startup_errors),
                 name=(
                     "adb-track-devices-"
                     f"{self.endpoint.host}-{self.endpoint.port}-"
@@ -149,6 +151,12 @@ class SmartSocketAdbDevicesTracker:
             session.close()
             source.close()
             raise
+
+        startup_complete.wait()
+        if startup_errors:
+            if thread is not current_thread():
+                thread.join()
+            raise startup_errors[0]
 
     def close(self) -> None:
         """Destroy this tracker scope and wait for its worker to stop."""
@@ -188,42 +196,69 @@ class SmartSocketAdbDevicesTracker:
         self,
         source: AdbTrackDevicesSource,
         session: AdbTrackDevicesSession,
+        startup_complete: Event,
+        startup_errors: list[BaseException],
     ) -> None:
         scope = self.identity
         terminal: object | None = None
+        startup_succeeded = False
         try:
-            if self._can_publish_from(source):
-                self._publisher.publish(AdbDevicesTrackingStarted(scope))
-                for snapshot in session.snapshots():
-                    if not self._can_publish_from(source):
-                        break
-                    self._publisher.publish(
-                        AdbDevicesSnapshotObserved(scope, snapshot)
-                    )
-                terminal = AdbDevicesTrackingStopped(scope)
+            if not self._can_publish_from(source):
+                raise RuntimeError(
+                    "ADB devices tracker was closed before its initial snapshot was published"
+                )
+
+            self._publisher.publish(AdbDevicesTrackingStarted(scope))
+            self._publisher.publish(
+                AdbDevicesSnapshotObserved(scope, session.initial_snapshot)
+            )
+            startup_succeeded = True
+            startup_complete.set()
+
+            for snapshot in session.snapshots():
+                if not self._can_publish_from(source):
+                    break
+                self._publisher.publish(
+                    AdbDevicesSnapshotObserved(scope, snapshot)
+                )
+            terminal = AdbDevicesTrackingStopped(scope)
         except AdbServerConnectionError as exc:
-            terminal = AdbDevicesTrackingFailed(
-                scope,
-                AdbDevicesTrackingFailure.SERVER_CONNECTION,
-                str(exc),
-            )
+            if startup_succeeded:
+                terminal = AdbDevicesTrackingFailed(
+                    scope,
+                    AdbDevicesTrackingFailure.SERVER_CONNECTION,
+                    str(exc),
+                )
+            else:
+                startup_errors.append(exc)
         except AdbServiceError as exc:
-            terminal = AdbDevicesTrackingFailed(
-                scope,
-                AdbDevicesTrackingFailure.SERVICE,
-                str(exc),
-            )
+            if startup_succeeded:
+                terminal = AdbDevicesTrackingFailed(
+                    scope,
+                    AdbDevicesTrackingFailure.SERVICE,
+                    str(exc),
+                )
+            else:
+                startup_errors.append(exc)
         except AdbProtocolError as exc:
-            terminal = AdbDevicesTrackingFailed(
-                scope,
-                AdbDevicesTrackingFailure.PROTOCOL,
-                str(exc),
-            )
+            if startup_succeeded:
+                terminal = AdbDevicesTrackingFailed(
+                    scope,
+                    AdbDevicesTrackingFailure.PROTOCOL,
+                    str(exc),
+                )
+            else:
+                startup_errors.append(exc)
+        except BaseException as exc:
+            if startup_succeeded:
+                raise
+            startup_errors.append(exc)
         finally:
+            startup_complete.set()
             session.close()
             publish_terminal = self._mark_terminal(source)
 
-        if terminal is not None and publish_terminal:
+        if startup_succeeded and terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
     def _can_publish_from(self, source: AdbTrackDevicesSource) -> bool:

@@ -39,11 +39,23 @@ def _parse_snapshot(payload: bytes) -> AdbDevicesSnapshot:
 
 
 class AdbTrackDevicesSession:
-    """One established blocking track-devices stream session."""
+    """One established blocking track-devices stream session.
 
-    def __init__(self, source: "AdbTrackDevicesSource", session_socket: socket.socket) -> None:
+    ``initial_snapshot`` is the first complete snapshot read while the source is still under its
+    startup deadline. ``snapshots`` yields only subsequent stream observations.
+    """
+
+    def __init__(
+        self,
+        source: "AdbTrackDevicesSource",
+        session_socket: socket.socket,
+        initial_snapshot: AdbDevicesSnapshot,
+    ) -> None:
+        if not isinstance(initial_snapshot, AdbDevicesSnapshot):
+            raise TypeError("initial_snapshot must be AdbDevicesSnapshot")
         self._source = source
         self._socket = session_socket
+        self.initial_snapshot = initial_snapshot
         self._closed = False
 
     def snapshots(self) -> Iterator[AdbDevicesSnapshot]:
@@ -110,7 +122,7 @@ class AdbTrackDevicesSource:
                 pass
 
     def open(self) -> AdbTrackDevicesSession | None:
-        """Establish one tracker stream and return after stream mode is entered."""
+        """Establish one tracker stream and synchronously read its initial snapshot."""
 
         if not self._acquire_session():
             return None
@@ -119,8 +131,15 @@ class AdbTrackDevicesSource:
         try:
             session_socket, deadline = self._connect()
             self._handshake(session_socket, deadline)
+            initial_snapshot = _parse_snapshot(
+                self._read_frame(session_socket, deadline=deadline)
+            )
             self._enter_stream_mode(session_socket)
-            return AdbTrackDevicesSession(self, session_socket)
+            return AdbTrackDevicesSession(
+                self,
+                session_socket,
+                initial_snapshot,
+            )
         except _SourceClosed:
             self._release_session(session_socket)
             return None
@@ -190,7 +209,7 @@ class AdbTrackDevicesSource:
 
         # Synchronous hostname resolution above cannot be interrupted by a socket
         # timeout. The startup deadline begins after resolution and is shared by
-        # all connect attempts plus the ADB service handshake.
+        # all connect attempts, the ADB service handshake, and the first complete snapshot.
         deadline = monotonic() + self.startup_timeout_seconds
         last_error: OSError | None = None
         for family, socktype, proto, _, sockaddr in addresses:
@@ -283,13 +302,18 @@ class AdbTrackDevicesSource:
             f"unexpected ADB service status: {status!r}"
         )
 
-    def _read_frame(self, sock: socket.socket) -> bytes:
-        length_raw = self._recv_exact(sock, 4, deadline=None)
+    def _read_frame(
+        self,
+        sock: socket.socket,
+        *,
+        deadline: float | None = None,
+    ) -> bytes:
+        length_raw = self._recv_exact(sock, 4, deadline=deadline)
         try:
             length = parse_hex_length(length_raw, context="snapshot")
         except AdbProtocolError as exc:
             raise AdbProtocolError(str(exc)) from exc
-        return self._recv_exact(sock, length, deadline=None)
+        return self._recv_exact(sock, length, deadline=deadline)
 
     def _send_all(self, sock: socket.socket, data: bytes, deadline: float) -> None:
         self._set_deadline_timeout(sock, deadline)
