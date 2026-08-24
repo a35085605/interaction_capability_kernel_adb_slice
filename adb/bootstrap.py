@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from adb.epoch import EpochIssuer
 from adb.runtime import AdbRuntime
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServer, AdbServerEpochIssuer, AdbServerEpochSequence
+from adb.server.identity import AdbServer, ServerEpoch, ServerEpochSequence
 from adb.server.lifecycle.control.port import AdbServerController
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerController
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
@@ -29,11 +30,11 @@ from eventing import EventBus
 from scheduling import TemporalScheduler
 
 
-_AdbServerControllerFactory = Callable[[AdbServerEpochIssuer], AdbServerController]
+_AdbServerControllerFactory = Callable[[EpochIssuer[ServerEpoch]], AdbServerController]
 
 
 def _default_server_controller_factory(
-    issuer: AdbServerEpochIssuer,
+    issuer: EpochIssuer[ServerEpoch],
 ) -> AdbServerController:
     return SubprocessAdbServerController(server_epoch_issuer=issuer)
 
@@ -200,7 +201,7 @@ class AdbRuntimeBootstrap:
         return AdbRuntime(*args, **kwargs)
 
     def _build_core(self) -> _BootstrapCore:
-        issuer = AdbServerEpochSequence()
+        issuer = ServerEpochSequence()
         controller = self._server_controller_factory(issuer)
         if not isinstance(controller, AdbServerController):
             raise TypeError("server controller factory must return AdbServerController")

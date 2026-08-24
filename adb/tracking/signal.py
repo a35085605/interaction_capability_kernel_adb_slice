@@ -5,9 +5,9 @@ from enum import Enum
 from typing import TypeAlias
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServer
+from adb.server.identity import AdbServer, ServerEpoch
 from adb.tracking.model import AdbDevicesSnapshot
-from adb.tracking.identity import AdbDevicesTrackingScope
+from adb.tracking.identity import AdbDevicesTrackingScope, DevicesTrackingEpoch
 
 
 def _require_scope(value: object) -> AdbDevicesTrackingScope:
@@ -47,12 +47,12 @@ class _TrackingScopeSignalProjection:
         return self.scope.server_endpoint
 
     @property
-    def server_epoch(self) -> int:
+    def server_epoch(self) -> ServerEpoch:
         return self.scope.server_epoch
 
     @property
-    def generation(self) -> int:
-        return self.scope.generation
+    def epoch(self) -> DevicesTrackingEpoch:
+        return self.scope.epoch
 
 
 @dataclass(frozen=True, slots=True)

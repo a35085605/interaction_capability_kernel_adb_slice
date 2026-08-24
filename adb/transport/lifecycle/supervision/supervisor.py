@@ -20,7 +20,7 @@ from adb.tracking.state import (
     AdbDevicesView,
     AdbDevicesWriter,
 )
-from adb.tracking.identity import AdbDevicesTrackingScope
+from adb.tracking.identity import AdbDevicesTrackingScope, DevicesTrackingEpoch
 from adb.transport.resolution import (
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
@@ -64,7 +64,7 @@ class AdbConfiguredTransportSupervisor:
     """Project and reconcile runtime-scoped registrations from device observations.
 
     Registrations are long-lived and survive replacement of the current ``AdbServer``, including
-    replacements that use a different endpoint. Tracker generations are observation-session
+    replacements that use a different endpoint. Tracking epochs are observation-session
     correlation only: replacing a tracker within one server epoch does not reset transport
     resolution or invalidate recovery work. Server replacement does. USB registrations are
     projection-only; an optional TCP ensurer reconciles currently absent TCP transports.
@@ -110,7 +110,7 @@ class AdbConfiguredTransportSupervisor:
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._tracking_active = False
         self._tracking_scope: AdbDevicesTrackingScope | None = None
-        self._latest_tracking_generation: int | None = None
+        self._latest_tracking_epoch: DevicesTrackingEpoch | None = None
         self._latest_server_epoch = server.epoch
         self._recovery_threads: set[Thread] = set()
         self._closed = False
@@ -278,14 +278,14 @@ class AdbConfiguredTransportSupervisor:
             if self._closed or event.server != self.server:
                 return
             if (
-                self._latest_tracking_generation is not None
-                and event.generation <= self._latest_tracking_generation
+                self._latest_tracking_epoch is not None
+                and event.epoch <= self._latest_tracking_epoch
             ):
                 return
             writer = self._devices_writer
             if writer is not None and not writer.begin_tracking(event.scope):
                 return
-            self._latest_tracking_generation = event.generation
+            self._latest_tracking_epoch = event.epoch
             self._tracking_active = True
             self._tracking_scope = event.scope
 
@@ -470,7 +470,7 @@ class AdbConfiguredTransportSupervisor:
             self._devices_writer.end_tracking(scope)
         self._tracking_active = False
         self._tracking_scope = None
-        self._latest_tracking_generation = None
+        self._latest_tracking_epoch = None
         for registration in self._registrations.values():
             registration.resolution = None
             registration.active_recovery_token = None

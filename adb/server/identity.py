@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from threading import Lock
-from typing import Protocol, runtime_checkable
 
+from adb.epoch import Epoch, EpochSequence
 from adb.server.endpoint import AdbServerEndpoint
+
+
+class ServerEpoch(Epoch):
+    """Ordinal identity for successive ADB server lifetimes within one runtime."""
+
+    __slots__ = ()
+
+
+class ServerEpochSequence(EpochSequence[ServerEpoch]):
+    """Runtime-scoped monotonically increasing ADB server epoch issuer."""
+
+    def __init__(self) -> None:
+        super().__init__(ServerEpoch)
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,36 +27,13 @@ class AdbServer:
     """
 
     endpoint: AdbServerEndpoint
-    epoch: int
+    epoch: ServerEpoch
 
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint")
-        if isinstance(self.epoch, bool) or not isinstance(self.epoch, int):
-            raise TypeError("epoch must be an integer")
-        if self.epoch <= 0:
-            raise ValueError("epoch must be greater than zero")
+        if not isinstance(self.epoch, ServerEpoch):
+            raise TypeError("epoch must be ServerEpoch")
 
 
-@runtime_checkable
-class AdbServerEpochIssuer(Protocol):
-    """Issue epochs for successive ADB server lifetimes within one runtime."""
-
-    def issue(self) -> int:
-        ...
-
-
-class AdbServerEpochSequence:
-    """Runtime-scoped monotonically increasing ADB server epoch issuer."""
-
-    def __init__(self) -> None:
-        self._lock = Lock()
-        self._current = 0
-
-    def issue(self) -> int:
-        with self._lock:
-            self._current += 1
-            return self._current
-
-
-__all__ = ["AdbServer", "AdbServerEpochIssuer", "AdbServerEpochSequence"]
+__all__ = ["AdbServer", "ServerEpoch", "ServerEpochSequence"]

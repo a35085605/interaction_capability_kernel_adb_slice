@@ -3,13 +3,16 @@ from __future__ import annotations
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
+from adb.server.identity import ServerEpoch
 from adb.tracking.model import AdbDevicesSnapshot
-from adb.tracking.identity import AdbDevicesTrackingScope
+from adb.tracking.identity import AdbDevicesTrackingScope, DevicesTrackingEpoch
 from adb.tracking.signal import AdbDevicesSnapshotObserved
 
 
-def _scope_order(scope: AdbDevicesTrackingScope) -> tuple[int, int]:
-    return scope.server_epoch, scope.generation
+def _scope_order(
+    scope: AdbDevicesTrackingScope,
+) -> tuple[ServerEpoch, DevicesTrackingEpoch]:
+    return scope.server_epoch, scope.epoch
 
 
 @runtime_checkable
@@ -40,11 +43,11 @@ class AdbDevicesWriter(Protocol):
 class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
     """Thread-safe last-observed tracked-devices state for one runtime.
 
-    Tracking scopes identify observation sessions, not generations of device data. Replacing or
-    ending a tracker therefore changes only ``active_scope``; the last observation remains
-    available while no tracker is active and across replacement trackers for the same server
-    epoch. Starting observation of a newer server epoch invalidates the prior epoch's snapshot.
-    Late writes from older server epochs or tracker generations are rejected.
+    Tracking scopes identify observation sessions by epoch. Replacing or ending a tracker
+    therefore changes only ``active_scope``; the last observation remains available while no
+    tracker is active and across replacement trackers for the same server epoch. Starting
+    observation of a newer server epoch invalidates the prior epoch's snapshot.
+    Late writes from older server epochs or tracking epochs are rejected.
     """
 
     def __init__(self) -> None:

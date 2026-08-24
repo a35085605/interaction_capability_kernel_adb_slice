@@ -11,7 +11,7 @@ from adb.server.failure import (
     AdbServerLivenessFailure,
     AdbServerProcessExitedFailure,
 )
-from adb.server.identity import AdbServer
+from adb.server.identity import AdbServer, ServerEpoch
 from adb.server.endpoint import AdbServerEndpoint
 
 
@@ -57,7 +57,7 @@ class _ServerSignalProjection:
         return self.server.endpoint
 
     @property
-    def epoch(self) -> int:
+    def epoch(self) -> ServerEpoch:
         return self.server.epoch
 
 

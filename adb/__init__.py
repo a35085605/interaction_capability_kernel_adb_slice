@@ -1,5 +1,6 @@
 """Host-side ADB server, tracking, transport, and protocol capabilities."""
 
+from adb.epoch import Epoch, EpochIssuer, EpochSequence
 from adb.errors import (
     AdbError,
     AdbProtocolError,
@@ -27,8 +28,8 @@ from adb.server import (
     AdbServerProvider,
     AdbServerStopper,
     AdbServer,
-    AdbServerEpochIssuer,
-    AdbServerEpochSequence,
+    ServerEpoch,
+    ServerEpochSequence,
     AdbServerStartError,
     AdbServerState,
     AdbServerStateView,
@@ -46,6 +47,8 @@ from adb.tracking import (
     AdbDevicesState,
     AdbDevicesView,
     AdbDevicesWriter,
+    DevicesTrackingEpoch,
+    DevicesTrackingEpochSequence,
     AdbTrackedDevice,
     AdbTrackedDeviceLookup,
 )
@@ -69,8 +72,13 @@ __all__ = [
     "AdbDevicesState",
     "AdbDevicesView",
     "AdbDevicesWriter",
+    "DevicesTrackingEpoch",
+    "DevicesTrackingEpochSequence",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotReader",
+    "Epoch",
+    "EpochIssuer",
+    "EpochSequence",
     "AdbError",
     "AdbManagedRuntime",
     "AdbRuntimeBootstrap",
@@ -84,8 +92,8 @@ __all__ = [
     "AdbServerProvider",
     "AdbServerStopper",
     "AdbServer",
-    "AdbServerEpochIssuer",
-    "AdbServerEpochSequence",
+    "ServerEpoch",
+    "ServerEpochSequence",
     "AdbServerStartError",
     "AdbServerStateWriter",
     "AdbServerStateView",

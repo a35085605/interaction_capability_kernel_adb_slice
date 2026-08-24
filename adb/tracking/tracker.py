@@ -121,7 +121,7 @@ class SmartSocketAdbDevicesTracker:
                 name=(
                     "adb-track-devices-"
                     f"{self.endpoint.host}-{self.endpoint.port}-"
-                    f"{self.server.epoch}-{self.identity.generation}"
+                    f"{self.server.epoch}-{self.identity.epoch}"
                 ),
             )
         except BaseException:

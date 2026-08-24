@@ -10,9 +10,10 @@ from typing import Protocol
 
 from adb._internal.client import AdbServiceClient
 from adb._internal.subprocess import normalize_executable, normalize_timeout
+from adb.epoch import EpochIssuer
 from adb.errors import AdbError
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServer, AdbServerEpochIssuer
+from adb.server.identity import AdbServer, ServerEpoch
 from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
 from adb.server.status.reader import SmartSocketAdbServerStatusReader
 
@@ -105,7 +106,7 @@ class SubprocessAdbServerController:
     def __init__(
         self,
         *,
-        server_epoch_issuer: AdbServerEpochIssuer,
+        server_epoch_issuer: EpochIssuer[ServerEpoch],
         executable: str = "adb",
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
@@ -118,8 +119,8 @@ class SubprocessAdbServerController:
         _status_reader: _ServerStatusReader | None = None,
         _socket_activation_supported: bool = os.name != "nt",
     ) -> None:
-        if not isinstance(server_epoch_issuer, AdbServerEpochIssuer):
-            raise TypeError("server_epoch_issuer must satisfy AdbServerEpochIssuer")
+        if not isinstance(server_epoch_issuer, EpochIssuer):
+            raise TypeError("server_epoch_issuer must satisfy EpochIssuer")
         if not isinstance(_socket_activation_supported, bool):
             raise TypeError("_socket_activation_supported must be a bool")
 

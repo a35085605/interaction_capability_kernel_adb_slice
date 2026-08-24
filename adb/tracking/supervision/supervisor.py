@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 
+from adb.epoch import EpochIssuer
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from adb.server.failure import AdbServerConnectionFailure
-from adb.server.identity import AdbServer
+from adb.server.identity import AdbServer, ServerEpoch
 from adb.tracking.supervision.policy import AdbDevicesTrackingSupervisionPolicy
 from adb.server.signal import (
     AdbServerRetired,
@@ -13,9 +14,9 @@ from adb.server.signal import (
     AdbServerReconciliationRequested,
 )
 from adb.tracking.identity import (
-    AdbDevicesTrackingGenerationIssuer,
-    AdbDevicesTrackingGenerationSequence,
     AdbDevicesTrackingScope,
+    DevicesTrackingEpoch,
+    DevicesTrackingEpochSequence,
 )
 from adb.tracking.state import AdbDevicesState
 from adb.tracking.publication import (
@@ -39,7 +40,6 @@ _TrackerFactory = Callable[
     [AdbDevicesTrackingScope, EventPublisher],
     AdbDevicesTracker,
 ]
-_DEFAULT_GENERATION_ISSUER = AdbDevicesTrackingGenerationSequence()
 
 
 def _default_thread_factory(*args, **kwargs) -> Thread:
@@ -66,7 +66,7 @@ class AdbDevicesTrackingSupervisor:
         devices_state: AdbDevicesState | None = None,
         _tracker_factory: _TrackerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
-        _generation_issuer: AdbDevicesTrackingGenerationIssuer | None = None,
+        _epoch_issuer: EpochIssuer[DevicesTrackingEpoch] | None = None,
     ) -> None:
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
@@ -84,10 +84,10 @@ class AdbDevicesTrackingSupervisor:
             raise TypeError("_tracker_factory must be callable or None")
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
-        if _generation_issuer is None:
-            _generation_issuer = _DEFAULT_GENERATION_ISSUER
-        if not isinstance(_generation_issuer, AdbDevicesTrackingGenerationIssuer):
-            raise TypeError("_generation_issuer must satisfy AdbDevicesTrackingGenerationIssuer")
+        if _epoch_issuer is None:
+            _epoch_issuer = DevicesTrackingEpochSequence()
+        if not isinstance(_epoch_issuer, EpochIssuer):
+            raise TypeError("_epoch_issuer must satisfy EpochIssuer")
 
         self.server: AdbServer | None = server
         self._bus = event_bus
@@ -99,14 +99,14 @@ class AdbDevicesTrackingSupervisor:
         self._policy = policy
         self._tracker_factory = _tracker_factory
         self._thread_factory = _thread_factory
-        self._generation_issuer = _generation_issuer
+        self._epoch_issuer = _epoch_issuer
         self._lock = Lock()
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._desired_tracking = False
         self._tracker: AdbDevicesTracker | None = None
         self._tracking_active = False
         self._server_identity: AdbServer | None = None
-        self._latest_server_epoch: int | None = None
+        self._latest_server_epoch: ServerEpoch | None = None
         self._start_in_progress = False
         self._attempt_threads: set[Thread] = set()
         self._closed = False
@@ -431,7 +431,7 @@ class AdbDevicesTrackingSupervisor:
             raise RuntimeError("cannot create tracker without an active server")
         identity = AdbDevicesTrackingScope(
             server,
-            self._generation_issuer.issue(),
+            self._epoch_issuer.issue(),
         )
         factory = self._tracker_factory
         tracker = (

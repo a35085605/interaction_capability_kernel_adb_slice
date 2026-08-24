@@ -3,7 +3,7 @@ from __future__ import annotations
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
-from adb.server.identity import AdbServer
+from adb.server.identity import AdbServer, ServerEpoch
 
 
 @runtime_checkable
@@ -14,7 +14,7 @@ class AdbServerStateView(Protocol):
     def current(self) -> AdbServer | None: ...
 
     @property
-    def latest_epoch(self) -> int | None: ...
+    def latest_epoch(self) -> ServerEpoch | None: ...
 
 
 @runtime_checkable
@@ -48,7 +48,7 @@ class AdbServerState(AdbServerStateView, AdbServerStateWriter):
             return self._current
 
     @property
-    def latest_epoch(self) -> int | None:
+    def latest_epoch(self) -> ServerEpoch | None:
         with self._lock:
             return self._latest_epoch
 
