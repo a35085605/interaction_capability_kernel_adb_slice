@@ -116,9 +116,9 @@ class AdbManagedRuntime:
         """Add one runtime-scoped configured-transport registration.
 
         The returned handle is long-lived and survives successive ``AdbServer`` lifetimes.
-        Adding a registration observes the current tracker baseline when one exists, but does
-        not actively recover an already-absent transport. TCP automatic recovery only applies
-        to a disappearance observed after a resolved baseline; USB remains projection-only.
+        When an active tracker already has a current observation, adding a registration projects
+        that observation immediately. An absent configured TCP transport is reconciled through
+        automatic recovery when enabled; USB remains projection-only.
         """
 
         if not isinstance(configuration, AdbConfiguredTransport):

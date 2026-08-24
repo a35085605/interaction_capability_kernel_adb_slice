@@ -130,7 +130,7 @@ class AdbRuntime(AdbManagedRuntime):
 
             event_bus = self._event_bus
             if event_bus is not None and transport_supervisor is not None:
-                # Rebind configured transports before a successor tracker can publish its baseline.
+                # Rebind configured transports before a successor tracker can publish observations.
                 subscriptions = (
                     event_bus.subscribe(AdbServerRetired, self._on_server_retired),
                     event_bus.subscribe(AdbServerRecovered, self._on_server_recovered),

@@ -10,11 +10,11 @@ from adb.server.identity import AdbServer
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingScope:
-    """One track-devices lifetime.
+    """One track-devices observation session.
 
-    The generation distinguishes successive tracker scopes bound to the same ADB server
-    lifetime. A tracking lifetime is therefore stable for all signals emitted by one tracker
-    and changes whenever supervision creates a replacement tracker.
+    ``generation`` distinguishes successive tracker sessions for correlation and stale-signal
+    fencing. It is not a generation of the observed device data: replacement trackers bound to
+    the same ``AdbServer`` lifetime observe the same server-epoch data world.
     """
 
     server: AdbServer
@@ -39,14 +39,14 @@ class AdbDevicesTrackingScope:
 
 @runtime_checkable
 class AdbDevicesTrackingGenerationIssuer(Protocol):
-    """Issue generations for successive track-devices tracker scopes."""
+    """Issue correlation generations for successive track-devices sessions."""
 
     def issue(self) -> int:
         ...
 
 
 class AdbDevicesTrackingGenerationSequence:
-    """Runtime-scoped monotonically increasing tracking-scope generation issuer."""
+    """Runtime-scoped monotonically increasing tracking-session generation issuer."""
 
     def __init__(self) -> None:
         self._lock = Lock()

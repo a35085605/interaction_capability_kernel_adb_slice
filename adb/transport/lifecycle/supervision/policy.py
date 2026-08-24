@@ -7,7 +7,7 @@ from adb.transport.lifecycle.ensure import AdbTcpTransportEnsurePolicy
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportSupervisionPolicy:
-    """Policy for transport projection and optional TCP disappearance recovery."""
+    """Policy for transport projection and optional TCP absence reconciliation."""
 
     tcp_recovery_ensure_policy: AdbTcpTransportEnsurePolicy | None = None
 

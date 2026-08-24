@@ -16,7 +16,7 @@ from adb.transport.lifecycle.ensure import (
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportResolutionChanged:
-    """Signal carrying one configured-transport projection in the current tracker scope."""
+    """Signal carrying a change in configured-transport projection from device observations."""
 
     previous: AdbConfiguredTransportResolution | None
     current: AdbConfiguredTransportResolution
@@ -38,7 +38,7 @@ class AdbConfiguredTransportResolutionChanged:
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportRecoveryExhausted:
-    """Signal that TCP recovery after an observed disappearance ended unsatisfied."""
+    """Signal that TCP recovery for an observed absence ended unsatisfied."""
 
     configuration: AdbConfiguredTransport
     result: AdbTcpTransportEnsureResult

@@ -56,19 +56,18 @@ class _ConfiguredTransportRegistration:
     configuration: AdbConfiguredTransport
     policy: AdbConfiguredTransportSupervisionPolicy
     resolution: AdbConfiguredTransportResolution | None = None
-    recovery_pending: bool = False
     active_recovery_thread: Thread | None = None
     active_recovery_token: object | None = None
 
 
 class AdbConfiguredTransportSupervisor:
-    """Project runtime-scoped registrations across server and tracker lifetimes.
+    """Project and reconcile runtime-scoped registrations from device observations.
 
     Registrations are long-lived and survive replacement of the current ``AdbServer``, including
-    replacements that use a different endpoint. Each new server/tracker scope starts a fresh
-    observation baseline; prior resolutions never create disappearance events in the replacement
-    scope. The supplied event bus is the runtime correlation boundary. USB registrations are
-    projection-only; an optional TCP ensurer may actively recover disappeared TCP transports.
+    replacements that use a different endpoint. Tracker generations are observation-session
+    correlation only: replacing a tracker within one server epoch does not reset transport
+    resolution or invalidate recovery work. Server replacement does. USB registrations are
+    projection-only; an optional TCP ensurer reconciles currently absent TCP transports.
     """
 
     def __init__(
@@ -140,7 +139,7 @@ class AdbConfiguredTransportSupervisor:
     def reconcile(self, server: AdbServer | None) -> None:
         """Rebind long-lived registrations to the current server lifetime.
 
-        Server replacement clears tracker-local resolution and invalidates recovery work
+        Server replacement clears server-local resolution and invalidates recovery work
         started for the previous lifetime, while preserving the registration set itself.
         Older server epochs are ignored.
         """
@@ -166,7 +165,7 @@ class AdbConfiguredTransportSupervisor:
             self.server = server
             if server is not None and server.epoch > self._latest_server_epoch:
                 self._latest_server_epoch = server.epoch
-            self._reset_scope_locked()
+            self._reset_server_lifetime_locked()
 
     def register(
         self,
@@ -287,7 +286,6 @@ class AdbConfiguredTransportSupervisor:
             if writer is not None and not writer.begin_tracking(event.scope):
                 return
             self._latest_tracking_generation = event.generation
-            self._reset_scope_locked(clear_devices=False)
             self._tracking_active = True
             self._tracking_scope = event.scope
 
@@ -335,7 +333,8 @@ class AdbConfiguredTransportSupervisor:
             writer = self._devices_writer
             if writer is not None:
                 writer.end_tracking(event.scope)
-            self._reset_scope_locked(clear_devices=False)
+            self._tracking_active = False
+            self._tracking_scope = None
 
     def _project_registration_locked(
         self,
@@ -351,7 +350,6 @@ class AdbConfiguredTransportSupervisor:
         registration.resolution = current
 
         if current.status is not AdbConfiguredTransportResolutionStatus.ABSENT:
-            registration.recovery_pending = False
             registration.active_recovery_token = None
 
         publication = (
@@ -359,24 +357,20 @@ class AdbConfiguredTransportSupervisor:
             if changed
             else None
         )
-        recoverable_disappearance = (
-            previous is not None
-            and previous.status is AdbConfiguredTransportResolutionStatus.RESOLVED
-            and current.status is AdbConfiguredTransportResolutionStatus.ABSENT
-        )
         match registration.configuration.transport:
             case AdbUsbTransportConfiguration():
                 recovery_launch_requested = False
             case AdbTcpTransportConfiguration():
                 recovery_launch_requested = (
-                    recoverable_disappearance
+                    current.status is AdbConfiguredTransportResolutionStatus.ABSENT
                     and registration.policy.tcp_recovery_ensure_policy is not None
                 )
             case _:
                 raise TypeError("unsupported configured transport type")
-        if recovery_launch_requested:
-            registration.recovery_pending = True
-            recovery_launch_requested = registration.active_recovery_thread is None
+        recovery_launch_requested = (
+            recovery_launch_requested
+            and registration.active_recovery_thread is None
+        )
         return publication, recovery_launch_requested
 
     def _launch_recovery(self, configuration: AdbConfiguredTransport) -> None:
@@ -387,7 +381,12 @@ class AdbConfiguredTransportSupervisor:
                 return
             if registration.active_recovery_thread is not None:
                 return
-            if not registration.recovery_pending:
+            resolution = registration.resolution
+            if (
+                resolution is None
+                or resolution.status is not AdbConfiguredTransportResolutionStatus.ABSENT
+                or registration.policy.tcp_recovery_ensure_policy is None
+            ):
                 return
             recovery_token = object()
             thread = self._thread_factory(
@@ -395,7 +394,6 @@ class AdbConfiguredTransportSupervisor:
                 args=(configuration, server, recovery_token),
                 name=f"adb-tcp-transport-recovery-{configuration.serial.value}",
             )
-            registration.recovery_pending = False
             registration.active_recovery_token = recovery_token
             registration.active_recovery_thread = thread
             self._recovery_threads.add(thread)
@@ -455,7 +453,6 @@ class AdbConfiguredTransportSupervisor:
                     AdbConfiguredTransportRecoveryExhausted(configuration, result)
                 )
         finally:
-            launch_pending_recovery = False
             with self._lock:
                 self._recovery_threads.discard(current_thread())
                 registration = self._registrations.get(configuration)
@@ -466,22 +463,16 @@ class AdbConfiguredTransportSupervisor:
                     registration.active_recovery_thread = None
                     if registration.active_recovery_token is recovery_token:
                         registration.active_recovery_token = None
-                    launch_pending_recovery = (
-                        not self._closed
-                        and registration.recovery_pending
-                    )
-            if launch_pending_recovery:
-                self._launch_recovery(configuration)
 
-    def _reset_scope_locked(self, *, clear_devices: bool = True) -> None:
+    def _reset_server_lifetime_locked(self) -> None:
         scope = self._tracking_scope
-        if clear_devices and self._devices_writer is not None and scope is not None:
+        if self._devices_writer is not None and scope is not None:
             self._devices_writer.end_tracking(scope)
         self._tracking_active = False
         self._tracking_scope = None
+        self._latest_tracking_generation = None
         for registration in self._registrations.values():
             registration.resolution = None
-            registration.recovery_pending = False
             registration.active_recovery_token = None
             # The thread may still finish against its captured server lifetime, but it is no
             # longer allowed to affect this registration or block recovery in a successor.

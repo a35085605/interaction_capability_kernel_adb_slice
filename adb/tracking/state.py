@@ -38,12 +38,13 @@ class AdbDevicesWriter(Protocol):
 
 
 class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
-    """Thread-safe current tracked-devices state for one runtime.
+    """Thread-safe last-observed tracked-devices state for one runtime.
 
-    The state is scoped to the newest accepted tracking lifetime. A new scope clears the prior
-    current observation, and ending that exact scope clears current tracked devices entirely. Late
-    writes from older server epochs or tracker generations are rejected rather than resurrecting
-    stale tracked-device state. Successive accepted scopes may belong to servers at different endpoints.
+    Tracking scopes identify observation sessions, not generations of device data. Replacing or
+    ending a tracker therefore changes only ``active_scope``; the last observation remains
+    available while no tracker is active and across replacement trackers for the same server
+    epoch. Starting observation of a newer server epoch invalidates the prior epoch's snapshot.
+    Late writes from older server epochs or tracker generations are rejected.
     """
 
     def __init__(self) -> None:
@@ -76,9 +77,11 @@ class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
             latest = self._latest_scope
             if latest is not None and _scope_order(scope) <= _scope_order(latest):
                 return False
+            observation = self._current_observation
+            if observation is not None and observation.server_epoch != scope.server_epoch:
+                self._current_observation = None
             self._latest_scope = scope
             self._active_scope = scope
-            self._current_observation = None
             return True
 
     def observe(self, observation: AdbDevicesSnapshotObserved) -> bool:
@@ -97,7 +100,6 @@ class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
             if scope != self._active_scope:
                 return False
             self._active_scope = None
-            self._current_observation = None
             return True
 
     @staticmethod
