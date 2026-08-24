@@ -8,11 +8,6 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, AdbServerEpochIssuer, AdbServerEpochSequence
 from adb.server.lifecycle.control.port import AdbServerController
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerController
-from adb.server.lifecycle.provisioning.policy import (
-    AdbServerEndpointPolicy,
-    AdbServerFixedEndpoint,
-    AdbServerPerGenerationEndpoint,
-)
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerState
@@ -46,7 +41,7 @@ def _default_server_controller_factory(
 @dataclass(frozen=True, slots=True)
 class _BootstrapCore:
     controller: AdbServerController
-    endpoint_policy: AdbServerEndpointPolicy
+    provisioning_endpoint: AdbServerEndpoint | None
     server_state: AdbServerState
     inventory_state: AdbDevicesInventoryState
     initial_server: AdbServer
@@ -120,7 +115,7 @@ class AdbRuntimeBootstrap:
                 core.inventory_state,
                 server_provider=core.controller,
                 server_stopper=core.controller,
-                server_endpoint_policy=core.endpoint_policy,
+                server_provisioning_endpoint=core.provisioning_endpoint,
                 transport_supervision_policy=self._transport_supervision_policy,
             )
         except BaseException:
@@ -168,7 +163,7 @@ class AdbRuntimeBootstrap:
                 core.server_state,
                 provider=core.controller,
                 stopper=core.controller,
-                endpoint_policy=core.endpoint_policy,
+                provisioning_endpoint=core.provisioning_endpoint,
                 event_bus=event_bus,
                 scheduler=scheduler,
                 policy=self._server_supervision_policy,
@@ -198,7 +193,7 @@ class AdbRuntimeBootstrap:
                 core.inventory_state,
                 server_provider=core.controller,
                 server_stopper=core.controller,
-                server_endpoint_policy=core.endpoint_policy,
+                server_provisioning_endpoint=core.provisioning_endpoint,
                 event_bus=event_bus,
                 server_supervisor=server_supervisor,
                 tracking_supervisor=tracking_supervisor,
@@ -221,14 +216,10 @@ class AdbRuntimeBootstrap:
         try:
             if self._endpoint is not None and initial_server.endpoint != self._endpoint:
                 raise ValueError("endpoint-constrained initial server provisioning changed endpoint")
-            endpoint_policy: AdbServerEndpointPolicy = (
-                AdbServerFixedEndpoint(initial_server.endpoint)
-                if self._pin_endpoint
-                else AdbServerPerGenerationEndpoint()
-            )
+            provisioning_endpoint = initial_server.endpoint if self._pin_endpoint else None
             return _BootstrapCore(
                 controller=controller,
-                endpoint_policy=endpoint_policy,
+                provisioning_endpoint=provisioning_endpoint,
                 server_state=AdbServerState(initial_server),
                 inventory_state=AdbDevicesInventoryState(),
                 initial_server=initial_server,

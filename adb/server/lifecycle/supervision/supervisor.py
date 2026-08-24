@@ -6,12 +6,9 @@ from random import random
 from threading import Lock, Thread, current_thread
 
 from adb.server.availability import AdbServerUnavailableError
+from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
 from adb.server.lifecycle.control.port import AdbServerProvider, AdbServerStopper
-from adb.server.lifecycle.provisioning.policy import (
-    AdbServerEndpointPolicy,
-    resolve_server_provisioning_endpoint,
-)
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
@@ -65,7 +62,7 @@ class AdbServerSupervisor:
         server: AdbServer | AdbServerState,
         provider: AdbServerProvider,
         stopper: AdbServerStopper,
-        endpoint_policy: AdbServerEndpointPolicy,
+        provisioning_endpoint: AdbServerEndpoint | None,
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
@@ -85,7 +82,10 @@ class AdbServerSupervisor:
             raise TypeError("provider must satisfy AdbServerProvider")
         if not isinstance(stopper, AdbServerStopper):
             raise TypeError("stopper must satisfy AdbServerStopper")
-        resolve_server_provisioning_endpoint(endpoint_policy)
+        if provisioning_endpoint is not None and not isinstance(
+            provisioning_endpoint, AdbServerEndpoint
+        ):
+            raise TypeError("provisioning_endpoint must be AdbServerEndpoint or None")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -99,7 +99,7 @@ class AdbServerSupervisor:
         self._bus = event_bus
         self._provider = provider
         self._stopper = stopper
-        self._endpoint_policy = endpoint_policy
+        self._provisioning_endpoint = provisioning_endpoint
         self._scheduler = scheduler
         self._policy = policy
         self._random = _random
@@ -372,11 +372,13 @@ class AdbServerSupervisor:
                 raise
 
     def _provide_server(self) -> AdbServer:
-        endpoint = resolve_server_provisioning_endpoint(self._endpoint_policy)
-        server = self._provider.provide(endpoint)
+        server = self._provider.provide(self._provisioning_endpoint)
         if not isinstance(server, AdbServer):
             raise TypeError("server provider must return AdbServer")
-        if endpoint is not None and server.endpoint != endpoint:
+        if (
+            self._provisioning_endpoint is not None
+            and server.endpoint != self._provisioning_endpoint
+        ):
             self._stopper.stop(server)
             raise ValueError("endpoint-constrained server provisioning changed endpoint")
         return server
