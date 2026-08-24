@@ -47,17 +47,10 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
     return thread
 
 
-def _require_bool(value: object, *, field_name: str) -> bool:
-    if not isinstance(value, bool):
-        raise TypeError(f"{field_name} must be bool")
-    return value
-
-
 @dataclass(slots=True)
 class _ConfiguredTransportRegistration:
     configuration: AdbConfiguredTransport
     policy: AdbConfiguredTransportSupervisionPolicy
-    recovery_enabled: bool
     resolution: AdbConfiguredTransportResolution | None = None
     recovery_pending: bool = False
     active_recovery_thread: Thread | None = None
@@ -175,8 +168,6 @@ class AdbConfiguredTransportSupervisor:
         self,
         configuration: AdbConfiguredTransport,
         policy: AdbConfiguredTransportSupervisionPolicy | None = None,
-        *,
-        recovery_enabled: bool | None = None,
     ) -> None:
         if not isinstance(configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
@@ -184,13 +175,6 @@ class AdbConfiguredTransportSupervisor:
             policy = AdbConfiguredTransportSupervisionPolicy()
         if not isinstance(policy, AdbConfiguredTransportSupervisionPolicy):
             raise TypeError("policy must be AdbConfiguredTransportSupervisionPolicy")
-        enabled = (
-            policy.recovery_ensure_policy is not None
-            if recovery_enabled is None
-            else _require_bool(recovery_enabled, field_name="recovery_enabled")
-        )
-        if enabled and policy.recovery_ensure_policy is None:
-            raise ValueError("automatic recovery requires a recovery ensure policy")
         if policy.recovery_ensure_policy is not None:
             ensurer = self._ensurer
             if ensurer is None:
@@ -220,7 +204,7 @@ class AdbConfiguredTransportSupervisor:
                 raise ValueError(
                     "ADB configured transport serial and connection type are already registered"
                 )
-            registration = _ConfiguredTransportRegistration(configuration, policy, enabled)
+            registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
             observation = (
                 self._inventory.current_observation
@@ -237,35 +221,6 @@ class AdbConfiguredTransportSupervisor:
             self._bus.publish(publication)
         if recovery_launch_requested:
             self._launch_recovery(configuration)
-
-    def set_recovery_enabled(
-        self,
-        configuration: AdbConfiguredTransport | AdbDeviceSerial,
-        enabled: bool,
-    ) -> None:
-        """Mutate recovery intent without changing the long-lived registration itself."""
-
-        if not isinstance(configuration, (AdbConfiguredTransport, AdbDeviceSerial)):
-            raise TypeError("configuration must be AdbConfiguredTransport or AdbDeviceSerial")
-        normalized = _require_bool(enabled, field_name="enabled")
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("configured transport supervisor is closed")
-            key = self._resolve_registration_key_locked(configuration)
-            if key is None:
-                raise ValueError("ADB configured transport is not registered")
-            registration = self._registrations[key]
-            if registration.recovery_enabled is normalized:
-                return
-            if normalized and registration.policy.recovery_ensure_policy is None:
-                raise ValueError("automatic recovery requires a recovery ensure policy")
-            registration.recovery_enabled = normalized
-            if not normalized:
-                registration.recovery_pending = False
-                registration.active_recovery_token = None
-                # Any active attempt is fenced but allowed to finish against its captured
-                # server lifetime; disabling recovery must not block a later re-enable.
-                registration.active_recovery_thread = None
 
     def unregister(
         self,
@@ -406,7 +361,6 @@ class AdbConfiguredTransportSupervisor:
         )
         recovery_launch_requested = (
             recoverable_disappearance
-            and registration.recovery_enabled
             and registration.policy.recovery_ensure_policy is not None
         )
         if recovery_launch_requested:

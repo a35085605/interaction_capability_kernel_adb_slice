@@ -61,6 +61,7 @@ class AdbRuntimeBootstrap:
         server_controller_factory: _AdbServerControllerFactory | None = None,
         endpoint: AdbServerEndpoint | None = None,
         pin_endpoint: bool = True,
+        server_recovery_enabled: bool = True,
         server_supervision_policy: AdbServerSupervisionPolicy | None = None,
         tracking_supervision_policy: AdbDevicesTrackingSupervisionPolicy | None = None,
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
@@ -73,6 +74,8 @@ class AdbRuntimeBootstrap:
             raise TypeError("endpoint must be AdbServerEndpoint or None")
         if not isinstance(pin_endpoint, bool):
             raise TypeError("pin_endpoint must be bool")
+        if not isinstance(server_recovery_enabled, bool):
+            raise TypeError("server_recovery_enabled must be bool")
         if server_supervision_policy is None:
             server_supervision_policy = AdbServerSupervisionPolicy()
         if not isinstance(server_supervision_policy, AdbServerSupervisionPolicy):
@@ -101,6 +104,7 @@ class AdbRuntimeBootstrap:
         self._server_controller_factory = server_controller_factory
         self._endpoint = endpoint
         self._pin_endpoint = pin_endpoint
+        self._server_recovery_enabled = server_recovery_enabled
         self._server_supervision_policy = server_supervision_policy
         self._tracking_supervision_policy = tracking_supervision_policy
         self._transport_supervision_policy = transport_supervision_policy
@@ -113,9 +117,6 @@ class AdbRuntimeBootstrap:
             return AdbRuntime(
                 core.server_state,
                 core.inventory_state,
-                server_provider=core.controller,
-                server_stopper=core.controller,
-                server_provisioning_endpoint=core.provisioning_endpoint,
                 transport_supervision_policy=self._transport_supervision_policy,
             )
         except BaseException:
@@ -167,6 +168,7 @@ class AdbRuntimeBootstrap:
                 event_bus=event_bus,
                 scheduler=scheduler,
                 policy=self._server_supervision_policy,
+                recovery_enabled=self._server_recovery_enabled,
             )
             tracking_supervisor = (
                 AdbDevicesTrackingSupervisor(
@@ -191,9 +193,6 @@ class AdbRuntimeBootstrap:
             return AdbRuntime(
                 core.server_state,
                 core.inventory_state,
-                server_provider=core.controller,
-                server_stopper=core.controller,
-                server_provisioning_endpoint=core.provisioning_endpoint,
                 event_bus=event_bus,
                 server_supervisor=server_supervisor,
                 tracking_supervisor=tracking_supervisor,
@@ -235,6 +234,5 @@ def _is_event_bus(value: object) -> bool:
         and callable(getattr(value, "subscribe", None))
         and callable(getattr(value, "unsubscribe", None))
     )
-
 
 __all__ = ["AdbRuntimeBootstrap"]

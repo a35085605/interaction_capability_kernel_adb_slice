@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from threading import RLock
 
-from adb.managed import AdbManagedRuntime, RegisteredTransport
-from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServer
-from adb.server.lifecycle.control.port import AdbServerProvider, AdbServerStopper
+from adb.managed import AdbManagedRuntime
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
 from adb.server.state import AdbServerState
@@ -29,9 +26,6 @@ class AdbRuntime(AdbManagedRuntime):
         self,
         server_state: AdbServerState,
         inventory_state: AdbDevicesInventoryState,
-        server_provider: AdbServerProvider,
-        server_stopper: AdbServerStopper,
-        server_provisioning_endpoint: AdbServerEndpoint | None,
         *,
         event_bus: EventBus | None = None,
         server_supervisor: AdbServerSupervisor | None = None,
@@ -43,16 +37,6 @@ class AdbRuntime(AdbManagedRuntime):
             raise TypeError("server_state must be AdbServerState")
         if not isinstance(inventory_state, AdbDevicesInventoryState):
             raise TypeError("inventory_state must be AdbDevicesInventoryState")
-        if not isinstance(server_provider, AdbServerProvider):
-            raise TypeError("server_provider must satisfy AdbServerProvider")
-        if not isinstance(server_stopper, AdbServerStopper):
-            raise TypeError("server_stopper must satisfy AdbServerStopper")
-        if server_provisioning_endpoint is not None and not isinstance(
-            server_provisioning_endpoint, AdbServerEndpoint
-        ):
-            raise TypeError(
-                "server_provisioning_endpoint must be AdbServerEndpoint or None"
-            )
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if server_supervisor is not None and not isinstance(
@@ -96,9 +80,6 @@ class AdbRuntime(AdbManagedRuntime):
 
         super().__init__(server_state)
         self._inventory_state = inventory_state
-        self._server_provider = server_provider
-        self._server_stopper = server_stopper
-        self._provisioning_endpoint = server_provisioning_endpoint
         self._event_bus = event_bus
         self._server_supervisor = server_supervisor
         self._tracking_supervisor = tracking_supervisor
@@ -128,7 +109,7 @@ class AdbRuntime(AdbManagedRuntime):
             return self._closed
 
     def start(self) -> None:
-        """Start runtime infrastructure without changing server running intent."""
+        """Start the bootstrap-composed runtime supervision graph."""
 
         with self._runtime_lock:
             if self._closed:
@@ -137,28 +118,43 @@ class AdbRuntime(AdbManagedRuntime):
                 raise RuntimeError("ADB runtime is already started")
             self._starting = True
 
+        server_started = False
+        tracking_started = False
         transport_started = False
         subscriptions: tuple[EventSubscriptionToken, ...] = ()
         try:
             transport_supervisor = self._transport_supervisor
             if transport_supervisor is not None:
-                transport_supervisor.start()
                 transport_started = True
+                transport_supervisor.start()
 
             event_bus = self._event_bus
             if event_bus is not None and transport_supervisor is not None:
-                # Register before tracking supervision. When a successor is published, configured
-                # transport projection is rebound before the successor tracker can publish.
+                # Rebind configured transports before a successor tracker can publish its baseline.
                 subscriptions = (
                     event_bus.subscribe(AdbServerRetired, self._on_server_retired),
                     event_bus.subscribe(AdbServerRecovered, self._on_server_recovered),
                 )
+
+            server_supervisor = self._server_supervisor
+            if server_supervisor is not None:
+                server_started = True
+                server_supervisor.start()
+
+            tracking_supervisor = self._tracking_supervisor
+            if tracking_supervisor is not None:
+                tracking_started = True
+                tracking_supervisor.start()
         except BaseException:
             if self._event_bus is not None:
                 for token in subscriptions:
                     self._event_bus.unsubscribe(token)
+            if tracking_started and self._tracking_supervisor is not None:
+                self._tracking_supervisor.close()
             if transport_started and self._transport_supervisor is not None:
                 self._transport_supervisor.close()
+            if server_started and self._server_supervisor is not None:
+                self._server_supervisor.close()
             with self._runtime_lock:
                 self._starting = False
             raise
@@ -194,100 +190,19 @@ class AdbRuntime(AdbManagedRuntime):
             self._server_supervisor.close()
         self._close_transport_registrations()
 
-    def start_server(self, *, auto_recovery: bool = True) -> None:
-        """Declare server running intent, optionally enabling automatic recovery."""
-
-        if not isinstance(auto_recovery, bool):
-            raise TypeError("auto_recovery must be bool")
-        self._require_started()
-        supervisor = self._server_supervisor
-        if supervisor is not None:
-            if supervisor.desired_running:
-                if supervisor.recovery_enabled is not auto_recovery:
-                    supervisor.set_recovery_enabled(auto_recovery)
-            else:
-                supervisor.start(recovery_enabled=auto_recovery)
-            tracking_supervisor = self._tracking_supervisor
-            if tracking_supervisor is not None and not tracking_supervisor.desired_tracking:
-                tracking_supervisor.start()
-            return
-
-        if auto_recovery:
-            raise RuntimeError("automatic ADB server recovery is not configured")
-        if self.server is not None:
-            return
-
-        server = self._provide_server()
-        if not self._server_state.activate(server):
-            try:
-                self._server_stopper.stop(server)
-            finally:
-                raise RuntimeError("fresh ADB server lifetime could not become current")
-
-    def stop_server(self) -> None:
-        """Clear managed running intent without terminating the current server."""
-
-        self._require_started()
-        supervisor = self._server_supervisor
-        if supervisor is not None:
-            supervisor.stop()
-
-    def set_server_auto_recovery(self, enabled: bool) -> None:
-        """Mutate automatic server-recovery intent when supervision is configured."""
-
-        if not isinstance(enabled, bool):
-            raise TypeError("enabled must be bool")
-        self._require_started()
-        supervisor = self._server_supervisor
-        if supervisor is None:
-            if enabled:
-                raise RuntimeError("automatic ADB server recovery is not configured")
-            return
-        supervisor.set_recovery_enabled(enabled)
-
-    def add_transport(
-        self,
-        configuration: AdbConfiguredTransport,
-        *,
-        recovery_enabled: bool | None = None,
-    ) -> RegisteredTransport:
-        """Register one transport using runtime policy when recovery intent is omitted."""
-
-        enabled = (
-            self._transport_supervision_policy.recovery_ensure_policy is not None
-            if recovery_enabled is None
-            else recovery_enabled
-        )
-        return super().add_transport(configuration, recovery_enabled=enabled)
-
     def _register_transport(
         self,
         configuration: AdbConfiguredTransport,
-        *,
-        recovery_enabled: bool,
     ) -> None:
         self._require_started()
         supervisor = self._require_transport_supervisor()
-        supervisor.register(
-            configuration,
-            self._transport_supervision_policy,
-            recovery_enabled=recovery_enabled,
-        )
+        supervisor.register(configuration, self._transport_supervision_policy)
 
     def _unregister_transport(self, configuration: AdbConfiguredTransport) -> None:
         self._require_started()
         supervisor = self._require_transport_supervisor()
         if not supervisor.unregister(configuration):
             raise RuntimeError("configured transport registration disappeared from supervision")
-
-    def _update_transport_recovery_enabled(
-        self,
-        configuration: AdbConfiguredTransport,
-        *,
-        enabled: bool,
-    ) -> None:
-        self._require_started()
-        self._require_transport_supervisor().set_recovery_enabled(configuration, enabled)
 
     def _on_server_retired(self, event: AdbServerRetired) -> None:
         supervisor = self._transport_supervisor
@@ -298,18 +213,6 @@ class AdbRuntime(AdbManagedRuntime):
         supervisor = self._transport_supervisor
         if supervisor is not None:
             supervisor.reconcile(event.server)
-
-    def _provide_server(self) -> AdbServer:
-        server = self._server_provider.provide(self._provisioning_endpoint)
-        if not isinstance(server, AdbServer):
-            raise TypeError("server provider must return AdbServer")
-        if (
-            self._provisioning_endpoint is not None
-            and server.endpoint != self._provisioning_endpoint
-        ):
-            self._server_stopper.stop(server)
-            raise ValueError("endpoint-constrained server provisioning changed endpoint")
-        return server
 
     def _require_started(self) -> None:
         with self._runtime_lock:
