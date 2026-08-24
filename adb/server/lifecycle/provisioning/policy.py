@@ -12,13 +12,8 @@ class AdbServerPerGenerationEndpoint:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerPinFirstResolvedEndpoint:
-    """Pin the first server's resolved endpoint across later provisions."""
-
-
-@dataclass(frozen=True, slots=True)
 class AdbServerFixedEndpoint:
-    """Require every provisioned server to use one explicitly configured endpoint."""
+    """Require every newly provisioned server to use one fixed endpoint."""
 
     endpoint: AdbServerEndpoint
 
@@ -28,9 +23,7 @@ class AdbServerFixedEndpoint:
 
 
 AdbServerEndpointPolicy: TypeAlias = (
-    AdbServerPerGenerationEndpoint
-    | AdbServerPinFirstResolvedEndpoint
-    | AdbServerFixedEndpoint
+    AdbServerPerGenerationEndpoint | AdbServerFixedEndpoint
 )
 
 
@@ -39,7 +32,6 @@ def _require_endpoint_policy(value: object) -> AdbServerEndpointPolicy:
         value,
         (
             AdbServerPerGenerationEndpoint,
-            AdbServerPinFirstResolvedEndpoint,
             AdbServerFixedEndpoint,
         ),
     ):
@@ -49,22 +41,12 @@ def _require_endpoint_policy(value: object) -> AdbServerEndpointPolicy:
 
 def resolve_server_provisioning_endpoint(
     endpoint_policy: AdbServerEndpointPolicy,
-    first_generation_endpoint: AdbServerEndpoint,
 ) -> AdbServerEndpoint | None:
-    """Resolve the endpoint constraint to inject into a later server provision."""
+    """Resolve the endpoint constraint to pass to one server provision."""
 
     policy = _require_endpoint_policy(endpoint_policy)
-    if not isinstance(first_generation_endpoint, AdbServerEndpoint):
-        raise TypeError("first_generation_endpoint must be AdbServerEndpoint")
-
     if isinstance(policy, AdbServerPerGenerationEndpoint):
         return None
-    if isinstance(policy, AdbServerPinFirstResolvedEndpoint):
-        return first_generation_endpoint
-    if first_generation_endpoint != policy.endpoint:
-        raise ValueError(
-            "fixed endpoint policy must match the first generation endpoint"
-        )
     return policy.endpoint
 
 
@@ -72,6 +54,5 @@ __all__ = [
     "AdbServerEndpointPolicy",
     "AdbServerFixedEndpoint",
     "AdbServerPerGenerationEndpoint",
-    "AdbServerPinFirstResolvedEndpoint",
     "resolve_server_provisioning_endpoint",
 ]

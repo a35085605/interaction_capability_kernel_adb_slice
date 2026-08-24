@@ -12,9 +12,8 @@ from adb.errors import (
     AdbTransportSelectionError,
     AdbTransportUnavailableError,
 )
-from adb.bootstrap import AdbRuntimeBootstrap
+from adb.api import AdbRuntime, AdbRuntimeBootstrap, AdbServerEndpoint
 from adb.managed import AdbManagedRuntime, RegisteredTransport
-from adb.runtime import AdbRuntime
 from adb.server import (
     AdbServerControlError,
     AdbServerController,
@@ -69,6 +68,7 @@ __all__ = [
     "AdbServerConnectionError",
     "AdbServerControlError",
     "AdbServerController",
+    "AdbServerEndpoint",
     "AdbServerProvider",
     "AdbServerStopper",
     "AdbServer",

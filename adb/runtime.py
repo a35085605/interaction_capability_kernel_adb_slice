@@ -4,8 +4,11 @@ from threading import RLock
 
 from adb.managed import AdbManagedRuntime, RegisteredTransport
 from adb.server.identity import AdbServer
-from adb.server.lifecycle.control.port import AdbServerStopper
-from adb.server.lifecycle.provisioning.provisioner import AdbServerProvisioner
+from adb.server.lifecycle.control.port import AdbServerProvider, AdbServerStopper
+from adb.server.lifecycle.provisioning.policy import (
+    AdbServerEndpointPolicy,
+    resolve_server_provisioning_endpoint,
+)
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
 from adb.server.state import AdbServerState
@@ -29,8 +32,9 @@ class AdbRuntime(AdbManagedRuntime):
         self,
         server_state: AdbServerState,
         inventory_state: AdbDevicesInventoryState,
+        server_provider: AdbServerProvider,
         server_stopper: AdbServerStopper,
-        server_provisioner: AdbServerProvisioner,
+        server_endpoint_policy: AdbServerEndpointPolicy,
         *,
         event_bus: EventBus | None = None,
         server_supervisor: AdbServerSupervisor | None = None,
@@ -42,10 +46,11 @@ class AdbRuntime(AdbManagedRuntime):
             raise TypeError("server_state must be AdbServerState")
         if not isinstance(inventory_state, AdbDevicesInventoryState):
             raise TypeError("inventory_state must be AdbDevicesInventoryState")
+        if not isinstance(server_provider, AdbServerProvider):
+            raise TypeError("server_provider must satisfy AdbServerProvider")
         if not isinstance(server_stopper, AdbServerStopper):
             raise TypeError("server_stopper must satisfy AdbServerStopper")
-        if not isinstance(server_provisioner, AdbServerProvisioner):
-            raise TypeError("server_provisioner must satisfy AdbServerProvisioner")
+        resolve_server_provisioning_endpoint(server_endpoint_policy)
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if server_supervisor is not None and not isinstance(
@@ -89,8 +94,9 @@ class AdbRuntime(AdbManagedRuntime):
 
         super().__init__(server_state)
         self._inventory_state = inventory_state
+        self._server_provider = server_provider
         self._server_stopper = server_stopper
-        self._server_provisioner = server_provisioner
+        self._server_endpoint_policy = server_endpoint_policy
         self._event_bus = event_bus
         self._server_supervisor = server_supervisor
         self._tracking_supervisor = tracking_supervisor
@@ -209,9 +215,7 @@ class AdbRuntime(AdbManagedRuntime):
         if self.server is not None:
             return
 
-        server = self._server_provisioner.provision()
-        if not isinstance(server, AdbServer):
-            raise TypeError("server provisioner must return AdbServer")
+        server = self._provide_server()
         if not self._server_state.activate(server):
             try:
                 self._server_stopper.stop(server)
@@ -292,6 +296,16 @@ class AdbRuntime(AdbManagedRuntime):
         supervisor = self._transport_supervisor
         if supervisor is not None:
             supervisor.reconcile(event.server)
+
+    def _provide_server(self) -> AdbServer:
+        endpoint = resolve_server_provisioning_endpoint(self._server_endpoint_policy)
+        server = self._server_provider.provide(endpoint)
+        if not isinstance(server, AdbServer):
+            raise TypeError("server provider must return AdbServer")
+        if endpoint is not None and server.endpoint != endpoint:
+            self._server_stopper.stop(server)
+            raise ValueError("endpoint-constrained server provisioning changed endpoint")
+        return server
 
     def _require_started(self) -> None:
         with self._runtime_lock:

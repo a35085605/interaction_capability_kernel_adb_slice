@@ -12,10 +12,7 @@ from adb.server.lifecycle.provisioning.policy import (
     AdbServerEndpointPolicy,
     AdbServerFixedEndpoint,
     AdbServerPerGenerationEndpoint,
-    AdbServerPinFirstResolvedEndpoint,
-    resolve_server_provisioning_endpoint,
 )
-from adb.server.lifecycle.provisioning.provisioner import AdbServerControllerProvisioner
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerState
@@ -49,7 +46,7 @@ def _default_server_controller_factory(
 @dataclass(frozen=True, slots=True)
 class _BootstrapCore:
     controller: AdbServerController
-    provisioner: AdbServerControllerProvisioner
+    endpoint_policy: AdbServerEndpointPolicy
     server_state: AdbServerState
     inventory_state: AdbDevicesInventoryState
     initial_server: AdbServer
@@ -67,8 +64,8 @@ class AdbRuntimeBootstrap:
         self,
         *,
         server_controller_factory: _AdbServerControllerFactory | None = None,
-        initial_endpoint: AdbServerEndpoint | None = None,
-        endpoint_policy: AdbServerEndpointPolicy | None = None,
+        endpoint: AdbServerEndpoint | None = None,
+        pin_endpoint: bool = True,
         server_supervision_policy: AdbServerSupervisionPolicy | None = None,
         tracking_supervision_policy: AdbDevicesTrackingSupervisionPolicy | None = None,
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
@@ -77,25 +74,10 @@ class AdbRuntimeBootstrap:
             server_controller_factory = _default_server_controller_factory
         if not callable(server_controller_factory):
             raise TypeError("server_controller_factory must be callable")
-        if initial_endpoint is not None and not isinstance(initial_endpoint, AdbServerEndpoint):
-            raise TypeError("initial_endpoint must be AdbServerEndpoint or None")
-        if endpoint_policy is None:
-            endpoint_policy = AdbServerPinFirstResolvedEndpoint()
-        if not isinstance(
-            endpoint_policy,
-            (
-                AdbServerPerGenerationEndpoint,
-                AdbServerPinFirstResolvedEndpoint,
-                AdbServerFixedEndpoint,
-            ),
-        ):
-            raise TypeError("endpoint_policy must be an ADB server endpoint policy")
-        if (
-            isinstance(endpoint_policy, AdbServerFixedEndpoint)
-            and initial_endpoint is not None
-            and initial_endpoint != endpoint_policy.endpoint
-        ):
-            raise ValueError("initial_endpoint must match fixed ADB server endpoint policy")
+        if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint or None")
+        if not isinstance(pin_endpoint, bool):
+            raise TypeError("pin_endpoint must be bool")
         if server_supervision_policy is None:
             server_supervision_policy = AdbServerSupervisionPolicy()
         if not isinstance(server_supervision_policy, AdbServerSupervisionPolicy):
@@ -122,8 +104,8 @@ class AdbRuntimeBootstrap:
             )
 
         self._server_controller_factory = server_controller_factory
-        self._initial_endpoint = initial_endpoint
-        self._endpoint_policy = endpoint_policy
+        self._endpoint = endpoint
+        self._pin_endpoint = pin_endpoint
         self._server_supervision_policy = server_supervision_policy
         self._tracking_supervision_policy = tracking_supervision_policy
         self._transport_supervision_policy = transport_supervision_policy
@@ -136,8 +118,9 @@ class AdbRuntimeBootstrap:
             return AdbRuntime(
                 core.server_state,
                 core.inventory_state,
-                core.controller,
-                core.provisioner,
+                server_provider=core.controller,
+                server_stopper=core.controller,
+                server_endpoint_policy=core.endpoint_policy,
                 transport_supervision_policy=self._transport_supervision_policy,
             )
         except BaseException:
@@ -183,11 +166,12 @@ class AdbRuntimeBootstrap:
         try:
             server_supervisor = AdbServerSupervisor(
                 core.server_state,
-                core.controller,
-                core.provisioner,
-                event_bus,
-                scheduler,
-                self._server_supervision_policy,
+                provider=core.controller,
+                stopper=core.controller,
+                endpoint_policy=core.endpoint_policy,
+                event_bus=event_bus,
+                scheduler=scheduler,
+                policy=self._server_supervision_policy,
             )
             tracking_supervisor = (
                 AdbDevicesTrackingSupervisor(
@@ -212,8 +196,9 @@ class AdbRuntimeBootstrap:
             return AdbRuntime(
                 core.server_state,
                 core.inventory_state,
-                core.controller,
-                core.provisioner,
+                server_provider=core.controller,
+                server_stopper=core.controller,
+                server_endpoint_policy=core.endpoint_policy,
                 event_bus=event_bus,
                 server_supervisor=server_supervisor,
                 tracking_supervisor=tracking_supervisor,
@@ -230,27 +215,20 @@ class AdbRuntimeBootstrap:
         if not isinstance(controller, AdbServerController):
             raise TypeError("server controller factory must return AdbServerController")
 
-        initial_constraint = self._initial_endpoint
-        if initial_constraint is None and isinstance(
-            self._endpoint_policy, AdbServerFixedEndpoint
-        ):
-            initial_constraint = self._endpoint_policy.endpoint
-
-        initial_server = controller.provide(initial_constraint)
+        initial_server = controller.provide(self._endpoint)
         if not isinstance(initial_server, AdbServer):
             raise TypeError("server controller provide() must return AdbServer")
         try:
-            provision_endpoint = resolve_server_provisioning_endpoint(
-                self._endpoint_policy,
-                initial_server.endpoint,
-            )
-            provisioner = AdbServerControllerProvisioner(
-                controller,
-                provision_endpoint,
+            if self._endpoint is not None and initial_server.endpoint != self._endpoint:
+                raise ValueError("endpoint-constrained initial server provisioning changed endpoint")
+            endpoint_policy: AdbServerEndpointPolicy = (
+                AdbServerFixedEndpoint(initial_server.endpoint)
+                if self._pin_endpoint
+                else AdbServerPerGenerationEndpoint()
             )
             return _BootstrapCore(
                 controller=controller,
-                provisioner=provisioner,
+                endpoint_policy=endpoint_policy,
                 server_state=AdbServerState(initial_server),
                 inventory_state=AdbDevicesInventoryState(),
                 initial_server=initial_server,

@@ -8,7 +8,6 @@ from adb.server.lifecycle.provisioning.policy import (
     AdbServerEndpointPolicy,
     AdbServerFixedEndpoint,
     AdbServerPerGenerationEndpoint,
-    AdbServerPinFirstResolvedEndpoint,
 )
 
 
@@ -87,6 +86,5 @@ __all__ = [
     "AdbServerEndpointPolicy",
     "AdbServerFixedEndpoint",
     "AdbServerPerGenerationEndpoint",
-    "AdbServerPinFirstResolvedEndpoint",
     "AdbServerSupervisionPolicy",
 ]

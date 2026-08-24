@@ -7,8 +7,11 @@ from threading import Lock, Thread, current_thread
 
 from adb.server.availability import AdbServerUnavailableError
 from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
-from adb.server.lifecycle.control.port import AdbServerStopper
-from adb.server.lifecycle.provisioning.provisioner import AdbServerProvisioner
+from adb.server.lifecycle.control.port import AdbServerProvider, AdbServerStopper
+from adb.server.lifecycle.provisioning.policy import (
+    AdbServerEndpointPolicy,
+    resolve_server_provisioning_endpoint,
+)
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
@@ -60,8 +63,9 @@ class AdbServerSupervisor:
     def __init__(
         self,
         server: AdbServer | AdbServerState,
+        provider: AdbServerProvider,
         stopper: AdbServerStopper,
-        provisioner: AdbServerProvisioner,
+        endpoint_policy: AdbServerEndpointPolicy,
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
@@ -77,10 +81,11 @@ class AdbServerSupervisor:
             raise TypeError("server must be AdbServer or AdbServerState")
         if server_state.current is None:
             raise ValueError("server state must have an active initial server")
+        if not isinstance(provider, AdbServerProvider):
+            raise TypeError("provider must satisfy AdbServerProvider")
         if not isinstance(stopper, AdbServerStopper):
             raise TypeError("stopper must satisfy AdbServerStopper")
-        if not isinstance(provisioner, AdbServerProvisioner):
-            raise TypeError("provisioner must satisfy AdbServerProvisioner")
+        resolve_server_provisioning_endpoint(endpoint_policy)
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -92,8 +97,9 @@ class AdbServerSupervisor:
 
         self._server_state = server_state
         self._bus = event_bus
+        self._provider = provider
         self._stopper = stopper
-        self._provisioner = provisioner
+        self._endpoint_policy = endpoint_policy
         self._scheduler = scheduler
         self._policy = policy
         self._random = _random
@@ -365,6 +371,16 @@ class AdbServerSupervisor:
                 self._attempt_threads.discard(thread)
                 raise
 
+    def _provide_server(self) -> AdbServer:
+        endpoint = resolve_server_provisioning_endpoint(self._endpoint_policy)
+        server = self._provider.provide(endpoint)
+        if not isinstance(server, AdbServer):
+            raise TypeError("server provider must return AdbServer")
+        if endpoint is not None and server.endpoint != endpoint:
+            self._stopper.stop(server)
+            raise ValueError("endpoint-constrained server provisioning changed endpoint")
+        return server
+
     def _run_recovery_attempt(
         self,
         cycle_id: AdbServerRecoveryCycleId,
@@ -380,12 +396,10 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
                 try:
-                    recovered = self._provisioner.provision()
+                    recovered = self._provide_server()
                 except AdbServerStartError as exc:
                     launch_failure = AdbServerLaunchFailure(str(exc))
                 else:
-                    if not isinstance(recovered, AdbServer):
-                        raise TypeError("provisioner.provision() must return AdbServer")
                     with self._lock:
                         if not self._recovery_is_current_locked(cycle_id):
                             return
