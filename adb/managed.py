@@ -6,6 +6,9 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
 from adb.server.state import AdbServerState, AdbServerStateView
 from adb.transport.configuration import AdbConfiguredTransport
+from adb.transport.lifecycle.supervision.policy import (
+    AdbConfiguredTransportSupervisionPolicy,
+)
 
 
 class RegisteredTransport:
@@ -108,6 +111,7 @@ class AdbManagedRuntime:
     def add_transport(
         self,
         configuration: AdbConfiguredTransport,
+        policy: AdbConfiguredTransportSupervisionPolicy | None = None,
     ) -> RegisteredTransport:
         """Add one runtime-scoped configured-transport registration.
 
@@ -119,10 +123,16 @@ class AdbManagedRuntime:
 
         if not isinstance(configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
+        if policy is not None and not isinstance(
+            policy, AdbConfiguredTransportSupervisionPolicy
+        ):
+            raise TypeError(
+                "policy must be AdbConfiguredTransportSupervisionPolicy or None"
+            )
         with self._registration_lock:
             if configuration in self._registrations:
                 raise ValueError("ADB configured transport is already registered in this runtime")
-            self._register_transport(configuration)
+            self._register_transport(configuration, policy)
             registration = RegisteredTransport(self, configuration)
             self._registrations[configuration] = registration
             return registration
@@ -165,6 +175,7 @@ class AdbManagedRuntime:
     def _register_transport(
         self,
         configuration: AdbConfiguredTransport,
+        policy: AdbConfiguredTransportSupervisionPolicy | None,
     ) -> None:
         """Concrete hook that starts supervising one runtime-scoped registration."""
 

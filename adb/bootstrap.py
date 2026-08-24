@@ -114,7 +114,7 @@ class AdbRuntimeBootstrap:
 
         core = self._build_core()
         try:
-            return AdbRuntime(
+            return self._build_runtime(
                 core.server_state,
                 core.inventory_state,
                 transport_supervision_policy=self._transport_supervision_policy,
@@ -190,7 +190,7 @@ class AdbRuntimeBootstrap:
                 if configured_transports
                 else None
             )
-            return AdbRuntime(
+            return self._build_runtime(
                 core.server_state,
                 core.inventory_state,
                 event_bus=event_bus,
@@ -202,6 +202,9 @@ class AdbRuntimeBootstrap:
         except BaseException:
             core.controller.stop(core.initial_server)
             raise
+
+    def _build_runtime(self, *args: object, **kwargs: object) -> AdbRuntime:
+        return AdbRuntime(*args, **kwargs)
 
     def _build_core(self) -> _BootstrapCore:
         issuer = AdbServerEpochSequence()

@@ -193,10 +193,14 @@ class AdbRuntime(AdbManagedRuntime):
     def _register_transport(
         self,
         configuration: AdbConfiguredTransport,
+        policy: AdbConfiguredTransportSupervisionPolicy | None,
     ) -> None:
         self._require_started()
         supervisor = self._require_transport_supervisor()
-        supervisor.register(configuration, self._transport_supervision_policy)
+        supervisor.register(
+            configuration,
+            self._transport_supervision_policy if policy is None else policy,
+        )
 
     def _unregister_transport(self, configuration: AdbConfiguredTransport) -> None:
         self._require_started()

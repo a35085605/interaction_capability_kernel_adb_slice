@@ -12,8 +12,15 @@ from adb.errors import (
     AdbTransportSelectionError,
     AdbTransportUnavailableError,
 )
-from adb.api import AdbRuntime, AdbRuntimeBootstrap, AdbServerEndpoint
-from adb.managed import AdbManagedRuntime, RegisteredTransport
+from adb.api import (
+    AdbConfiguredTransportHandle,
+    AdbConfiguredTransportRegistration,
+    AdbConfiguredTransportType,
+    AdbRuntime,
+    AdbRuntimeBootstrap,
+    AdbServerEndpoint,
+)
+from adb.managed import AdbManagedRuntime
 from adb.server import (
     AdbServerControlError,
     AdbServerController,
@@ -51,6 +58,9 @@ from adb.transport import (
 )
 
 __all__ = [
+    "AdbConfiguredTransportHandle",
+    "AdbConfiguredTransportRegistration",
+    "AdbConfiguredTransportType",
     "AdbConnectionState",
     "AdbConnectionType",
     "AdbDeviceSerial",
@@ -95,6 +105,5 @@ __all__ = [
     "AdbTransportSelectionError",
     "AdbTransportSelector",
     "AdbTransportUnavailableError",
-    "RegisteredTransport",
     "SubprocessAdbServerController",
 ]
