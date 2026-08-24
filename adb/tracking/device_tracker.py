@@ -21,7 +21,7 @@ from adb.server.identity import AdbServer
 _SERVICE = "host:track-devices-proto-binary"
 
 
-class _SourceClosed(Exception):
+class _DeviceTrackerClosed(Exception):
     pass
 
 
@@ -38,50 +38,50 @@ def _parse_record(payload: bytes) -> AdbDevicesRecord:
     return parse_devices_record(payload)
 
 
-class AdbTrackDevicesSession:
-    """One established blocking track-devices stream session.
+class AdbDeviceTrackerStream:
+    """One established blocking ADB device-tracker stream.
 
-    ``initial_record`` is the first complete record read while the source is still under its
+    ``initial_record`` is the first complete record read while the tracker is still under its
     startup deadline. ``records`` yields only subsequent stream observations.
     """
 
     def __init__(
         self,
-        source: "AdbTrackDevicesSource",
-        session_socket: socket.socket,
+        tracker: "AdbDeviceTracker",
+        stream_socket: socket.socket,
         initial_record: AdbDevicesRecord,
     ) -> None:
         if not isinstance(initial_record, AdbDevicesRecord):
             raise TypeError("initial_record must be AdbDevicesRecord")
-        self._source = source
-        self._socket = session_socket
+        self._tracker = tracker
+        self._socket = stream_socket
         self.initial_record = initial_record
         self._closed = False
 
     def records(self) -> Iterator[AdbDevicesRecord]:
-        """Yield complete records until the session closes or tracking fails."""
+        """Yield complete records until the stream closes or tracking fails."""
 
         if self._closed:
             return
         try:
             while True:
-                yield _parse_record(self._source._read_frame(self._socket))
-        except _SourceClosed:
+                yield _parse_record(self._tracker._read_frame(self._socket))
+        except _DeviceTrackerClosed:
             return
 
     def close(self) -> None:
-        """Close this stream session."""
+        """Close this device-tracker stream."""
 
         if self._closed:
             return
         self._closed = True
-        self._source._release_session(self._socket)
+        self._tracker._release_stream(self._socket)
 
 
-class AdbTrackDevicesSource:
-    """Blocking ``host:track-devices-proto-binary`` source.
+class AdbDeviceTracker:
+    """Blocking ADB ``device_tracker`` backed by ``host:track-devices-proto-binary``.
 
-    Payloads are AOSP ``adb_host.proto.Devices`` messages. The source does not retry or reconnect.
+    Payloads are AOSP ``adb_host.proto.Devices`` messages. The tracker does not retry or reconnect.
     """
 
     def __init__(
@@ -98,11 +98,11 @@ class AdbTrackDevicesSource:
         )
         self._lock = Lock()
         self._closed = False
-        self._session_active = False
+        self._stream_active = False
         self._active_socket: socket.socket | None = None
 
     def close(self) -> None:
-        """Permanently close the source and interrupt an active socket read."""
+        """Permanently close the tracker and interrupt an active socket read."""
 
         active_socket: socket.socket | None
         with self._lock:
@@ -121,51 +121,51 @@ class AdbTrackDevicesSource:
             except OSError:
                 pass
 
-    def open(self) -> AdbTrackDevicesSession | None:
+    def open(self) -> AdbDeviceTrackerStream | None:
         """Establish one tracker stream and synchronously read its initial record."""
 
-        if not self._acquire_session():
+        if not self._acquire_stream():
             return None
 
-        session_socket: socket.socket | None = None
+        stream_socket: socket.socket | None = None
         try:
-            session_socket, deadline = self._connect()
-            self._handshake(session_socket, deadline)
+            stream_socket, deadline = self._connect()
+            self._handshake(stream_socket, deadline)
             initial_record = _parse_record(
-                self._read_frame(session_socket, deadline=deadline)
+                self._read_frame(stream_socket, deadline=deadline)
             )
-            self._enter_stream_mode(session_socket)
-            return AdbTrackDevicesSession(
+            self._enter_stream_mode(stream_socket)
+            return AdbDeviceTrackerStream(
                 self,
-                session_socket,
+                stream_socket,
                 initial_record,
             )
-        except _SourceClosed:
-            self._release_session(session_socket)
+        except _DeviceTrackerClosed:
+            self._release_stream(stream_socket)
             return None
         except BaseException:
-            self._release_session(session_socket)
+            self._release_stream(stream_socket)
             raise
 
-    def _acquire_session(self) -> bool:
+    def _acquire_stream(self) -> bool:
         with self._lock:
             if self._closed:
                 return False
-            if self._session_active:
-                raise RuntimeError("an ADB tracking session is already active")
-            self._session_active = True
+            if self._stream_active:
+                raise RuntimeError("an ADB device tracker stream is already active")
+            self._stream_active = True
             return True
 
-    def _release_session(self, session_socket: socket.socket | None) -> None:
-        if session_socket is not None:
+    def _release_stream(self, stream_socket: socket.socket | None) -> None:
+        if stream_socket is not None:
             try:
-                session_socket.close()
+                stream_socket.close()
             except OSError:
                 pass
         with self._lock:
-            if self._active_socket is session_socket:
+            if self._active_socket is stream_socket:
                 self._active_socket = None
-            self._session_active = False
+            self._stream_active = False
 
     def _is_closed(self) -> bool:
         with self._lock:
@@ -174,7 +174,7 @@ class AdbTrackDevicesSource:
     def _register_socket(self, candidate: socket.socket) -> None:
         with self._lock:
             if self._closed:
-                raise _SourceClosed
+                raise _DeviceTrackerClosed
             self._active_socket = candidate
 
     def _unregister_socket(self, candidate: socket.socket) -> None:
@@ -199,13 +199,13 @@ class AdbTrackDevicesSource:
             )
         except OSError as exc:
             if self._is_closed():
-                raise _SourceClosed from exc
+                raise _DeviceTrackerClosed from exc
             raise AdbServerConnectionError(
                 f"failed to resolve ADB server endpoint {self.endpoint.host!r}"
             ) from exc
 
         if self._is_closed():
-            raise _SourceClosed
+            raise _DeviceTrackerClosed
 
         # Synchronous hostname resolution above cannot be interrupted by a socket
         # timeout. The startup deadline begins after resolution and is shared by
@@ -217,7 +217,7 @@ class AdbTrackDevicesSource:
                 candidate = socket.socket(family, socktype, proto)
             except OSError as exc:
                 if self._is_closed():
-                    raise _SourceClosed from exc
+                    raise _DeviceTrackerClosed from exc
                 last_error = exc
                 continue
             try:
@@ -225,7 +225,7 @@ class AdbTrackDevicesSource:
                 self._set_deadline_timeout(candidate, deadline)
                 candidate.connect(sockaddr)
                 return candidate, deadline
-            except _SourceClosed:
+            except _DeviceTrackerClosed:
                 try:
                     candidate.close()
                 except OSError:
@@ -238,7 +238,7 @@ class AdbTrackDevicesSource:
                         candidate.close()
                     except OSError:
                         pass
-                    raise _SourceClosed from exc
+                    raise _DeviceTrackerClosed from exc
                 if isinstance(exc, OSError):
                     last_error = exc
                 self._unregister_socket(candidate)
@@ -260,7 +260,7 @@ class AdbTrackDevicesSource:
             sock.settimeout(timeout)
         except OSError as exc:
             if self._is_closed():
-                raise _SourceClosed from exc
+                raise _DeviceTrackerClosed from exc
             raise AdbServerConnectionError(
                 "failed to configure ADB track-devices startup timeout"
             ) from exc
@@ -270,7 +270,7 @@ class AdbTrackDevicesSource:
             sock.settimeout(None)
         except OSError as exc:
             if self._is_closed():
-                raise _SourceClosed from exc
+                raise _DeviceTrackerClosed from exc
             raise AdbServerConnectionError(
                 "failed to enter blocking ADB track-devices stream mode"
             ) from exc
@@ -321,13 +321,13 @@ class AdbTrackDevicesSource:
             sock.sendall(data)
         except socket.timeout as exc:
             if self._is_closed():
-                raise _SourceClosed from exc
+                raise _DeviceTrackerClosed from exc
             raise AdbServerConnectionError(
                 "ADB track-devices startup timed out"
             ) from exc
         except OSError as exc:
             if self._is_closed():
-                raise _SourceClosed from exc
+                raise _DeviceTrackerClosed from exc
             raise AdbServerConnectionError(
                 "failed to send ADB track-devices service request"
             ) from exc
@@ -348,22 +348,25 @@ class AdbTrackDevicesSource:
                 chunk = sock.recv(remaining)
             except socket.timeout as exc:
                 if self._is_closed():
-                    raise _SourceClosed from exc
+                    raise _DeviceTrackerClosed from exc
                 raise AdbServerConnectionError(
                     "ADB track-devices startup timed out"
                 ) from exc
             except OSError as exc:
                 if self._is_closed():
-                    raise _SourceClosed from exc
+                    raise _DeviceTrackerClosed from exc
                 raise AdbServerConnectionError(
                     "ADB track-devices socket read failed"
                 ) from exc
             if not chunk:
                 if self._is_closed():
-                    raise _SourceClosed
+                    raise _DeviceTrackerClosed
                 raise AdbServerConnectionError(
                     "unexpected EOF from ADB track-devices stream"
                 )
             chunks.append(chunk)
             remaining -= len(chunk)
         return b"".join(chunks)
+
+
+__all__ = ["AdbDeviceTracker", "AdbDeviceTrackerStream"]
