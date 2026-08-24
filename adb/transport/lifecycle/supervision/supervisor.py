@@ -109,6 +109,7 @@ class AdbConfiguredTransportSupervisor:
         ] = {}
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._tracking_active = False
+        self._devices_need_invalidation = False
         self._latest_server_epoch = server.epoch
         self._recovery_threads: set[Thread] = set()
         self._closed = False
@@ -209,12 +210,7 @@ class AdbConfiguredTransportSupervisor:
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
             snapshot = self._devices.current if self._tracking_active else None
-            server = self.server
-            if (
-                snapshot is not None
-                and server is not None
-                and self._devices.server_epoch == server.epoch
-            ):
+            if snapshot is not None and self.server is not None:
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
                     snapshot.record,
@@ -272,8 +268,9 @@ class AdbConfiguredTransportSupervisor:
             if self._closed or event.server != self.server:
                 return
             writer = self._devices_writer
-            if writer is not None and not writer.advance_server(event.server_epoch):
-                return
+            if writer is not None and self._devices_need_invalidation:
+                writer.invalidate_current()
+                self._devices_need_invalidation = False
             self._tracking_active = True
 
     def _on_snapshot_observed(self, event: AdbDevicesSnapshotObserved) -> None:
@@ -287,7 +284,7 @@ class AdbConfiguredTransportSupervisor:
             ):
                 return
             writer = self._devices_writer
-            if writer is not None and not writer.observe(event.server_epoch, event.snapshot):
+            if writer is not None and not writer.observe(event.snapshot):
                 return
             for registration in self._registrations.values():
                 publication, recovery_launch_requested = self._project_registration_locked(
@@ -447,6 +444,8 @@ class AdbConfiguredTransportSupervisor:
 
     def _reset_server_lifetime_locked(self) -> None:
         self._tracking_active = False
+        if self._devices_writer is not None:
+            self._devices_need_invalidation = True
         for registration in self._registrations.values():
             registration.resolution = None
             registration.active_recovery_token = None

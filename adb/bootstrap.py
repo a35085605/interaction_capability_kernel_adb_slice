@@ -174,6 +174,7 @@ class AdbRuntimeBootstrap:
                     core.initial_server,
                     event_bus,
                     self._tracking_supervision_policy,
+                    server_state=core.server_state,
                     devices_snapshot_epoch_issuer=core.devices_snapshot_epoch_issuer,
                     snapshot_state=core.snapshot_state,
                 )

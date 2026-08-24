@@ -3,6 +3,7 @@ from __future__ import annotations
 from threading import Lock
 
 from adb.server.identity import AdbServer
+from adb.server.state import AdbServerStateView
 from adb.tracking.snapshot.state import AdbDevicesSnapshotWriter
 from adb.tracking.signal import (
     AdbDevicesSnapshotObserved,
@@ -14,26 +15,31 @@ from eventing import EventPublisher
 
 
 class AdbDevicesSnapshotStateBackedTrackingPublisher:
-    """Commit tracking observations into snapshot state before publication.
+    """Commit current-server tracking observations into snapshot state before publication.
 
-    Tracking signals are correlated by the ``AdbServer`` lifetime they observe. Snapshot
-    identity is assigned by the tracker before publication; snapshot state rejects stale snapshot
-    identities and writes from older server epochs.
+    ``AdbServerStateView`` is the authoritative server-lifetime gate. Tracking signals are
+    accepted only while their exact ``AdbServer`` is current; snapshot state therefore needs to
+    understand only runtime-scoped snapshot identity, not ``ServerEpoch``.
     """
 
     def __init__(
         self,
         devices: AdbDevicesSnapshotWriter,
+        server_state: AdbServerStateView,
         publisher: EventPublisher,
     ) -> None:
         if not isinstance(devices, AdbDevicesSnapshotWriter):
             raise TypeError("devices must satisfy AdbDevicesSnapshotWriter")
+        if not isinstance(server_state, AdbServerStateView):
+            raise TypeError("server_state must satisfy AdbServerStateView")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
         self._devices = devices
+        self._server_state = server_state
         self._publisher = publisher
         self._lock = Lock()
         self._active_server: AdbServer | None = None
+        self._snapshot_server: AdbServer | None = server_state.current
 
     def publish(self, event: object) -> None:
         accepted = True
@@ -60,10 +66,13 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
     def _begin_tracking(self, server: AdbServer) -> bool:
         self._require_server(server)
         with self._lock:
+            if self._server_state.current != server:
+                return False
             if self._active_server == server:
                 return True
-            if not self._devices.advance_server(server.epoch):
-                return False
+            if self._snapshot_server != server:
+                self._devices.invalidate_current()
+                self._snapshot_server = server
             self._active_server = server
             return True
 
@@ -71,7 +80,9 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
         with self._lock:
             if event.server != self._active_server:
                 return False
-            return self._devices.observe(event.server_epoch, event.snapshot)
+            if self._server_state.current != event.server:
+                return False
+            return self._devices.observe(event.snapshot)
 
     @staticmethod
     def _require_server(server: AdbServer) -> None:

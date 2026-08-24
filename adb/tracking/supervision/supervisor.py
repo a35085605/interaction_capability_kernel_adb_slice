@@ -7,6 +7,7 @@ from adb.epoch import EpochIssuer
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from adb.server.failure import AdbServerConnectionFailure
 from adb.server.identity import AdbServer, ServerEpoch
+from adb.server.state import AdbServerStateView
 from adb.tracking.supervision.policy import AdbDevicesTrackingSupervisionPolicy
 from adb.server.signal import (
     AdbServerRetired,
@@ -59,6 +60,7 @@ class AdbDevicesTrackingSupervisor:
         event_bus: EventBus,
         policy: AdbDevicesTrackingSupervisionPolicy,
         *,
+        server_state: AdbServerStateView,
         devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch],
         snapshot_state: AdbDevicesSnapshotState | None = None,
         _tracker_factory: _TrackerFactory | None = None,
@@ -72,6 +74,10 @@ class AdbDevicesTrackingSupervisor:
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(policy, AdbDevicesTrackingSupervisionPolicy):
             raise TypeError("policy must be AdbDevicesTrackingSupervisionPolicy")
+        if not isinstance(server_state, AdbServerStateView):
+            raise TypeError("server_state must satisfy AdbServerStateView")
+        if server_state.current != server:
+            raise ValueError("server_state current server must match server")
         if not isinstance(devices_snapshot_epoch_issuer, EpochIssuer):
             raise TypeError("devices_snapshot_epoch_issuer must satisfy EpochIssuer")
         if snapshot_state is None:
@@ -88,6 +94,7 @@ class AdbDevicesTrackingSupervisor:
         self._devices = snapshot_state
         self._tracking_publisher = AdbDevicesSnapshotStateBackedTrackingPublisher(
             self._devices,
+            server_state,
             self._bus,
         )
         self._policy = policy
