@@ -1,118 +1,170 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
+from adb.epoch import EpochIssuer
 from adb.server.identity import ServerEpoch
+from adb.tracking.identity import (
+    AdbDevicesSnapshotEpoch,
+    AdbDevicesSnapshotEpochSequence,
+)
 from adb.tracking.model import AdbDevicesSnapshot
-from adb.tracking.identity import AdbDevicesTrackingScope, DevicesTrackingEpoch
-from adb.tracking.signal import AdbDevicesSnapshotObserved
 
 
-def _scope_order(
-    scope: AdbDevicesTrackingScope,
-) -> tuple[ServerEpoch, DevicesTrackingEpoch]:
-    return scope.server_epoch, scope.epoch
+@dataclass(frozen=True, slots=True)
+class AdbDevicesSnapshotRevision:
+    """One committed runtime device snapshot with snapshot-local identity.
+
+    ``epoch`` advances for every accepted snapshot observation. ``server_epoch`` identifies
+    the ADB server data world the snapshot belongs to. Tracking-session identity is deliberately
+    absent: ``DevicesTrackingEpoch`` is correlation for producers, not snapshot state identity.
+    """
+
+    server_epoch: ServerEpoch
+    epoch: AdbDevicesSnapshotEpoch
+    snapshot: AdbDevicesSnapshot
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.server_epoch, ServerEpoch):
+            raise TypeError("server_epoch must be ServerEpoch")
+        if not isinstance(self.epoch, AdbDevicesSnapshotEpoch):
+            raise TypeError("epoch must be AdbDevicesSnapshotEpoch")
+        if not isinstance(self.snapshot, AdbDevicesSnapshot):
+            raise TypeError("snapshot must be AdbDevicesSnapshot")
 
 
 @runtime_checkable
-class AdbDevicesView(Protocol):
-    """Read-only current tracked-devices projection for one runtime."""
+class AdbDevicesSnapshotView(Protocol):
+    """Read-only authoritative device-snapshot projection for one runtime."""
 
     @property
-    def active_scope(self) -> AdbDevicesTrackingScope | None: ...
-
-    @property
-    def current_observation(self) -> AdbDevicesSnapshotObserved | None: ...
+    def current(self) -> AdbDevicesSnapshotRevision | None: ...
 
     @property
     def current_snapshot(self) -> AdbDevicesSnapshot | None: ...
 
+    @property
+    def latest_epoch(self) -> AdbDevicesSnapshotEpoch | None: ...
+
+    @property
+    def server_epoch(self) -> ServerEpoch | None: ...
+
 
 @runtime_checkable
-class AdbDevicesWriter(Protocol):
-    """Commit one exact tracking scope into the current tracked-devices projection."""
+class AdbDevicesSnapshotWriter(Protocol):
+    """Commit server-local device snapshots into one runtime snapshot state."""
 
-    def begin_tracking(self, scope: AdbDevicesTrackingScope) -> bool: ...
+    def advance_server(self, server_epoch: ServerEpoch) -> bool: ...
 
-    def observe(self, observation: AdbDevicesSnapshotObserved) -> bool: ...
+    def observe(
+        self,
+        server_epoch: ServerEpoch,
+        snapshot: AdbDevicesSnapshot,
+    ) -> AdbDevicesSnapshotRevision | None: ...
 
-    def end_tracking(self, scope: AdbDevicesTrackingScope) -> bool: ...
 
+class AdbDevicesSnapshotState(AdbDevicesSnapshotView, AdbDevicesSnapshotWriter):
+    """Thread-safe authoritative current device snapshot for one runtime.
 
-class AdbDevicesState(AdbDevicesView, AdbDevicesWriter):
-    """Thread-safe last-observed tracked-devices state for one runtime.
+    The state deliberately stores no tracker-session identity. ``DevicesTrackingEpoch`` is used
+    upstream to fence stale producer signals before they reach this state. Every accepted
+    snapshot receives a fresh runtime-scoped ``AdbDevicesSnapshotEpoch`` even when its value is
+    equal to the previous snapshot.
 
-    Tracking scopes identify observation sessions by epoch. Replacing or ending a tracker
-    therefore changes only ``active_scope``; the last observation remains available while no
-    tracker is active and across replacement trackers for the same server epoch. Starting
-    observation of a newer server epoch invalidates the prior epoch's snapshot.
-    Late writes from older server epochs or tracking epochs are rejected.
+    Moving to a newer ``ServerEpoch`` invalidates the prior server-local snapshot. Re-entering
+    the same server epoch, such as through a replacement tracker, preserves the last snapshot.
+    Writes from older server epochs are rejected.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        _epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch] | None = None,
+    ) -> None:
+        if _epoch_issuer is None:
+            _epoch_issuer = AdbDevicesSnapshotEpochSequence()
+        if not isinstance(_epoch_issuer, EpochIssuer):
+            raise TypeError("_epoch_issuer must satisfy EpochIssuer")
         self._lock = Lock()
-        self._active_scope: AdbDevicesTrackingScope | None = None
-        self._latest_scope: AdbDevicesTrackingScope | None = None
-        self._current_observation: AdbDevicesSnapshotObserved | None = None
+        self._epoch_issuer = _epoch_issuer
+        self._current: AdbDevicesSnapshotRevision | None = None
+        self._latest_epoch: AdbDevicesSnapshotEpoch | None = None
+        self._server_epoch: ServerEpoch | None = None
 
     @property
-    def active_scope(self) -> AdbDevicesTrackingScope | None:
+    def current(self) -> AdbDevicesSnapshotRevision | None:
         with self._lock:
-            return self._active_scope
-
-    @property
-    def current_observation(self) -> AdbDevicesSnapshotObserved | None:
-        with self._lock:
-            return self._current_observation
+            return self._current
 
     @property
     def current_snapshot(self) -> AdbDevicesSnapshot | None:
         with self._lock:
-            observation = self._current_observation
-            return None if observation is None else observation.snapshot
+            current = self._current
+            return None if current is None else current.snapshot
 
-    def begin_tracking(self, scope: AdbDevicesTrackingScope) -> bool:
-        self._require_scope(scope)
+    @property
+    def latest_epoch(self) -> AdbDevicesSnapshotEpoch | None:
         with self._lock:
-            if self._active_scope == scope:
+            return self._latest_epoch
+
+    @property
+    def server_epoch(self) -> ServerEpoch | None:
+        with self._lock:
+            return self._server_epoch
+
+    def advance_server(self, server_epoch: ServerEpoch) -> bool:
+        """Advance the snapshot data world without coupling it to a tracking session."""
+
+        self._require_server_epoch(server_epoch)
+        with self._lock:
+            current_server_epoch = self._server_epoch
+            if current_server_epoch is None:
+                self._server_epoch = server_epoch
                 return True
-            latest = self._latest_scope
-            if latest is not None and _scope_order(scope) <= _scope_order(latest):
+            if server_epoch < current_server_epoch:
                 return False
-            observation = self._current_observation
-            if observation is not None and observation.server_epoch != scope.server_epoch:
-                self._current_observation = None
-            self._latest_scope = scope
-            self._active_scope = scope
+            if server_epoch == current_server_epoch:
+                return True
+            self._server_epoch = server_epoch
+            self._current = None
             return True
 
-    def observe(self, observation: AdbDevicesSnapshotObserved) -> bool:
-        if not isinstance(observation, AdbDevicesSnapshotObserved):
-            raise TypeError("observation must be AdbDevicesSnapshotObserved")
-        self._require_scope(observation.scope)
-        with self._lock:
-            if observation.scope != self._active_scope:
-                return False
-            self._current_observation = observation
-            return True
+    def observe(
+        self,
+        server_epoch: ServerEpoch,
+        snapshot: AdbDevicesSnapshot,
+    ) -> AdbDevicesSnapshotRevision | None:
+        """Commit one accepted snapshot observation and assign a fresh snapshot epoch."""
 
-    def end_tracking(self, scope: AdbDevicesTrackingScope) -> bool:
-        self._require_scope(scope)
+        self._require_server_epoch(server_epoch)
+        if not isinstance(snapshot, AdbDevicesSnapshot):
+            raise TypeError("snapshot must be AdbDevicesSnapshot")
         with self._lock:
-            if scope != self._active_scope:
-                return False
-            self._active_scope = None
-            return True
+            current_server_epoch = self._server_epoch
+            if current_server_epoch is not None and server_epoch < current_server_epoch:
+                return None
+            if current_server_epoch is None or server_epoch > current_server_epoch:
+                self._server_epoch = server_epoch
+                self._current = None
+            epoch = self._epoch_issuer.issue()
+            if not isinstance(epoch, AdbDevicesSnapshotEpoch):
+                raise TypeError("snapshot epoch issuer must return AdbDevicesSnapshotEpoch")
+            revision = AdbDevicesSnapshotRevision(server_epoch, epoch, snapshot)
+            self._current = revision
+            self._latest_epoch = epoch
+            return revision
 
     @staticmethod
-    def _require_scope(scope: AdbDevicesTrackingScope) -> None:
-        if not isinstance(scope, AdbDevicesTrackingScope):
-            raise TypeError("scope must be AdbDevicesTrackingScope")
+    def _require_server_epoch(server_epoch: ServerEpoch) -> None:
+        if not isinstance(server_epoch, ServerEpoch):
+            raise TypeError("server_epoch must be ServerEpoch")
 
 
 __all__ = [
-    "AdbDevicesState",
-    "AdbDevicesView",
-    "AdbDevicesWriter",
+    "AdbDevicesSnapshotRevision",
+    "AdbDevicesSnapshotState",
+    "AdbDevicesSnapshotView",
+    "AdbDevicesSnapshotWriter",
 ]

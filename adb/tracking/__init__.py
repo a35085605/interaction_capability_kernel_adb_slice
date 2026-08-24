@@ -1,6 +1,8 @@
 """ADB track-devices observations, state, and streaming lifetimes."""
 
 from adb.tracking.identity import (
+    AdbDevicesSnapshotEpoch,
+    AdbDevicesSnapshotEpochSequence,
     AdbDevicesTrackingScope,
     DevicesTrackingEpoch,
     DevicesTrackingEpochSequence,
@@ -22,16 +24,26 @@ from adb.tracking.signal import (
     AdbDevicesTrackingStopped,
 )
 from adb.tracking.source import AdbTrackDevicesSession, AdbTrackDevicesSource
-from adb.tracking.state import AdbDevicesState, AdbDevicesView, AdbDevicesWriter
+from adb.tracking.state import (
+    AdbDevicesSnapshotRevision,
+    AdbDevicesSnapshotState,
+    AdbDevicesSnapshotView,
+    AdbDevicesSnapshotWriter,
+)
 from adb.tracking.tracker import AdbDevicesTracker, SmartSocketAdbDevicesTracker
 
 __all__ = [
     "AdbConnectionState",
     "AdbConnectionType",
     "AdbDevicesSnapshot",
+    "AdbDevicesSnapshotEpoch",
+    "AdbDevicesSnapshotEpochSequence",
     "AdbDevicesSnapshotObserved",
     "AdbDevicesSnapshotReader",
-    "AdbDevicesState",
+    "AdbDevicesSnapshotRevision",
+    "AdbDevicesSnapshotState",
+    "AdbDevicesSnapshotView",
+    "AdbDevicesSnapshotWriter",
     "AdbDevicesTracker",
     "AdbDevicesTrackingScope",
     "AdbDevicesTrackingFailed",
@@ -42,8 +54,6 @@ __all__ = [
     "AdbDevicesTrackingSignal",
     "AdbDevicesTrackingStarted",
     "AdbDevicesTrackingStopped",
-    "AdbDevicesView",
-    "AdbDevicesWriter",
     "AdbTrackedDevice",
     "AdbTrackedDeviceLookup",
     "AdbTrackDevicesSession",

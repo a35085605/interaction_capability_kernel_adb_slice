@@ -7,6 +7,19 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch
 
 
+class AdbDevicesSnapshotEpoch(Epoch):
+    """Runtime-scoped ordinal identity for committed device snapshots."""
+
+    __slots__ = ()
+
+
+class AdbDevicesSnapshotEpochSequence(EpochSequence[AdbDevicesSnapshotEpoch]):
+    """Runtime-scoped monotonically increasing device-snapshot epoch issuer."""
+
+    def __init__(self) -> None:
+        super().__init__(AdbDevicesSnapshotEpoch)
+
+
 class DevicesTrackingEpoch(Epoch):
     """Ordinal identity for successive track-devices observation sessions."""
 
@@ -48,6 +61,8 @@ class AdbDevicesTrackingScope:
 
 
 __all__ = [
+    "AdbDevicesSnapshotEpoch",
+    "AdbDevicesSnapshotEpochSequence",
     "AdbDevicesTrackingScope",
     "DevicesTrackingEpoch",
     "DevicesTrackingEpochSequence",

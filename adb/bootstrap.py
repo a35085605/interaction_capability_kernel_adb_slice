@@ -12,7 +12,7 @@ from adb.server.lifecycle.control.subprocess import SubprocessAdbServerControlle
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerState
-from adb.tracking.state import AdbDevicesState
+from adb.tracking.state import AdbDevicesSnapshotState
 from adb.tracking.supervision.policy import (
     AdbDevicesTrackingSupervisionPolicy,
 )
@@ -44,7 +44,7 @@ class _BootstrapCore:
     controller: AdbServerController
     provisioning_endpoint: AdbServerEndpoint | None
     server_state: AdbServerState
-    devices_state: AdbDevicesState
+    snapshot_state: AdbDevicesSnapshotState
     initial_server: AdbServer
 
 
@@ -117,7 +117,7 @@ class AdbRuntimeBootstrap:
         try:
             return self._build_runtime(
                 core.server_state,
-                core.devices_state,
+                core.snapshot_state,
                 transport_supervision_policy=self._transport_supervision_policy,
             )
         except BaseException:
@@ -169,7 +169,7 @@ class AdbRuntimeBootstrap:
                     core.initial_server,
                     event_bus,
                     self._tracking_supervision_policy,
-                    devices_state=core.devices_state,
+                    snapshot_state=core.snapshot_state,
                 )
                 if track_devices
                 else None
@@ -179,14 +179,14 @@ class AdbRuntimeBootstrap:
                     core.initial_server,
                     event_bus,
                     tcp_transport_ensurer,
-                    devices=core.devices_state,
+                    devices=core.snapshot_state,
                 )
                 if configured_transports
                 else None
             )
             return self._build_runtime(
                 core.server_state,
-                core.devices_state,
+                core.snapshot_state,
                 event_bus=event_bus,
                 server_supervisor=server_supervisor,
                 tracking_supervisor=tracking_supervisor,
@@ -217,7 +217,7 @@ class AdbRuntimeBootstrap:
                 controller=controller,
                 provisioning_endpoint=provisioning_endpoint,
                 server_state=AdbServerState(initial_server),
-                devices_state=AdbDevicesState(),
+                snapshot_state=AdbDevicesSnapshotState(),
                 initial_server=initial_server,
             )
         except BaseException:

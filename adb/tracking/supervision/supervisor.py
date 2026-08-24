@@ -18,9 +18,9 @@ from adb.tracking.identity import (
     DevicesTrackingEpoch,
     DevicesTrackingEpochSequence,
 )
-from adb.tracking.state import AdbDevicesState
+from adb.tracking.state import AdbDevicesSnapshotState
 from adb.tracking.publication import (
-    AdbDevicesStateBackedTrackingPublisher,
+    AdbDevicesSnapshotStateBackedTrackingPublisher,
 )
 from adb.tracking.tracker import (
     AdbDevicesTracker,
@@ -63,7 +63,7 @@ class AdbDevicesTrackingSupervisor:
         event_bus: EventBus,
         policy: AdbDevicesTrackingSupervisionPolicy,
         *,
-        devices_state: AdbDevicesState | None = None,
+        snapshot_state: AdbDevicesSnapshotState | None = None,
         _tracker_factory: _TrackerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
         _epoch_issuer: EpochIssuer[DevicesTrackingEpoch] | None = None,
@@ -76,10 +76,10 @@ class AdbDevicesTrackingSupervisor:
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(policy, AdbDevicesTrackingSupervisionPolicy):
             raise TypeError("policy must be AdbDevicesTrackingSupervisionPolicy")
-        if devices_state is None:
-            devices_state = AdbDevicesState()
-        if not isinstance(devices_state, AdbDevicesState):
-            raise TypeError("devices_state must be AdbDevicesState or None")
+        if snapshot_state is None:
+            snapshot_state = AdbDevicesSnapshotState()
+        if not isinstance(snapshot_state, AdbDevicesSnapshotState):
+            raise TypeError("snapshot_state must be AdbDevicesSnapshotState or None")
         if _tracker_factory is not None and not callable(_tracker_factory):
             raise TypeError("_tracker_factory must be callable or None")
         if not callable(_thread_factory):
@@ -91,8 +91,8 @@ class AdbDevicesTrackingSupervisor:
 
         self.server: AdbServer | None = server
         self._bus = event_bus
-        self._devices = devices_state
-        self._tracking_publisher = AdbDevicesStateBackedTrackingPublisher(
+        self._devices = snapshot_state
+        self._tracking_publisher = AdbDevicesSnapshotStateBackedTrackingPublisher(
             self._devices,
             self._bus,
         )
@@ -115,7 +115,7 @@ class AdbDevicesTrackingSupervisor:
         # fences local background work tied to one concrete tracker instance.
 
     @property
-    def devices(self) -> AdbDevicesState:
+    def devices(self) -> AdbDevicesSnapshotState:
         """Shared current tracked-devices state committed before tracking events are published."""
 
         return self._devices
@@ -454,7 +454,7 @@ class AdbDevicesTrackingSupervisor:
     def _detach_tracker_locked(self) -> AdbDevicesTracker | None:
         tracker = self._tracker
         if tracker is not None:
-            self._devices.end_tracking(tracker.identity)
+            self._tracking_publisher.end_tracking(tracker.identity)
         self._tracker = None
         self._tracking_active = False
         self._start_in_progress = False

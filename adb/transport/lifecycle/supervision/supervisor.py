@@ -16,11 +16,12 @@ from adb.transport.configuration import (
     AdbUsbTransportConfiguration,
 )
 from adb.tracking.state import (
-    AdbDevicesState,
-    AdbDevicesView,
-    AdbDevicesWriter,
+    AdbDevicesSnapshotState,
+    AdbDevicesSnapshotView,
+    AdbDevicesSnapshotWriter,
 )
 from adb.tracking.identity import AdbDevicesTrackingScope, DevicesTrackingEpoch
+from adb.tracking.model import AdbDevicesSnapshot
 from adb.transport.resolution import (
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
@@ -76,7 +77,7 @@ class AdbConfiguredTransportSupervisor:
         event_bus: EventBus,
         tcp_ensurer: AdbTcpTransportEnsurer | None,
         *,
-        devices: AdbDevicesView | None = None,
+        devices: AdbDevicesSnapshotView | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(server, AdbServer):
@@ -89,16 +90,16 @@ class AdbConfiguredTransportSupervisor:
             raise TypeError("tcp_ensurer must satisfy AdbTcpTransportEnsurer or be None")
         owns_devices = devices is None
         if devices is None:
-            devices = AdbDevicesState()
-        if not isinstance(devices, AdbDevicesView):
-            raise TypeError("devices must satisfy AdbDevicesView or be None")
+            devices = AdbDevicesSnapshotState()
+        if not isinstance(devices, AdbDevicesSnapshotView):
+            raise TypeError("devices must satisfy AdbDevicesSnapshotView or be None")
         self.server: AdbServer | None = server
         self._bus = event_bus
         self._tcp_ensurer = tcp_ensurer
         self._devices = devices
-        self._devices_writer: AdbDevicesWriter | None = (
+        self._devices_writer: AdbDevicesSnapshotWriter | None = (
             devices
-            if owns_devices and isinstance(devices, AdbDevicesWriter)
+            if owns_devices and isinstance(devices, AdbDevicesSnapshotWriter)
             else None
         )
         self._thread_factory = _thread_factory
@@ -118,7 +119,7 @@ class AdbConfiguredTransportSupervisor:
         # Per-registration tokens fence late recovery results without coupling independent ensures.
 
     @property
-    def devices(self) -> AdbDevicesView:
+    def devices(self) -> AdbDevicesSnapshotView:
         """Current tracked-devices state used to seed newly registered transport projections."""
 
         return self._devices
@@ -210,15 +211,16 @@ class AdbConfiguredTransportSupervisor:
                 )
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
-            observation = (
-                self._devices.current_observation
-                if self._tracking_active
-                else None
-            )
-            if observation is not None and observation.scope == self._tracking_scope:
+            revision = self._devices.current if self._tracking_active else None
+            server = self.server
+            if (
+                revision is not None
+                and server is not None
+                and revision.server_epoch == server.epoch
+            ):
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
-                    observation,
+                    revision.snapshot,
                 )
 
         if publication is not None:
@@ -259,14 +261,10 @@ class AdbConfiguredTransportSupervisor:
             subscriptions = self._subscriptions
             self._subscriptions = ()
             self._tracking_active = False
-            scope = self._tracking_scope
             self._tracking_scope = None
-            writer = self._devices_writer
             threads = tuple(self._recovery_threads)
             self._recovery_threads.clear()
             self._registrations.clear()
-        if writer is not None and scope is not None:
-            writer.end_tracking(scope)
         for token in subscriptions:
             self._bus.unsubscribe(token)
         for thread in threads:
@@ -283,7 +281,7 @@ class AdbConfiguredTransportSupervisor:
             ):
                 return
             writer = self._devices_writer
-            if writer is not None and not writer.begin_tracking(event.scope):
+            if writer is not None and not writer.advance_server(event.server_epoch):
                 return
             self._latest_tracking_epoch = event.epoch
             self._tracking_active = True
@@ -301,12 +299,12 @@ class AdbConfiguredTransportSupervisor:
             ):
                 return
             writer = self._devices_writer
-            if writer is not None and not writer.observe(event):
+            if writer is not None and writer.observe(event.server_epoch, event.snapshot) is None:
                 return
             for registration in self._registrations.values():
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
-                    event,
+                    event.snapshot,
                 )
                 if publication is not None:
                     publications.append(publication)
@@ -330,21 +328,18 @@ class AdbConfiguredTransportSupervisor:
                 or event.scope != self._tracking_scope
             ):
                 return
-            writer = self._devices_writer
-            if writer is not None:
-                writer.end_tracking(event.scope)
             self._tracking_active = False
             self._tracking_scope = None
 
     def _project_registration_locked(
         self,
         registration: _ConfiguredTransportRegistration,
-        observation: AdbDevicesSnapshotObserved,
+        snapshot: AdbDevicesSnapshot,
     ) -> tuple[AdbConfiguredTransportResolutionChanged | None, bool]:
         previous = registration.resolution
         current = resolve_configured_transport(
             registration.configuration,
-            observation.snapshot,
+            snapshot,
         )
         changed = previous != current
         registration.resolution = current
@@ -465,9 +460,6 @@ class AdbConfiguredTransportSupervisor:
                         registration.active_recovery_token = None
 
     def _reset_server_lifetime_locked(self) -> None:
-        scope = self._tracking_scope
-        if self._devices_writer is not None and scope is not None:
-            self._devices_writer.end_tracking(scope)
         self._tracking_active = False
         self._tracking_scope = None
         self._latest_tracking_epoch = None
