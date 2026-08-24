@@ -23,7 +23,7 @@ from adb.tracking.publication import (
 )
 from adb.tracking.tracker import (
     AdbDevicesTracker,
-    AdbDevicesTrackingScope,
+    SmartSocketAdbDevicesTracker,
 )
 from adb.tracking.signal import (
     AdbDevicesTrackingFailed,
@@ -37,7 +37,7 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 _ThreadFactory = Callable[..., Thread]
 _TrackerFactory = Callable[
     [AdbDevicesTracking, EventPublisher],
-    AdbDevicesTrackingScope,
+    AdbDevicesTracker,
 ]
 _DEFAULT_GENERATION_ISSUER = AdbDevicesTrackingGenerationSequence()
 
@@ -49,7 +49,7 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 
 class AdbDevicesTrackingSupervisor:
-    """Maintain desired track-devices with single-use tracker scopes.
+    """Maintain desired track-devices with single-use trackers.
 
     Terminal tracker or server events discard the current scope; a fresh server creates a
     new tracker, even when the replacement server uses a different endpoint. Tracker startup is
@@ -103,7 +103,7 @@ class AdbDevicesTrackingSupervisor:
         self._lock = Lock()
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._desired_tracking = False
-        self._tracker: AdbDevicesTrackingScope | None = None
+        self._tracker: AdbDevicesTracker | None = None
         self._tracking_active = False
         self._server_identity: AdbServer | None = None
         self._latest_server_epoch: int | None = None
@@ -160,8 +160,8 @@ class AdbDevicesTrackingSupervisor:
 
         if server is not None and not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer or None")
-        tracker_to_close: AdbDevicesTrackingScope | None = None
-        launch: tuple[Thread, AdbDevicesTrackingScope] | None = None
+        tracker_to_close: AdbDevicesTracker | None = None
+        launch: tuple[Thread, AdbDevicesTracker] | None = None
 
         with self._lock:
             self._require_open()
@@ -316,7 +316,7 @@ class AdbDevicesTrackingSupervisor:
                 return
         self.reconcile(event.server)
 
-    def _run_start_attempt(self, tracker: AdbDevicesTrackingScope) -> None:
+    def _run_start_attempt(self, tracker: AdbDevicesTracker) -> None:
         active_thread = current_thread()
         try:
             with self._lock:
@@ -331,7 +331,7 @@ class AdbDevicesTrackingSupervisor:
             with self._lock:
                 self._attempt_threads.discard(active_thread)
 
-    def _attempt_start(self, tracker: AdbDevicesTrackingScope) -> bool:
+    def _attempt_start(self, tracker: AdbDevicesTracker) -> bool:
         try:
             tracker.start()
         except AdbServerConnectionError as exc:
@@ -358,7 +358,7 @@ class AdbDevicesTrackingSupervisor:
         except RuntimeError:
             return self._complete_start_attempt(tracker, started=False)
         except BaseException:
-            tracker_to_close: AdbDevicesTrackingScope | None = None
+            tracker_to_close: AdbDevicesTracker | None = None
             with self._lock:
                 if self._tracker is tracker:
                     tracker_to_close = self._detach_tracker_locked()
@@ -369,7 +369,7 @@ class AdbDevicesTrackingSupervisor:
 
     def _complete_start_attempt(
         self,
-        tracker: AdbDevicesTrackingScope,
+        tracker: AdbDevicesTracker,
         *,
         started: bool,
         failure: AdbDevicesTrackingFailure | None = None,
@@ -377,7 +377,7 @@ class AdbDevicesTrackingSupervisor:
     ) -> bool:
         request_server_reconciliation = False
         reconciliation_server: AdbServer | None = None
-        tracker_to_close: AdbDevicesTrackingScope | None = None
+        tracker_to_close: AdbDevicesTracker | None = None
         publish_failure = False
 
         with self._lock:
@@ -423,9 +423,9 @@ class AdbDevicesTrackingSupervisor:
             )
         return keep_tracker
 
-    def _create_tracker_locked(self) -> AdbDevicesTrackingScope:
+    def _create_tracker_locked(self) -> AdbDevicesTracker:
         if self._tracker is not None:
-            raise RuntimeError("a tracker scope already exists")
+            raise RuntimeError("a tracker already exists")
         server = self.server
         if server is None:
             raise RuntimeError("cannot create tracker without an active server")
@@ -435,7 +435,7 @@ class AdbDevicesTrackingSupervisor:
         )
         factory = self._tracker_factory
         tracker = (
-            AdbDevicesTracker(
+            SmartSocketAdbDevicesTracker(
                 identity,
                 self._tracking_publisher,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
@@ -443,15 +443,15 @@ class AdbDevicesTrackingSupervisor:
             if factory is None
             else factory(identity, self._tracking_publisher)
         )
-        if not isinstance(tracker, AdbDevicesTrackingScope):
-            raise TypeError("tracker factory must return AdbDevicesTrackingScope")
+        if not isinstance(tracker, AdbDevicesTracker):
+            raise TypeError("tracker factory must return AdbDevicesTracker")
         if tracker.identity != identity:
-            raise ValueError("tracker factory returned a mismatched tracking scope identity")
+            raise ValueError("tracker factory returned a mismatched tracking identity")
         self._tracker = tracker
         self._tracking_active = False
         return tracker
 
-    def _detach_tracker_locked(self) -> AdbDevicesTrackingScope | None:
+    def _detach_tracker_locked(self) -> AdbDevicesTracker | None:
         tracker = self._tracker
         if tracker is not None:
             self._devices.end_tracking(tracker.identity)

@@ -33,8 +33,8 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 
 @runtime_checkable
-class AdbDevicesTrackingScope(Protocol):
-    """Single-use track-devices scope."""
+class AdbDevicesTracker(Protocol):
+    """Single-use ADB devices tracker."""
 
     @property
     def identity(self) -> AdbDevicesTracking: ...
@@ -47,8 +47,8 @@ class AdbDevicesTrackingScope(Protocol):
     def close(self) -> None: ...
 
 
-class AdbDevicesTracker:
-    """Track one track-devices stream for one exact tracking scope.
+class SmartSocketAdbDevicesTracker:
+    """Track one smart-socket track-devices stream for one exact tracking lifetime.
 
     ``start`` establishes stream mode before returning, then hands the established session to
     the worker. A tracker is single-use. Stop or failure is terminal; ``close`` closes the source
@@ -242,5 +242,5 @@ class AdbDevicesTracker:
 
 __all__ = [
     "AdbDevicesTracker",
-    "AdbDevicesTrackingScope",
+    "SmartSocketAdbDevicesTracker",
 ]

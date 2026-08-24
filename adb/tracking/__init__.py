@@ -23,7 +23,7 @@ from adb.tracking.signal import (
 )
 from adb.tracking.source import AdbTrackDevicesSession, AdbTrackDevicesSource
 from adb.tracking.state import AdbDevicesState, AdbDevicesView, AdbDevicesWriter
-from adb.tracking.tracker import AdbDevicesTracker, AdbDevicesTrackingScope
+from adb.tracking.tracker import AdbDevicesTracker, SmartSocketAdbDevicesTracker
 
 __all__ = [
     "AdbConnectionState",
@@ -38,7 +38,7 @@ __all__ = [
     "AdbDevicesTrackingFailure",
     "AdbDevicesTrackingGenerationIssuer",
     "AdbDevicesTrackingGenerationSequence",
-    "AdbDevicesTrackingScope",
+    "SmartSocketAdbDevicesTracker",
     "AdbDevicesTrackingSignal",
     "AdbDevicesTrackingStarted",
     "AdbDevicesTrackingStopped",
