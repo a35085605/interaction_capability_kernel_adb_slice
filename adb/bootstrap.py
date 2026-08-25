@@ -186,6 +186,7 @@ class AdbRuntimeBootstrap:
                     core.initial_server,
                     event_bus,
                     tcp_transport_ensurer,
+                    server_state=core.server_state,
                     devices=core.snapshot_state,
                 )
                 if configured_transports

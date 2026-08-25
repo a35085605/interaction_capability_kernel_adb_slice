@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from threading import Lock, Thread, current_thread
 
 from adb.server.identity import AdbServer
+from adb.server.state import AdbServerStateView
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.signal import (
     AdbConfiguredTransportRecoveryExhausted,
@@ -76,6 +77,7 @@ class AdbConfiguredTransportSupervisor:
         event_bus: EventBus,
         tcp_ensurer: AdbTcpTransportEnsurer | None,
         *,
+        server_state: AdbServerStateView,
         devices: AdbDevicesSnapshotView | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
@@ -87,12 +89,17 @@ class AdbConfiguredTransportSupervisor:
             raise TypeError("event_bus must satisfy EventBus")
         if tcp_ensurer is not None and not isinstance(tcp_ensurer, AdbTcpTransportEnsurer):
             raise TypeError("tcp_ensurer must satisfy AdbTcpTransportEnsurer or be None")
+        if not isinstance(server_state, AdbServerStateView):
+            raise TypeError("server_state must satisfy AdbServerStateView")
+        if server_state.current != server:
+            raise ValueError("server_state current server must match server")
         owns_devices = devices is None
         if devices is None:
             devices = AdbDevicesSnapshotState()
         if not isinstance(devices, AdbDevicesSnapshotView):
             raise TypeError("devices must satisfy AdbDevicesSnapshotView or be None")
-        self.server: AdbServer | None = server
+        self._server_state = server_state
+        self._projection_server: AdbServer | None = server
         self._bus = event_bus
         self._tcp_ensurer = tcp_ensurer
         self._devices = devices
@@ -110,11 +117,22 @@ class AdbConfiguredTransportSupervisor:
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._tracking_active = False
         self._devices_need_invalidation = False
-        self._latest_server_epoch = server.epoch
         self._recovery_threads: set[Thread] = set()
         self._closed = False
 
         # Per-registration tokens fence late recovery results without coupling independent ensures.
+
+    @property
+    def server(self) -> AdbServer | None:
+        """Current server lifetime from the runtime authoritative state."""
+
+        return self._server_state.current
+
+    @property
+    def server_state(self) -> AdbServerStateView:
+        """Read-only authoritative server state shared with the owning runtime."""
+
+        return self._server_state
 
     @property
     def devices(self) -> AdbDevicesSnapshotView:
@@ -134,36 +152,27 @@ class AdbConfiguredTransportSupervisor:
                 self._bus.subscribe(AdbDevicesTrackingFailed, self._on_tracking_terminal),
                 self._bus.subscribe(AdbDevicesTrackingStopped, self._on_tracking_terminal),
             )
+            server = self._server_state.current
+            if server != self._projection_server:
+                self._projection_server = server
+                self._reset_server_lifetime_locked()
 
-    def reconcile(self, server: AdbServer | None) -> None:
-        """Rebind long-lived registrations to the current server lifetime.
+    def reconcile(self) -> None:
+        """Rebind long-lived registrations to the authoritative current server.
 
         Server replacement clears server-local resolution and invalidates recovery work
         started for the previous lifetime, while preserving the registration set itself.
-        Older server epochs are ignored.
+        ``_projection_server`` records only which lifetime the derived registration state
+        currently belongs to; it is not a source of current-server truth.
         """
 
-        if server is not None and not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer or None")
         with self._lock:
             if self._closed:
                 raise RuntimeError("configured transport supervisor is closed")
-            if server is not None and server.epoch < self._latest_server_epoch:
+            server = self._server_state.current
+            if server == self._projection_server:
                 return
-            if (
-                server is not None
-                and self.server is None
-                and server.epoch == self._latest_server_epoch
-            ):
-                # Once a lifetime has been retired to ``None``, only a newer epoch may
-                # become current; a late recovery signal must not resurrect the old one.
-                return
-            if server == self.server:
-                return
-
-            self.server = server
-            if server is not None and server.epoch > self._latest_server_epoch:
-                self._latest_server_epoch = server.epoch
+            self._projection_server = server
             self._reset_server_lifetime_locked()
 
     def register(
@@ -210,7 +219,12 @@ class AdbConfiguredTransportSupervisor:
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
             snapshot = self._devices.current if self._tracking_active else None
-            if snapshot is not None and self.server is not None:
+            server = self._server_state.current
+            if (
+                snapshot is not None
+                and server is not None
+                and self._projection_server == server
+            ):
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
                     snapshot.record,
@@ -265,7 +279,12 @@ class AdbConfiguredTransportSupervisor:
 
     def _on_tracking_started(self, event: AdbDevicesTrackingStarted) -> None:
         with self._lock:
-            if self._closed or event.server != self.server:
+            server = self._server_state.current
+            if (
+                self._closed
+                or event.server != server
+                or self._projection_server != server
+            ):
                 return
             writer = self._devices_writer
             if writer is not None and self._devices_need_invalidation:
@@ -277,9 +296,11 @@ class AdbConfiguredTransportSupervisor:
         publications: list[object] = []
         recovery_launch_requests: list[AdbConfiguredTransport] = []
         with self._lock:
+            server = self._server_state.current
             if (
                 self._closed
-                or event.server != self.server
+                or event.server != server
+                or self._projection_server != server
                 or not self._tracking_active
             ):
                 return
@@ -306,9 +327,11 @@ class AdbConfiguredTransportSupervisor:
         event: AdbDevicesTrackingFailed | AdbDevicesTrackingStopped,
     ) -> None:
         with self._lock:
+            server = self._server_state.current
             if (
                 self._closed
-                or event.server != self.server
+                or event.server != server
+                or self._projection_server != server
                 or not self._tracking_active
             ):
                 return
@@ -354,8 +377,13 @@ class AdbConfiguredTransportSupervisor:
     def _launch_recovery(self, configuration: AdbConfiguredTransport) -> None:
         with self._lock:
             registration = self._registrations.get(configuration)
-            server = self.server
-            if registration is None or self._closed or server is None:
+            server = self._server_state.current
+            if (
+                registration is None
+                or self._closed
+                or server is None
+                or self._projection_server != server
+            ):
                 return
             if registration.active_recovery_thread is not None:
                 return
@@ -421,7 +449,8 @@ class AdbConfiguredTransportSupervisor:
                 result_is_current = (
                     registration is not None
                     and not self._closed
-                    and self.server == server
+                    and self._server_state.current == server
+                    and self._projection_server == server
                     and registration.active_recovery_token is recovery_token
                 )
             if not result_is_current:

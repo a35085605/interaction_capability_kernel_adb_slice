@@ -73,8 +73,18 @@ class AdbRuntime(AdbManagedRuntime):
             raise ValueError("supervised runtime components require an event bus")
         if server_supervisor is not None and server_supervisor.server_state is not server_state:
             raise ValueError("server supervisor must share the runtime server state")
+        if (
+            tracking_supervisor is not None
+            and tracking_supervisor.server_state is not server_state
+        ):
+            raise ValueError("tracking supervisor must share the runtime server state")
         if tracking_supervisor is not None and tracking_supervisor.devices is not snapshot_state:
             raise ValueError("tracking supervisor must share the runtime tracked-devices state")
+        if (
+            transport_supervisor is not None
+            and transport_supervisor.server_state is not server_state
+        ):
+            raise ValueError("transport supervisor must share the runtime server state")
         if transport_supervisor is not None and transport_supervisor.devices is not snapshot_state:
             raise ValueError("transport supervisor must share the runtime tracked-devices state")
 
@@ -208,15 +218,15 @@ class AdbRuntime(AdbManagedRuntime):
         if not supervisor.unregister(configuration):
             raise RuntimeError("configured transport registration disappeared from supervision")
 
-    def _on_server_retired(self, event: AdbServerRetired) -> None:
-        supervisor = self._transport_supervisor
-        if supervisor is not None and supervisor.server == event.server:
-            supervisor.reconcile(None)
-
-    def _on_server_recovered(self, event: AdbServerRecovered) -> None:
+    def _on_server_retired(self, _event: AdbServerRetired) -> None:
         supervisor = self._transport_supervisor
         if supervisor is not None:
-            supervisor.reconcile(event.server)
+            supervisor.reconcile()
+
+    def _on_server_recovered(self, _event: AdbServerRecovered) -> None:
+        supervisor = self._transport_supervisor
+        if supervisor is not None:
+            supervisor.reconcile()
 
     def _require_started(self) -> None:
         with self._runtime_lock:

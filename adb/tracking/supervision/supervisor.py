@@ -6,7 +6,7 @@ from threading import Lock, Thread, current_thread
 from adb.epoch import EpochIssuer
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from adb.server.failure import AdbServerConnectionFailure
-from adb.server.identity import AdbServer, ServerEpoch
+from adb.server.identity import AdbServer
 from adb.server.state import AdbServerStateView
 from adb.tracking.supervision.policy import AdbDevicesTrackingSupervisionPolicy
 from adb.server.signal import (
@@ -89,12 +89,12 @@ class AdbDevicesTrackingSupervisor:
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
 
-        self.server: AdbServer | None = server
+        self._server_state = server_state
         self._bus = event_bus
         self._devices = snapshot_state
         self._tracking_publisher = AdbDevicesSnapshotStateBackedTrackingPublisher(
             self._devices,
-            server_state,
+            self._server_state,
             self._bus,
         )
         self._policy = policy
@@ -106,11 +106,21 @@ class AdbDevicesTrackingSupervisor:
         self._desired_tracking = False
         self._controller: AdbDevicesTrackingController | None = None
         self._tracking_active = False
-        self._server_identity: AdbServer | None = None
-        self._latest_server_epoch: ServerEpoch | None = None
         self._start_in_progress = False
         self._attempt_threads: set[Thread] = set()
         self._closed = False
+
+    @property
+    def server(self) -> AdbServer | None:
+        """Current server lifetime from the runtime authoritative state."""
+
+        return self._server_state.current
+
+    @property
+    def server_state(self) -> AdbServerStateView:
+        """Read-only authoritative server state shared with the owning runtime."""
+
+        return self._server_state
 
     @property
     def devices(self) -> AdbDevicesSnapshotState:
@@ -131,28 +141,23 @@ class AdbDevicesTrackingSupervisor:
     def start(self) -> bool:
         """Declare tracking intent and establish a controller for the current server."""
 
-        server = self.server
         with self._lock:
             self._require_open()
             if self._desired_tracking:
                 raise RuntimeError("track-devices supervisor is already started")
             self._ensure_subscriptions_locked()
             self._desired_tracking = True
-            self._server_identity = server
-            if server is not None:
-                self._latest_server_epoch = server.epoch
+            server = self._server_state.current
             if server is None:
                 return False
-            controller = self._create_controller_locked()
+            controller = self._create_controller_locked(server)
             self._start_in_progress = True
 
         return self._attempt_start(controller)
 
-    def reconcile(self, server: AdbServer | None) -> None:
-        """Reconcile tracking intent against the current active server."""
+    def reconcile(self) -> None:
+        """Reconcile tracking intent against the authoritative current server."""
 
-        if server is not None and not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer or None")
         controller_to_stop: AdbDevicesTrackingController | None = None
         launch: tuple[Thread, AdbDevicesTrackingController] | None = None
 
@@ -160,32 +165,18 @@ class AdbDevicesTrackingSupervisor:
             self._require_open()
             if not self._desired_tracking:
                 return
-            server_identity = server
-            epoch = server_identity.epoch if server_identity is not None else None
-            if (
-                epoch is not None
-                and self._latest_server_epoch is not None
-                and epoch < self._latest_server_epoch
-            ):
-                return
-            server_changed = server_identity != self._server_identity
-            self.server = server
-            self._server_identity = server_identity
-            if epoch is not None and (
-                self._latest_server_epoch is None
-                or epoch > self._latest_server_epoch
-            ):
-                self._latest_server_epoch = epoch
+            server = self._server_state.current
+            controller = self._controller
             if server is None:
                 controller_to_stop = self._detach_controller_locked()
-            elif server_changed and self._controller is not None:
+            elif controller is not None and controller.server != server:
                 controller_to_stop = self._detach_controller_locked()
             if (
                 server is not None
                 and self._controller is None
                 and not self._start_in_progress
             ):
-                controller = self._create_controller_locked()
+                controller = self._create_controller_locked(server)
                 thread = self._thread_factory(
                     target=self._run_start_attempt,
                     args=(controller,),
@@ -218,7 +209,6 @@ class AdbDevicesTrackingSupervisor:
                 return
             self._closed = True
             self._desired_tracking = False
-            self._server_identity = None
             subscriptions = self._subscriptions
             self._subscriptions = ()
             controller = self._detach_controller_locked()
@@ -239,30 +229,32 @@ class AdbDevicesTrackingSupervisor:
                 or not self._desired_tracking
                 or controller is None
                 or event.server != controller.server
+                or self._server_state.current != controller.server
             ):
                 return
             self._tracking_active = True
 
     def _on_tracking_failed(self, event: AdbDevicesTrackingFailed) -> None:
         request_server_reconciliation = False
-        server: AdbServer | None = None
+        failed_server: AdbServer | None = None
         with self._lock:
             current = self._controller
             if self._closed or current is None or event.server != current.server:
                 return
+            failed_server = current.server
             controller = self._detach_controller_locked()
             if event.failure is AdbDevicesTrackingFailure.SERVER_CONNECTION:
-                server = self._server_identity
                 request_server_reconciliation = (
-                    self._desired_tracking and server is not None
+                    self._desired_tracking
+                    and self._server_state.current == failed_server
                 )
         assert controller is not None
         controller.stop()
         if request_server_reconciliation:
-            assert server is not None
+            assert failed_server is not None
             self._bus.publish(
                 AdbServerReconciliationRequested(
-                    server,
+                    failed_server,
                     AdbServerConnectionFailure(event.diagnostic),
                 )
             )
@@ -276,38 +268,11 @@ class AdbDevicesTrackingSupervisor:
         assert controller is not None
         controller.stop()
 
-    def _on_server_retired(self, event: AdbServerRetired) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            if (
-                self._latest_server_epoch is not None
-                and event.server.epoch < self._latest_server_epoch
-            ):
-                return
-            if (
-                self._latest_server_epoch is None
-                or event.server.epoch > self._latest_server_epoch
-            ):
-                self._latest_server_epoch = event.server.epoch
-            if self._server_identity != event.server:
-                return
-            self._server_identity = None
-            self.server = None
-            controller = self._detach_controller_locked()
-        if controller is not None:
-            controller.stop()
+    def _on_server_retired(self, _event: AdbServerRetired) -> None:
+        self.reconcile()
 
-    def _on_server_recovered(self, event: AdbServerRecovered) -> None:
-        with self._lock:
-            if self._closed or not self._desired_tracking:
-                return
-            if (
-                self._latest_server_epoch is not None
-                and event.server.epoch <= self._latest_server_epoch
-            ):
-                return
-        self.reconcile(event.server)
+    def _on_server_recovered(self, _event: AdbServerRecovered) -> None:
+        self.reconcile()
 
     def _run_start_attempt(self, controller: AdbDevicesTrackingController) -> None:
         active_thread = current_thread()
@@ -381,7 +346,7 @@ class AdbDevicesTrackingSupervisor:
                 started
                 and not self._closed
                 and self._desired_tracking
-                and self._server_identity == controller.server
+                and self._server_state.current == controller.server
                 and controller.active
             )
             if keep_controller:
@@ -390,9 +355,10 @@ class AdbDevicesTrackingSupervisor:
                 controller_to_stop = self._detach_controller_locked()
                 publish_failure = failure is not None
                 if failure is AdbDevicesTrackingFailure.SERVER_CONNECTION:
-                    reconciliation_server = self._server_identity
+                    reconciliation_server = controller.server
                     request_server_reconciliation = (
-                        self._desired_tracking and reconciliation_server is not None
+                        self._desired_tracking
+                        and self._server_state.current == reconciliation_server
                     )
 
         if controller_to_stop is not None:
@@ -416,12 +382,14 @@ class AdbDevicesTrackingSupervisor:
             )
         return keep_controller
 
-    def _create_controller_locked(self) -> AdbDevicesTrackingController:
+    def _create_controller_locked(
+        self,
+        server: AdbServer,
+    ) -> AdbDevicesTrackingController:
         if self._controller is not None:
             raise RuntimeError("a controller already exists")
-        server = self.server
-        if server is None:
-            raise RuntimeError("cannot create controller without an active server")
+        if not isinstance(server, AdbServer):
+            raise TypeError("server must be AdbServer")
         factory = self._controller_factory
         controller = (
             SmartSocketAdbDevicesTrackingController(
