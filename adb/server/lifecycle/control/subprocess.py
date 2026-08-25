@@ -98,8 +98,8 @@ class _SubprocessLifetime:
             self._closed = True
 
 
-class SubprocessAdbEndpointController:
-    """Synchronously own one subprocess-backed ADB endpoint lifetime."""
+class SubprocessAdbServerBackend:
+    """Synchronously own one subprocess-backed ADB server lifetime."""
 
     def __init__(
         self,
@@ -144,7 +144,7 @@ class SubprocessAdbEndpointController:
 
         self._mutation_lock = Lock()
         # The native handle never crosses this backend boundary.  Its existence reserves the
-        # controller slot even when the child has already exited or a prior stop was unproven.
+        # backend slot even when the child has already exited or a prior stop was unproven.
         self._lifetime: _SubprocessLifetime | None = None
 
     def start(
@@ -156,13 +156,13 @@ class SubprocessAdbEndpointController:
         if not self._socket_activation_supported:
             raise AdbServerStartError(
                 "ADB acceptfd socket activation is unavailable on this platform; "
-                "a platform-specific endpoint controller is required"
+                "a platform-specific server backend is required"
             )
 
         with self._mutation_lock:
             if self._lifetime is not None:
                 raise AdbServerStartError(
-                    "an ADB server subprocess lifetime is already owned by this controller"
+                    "an ADB server subprocess lifetime is already owned by this backend"
                 )
 
             lifetime = self._create_lifetime_locked(endpoint)
@@ -318,4 +318,4 @@ class SubprocessAdbEndpointController:
             self._sleep(min(self.probe_interval_seconds, remaining))
 
 
-__all__ = ["SubprocessAdbEndpointController"]
+__all__ = ["SubprocessAdbServerBackend"]

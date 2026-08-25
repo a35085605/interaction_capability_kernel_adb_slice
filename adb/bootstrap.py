@@ -9,8 +9,8 @@ from adb.runtime import AdbRuntime
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch, ServerEpochSequence
 from adb.server.lifecycle.control.controller import AdbServerController
-from adb.server.lifecycle.control.port import AdbEndpointController
-from adb.server.lifecycle.control.subprocess import SubprocessAdbEndpointController
+from adb.server.lifecycle.control.port import AdbServerBackend
+from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerState
@@ -53,11 +53,11 @@ class _AdbServerLifecycleController(Protocol):
 _AdbServerControllerFactory = Callable[
     [EpochIssuer[ServerEpoch]], _AdbServerLifecycleController
 ]
-_AdbEndpointControllerFactory = Callable[[], AdbEndpointController]
+_AdbServerBackendFactory = Callable[[], AdbServerBackend]
 
 
-def _default_endpoint_controller_factory() -> AdbEndpointController:
-    return SubprocessAdbEndpointController()
+def _default_server_backend_factory() -> AdbServerBackend:
+    return SubprocessAdbServerBackend()
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +82,7 @@ class AdbRuntimeBootstrap:
         self,
         *,
         server_controller_factory: _AdbServerControllerFactory | None = None,
-        endpoint_controller_factory: _AdbEndpointControllerFactory | None = None,
+        server_backend_factory: _AdbServerBackendFactory | None = None,
         endpoint: AdbServerEndpoint | None = None,
         pin_endpoint: bool = True,
         server_recovery_enabled: bool = True,
@@ -92,16 +92,14 @@ class AdbRuntimeBootstrap:
     ) -> None:
         if server_controller_factory is not None and not callable(server_controller_factory):
             raise TypeError("server_controller_factory must be callable or None")
-        if endpoint_controller_factory is not None and not callable(
-            endpoint_controller_factory
-        ):
-            raise TypeError("endpoint_controller_factory must be callable or None")
-        if server_controller_factory is not None and endpoint_controller_factory is not None:
+        if server_backend_factory is not None and not callable(server_backend_factory):
+            raise TypeError("server_backend_factory must be callable or None")
+        if server_controller_factory is not None and server_backend_factory is not None:
             raise ValueError(
-                "server_controller_factory and endpoint_controller_factory are mutually exclusive"
+                "server_controller_factory and server_backend_factory are mutually exclusive"
             )
-        if endpoint_controller_factory is None:
-            endpoint_controller_factory = _default_endpoint_controller_factory
+        if server_backend_factory is None:
+            server_backend_factory = _default_server_backend_factory
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint or None")
         if not isinstance(pin_endpoint, bool):
@@ -134,7 +132,7 @@ class AdbRuntimeBootstrap:
             )
 
         self._server_controller_factory = server_controller_factory
-        self._endpoint_controller_factory = endpoint_controller_factory
+        self._server_backend_factory = server_backend_factory
         self._endpoint = endpoint
         self._pin_endpoint = pin_endpoint
         self._server_recovery_enabled = server_recovery_enabled
@@ -239,13 +237,13 @@ class AdbRuntimeBootstrap:
         devices_snapshot_epoch_issuer = AdbDevicesSnapshotEpochSequence()
         controller_factory = self._server_controller_factory
         if controller_factory is None:
-            endpoint_controller = self._endpoint_controller_factory()
-            if not isinstance(endpoint_controller, AdbEndpointController):
+            backend = self._server_backend_factory()
+            if not isinstance(backend, AdbServerBackend):
                 raise TypeError(
-                    "endpoint controller factory must return AdbEndpointController"
+                    "server backend factory must return AdbServerBackend"
                 )
             controller: _AdbServerLifecycleController = AdbServerController(
-                endpoint_controller,
+                backend,
                 server_epoch_issuer,
             )
         else:

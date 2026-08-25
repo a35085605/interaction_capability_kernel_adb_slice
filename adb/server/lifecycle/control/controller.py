@@ -6,28 +6,28 @@ from adb.epoch import EpochIssuer
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch
 from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
-from adb.server.lifecycle.control.port import AdbEndpointController
+from adb.server.lifecycle.control.port import AdbServerBackend
 
 
 class AdbServerController:
-    """Fabricate and dispose exact domain server lifetimes over one endpoint backend.
+    """Fabricate and dispose exact domain server lifetimes over one server backend.
 
-    The endpoint controller owns native resource identity.  This facade owns only the current
+    The server backend owns native resource identity.  This facade owns only the current
     :class:`AdbServer` identity and serializes domain-facing mutations so an endpoint can never be
     rebound to a newer server lifetime while an older one is still active or unproven stopped.
     """
 
     def __init__(
         self,
-        endpoint_controller: AdbEndpointController,
+        backend: AdbServerBackend,
         server_epoch_issuer: EpochIssuer[ServerEpoch],
     ) -> None:
-        if not isinstance(endpoint_controller, AdbEndpointController):
-            raise TypeError("endpoint_controller must satisfy AdbEndpointController")
+        if not isinstance(backend, AdbServerBackend):
+            raise TypeError("backend must satisfy AdbServerBackend")
         if not isinstance(server_epoch_issuer, EpochIssuer):
             raise TypeError("server_epoch_issuer must satisfy EpochIssuer")
 
-        self._endpoint_controller = endpoint_controller
+        self._backend = backend
         self._server_epoch_issuer = server_epoch_issuer
         self._mutation_lock = Lock()
         self._active_server: AdbServer | None = None
@@ -47,10 +47,10 @@ class AdbServerController:
                     "an ADB server lifetime is already active in this controller"
                 )
 
-            resolved_endpoint = self._endpoint_controller.start(endpoint)
+            resolved_endpoint = self._backend.start(endpoint)
             if not isinstance(resolved_endpoint, AdbServerEndpoint):
                 raise TypeError(
-                    "endpoint controller start() must return AdbServerEndpoint"
+                    "server backend start() must return AdbServerEndpoint"
                 )
 
             try:
@@ -64,7 +64,7 @@ class AdbServerController:
                 )
             except BaseException:
                 try:
-                    self._endpoint_controller.stop(resolved_endpoint)
+                    self._backend.stop(resolved_endpoint)
                 except BaseException as stop_error:
                     raise AdbServerStartError(
                         "ADB server identity creation failed and its native lifetime "
@@ -87,7 +87,7 @@ class AdbServerController:
                     "no exact active ADB server lifetime is registered for the request"
                 )
 
-            self._endpoint_controller.stop(server.endpoint)
+            self._backend.stop(server.endpoint)
             self._active_server = None
 
 

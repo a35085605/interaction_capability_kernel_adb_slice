@@ -6,16 +6,10 @@ from adb.server.lifecycle.control.errors import (
     AdbServerStartError,
     AdbServerStopError,
 )
-from adb.server.lifecycle.control.port import (
-    AdbEndpointController,
-    AdbEndpointStarter,
-    AdbEndpointStopper,
-)
+from adb.server.lifecycle.control.port import AdbServerBackend
 
 __all__ = [
-    "AdbEndpointController",
-    "AdbEndpointStarter",
-    "AdbEndpointStopper",
+    "AdbServerBackend",
     "AdbServerControlError",
     "AdbServerController",
     "AdbServerStartError",
