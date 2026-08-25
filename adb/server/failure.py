@@ -59,12 +59,27 @@ class AdbServerProcessExitedFailure(_AdbServerFailure):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerLaunchFailure(_AdbServerFailure):
-    """Starting a fresh ADB server failed."""
+    """Starting a fresh ADB server failed after a native launch was attempted."""
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerCloseUnprovenFailure(_AdbServerFailure):
-    """Termination of the requested ADB server could not be proven."""
+class AdbServerStartDeferredFailure(_AdbServerFailure):
+    """A fresh server cannot start yet because prior lifecycle work is still converging."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerNativeLifetimeBusyFailure(AdbServerStartDeferredFailure):
+    """A retired domain lifetime still occupies the backend native slot."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerStopInProgressFailure(AdbServerStartDeferredFailure):
+    """A retired domain lifetime is still being terminated by the backend."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerNativeTerminationUnprovenFailure(_AdbServerFailure):
+    """Backend-native termination cannot be proven and requires external intervention."""
 
 
 AdbServerRequestFailure: TypeAlias = (
@@ -73,25 +88,33 @@ AdbServerRequestFailure: TypeAlias = (
     | AdbServerProtocolFailure
     | AdbServerServiceFailure
 )
+AdbServerRecoveryDeferredFailure: TypeAlias = AdbServerStartDeferredFailure
 AdbServerLifecycleFailure: TypeAlias = (
     AdbServerProcessExitedFailure
     | AdbServerLaunchFailure
-    | AdbServerCloseUnprovenFailure
+    | AdbServerRecoveryDeferredFailure
+    | AdbServerNativeTerminationUnprovenFailure
 )
 AdbServerFailure: TypeAlias = AdbServerRequestFailure | AdbServerLifecycleFailure
 AdbServerLivenessFailure: TypeAlias = (
     AdbServerConnectionFailure | AdbServerProcessExitedFailure
 )
+
+
 __all__ = [
-    "AdbServerCloseUnprovenFailure",
     "AdbServerConnectionFailure",
     "AdbServerFailure",
     "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",
+    "AdbServerNativeLifetimeBusyFailure",
+    "AdbServerNativeTerminationUnprovenFailure",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",
+    "AdbServerRecoveryDeferredFailure",
     "AdbServerRequestFailure",
     "AdbServerServiceFailure",
+    "AdbServerStartDeferredFailure",
+    "AdbServerStopInProgressFailure",
     "AdbServerTimeoutFailure",
 ]

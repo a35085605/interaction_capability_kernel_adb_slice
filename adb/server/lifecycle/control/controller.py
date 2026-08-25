@@ -5,7 +5,12 @@ from threading import Lock
 from adb.epoch import EpochIssuer
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch
-from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
+from adb.server.lifecycle.control.errors import (
+    AdbServerNativeTerminationUnprovenError,
+    AdbServerStartDeferredError,
+    AdbServerStartError,
+    AdbServerStopError,
+)
 from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.provisioning import (
     AdbServerProvisioningState,
@@ -14,12 +19,12 @@ from adb.server.provisioning import (
 
 
 class AdbServerController:
-    """Fabricate and dispose exact domain server lifetimes over one server backend.
+    """Fabricate and retire exact domain server lifetimes over one native backend.
 
-    The server backend owns native resource identity.  This facade owns at most one domain
-    :class:`AdbServer` identity at a time.  Ownership persists until stopping that exact lifetime
-    succeeds, even if higher layers have already retired it from runtime-current state.  Mutations
-    are serialized so a newer lifetime cannot be provided while an older one remains owned.
+    The controller owns at most one domain :class:`AdbServer` identity at a time.  Accepting
+    ``stop(server)`` irreversibly relinquishes that exact domain lifetime before native teardown
+    is attempted.  Native termination completion is backend state: failure to prove termination
+    never restores controller ownership and never revives a retired server epoch.
     """
 
     def __init__(
@@ -49,8 +54,8 @@ class AdbServerController:
         with self._mutation_lock:
             endpoint = self._provisioning.required_endpoint
             if self._owned_server is not None:
-                raise AdbServerStartError(
-                    "an ADB server lifetime is already owned by this controller"
+                raise AdbServerStartDeferredError(
+                    "the previous ADB server domain lifetime has not yet been relinquished"
                 )
 
             resolved_endpoint = self._backend.start(endpoint)
@@ -71,6 +76,10 @@ class AdbServerController:
             except BaseException:
                 try:
                     self._backend.stop(resolved_endpoint)
+                except AdbServerNativeTerminationUnprovenError:
+                    # Preserve the stronger native fact.  The controller never fabricated a
+                    # domain identity, and the backend now requires external intervention.
+                    raise
                 except BaseException as stop_error:
                     raise AdbServerStartError(
                         "ADB server identity creation failed and its native lifetime "
@@ -82,7 +91,13 @@ class AdbServerController:
             return server
 
     def stop(self, server: AdbServer) -> None:
-        """Synchronously stop the exact owned domain server lifetime."""
+        """Retire exact controller ownership, then synchronously request native teardown.
+
+        Once exact ownership is accepted it is relinquished under the controller lock and is never
+        restored, regardless of the backend stop outcome.  The potentially slow native teardown is
+        deliberately performed outside that lock so a successor ``provide()`` may reach the backend
+        while termination of the retired native lifetime is still in progress.
+        """
 
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
@@ -92,9 +107,9 @@ class AdbServerController:
                 raise AdbServerStopError(
                     "no exact owned ADB server lifetime matches the request"
                 )
-
-            self._backend.stop(server.endpoint)
             self._owned_server = None
+
+        self._backend.stop(server.endpoint)
 
 
 __all__ = ["AdbServerController"]

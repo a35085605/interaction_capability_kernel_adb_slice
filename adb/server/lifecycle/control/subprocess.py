@@ -4,6 +4,7 @@ from collections.abc import Callable
 import os
 import socket
 import subprocess
+from enum import Enum, auto
 from threading import Lock
 from time import monotonic, sleep
 from typing import Protocol
@@ -12,7 +13,13 @@ from adb._internal.client import AdbServiceClient
 from adb._internal.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
+from adb.server.lifecycle.control.errors import (
+    AdbServerNativeLifetimeBusyError,
+    AdbServerNativeTerminationUnprovenError,
+    AdbServerStartError,
+    AdbServerStopError,
+    AdbServerStopInProgressError,
+)
 from adb.server.status.reader import SmartSocketAdbServerStatusReader
 
 
@@ -68,7 +75,7 @@ class _SubprocessLifetime:
                 self._process.terminate()
             except OSError as exc:
                 if self._process.poll() is None:
-                    raise AdbServerStopError(
+                    raise AdbServerNativeTerminationUnprovenError(
                         f"failed to terminate ADB server child process at {self.endpoint.host}:"
                         f"{self.endpoint.port}: {exc}"
                     ) from exc
@@ -80,26 +87,39 @@ class _SubprocessLifetime:
                     self._process.kill()
                 except OSError as exc:
                     if self._process.poll() is None:
-                        raise AdbServerStopError(
+                        raise AdbServerNativeTerminationUnprovenError(
                             f"failed to kill ADB server child process at {self.endpoint.host}:"
                             f"{self.endpoint.port}: {exc}"
                         ) from exc
                 try:
                     self._process.wait(timeout=self._shutdown_timeout_seconds)
                 except subprocess.TimeoutExpired as exc:
-                    raise AdbServerStopError(
+                    raise AdbServerNativeTerminationUnprovenError(
                         "ADB server child process did not terminate after kill"
                     ) from exc
 
             if self._process.poll() is None:
-                raise AdbServerStopError(
+                raise AdbServerNativeTerminationUnprovenError(
                     "ADB server child-process termination was not confirmed"
                 )
             self._closed = True
 
 
+class _BackendPhase(Enum):
+    IDLE = auto()
+    RUNNING = auto()
+    STOPPING = auto()
+    NATIVE_TERMINATION_UNPROVEN = auto()
+
+
 class SubprocessAdbServerBackend:
-    """Synchronously own one subprocess-backed ADB server lifetime."""
+    """Own one subprocess-backed native ADB server lifetime.
+
+    Domain retirement and native termination are independent.  ``stop()`` publishes STOPPING
+    under a short backend lock, performs terminate/wait outside that lock, then commits either
+    IDLE or NATIVE_TERMINATION_UNPROVEN.  ``start()`` therefore fails fast rather than waiting
+    behind native teardown.
+    """
 
     def __init__(
         self,
@@ -143,8 +163,9 @@ class SubprocessAdbServerBackend:
         self._status_reader = _status_reader
 
         self._mutation_lock = Lock()
-        # The native handle never crosses this backend boundary.  Its existence reserves the
-        # backend slot even when the child has already exited or a prior stop was unproven.
+        # Native lifecycle truth never crosses this backend boundary.  An unproven lifetime
+        # permanently reserves the slot within this backend scope; start/stop cannot self-heal it.
+        self._phase = _BackendPhase.IDLE
         self._lifetime: _SubprocessLifetime | None = None
 
     def start(
@@ -160,24 +181,38 @@ class SubprocessAdbServerBackend:
             )
 
         with self._mutation_lock:
-            if self._lifetime is not None:
-                raise AdbServerStartError(
-                    "an ADB server subprocess lifetime is already owned by this backend"
+            if self._phase is _BackendPhase.STOPPING:
+                raise AdbServerStopInProgressError(
+                    "the previous ADB server native lifetime is still terminating"
                 )
+            if self._phase is _BackendPhase.NATIVE_TERMINATION_UNPROVEN:
+                raise AdbServerNativeTerminationUnprovenError(
+                    "the previous ADB server native lifetime termination remains unproven"
+                )
+            if self._phase is _BackendPhase.RUNNING:
+                raise AdbServerNativeLifetimeBusyError(
+                    "an ADB server native lifetime still occupies this backend slot"
+                )
+            if self._phase is not _BackendPhase.IDLE or self._lifetime is not None:
+                raise RuntimeError("invalid ADB subprocess backend lifecycle state")
 
             lifetime = self._create_lifetime_locked(endpoint)
             self._lifetime = lifetime
+            self._phase = _BackendPhase.RUNNING
             try:
                 self._wait_until_ready(lifetime.endpoint, lifetime._process)
             except BaseException:
                 try:
                     lifetime.close()
-                except AdbServerStopError as close_exc:
-                    # Keep the handle: native termination is unproven, so the slot remains owned.
-                    raise AdbServerStartError(
-                        "ADB server start failed and its child process could not be stopped"
+                except AdbServerNativeTerminationUnprovenError as close_exc:
+                    # The backend has exhausted its supported termination procedure.  Retain the
+                    # native identity and require external intervention; never silently retry it.
+                    self._phase = _BackendPhase.NATIVE_TERMINATION_UNPROVEN
+                    raise AdbServerNativeTerminationUnprovenError(
+                        "ADB server start failed and native termination could not be proven"
                     ) from close_exc
                 self._lifetime = None
+                self._phase = _BackendPhase.IDLE
                 raise
 
             return lifetime.endpoint
@@ -188,18 +223,41 @@ class SubprocessAdbServerBackend:
 
         with self._mutation_lock:
             lifetime = self._lifetime
-            if lifetime is None:
+            if lifetime is None or self._phase is _BackendPhase.IDLE:
                 raise AdbServerStopError("no ADB server subprocess lifetime is owned")
             if lifetime.endpoint != endpoint:
                 raise AdbServerStopError(
                     "requested endpoint does not identify the owned ADB server subprocess lifetime"
                 )
+            if self._phase is _BackendPhase.STOPPING:
+                raise AdbServerStopError(
+                    "the requested ADB server native lifetime is already stopping"
+                )
+            if self._phase is _BackendPhase.NATIVE_TERMINATION_UNPROVEN:
+                raise AdbServerNativeTerminationUnprovenError(
+                    "ADB server native termination is already unproven; external intervention "
+                    "is required"
+                )
+            if self._phase is not _BackendPhase.RUNNING:
+                raise RuntimeError("invalid ADB subprocess backend lifecycle state")
 
+            # Publish native STOPPING before slow terminate/wait work.  Successor start() calls can
+            # now enter this backend concurrently and receive a typed fail-fast result.
+            self._phase = _BackendPhase.STOPPING
+
+        try:
             lifetime.close()
-            # Only proven termination releases the native slot.  Stop failures retain the handle
-            # so callers may retry and start() cannot accidentally reuse the endpoint.
-            if self._lifetime is lifetime:
-                self._lifetime = None
+        except AdbServerNativeTerminationUnprovenError:
+            with self._mutation_lock:
+                if self._lifetime is lifetime:
+                    self._phase = _BackendPhase.NATIVE_TERMINATION_UNPROVEN
+            raise
+
+        with self._mutation_lock:
+            if self._lifetime is not lifetime:
+                raise RuntimeError("ADB subprocess backend native lifetime changed during stop")
+            self._lifetime = None
+            self._phase = _BackendPhase.IDLE
 
     def _create_lifetime_locked(
         self,

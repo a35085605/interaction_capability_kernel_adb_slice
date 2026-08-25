@@ -5,10 +5,10 @@ from typing import TypeAlias
 from uuid import uuid4
 
 from adb.server.failure import (
-    AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,
     AdbServerLaunchFailure,
     AdbServerLivenessFailure,
+    AdbServerNativeTerminationUnprovenFailure,
     AdbServerProcessExitedFailure,
 )
 from adb.server.identity import AdbServer, ServerEpoch
@@ -79,7 +79,7 @@ class AdbServerReconciliationRequested(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRetired(_ServerSignalProjection):
-    """One ADB server lifetime is no longer usable."""
+    """One ADB server domain lifetime is no longer usable."""
 
     server: AdbServer
 
@@ -104,8 +104,8 @@ class AdbServerLost(_ServerSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerNativeCloseCompleted(_ServerSignalProjection):
-    """Termination of a retired ADB server was proven."""
+class AdbServerNativeTerminationCompleted(_ServerSignalProjection):
+    """Native termination of a retired ADB server was proven."""
 
     server: AdbServer
 
@@ -114,21 +114,27 @@ class AdbServerNativeCloseCompleted(_ServerSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerNativeCloseUnproven(_ServerSignalProjection):
-    """Termination of a retired ADB server remains unproven."""
+class AdbServerNativeTerminationUnproven(_ServerSignalProjection):
+    """Backend-native termination cannot be proven and needs external intervention."""
 
     server: AdbServer
-    failure: AdbServerCloseUnprovenFailure
+    failure: AdbServerNativeTerminationUnprovenFailure
 
     def __post_init__(self) -> None:
         _require_server(self.server)
-        if not isinstance(self.failure, AdbServerCloseUnprovenFailure):
-            raise TypeError("failure must be AdbServerCloseUnprovenFailure")
+        if not isinstance(self.failure, AdbServerNativeTerminationUnprovenFailure):
+            raise TypeError(
+                "failure must be AdbServerNativeTerminationUnprovenFailure"
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecovered(_ServerSignalProjection):
-    """Signal carrying the recovered ADB server."""
+    """Signal carrying the recovered ADB server.
+
+    Publication order relative to native-termination signals for older epochs is intentionally
+    unspecified.  Consumers must use authoritative state plus epoch, not signal arrival order.
+    """
 
     server: AdbServer
 
@@ -154,7 +160,7 @@ class AdbServerRecoveryRetryDue:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryExhausted:
-    """Signal that ADB server recovery exhausted its retry budget."""
+    """Signal that genuine ADB server launch failures exhausted the retry budget."""
 
     cycle_id: AdbServerRecoveryCycleId
     attempts: int
@@ -175,8 +181,8 @@ AdbServerSignal: TypeAlias = (
     AdbServerReconciliationRequested
     | AdbServerRetired
     | AdbServerLost
-    | AdbServerNativeCloseCompleted
-    | AdbServerNativeCloseUnproven
+    | AdbServerNativeTerminationCompleted
+    | AdbServerNativeTerminationUnproven
     | AdbServerRecovered
     | AdbServerRecoveryRetryDue
     | AdbServerRecoveryExhausted
@@ -184,9 +190,9 @@ AdbServerSignal: TypeAlias = (
 
 
 __all__ = [
-    "AdbServerNativeCloseCompleted",
-    "AdbServerNativeCloseUnproven",
     "AdbServerLost",
+    "AdbServerNativeTerminationCompleted",
+    "AdbServerNativeTerminationUnproven",
     "AdbServerRecovered",
     "AdbServerRetired",
     "AdbServerReconciliationRequested",

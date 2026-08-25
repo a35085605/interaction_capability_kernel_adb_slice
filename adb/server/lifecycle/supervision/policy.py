@@ -20,8 +20,9 @@ def _normalize_retry_configuration(
     retry_max_seconds: object,
     retry_multiplier: object,
     retry_jitter_ratio: object,
+    deferred_retry_seconds: object,
     max_attempts: object,
-) -> tuple[float, float, float, float, int | None]:
+) -> tuple[float, float, float, float, float, int | None]:
     initial = _normalize_positive_seconds(
         retry_initial_seconds,
         field_name="ADB server supervision initial retry",
@@ -43,12 +44,16 @@ def _normalize_retry_configuration(
     jitter = float(retry_jitter_ratio)
     if not math.isfinite(jitter) or not 0.0 <= jitter < 1.0:
         raise ValueError("ADB server supervision retry jitter ratio must be in [0, 1)")
+    deferred = _normalize_positive_seconds(
+        deferred_retry_seconds,
+        field_name="ADB server supervision deferred retry",
+    )
     if max_attempts is not None:
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
             raise TypeError("ADB server supervision max_attempts must be an integer or None")
         if max_attempts <= 0:
             raise ValueError("ADB server supervision max_attempts must be greater than zero")
-    return initial, maximum, multiplier, jitter, max_attempts
+    return initial, maximum, multiplier, jitter, deferred, max_attempts
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,20 +64,23 @@ class AdbServerSupervisionPolicy:
     retry_max_seconds: float = 30.0
     retry_multiplier: float = 2.0
     retry_jitter_ratio: float = 0.2
+    deferred_retry_seconds: float = 0.1
     max_attempts: int | None = None
 
     def __post_init__(self) -> None:
-        initial, maximum, multiplier, jitter, max_attempts = _normalize_retry_configuration(
+        initial, maximum, multiplier, jitter, deferred, max_attempts = _normalize_retry_configuration(
             retry_initial_seconds=self.retry_initial_seconds,
             retry_max_seconds=self.retry_max_seconds,
             retry_multiplier=self.retry_multiplier,
             retry_jitter_ratio=self.retry_jitter_ratio,
+            deferred_retry_seconds=self.deferred_retry_seconds,
             max_attempts=self.max_attempts,
         )
         object.__setattr__(self, "retry_initial_seconds", initial)
         object.__setattr__(self, "retry_max_seconds", maximum)
         object.__setattr__(self, "retry_multiplier", multiplier)
         object.__setattr__(self, "retry_jitter_ratio", jitter)
+        object.__setattr__(self, "deferred_retry_seconds", deferred)
         object.__setattr__(self, "max_attempts", max_attempts)
 
 
