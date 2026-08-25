@@ -2,13 +2,14 @@
 
 from adb.server.availability import AdbServerUnavailableError
 
+from adb.server.lifecycle.control.controller import AdbServerController
 from adb.server.lifecycle.control.errors import (
     AdbServerControlError,
     AdbServerStartError,
     AdbServerStopError,
 )
 from adb.server.lifecycle.control.port import (
-    AdbServerController,
+    AdbEndpointController,
     AdbServerProvider,
     AdbServerStopper,
 )
@@ -29,9 +30,10 @@ from adb.server.identity import AdbServer, ServerEpoch, ServerEpochSequence
 from adb.server.state import AdbServerState, AdbServerStateView, AdbServerStateWriter
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
-from adb.server.lifecycle.control.subprocess import SubprocessAdbServerController
+from adb.server.lifecycle.control.subprocess import SubprocessAdbEndpointController
 
 __all__ = [
+    "AdbEndpointController",
     "AdbMdnsBackend",
     "AdbServerCloseUnprovenFailure",
     "AdbServerConnectionFailure",
@@ -61,5 +63,5 @@ __all__ = [
     "AdbServerTimeoutFailure",
     "AdbServerUnavailableError",
     "AdbUsbBackend",
-    "SubprocessAdbServerController",
+    "SubprocessAdbEndpointController",
 ]

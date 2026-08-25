@@ -23,6 +23,7 @@ from adb.api import (
 )
 from adb.managed import AdbManagedRuntime
 from adb.server import (
+    AdbEndpointController,
     AdbServerControlError,
     AdbServerController,
     AdbServerProvider,
@@ -37,7 +38,7 @@ from adb.server import (
     AdbServerStatusReader,
     AdbServerStopError,
     AdbServerUnavailableError,
-    SubprocessAdbServerController,
+    SubprocessAdbEndpointController,
 )
 from adb.tracking import (
     AdbConnectionState,
@@ -90,6 +91,7 @@ __all__ = [
     "AdbProtocolError",
     "AdbRemoteCommandError",
     "AdbServerConnectionError",
+    "AdbEndpointController",
     "AdbServerControlError",
     "AdbServerController",
     "AdbServerEndpoint",
@@ -119,5 +121,5 @@ __all__ = [
     "AdbTransportSelectionError",
     "AdbTransportSelector",
     "AdbTransportUnavailableError",
-    "SubprocessAdbServerController",
+    "SubprocessAdbEndpointController",
 ]

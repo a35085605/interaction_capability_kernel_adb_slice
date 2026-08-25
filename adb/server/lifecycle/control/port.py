@@ -31,8 +31,19 @@ class AdbServerStopper(Protocol):
 
 
 @runtime_checkable
-class AdbServerController(AdbServerProvider, AdbServerStopper, Protocol):
-    """Provide and stop ADB server lifetimes."""
+class AdbEndpointController(Protocol):
+    """Synchronously own one native ADB server endpoint lifetime at a time."""
+
+    def start(
+        self,
+        endpoint: AdbServerEndpoint | None = None,
+    ) -> AdbServerEndpoint:
+        """Return only after one owned endpoint is usable."""
+        ...
+
+    def stop(self, endpoint: AdbServerEndpoint) -> None:
+        """Return only after the owned native lifetime at endpoint is proven stopped."""
+        ...
 
 
-__all__ = ["AdbServerController", "AdbServerProvider", "AdbServerStopper"]
+__all__ = ["AdbEndpointController", "AdbServerProvider", "AdbServerStopper"]
