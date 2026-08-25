@@ -16,9 +16,10 @@ from adb.server.provisioning import (
 class AdbServerController:
     """Fabricate and dispose exact domain server lifetimes over one server backend.
 
-    The server backend owns native resource identity.  This facade owns only the current
-    :class:`AdbServer` identity and serializes domain-facing mutations so an endpoint can never be
-    rebound to a newer server lifetime while an older one is still active or unproven stopped.
+    The server backend owns native resource identity.  This facade owns at most one domain
+    :class:`AdbServer` identity at a time.  Ownership persists until stopping that exact lifetime
+    succeeds, even if higher layers have already retired it from runtime-current state.  Mutations
+    are serialized so a newer lifetime cannot be provided while an older one remains owned.
     """
 
     def __init__(
@@ -40,16 +41,16 @@ class AdbServerController:
         self._server_epoch_issuer = server_epoch_issuer
         self._provisioning = provisioning
         self._mutation_lock = Lock()
-        self._active_server: AdbServer | None = None
+        self._owned_server: AdbServer | None = None
 
     def provide(self) -> AdbServer:
         """Synchronously provide one fresh usable domain server lifetime."""
 
         with self._mutation_lock:
             endpoint = self._provisioning.required_endpoint
-            if self._active_server is not None:
+            if self._owned_server is not None:
                 raise AdbServerStartError(
-                    "an ADB server lifetime is already active in this controller"
+                    "an ADB server lifetime is already owned by this controller"
                 )
 
             resolved_endpoint = self._backend.start(endpoint)
@@ -77,23 +78,23 @@ class AdbServerController:
                     ) from stop_error
                 raise
 
-            self._active_server = server
+            self._owned_server = server
             return server
 
     def stop(self, server: AdbServer) -> None:
-        """Synchronously stop the exact active domain server lifetime."""
+        """Synchronously stop the exact owned domain server lifetime."""
 
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
 
         with self._mutation_lock:
-            if self._active_server != server:
+            if self._owned_server != server:
                 raise AdbServerStopError(
-                    "no exact active ADB server lifetime is registered for the request"
+                    "no exact owned ADB server lifetime matches the request"
                 )
 
             self._backend.stop(server.endpoint)
-            self._active_server = None
+            self._owned_server = None
 
 
 __all__ = ["AdbServerController"]
