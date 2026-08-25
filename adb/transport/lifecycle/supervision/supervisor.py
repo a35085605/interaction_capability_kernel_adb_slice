@@ -17,12 +17,13 @@ from adb.transport.configuration import (
     AdbUsbTransportConfiguration,
 )
 from adb.tracking.snapshot.state import (
+    AdbDevicesObservation,
     AdbDevicesSnapshotState,
     AdbDevicesSnapshotView,
     AdbDevicesSnapshotWriter,
 )
-from adb.tracking.snapshot.model import AdbDevicesRecord
 from adb.transport.resolution import (
+    AdbConfiguredTransportProjection,
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
     resolve_configured_transport,
@@ -56,7 +57,7 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 class _ConfiguredTransportRegistration:
     configuration: AdbConfiguredTransport
     policy: AdbConfiguredTransportSupervisionPolicy
-    resolution: AdbConfiguredTransportResolution | None = None
+    projection: AdbConfiguredTransportProjection | None = None
     active_recovery_thread: Thread | None = None
     active_recovery_token: object | None = None
 
@@ -218,16 +219,17 @@ class AdbConfiguredTransportSupervisor:
                 )
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
-            snapshot = self._devices.current if self._tracking_active else None
+            observation = self._devices.current if self._tracking_active else None
             server = self._server_state.current
             if (
-                snapshot is not None
+                observation is not None
                 and server is not None
+                and observation.server == server
                 and self._projection_server == server
             ):
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
-                    snapshot.record,
+                    observation,
                 )
 
         if publication is not None:
@@ -249,16 +251,27 @@ class AdbConfiguredTransportSupervisor:
             thread.join()
         return registration is not None
 
-    def resolution(
+    def projection(
         self,
         configuration: AdbConfiguredTransport | AdbDeviceSerial,
-    ) -> AdbConfiguredTransportResolution | None:
+    ) -> AdbConfiguredTransportProjection | None:
+        """Return the latest server- and snapshot-bound projection for one registration."""
+
         if not isinstance(configuration, (AdbConfiguredTransport, AdbDeviceSerial)):
             raise TypeError("configuration must be AdbConfiguredTransport or AdbDeviceSerial")
         with self._lock:
             key = self._resolve_registration_key_locked(configuration)
             registration = None if key is None else self._registrations.get(key)
-            return None if registration is None else registration.resolution
+            return None if registration is None else registration.projection
+
+    def resolution(
+        self,
+        configuration: AdbConfiguredTransport | AdbDeviceSerial,
+    ) -> AdbConfiguredTransportResolution | None:
+        """Compatibility view of the latest projection's bare resolution evidence."""
+
+        projection = self.projection(configuration)
+        return None if projection is None else projection.resolution
 
     def close(self) -> None:
         with self._lock:
@@ -305,12 +318,19 @@ class AdbConfiguredTransportSupervisor:
             ):
                 return
             writer = self._devices_writer
-            if writer is not None and not writer.observe(event.snapshot):
+            event_observation = AdbDevicesObservation(event.server, event.snapshot)
+            if writer is not None:
+                if not writer.observe(event_observation):
+                    return
+                observation = writer.current
+            else:
+                observation = self._devices.current
+            if observation != event_observation:
                 return
             for registration in self._registrations.values():
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
-                    event.snapshot.record,
+                    observation,
                 )
                 if publication is not None:
                     publications.append(publication)
@@ -340,15 +360,22 @@ class AdbConfiguredTransportSupervisor:
     def _project_registration_locked(
         self,
         registration: _ConfiguredTransportRegistration,
-        record: AdbDevicesRecord,
+        observation: AdbDevicesObservation,
     ) -> tuple[AdbConfiguredTransportResolutionChanged | None, bool]:
-        previous = registration.resolution
-        current = resolve_configured_transport(
+        if observation.server != self._projection_server:
+            raise ValueError("device observation does not match projection server lifetime")
+        previous = registration.projection
+        resolution = resolve_configured_transport(
             registration.configuration,
-            record,
+            observation.record,
         )
-        changed = previous != current
-        registration.resolution = current
+        current = AdbConfiguredTransportProjection(
+            server=observation.server,
+            snapshot_epoch=observation.epoch,
+            resolution=resolution,
+        )
+        changed = previous is None or previous.resolution != current.resolution
+        registration.projection = current
 
         if current.status is not AdbConfiguredTransportResolutionStatus.ABSENT:
             registration.active_recovery_token = None
@@ -387,10 +414,11 @@ class AdbConfiguredTransportSupervisor:
                 return
             if registration.active_recovery_thread is not None:
                 return
-            resolution = registration.resolution
+            projection = registration.projection
             if (
-                resolution is None
-                or resolution.status is not AdbConfiguredTransportResolutionStatus.ABSENT
+                projection is None
+                or projection.server != server
+                or projection.status is not AdbConfiguredTransportResolutionStatus.ABSENT
                 or registration.policy.tcp_recovery_ensure_policy is None
             ):
                 return
@@ -476,7 +504,7 @@ class AdbConfiguredTransportSupervisor:
         if self._devices_writer is not None:
             self._devices_need_invalidation = True
         for registration in self._registrations.values():
-            registration.resolution = None
+            registration.projection = None
             registration.active_recovery_token = None
             # The thread may still finish against its captured server lifetime, but it is no
             # longer allowed to affect this registration or block recovery in a successor.

@@ -452,7 +452,7 @@ class AdbTcpTransportEnsureOrchestrator:
         result = self._connector.connect(operation)
         if not isinstance(result, NativeAttemptResult):
             raise TypeError("connector must return NativeAttemptResult")
-        self._publisher.publish(AdbTransportCommandCompleted(operation, result))
+        self._publisher.publish(AdbTransportCommandCompleted(self.server, operation, result))
         return result
 
     def _complete(

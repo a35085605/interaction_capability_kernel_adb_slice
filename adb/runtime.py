@@ -104,7 +104,7 @@ class AdbRuntime(AdbManagedRuntime):
 
     @property
     def devices(self) -> AdbDevicesSnapshotView:
-        """Read-only current tracked-devices projection for this runtime."""
+        """Read-only current server-bound tracked-devices observation for this runtime."""
 
         return self._snapshot_state
 

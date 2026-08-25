@@ -7,7 +7,7 @@ from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
 )
-from adb.transport.resolution import AdbConfiguredTransportResolution
+from adb.transport.resolution import AdbConfiguredTransportProjection
 from adb.transport.lifecycle.ensure import (
     AdbTcpTransportEnsureResult,
     AdbTcpTransportEnsureStatus,
@@ -16,23 +16,23 @@ from adb.transport.lifecycle.ensure import (
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportResolutionChanged:
-    """Signal carrying a change in configured-transport projection from device observations."""
+    """Signal carrying a provenance-preserving configured-transport projection change."""
 
-    previous: AdbConfiguredTransportResolution | None
-    current: AdbConfiguredTransportResolution
+    previous: AdbConfiguredTransportProjection | None
+    current: AdbConfiguredTransportProjection
 
     def __post_init__(self) -> None:
         if self.previous is not None and not isinstance(
-            self.previous, AdbConfiguredTransportResolution
+            self.previous, AdbConfiguredTransportProjection
         ):
-            raise TypeError("previous must be AdbConfiguredTransportResolution or None")
-        if not isinstance(self.current, AdbConfiguredTransportResolution):
-            raise TypeError("current must be AdbConfiguredTransportResolution")
+            raise TypeError("previous must be AdbConfiguredTransportProjection or None")
+        if not isinstance(self.current, AdbConfiguredTransportProjection):
+            raise TypeError("current must be AdbConfiguredTransportProjection")
         if self.previous is not None and (
             self.previous.configuration != self.current.configuration
         ):
             raise ValueError(
-                "configured transport resolution change must keep one configuration"
+                "configured transport projection change must keep one configuration"
             )
 
 

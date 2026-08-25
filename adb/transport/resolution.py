@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from adb.server.identity import AdbServer
 from adb.transport.configuration import AdbConfiguredTransport
+from adb.tracking.snapshot.identity import AdbDevicesSnapshotEpoch
 from adb.tracking.snapshot.model import (
     AdbConnectionType,
     AdbDevicesRecord,
@@ -86,6 +88,35 @@ class AdbConfiguredTransportResolution:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AdbConfiguredTransportProjection:
+    """One configured-transport resolution bound to its source server and snapshot identity."""
+
+    server: AdbServer
+    snapshot_epoch: AdbDevicesSnapshotEpoch
+    resolution: AdbConfiguredTransportResolution
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.server, AdbServer):
+            raise TypeError("server must be AdbServer")
+        if not isinstance(self.snapshot_epoch, AdbDevicesSnapshotEpoch):
+            raise TypeError("snapshot_epoch must be AdbDevicesSnapshotEpoch")
+        if not isinstance(self.resolution, AdbConfiguredTransportResolution):
+            raise TypeError("resolution must be AdbConfiguredTransportResolution")
+
+    @property
+    def configuration(self) -> AdbConfiguredTransport:
+        return self.resolution.configuration
+
+    @property
+    def status(self) -> AdbConfiguredTransportResolutionStatus:
+        return self.resolution.status
+
+    @property
+    def row(self) -> AdbTrackedDevice | None:
+        return self.resolution.row
+
+
 def resolve_configured_transport(
     configuration: AdbConfiguredTransport,
     record: AdbDevicesRecord,
@@ -131,6 +162,7 @@ def resolve_configured_transport(
 
 
 __all__ = [
+    "AdbConfiguredTransportProjection",
     "AdbConfiguredTransportResolution",
     "AdbConfiguredTransportResolutionStatus",
     "resolve_configured_transport",

@@ -42,6 +42,7 @@ from adb.server import (
 from adb.tracking import (
     AdbConnectionState,
     AdbConnectionType,
+    AdbDevicesObservation,
     AdbDevicesRecord,
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
@@ -70,6 +71,7 @@ __all__ = [
     "AdbConnectionState",
     "AdbConnectionType",
     "AdbDeviceSerial",
+    "AdbDevicesObservation",
     "AdbDevicesRecord",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotEpoch",

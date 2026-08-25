@@ -21,6 +21,7 @@ from adb.tracking.snapshot.reader import (
     SmartSocketAdbDevicesSnapshotReader,
 )
 from adb.tracking.snapshot.state import (
+    AdbDevicesObservation,
     AdbDevicesSnapshotState,
     AdbDevicesSnapshotView,
     AdbDevicesSnapshotWriter,
@@ -29,6 +30,7 @@ from adb.tracking.snapshot.state import (
 __all__ = [
     "AdbConnectionState",
     "AdbConnectionType",
+    "AdbDevicesObservation",
     "AdbDevicesRecord",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotEpoch",

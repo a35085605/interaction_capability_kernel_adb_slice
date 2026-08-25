@@ -3,6 +3,7 @@
 from adb.tracking.snapshot import (
     AdbConnectionState,
     AdbConnectionType,
+    AdbDevicesObservation,
     AdbDevicesRecord,
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
@@ -31,6 +32,7 @@ from adb.tracking.controller import (
 __all__ = [
     "AdbConnectionState",
     "AdbConnectionType",
+    "AdbDevicesObservation",
     "AdbDevicesRecord",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotEpoch",
