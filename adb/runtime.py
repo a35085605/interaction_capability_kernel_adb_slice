@@ -4,6 +4,7 @@ from threading import RLock
 
 from adb.managed import AdbManagedRuntime
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
+from adb.server.provisioning import AdbServerProvisioningState
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
 from adb.server.state import AdbServerState
 from adb.transport.configuration import AdbConfiguredTransport
@@ -27,6 +28,7 @@ class AdbRuntime(AdbManagedRuntime):
         server_state: AdbServerState,
         snapshot_state: AdbDevicesSnapshotState,
         *,
+        provisioning_state: AdbServerProvisioningState | None = None,
         event_bus: EventBus | None = None,
         server_supervisor: AdbServerSupervisor | None = None,
         tracking_supervisor: AdbDevicesTrackingSupervisor | None = None,
@@ -37,6 +39,12 @@ class AdbRuntime(AdbManagedRuntime):
             raise TypeError("server_state must be AdbServerState")
         if not isinstance(snapshot_state, AdbDevicesSnapshotState):
             raise TypeError("snapshot_state must be AdbDevicesSnapshotState")
+        if provisioning_state is not None and not isinstance(
+            provisioning_state, AdbServerProvisioningState
+        ):
+            raise TypeError(
+                "provisioning_state must be AdbServerProvisioningState or None"
+            )
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if server_supervisor is not None and not isinstance(
@@ -88,7 +96,7 @@ class AdbRuntime(AdbManagedRuntime):
         if transport_supervisor is not None and transport_supervisor.devices is not snapshot_state:
             raise ValueError("transport supervisor must share the runtime tracked-devices state")
 
-        super().__init__(server_state)
+        super().__init__(server_state, provisioning_state=provisioning_state)
         self._snapshot_state = snapshot_state
         self._event_bus = event_bus
         self._server_supervisor = server_supervisor

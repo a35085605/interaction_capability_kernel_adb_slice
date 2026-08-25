@@ -7,6 +7,10 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch
 from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
 from adb.server.lifecycle.control.port import AdbServerBackend
+from adb.server.provisioning import (
+    AdbServerProvisioningState,
+    AdbServerProvisioningView,
+)
 
 
 class AdbServerController:
@@ -21,27 +25,28 @@ class AdbServerController:
         self,
         backend: AdbServerBackend,
         server_epoch_issuer: EpochIssuer[ServerEpoch],
+        provisioning: AdbServerProvisioningView | None = None,
     ) -> None:
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("backend must satisfy AdbServerBackend")
         if not isinstance(server_epoch_issuer, EpochIssuer):
             raise TypeError("server_epoch_issuer must satisfy EpochIssuer")
+        if provisioning is None:
+            provisioning = AdbServerProvisioningState()
+        if not isinstance(provisioning, AdbServerProvisioningView):
+            raise TypeError("provisioning must satisfy AdbServerProvisioningView or be None")
 
         self._backend = backend
         self._server_epoch_issuer = server_epoch_issuer
+        self._provisioning = provisioning
         self._mutation_lock = Lock()
         self._active_server: AdbServer | None = None
 
-    def provide(
-        self,
-        endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServer:
+    def provide(self) -> AdbServer:
         """Synchronously provide one fresh usable domain server lifetime."""
 
-        if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint or None")
-
         with self._mutation_lock:
+            endpoint = self._provisioning.required_endpoint
             if self._active_server is not None:
                 raise AdbServerStartError(
                     "an ADB server lifetime is already active in this controller"
