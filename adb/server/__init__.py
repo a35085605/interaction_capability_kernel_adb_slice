@@ -8,7 +8,7 @@ from adb.server.lifecycle.control.errors import (
     AdbServerStartError,
     AdbServerStopError,
 )
-from adb.server.lifecycle.control.port import AdbServerBackend
+from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
     AdbServerConnectionFailure,

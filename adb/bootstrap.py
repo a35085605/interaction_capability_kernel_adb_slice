@@ -9,7 +9,7 @@ from adb.runtime import AdbRuntime
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch, ServerEpochSequence
 from adb.server.lifecycle.control.controller import AdbServerController
-from adb.server.lifecycle.control.port import AdbServerBackend
+from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor

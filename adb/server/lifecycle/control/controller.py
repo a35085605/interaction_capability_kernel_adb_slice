@@ -6,7 +6,7 @@ from adb.epoch import EpochIssuer
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch
 from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
-from adb.server.lifecycle.control.port import AdbServerBackend
+from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.provisioning import (
     AdbServerProvisioningState,
     AdbServerProvisioningView,
