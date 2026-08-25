@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from threading import Lock
+from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServer
 from adb.server.state import AdbServerStateView
-from adb.tracking.snapshot.state import AdbDevicesObservation, AdbDevicesSnapshotWriter
+from adb.tracking.snapshot.state import (
+    AdbDevicesObservation,
+    AdbDevicesSnapshotView,
+    AdbDevicesSnapshotWriter,
+)
 from adb.tracking.signal import (
     AdbDevicesSnapshotObserved,
     AdbDevicesTrackingFailed,
@@ -12,6 +17,15 @@ from adb.tracking.signal import (
     AdbDevicesTrackingStopped,
 )
 from eventing import EventPublisher
+
+
+@runtime_checkable
+class _AdbDevicesSnapshotStateAccess(
+    AdbDevicesSnapshotView,
+    AdbDevicesSnapshotWriter,
+    Protocol,
+):
+    """Read and commit authoritative tracked-devices snapshot state."""
 
 
 class AdbDevicesSnapshotStateBackedTrackingPublisher:
@@ -24,12 +38,14 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
 
     def __init__(
         self,
-        devices: AdbDevicesSnapshotWriter,
+        devices: _AdbDevicesSnapshotStateAccess,
         server_state: AdbServerStateView,
         publisher: EventPublisher,
     ) -> None:
-        if not isinstance(devices, AdbDevicesSnapshotWriter):
-            raise TypeError("devices must satisfy AdbDevicesSnapshotWriter")
+        if not isinstance(devices, _AdbDevicesSnapshotStateAccess):
+            raise TypeError(
+                "devices must satisfy AdbDevicesSnapshotView and AdbDevicesSnapshotWriter"
+            )
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
         if not isinstance(publisher, EventPublisher):

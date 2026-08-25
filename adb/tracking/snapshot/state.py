@@ -47,7 +47,7 @@ class AdbDevicesSnapshotView(Protocol):
 
 
 @runtime_checkable
-class AdbDevicesSnapshotWriter(AdbDevicesSnapshotView, Protocol):
+class AdbDevicesSnapshotWriter(Protocol):
     """Commit already-identified server-bound observations into one runtime state."""
 
     def invalidate_current(self) -> None: ...
@@ -55,7 +55,7 @@ class AdbDevicesSnapshotWriter(AdbDevicesSnapshotView, Protocol):
     def observe(self, observation: AdbDevicesObservation) -> bool: ...
 
 
-class AdbDevicesSnapshotState(AdbDevicesSnapshotWriter):
+class AdbDevicesSnapshotState(AdbDevicesSnapshotView, AdbDevicesSnapshotWriter):
     """Thread-safe authoritative current device observation for one runtime.
 
     Snapshot identity is minted by observation producers, not by state. The state accepts only
