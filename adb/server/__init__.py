@@ -10,8 +10,8 @@ from adb.server.lifecycle.control.errors import (
 )
 from adb.server.lifecycle.control.port import (
     AdbEndpointController,
-    AdbServerProvider,
-    AdbServerStopper,
+    AdbEndpointStarter,
+    AdbEndpointStopper,
 )
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
@@ -34,13 +34,13 @@ from adb.server.lifecycle.control.subprocess import SubprocessAdbEndpointControl
 
 __all__ = [
     "AdbEndpointController",
+    "AdbEndpointStarter",
+    "AdbEndpointStopper",
     "AdbMdnsBackend",
     "AdbServerCloseUnprovenFailure",
     "AdbServerConnectionFailure",
     "AdbServerControlError",
     "AdbServerController",
-    "AdbServerProvider",
-    "AdbServerStopper",
     "AdbServerEndpoint",
     "ServerEpoch",
     "ServerEpochSequence",

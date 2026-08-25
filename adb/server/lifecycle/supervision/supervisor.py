@@ -4,10 +4,10 @@ from collections.abc import Callable
 from datetime import timedelta
 from random import random
 from threading import Lock, Thread, current_thread
+from typing import Protocol, runtime_checkable
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
-from adb.server.lifecycle.control.port import AdbServerProvider, AdbServerStopper
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.failure import (
     AdbServerCloseUnprovenFailure,
@@ -49,6 +49,20 @@ def _require_bool(value: object, *, field_name: str) -> bool:
     return value
 
 
+@runtime_checkable
+class _AdbServerLifecycleController(Protocol):
+    """Supervisor-private contract for one inseparable server lifecycle owner."""
+
+    def provide(
+        self,
+        endpoint: AdbServerEndpoint | None = None,
+    ) -> AdbServer:
+        ...
+
+    def stop(self, server: AdbServer) -> None:
+        ...
+
+
 class AdbServerSupervisor:
     """Reconcile ADB server failures across successive server lifetimes.
 
@@ -59,8 +73,7 @@ class AdbServerSupervisor:
     def __init__(
         self,
         server: AdbServer | AdbServerState,
-        provider: AdbServerProvider,
-        stopper: AdbServerStopper,
+        controller: _AdbServerLifecycleController,
         provisioning_endpoint: AdbServerEndpoint | None,
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
@@ -78,10 +91,10 @@ class AdbServerSupervisor:
             raise TypeError("server must be AdbServer or AdbServerState")
         if server_state.current is None:
             raise ValueError("server state must have an active initial server")
-        if not isinstance(provider, AdbServerProvider):
-            raise TypeError("provider must satisfy AdbServerProvider")
-        if not isinstance(stopper, AdbServerStopper):
-            raise TypeError("stopper must satisfy AdbServerStopper")
+        if not isinstance(controller, _AdbServerLifecycleController):
+            raise TypeError(
+                "controller must satisfy the complete ADB server lifecycle contract"
+            )
         if provisioning_endpoint is not None and not isinstance(
             provisioning_endpoint, AdbServerEndpoint
         ):
@@ -101,8 +114,7 @@ class AdbServerSupervisor:
 
         self._server_state = server_state
         self._bus = event_bus
-        self._provider = provider
-        self._stopper = stopper
+        self._controller = controller
         self._provisioning_endpoint = provisioning_endpoint
         self._scheduler = scheduler
         self._policy = policy
@@ -261,7 +273,7 @@ class AdbServerSupervisor:
 
     def _dispose_retired_server(self, server: AdbServer) -> None:
         try:
-            self._stopper.stop(server)
+            self._controller.stop(server)
         except AdbServerStopError as exc:
             self._bus.publish(
                 AdbServerNativeCloseUnproven(
@@ -317,14 +329,14 @@ class AdbServerSupervisor:
                 raise
 
     def _provide_server(self) -> AdbServer:
-        server = self._provider.provide(self._provisioning_endpoint)
+        server = self._controller.provide(self._provisioning_endpoint)
         if not isinstance(server, AdbServer):
-            raise TypeError("server provider must return AdbServer")
+            raise TypeError("server controller provide() must return AdbServer")
         if (
             self._provisioning_endpoint is not None
             and server.endpoint != self._provisioning_endpoint
         ):
-            self._stopper.stop(server)
+            self._controller.stop(server)
             raise ValueError("endpoint-constrained server provisioning changed endpoint")
         return server
 

@@ -3,36 +3,11 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServer
 
 
 @runtime_checkable
-class AdbServerProvider(Protocol):
-    """Provide fresh usable ADB server lifetimes."""
-
-    def provide(
-        self,
-        endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServer:
-        """Provide one fresh usable ADB server lifetime."""
-        ...
-
-
-@runtime_checkable
-class AdbServerStopper(Protocol):
-    """Make exact ADB server lifetimes unavailable."""
-
-    def stop(
-        self,
-        server: AdbServer,
-    ) -> None:
-        """Return only after the exact server lifetime is proven unavailable."""
-        ...
-
-
-@runtime_checkable
-class AdbEndpointController(Protocol):
-    """Synchronously own one native ADB server endpoint lifetime at a time."""
+class AdbEndpointStarter(Protocol):
+    """Synchronously establish one owned native ADB server endpoint lifetime."""
 
     def start(
         self,
@@ -41,9 +16,23 @@ class AdbEndpointController(Protocol):
         """Return only after one owned endpoint is usable."""
         ...
 
+
+@runtime_checkable
+class AdbEndpointStopper(Protocol):
+    """Synchronously stop one owned native ADB server endpoint lifetime."""
+
     def stop(self, endpoint: AdbServerEndpoint) -> None:
         """Return only after the owned native lifetime at endpoint is proven stopped."""
         ...
 
 
-__all__ = ["AdbEndpointController", "AdbServerProvider", "AdbServerStopper"]
+@runtime_checkable
+class AdbEndpointController(AdbEndpointStarter, AdbEndpointStopper, Protocol):
+    """Synchronously own one native ADB server endpoint lifetime at a time."""
+
+
+__all__ = [
+    "AdbEndpointController",
+    "AdbEndpointStarter",
+    "AdbEndpointStopper",
+]

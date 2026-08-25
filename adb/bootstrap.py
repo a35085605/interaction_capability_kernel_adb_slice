@@ -2,18 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from adb.epoch import EpochIssuer
 from adb.runtime import AdbRuntime
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch, ServerEpochSequence
 from adb.server.lifecycle.control.controller import AdbServerController
-from adb.server.lifecycle.control.port import (
-    AdbEndpointController,
-    AdbServerProvider,
-    AdbServerStopper,
-)
+from adb.server.lifecycle.control.port import AdbEndpointController
 from adb.server.lifecycle.control.subprocess import SubprocessAdbEndpointController
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
@@ -40,8 +36,18 @@ from eventing import EventBus
 from scheduling import TemporalScheduler
 
 
-class _AdbServerLifecycleController(AdbServerProvider, AdbServerStopper, Protocol):
-    """Bootstrap-private structural type for high-level server lifecycle controllers."""
+@runtime_checkable
+class _AdbServerLifecycleController(Protocol):
+    """Bootstrap-private structural type for one complete server lifecycle controller."""
+
+    def provide(
+        self,
+        endpoint: AdbServerEndpoint | None = None,
+    ) -> AdbServer:
+        ...
+
+    def stop(self, server: AdbServer) -> None:
+        ...
 
 
 _AdbServerControllerFactory = Callable[
@@ -182,8 +188,7 @@ class AdbRuntimeBootstrap:
         try:
             server_supervisor = AdbServerSupervisor(
                 core.server_state,
-                provider=core.controller,
-                stopper=core.controller,
+                controller=core.controller,
                 provisioning_endpoint=core.provisioning_endpoint,
                 event_bus=event_bus,
                 scheduler=scheduler,
@@ -246,11 +251,9 @@ class AdbRuntimeBootstrap:
         else:
             controller = controller_factory(server_epoch_issuer)
 
-        if not isinstance(controller, AdbServerProvider) or not isinstance(
-            controller, AdbServerStopper
-        ):
+        if not isinstance(controller, _AdbServerLifecycleController):
             raise TypeError(
-                "server controller factory must return AdbServerProvider and AdbServerStopper"
+                "server controller factory must return a complete server lifecycle controller"
             )
 
         initial_server = controller.provide(self._endpoint)
