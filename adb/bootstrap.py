@@ -41,10 +41,10 @@ from scheduling import TemporalScheduler
 class _AdbServerLifecycleController(Protocol):
     """Bootstrap-private structural type for one complete server lifecycle controller."""
 
-    def provide(self) -> AdbServer:
+    def provision(self) -> AdbServer:
         ...
 
-    def stop(self, server: AdbServer) -> None:
+    def retire(self, server: AdbServer) -> None:
         ...
 
 
@@ -151,7 +151,7 @@ class AdbRuntimeBootstrap:
                 transport_supervision_policy=self._transport_supervision_policy,
             )
         except BaseException:
-            core.controller.stop(core.initial_server)
+            core.controller.retire(core.initial_server)
             raise
 
     def build_managed(
@@ -226,7 +226,7 @@ class AdbRuntimeBootstrap:
                 transport_supervision_policy=self._transport_supervision_policy,
             )
         except BaseException:
-            core.controller.stop(core.initial_server)
+            core.controller.retire(core.initial_server)
             raise
 
     def _build_runtime(self, *args: object, **kwargs: object) -> AdbRuntime:
@@ -256,9 +256,9 @@ class AdbRuntimeBootstrap:
                 "server controller factory must return a complete server lifecycle controller"
             )
 
-        initial_server = controller.provide()
+        initial_server = controller.provision()
         if not isinstance(initial_server, AdbServer):
-            raise TypeError("server controller provide() must return AdbServer")
+            raise TypeError("server controller provision() must return AdbServer")
         try:
             if self._endpoint is not None and initial_server.endpoint != self._endpoint:
                 raise ValueError("endpoint-constrained initial server provisioning changed endpoint")
@@ -274,7 +274,7 @@ class AdbRuntimeBootstrap:
                 initial_server=initial_server,
             )
         except BaseException:
-            controller.stop(initial_server)
+            controller.retire(initial_server)
             raise
 
 

@@ -61,10 +61,10 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 class _AdbServerLifecycleController(Protocol):
     """Supervisor-private contract for one inseparable server lifecycle owner."""
 
-    def provide(self) -> AdbServer:
+    def provision(self) -> AdbServer:
         ...
 
-    def stop(self, server: AdbServer) -> None:
+    def retire(self, server: AdbServer) -> None:
         ...
 
 
@@ -266,7 +266,7 @@ class AdbServerSupervisor:
 
     def _dispose_retired_server(self, server: AdbServer) -> None:
         try:
-            self._controller.stop(server)
+            self._controller.retire(server)
         except AdbServerNativeTerminationUnprovenError as exc:
             # Only the backend may establish this terminal native fact.  Do not manufacture
             # UNPROVEN from generic controller/ownership errors.
@@ -303,10 +303,10 @@ class AdbServerSupervisor:
                 self._attempt_threads.discard(thread)
                 raise
 
-    def _provide_server(self) -> AdbServer:
-        server = self._controller.provide()
+    def _provision_server(self) -> AdbServer:
+        server = self._controller.provision()
         if not isinstance(server, AdbServer):
-            raise TypeError("server controller provide() must return AdbServer")
+            raise TypeError("server controller provision() must return AdbServer")
         return server
 
     def _run_recovery_attempt(
@@ -327,7 +327,7 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
                 try:
-                    recovered = self._provide_server()
+                    recovered = self._provision_server()
                 except AdbServerStopInProgressError as exc:
                     deferred_failure = AdbServerStopInProgressFailure(str(exc))
                 except AdbServerNativeLifetimeBusyError as exc:

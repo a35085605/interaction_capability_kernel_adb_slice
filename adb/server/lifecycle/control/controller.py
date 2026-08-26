@@ -22,7 +22,7 @@ class AdbServerController:
     """Fabricate and retire exact domain server lifetimes over one native backend.
 
     The controller owns at most one domain :class:`AdbServer` identity at a time.  Accepting
-    ``stop(server)`` irreversibly relinquishes that exact domain lifetime before native teardown
+    ``retire(server)`` irreversibly relinquishes that exact domain lifetime before native teardown
     is attempted.  Native termination completion is backend state: failure to prove termination
     never restores controller ownership and never revives a retired server epoch.
     """
@@ -48,8 +48,8 @@ class AdbServerController:
         self._mutation_lock = Lock()
         self._owned_server: AdbServer | None = None
 
-    def provide(self) -> AdbServer:
-        """Synchronously provide one fresh usable domain server lifetime."""
+    def provision(self) -> AdbServer:
+        """Synchronously provision one fresh usable domain server lifetime."""
 
         with self._mutation_lock:
             endpoint = self._provisioning.required_endpoint
@@ -90,12 +90,12 @@ class AdbServerController:
             self._owned_server = server
             return server
 
-    def stop(self, server: AdbServer) -> None:
+    def retire(self, server: AdbServer) -> None:
         """Retire exact controller ownership, then synchronously request native teardown.
 
         Once exact ownership is accepted it is relinquished under the controller lock and is never
         restored, regardless of the backend stop outcome.  The potentially slow native teardown is
-        deliberately performed outside that lock so a successor ``provide()`` may reach the backend
+        deliberately performed outside that lock so a successor ``provision()`` may reach the backend
         while termination of the retired native lifetime is still in progress.
         """
 
