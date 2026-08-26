@@ -4,7 +4,6 @@ from collections.abc import Callable
 import os
 import socket
 import subprocess
-from enum import Enum, auto
 from threading import Lock
 from time import monotonic, sleep
 from typing import Protocol
@@ -13,6 +12,7 @@ from adb._internal.client import AdbServiceClient
 from adb._internal.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.lifecycle.control.backend import AdbServerBackendPhase
 from adb.server.lifecycle.control.errors import (
     AdbServerNativeLifetimeBusyError,
     AdbServerNativeTerminationUnprovenError,
@@ -105,20 +105,14 @@ class _SubprocessLifetime:
             self._closed = True
 
 
-class _BackendPhase(Enum):
-    IDLE = auto()
-    RUNNING = auto()
-    STOPPING = auto()
-    NATIVE_TERMINATION_UNPROVEN = auto()
-
-
 class SubprocessAdbServerBackend:
-    """Own one subprocess-backed native ADB server lifetime.
+    """Provide one ADB server attachment backed by an owned child process.
 
-    Domain retirement and native termination are independent.  ``stop()`` publishes STOPPING
-    under a short backend lock, performs terminate/wait outside that lock, then commits either
-    IDLE or NATIVE_TERMINATION_UNPROVEN.  ``start()`` therefore fails fast rather than waiting
-    behind native teardown.
+    This adapter owns the foreground ADB server process it spawns, so ``release()`` terminates that
+    child.  Domain retirement and process termination remain independent: release publishes
+    :attr:`AdbServerBackendPhase.RELEASING` before slow terminate/wait work, allowing a concurrent
+    ``acquire()`` to fail fast rather than waiting behind disposal.  Failure to prove child-process
+    termination poisons this adapter instance and requires external intervention.
     """
 
     def __init__(
@@ -163,12 +157,13 @@ class SubprocessAdbServerBackend:
         self._status_reader = _status_reader
 
         self._mutation_lock = Lock()
-        # Native lifecycle truth never crosses this backend boundary.  An unproven lifetime
-        # permanently reserves the slot within this backend scope; start/stop cannot self-heal it.
-        self._phase = _BackendPhase.IDLE
+        # Concrete process ownership never crosses this adapter boundary.  An unproven release
+        # permanently reserves the slot within this backend scope; acquire/release cannot self-heal it.
+        self._phase = AdbServerBackendPhase.IDLE
         self._lifetime: _SubprocessLifetime | None = None
+        self._native_termination_unproven = False
 
-    def start(
+    def acquire(
         self,
         endpoint: AdbServerEndpoint | None = None,
     ) -> AdbServerEndpoint:
@@ -181,89 +176,110 @@ class SubprocessAdbServerBackend:
             )
 
         with self._mutation_lock:
-            if self._phase is _BackendPhase.STOPPING:
-                raise AdbServerStopInProgressError(
-                    "the previous ADB server native lifetime is still terminating"
-                )
-            if self._phase is _BackendPhase.NATIVE_TERMINATION_UNPROVEN:
+            if self._native_termination_unproven:
                 raise AdbServerNativeTerminationUnprovenError(
                     "the previous ADB server native lifetime termination remains unproven"
                 )
-            if self._phase is _BackendPhase.RUNNING:
-                raise AdbServerNativeLifetimeBusyError(
-                    "an ADB server native lifetime still occupies this backend slot"
+            if self._phase is AdbServerBackendPhase.RELEASING:
+                raise AdbServerStopInProgressError(
+                    "the previous ADB server backend attachment is still releasing"
                 )
-            if self._phase is not _BackendPhase.IDLE or self._lifetime is not None:
+            if self._phase in (
+                AdbServerBackendPhase.ACQUIRING,
+                AdbServerBackendPhase.ACTIVE,
+            ):
+                raise AdbServerNativeLifetimeBusyError(
+                    "an ADB server backend attachment still occupies this backend slot"
+                )
+            if self._phase is not AdbServerBackendPhase.IDLE or self._lifetime is not None:
                 raise RuntimeError("invalid ADB subprocess backend lifecycle state")
+            self._phase = AdbServerBackendPhase.ACQUIRING
 
-            lifetime = self._create_lifetime_locked(endpoint)
-            self._lifetime = lifetime
-            self._phase = _BackendPhase.RUNNING
-            try:
-                self._wait_until_ready(lifetime.endpoint, lifetime._process)
-            except BaseException:
+        lifetime: _SubprocessLifetime | None = None
+        try:
+            lifetime = self._create_lifetime(endpoint)
+            with self._mutation_lock:
+                if self._phase is not AdbServerBackendPhase.ACQUIRING or self._lifetime is not None:
+                    raise RuntimeError("ADB subprocess backend state changed during acquire")
+                self._lifetime = lifetime
+
+            self._wait_until_ready(lifetime.endpoint, lifetime._process)
+        except BaseException:
+            if lifetime is not None:
                 try:
                     lifetime.close()
                 except AdbServerNativeTerminationUnprovenError as close_exc:
-                    # The backend has exhausted its supported termination procedure.  Retain the
-                    # native identity and require external intervention; never silently retry it.
-                    self._phase = _BackendPhase.NATIVE_TERMINATION_UNPROVEN
+                    with self._mutation_lock:
+                        if self._lifetime is None:
+                            self._lifetime = lifetime
+                        self._phase = AdbServerBackendPhase.RELEASING
+                        self._native_termination_unproven = True
                     raise AdbServerNativeTerminationUnprovenError(
-                        "ADB server start failed and native termination could not be proven"
+                        "ADB server acquire failed and native termination could not be proven"
                     ) from close_exc
-                self._lifetime = None
-                self._phase = _BackendPhase.IDLE
-                raise
+            with self._mutation_lock:
+                if self._lifetime is lifetime:
+                    self._lifetime = None
+                self._phase = AdbServerBackendPhase.IDLE
+            raise
 
-            return lifetime.endpoint
+        with self._mutation_lock:
+            if self._lifetime is not lifetime or self._phase is not AdbServerBackendPhase.ACQUIRING:
+                raise RuntimeError("ADB subprocess backend state changed during acquire")
+            self._phase = AdbServerBackendPhase.ACTIVE
+        return lifetime.endpoint
 
-    def stop(self, endpoint: AdbServerEndpoint) -> None:
+    def release(self, endpoint: AdbServerEndpoint) -> None:
         if not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint")
 
         with self._mutation_lock:
             lifetime = self._lifetime
-            if lifetime is None or self._phase is _BackendPhase.IDLE:
-                raise AdbServerStopError("no ADB server subprocess lifetime is owned")
-            if lifetime.endpoint != endpoint:
-                raise AdbServerStopError(
-                    "requested endpoint does not identify the owned ADB server subprocess lifetime"
-                )
-            if self._phase is _BackendPhase.STOPPING:
-                raise AdbServerStopError(
-                    "the requested ADB server native lifetime is already stopping"
-                )
-            if self._phase is _BackendPhase.NATIVE_TERMINATION_UNPROVEN:
+            if self._native_termination_unproven:
                 raise AdbServerNativeTerminationUnprovenError(
                     "ADB server native termination is already unproven; external intervention "
                     "is required"
                 )
-            if self._phase is not _BackendPhase.RUNNING:
+            if self._phase is AdbServerBackendPhase.ACQUIRING:
+                raise AdbServerStopError(
+                    "the requested ADB server backend attachment is still acquiring"
+                )
+            if lifetime is None or self._phase is AdbServerBackendPhase.IDLE:
+                raise AdbServerStopError("no ADB server subprocess attachment is owned")
+            if lifetime.endpoint != endpoint:
+                raise AdbServerStopError(
+                    "requested endpoint does not identify the owned ADB server subprocess attachment"
+                )
+            if self._phase is AdbServerBackendPhase.RELEASING:
+                raise AdbServerStopError(
+                    "the requested ADB server backend attachment is already releasing"
+                )
+            if self._phase is not AdbServerBackendPhase.ACTIVE:
                 raise RuntimeError("invalid ADB subprocess backend lifecycle state")
 
-            # Publish native STOPPING before slow terminate/wait work.  Successor start() calls can
-            # now enter this backend concurrently and receive a typed fail-fast result.
-            self._phase = _BackendPhase.STOPPING
+            # Publish RELEASING before slow terminate/wait work.  Successor acquire() calls can now
+            # enter this adapter concurrently and receive a typed fail-fast result.
+            self._phase = AdbServerBackendPhase.RELEASING
 
         try:
             lifetime.close()
         except AdbServerNativeTerminationUnprovenError:
             with self._mutation_lock:
                 if self._lifetime is lifetime:
-                    self._phase = _BackendPhase.NATIVE_TERMINATION_UNPROVEN
+                    self._native_termination_unproven = True
             raise
 
         with self._mutation_lock:
             if self._lifetime is not lifetime:
-                raise RuntimeError("ADB subprocess backend native lifetime changed during stop")
+                raise RuntimeError("ADB subprocess backend attachment changed during release")
             self._lifetime = None
-            self._phase = _BackendPhase.IDLE
+            self._phase = AdbServerBackendPhase.IDLE
 
-    def _create_lifetime_locked(
+    def _create_lifetime(
         self,
         endpoint: AdbServerEndpoint | None,
     ) -> _SubprocessLifetime:
-        reservation, resolved_endpoint = self._reserve_listener_locked(endpoint)
+        reservation, resolved_endpoint = self._reserve_listener(endpoint)
         process: subprocess.Popen[bytes] | None = None
         try:
             fd = reservation.fileno()
@@ -293,7 +309,7 @@ class SubprocessAdbServerBackend:
         finally:
             reservation.close()
 
-    def _reserve_listener_locked(
+    def _reserve_listener(
         self,
         endpoint: AdbServerEndpoint | None,
     ) -> tuple[socket.socket, AdbServerEndpoint]:

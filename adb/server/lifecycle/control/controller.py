@@ -19,12 +19,13 @@ from adb.server.provisioning import (
 
 
 class AdbServerController:
-    """Fabricate and retire exact domain server lifetimes over one native backend.
+    """Fabricate and retire exact domain server lifetimes over one server backend.
 
     The controller owns at most one domain :class:`AdbServer` identity at a time.  Accepting
-    ``retire(server)`` irreversibly relinquishes that exact domain lifetime before native teardown
-    is attempted.  Native termination completion is backend state: failure to prove termination
-    never restores controller ownership and never revives a retired server epoch.
+    ``retire(server)`` irreversibly relinquishes that exact domain lifetime before backend release
+    is attempted.  Concrete resource ownership remains a backend concern: release may terminate an
+    owned server process, detach from a borrowed server, or dispose other adapter-owned resources.
+    A release failure never restores controller ownership or revives a retired server epoch.
     """
 
     def __init__(
@@ -58,10 +59,10 @@ class AdbServerController:
                     "the previous ADB server domain lifetime has not yet been relinquished"
                 )
 
-            resolved_endpoint = self._backend.start(endpoint)
+            resolved_endpoint = self._backend.acquire(endpoint)
             if not isinstance(resolved_endpoint, AdbServerEndpoint):
                 raise TypeError(
-                    "server backend start() must return AdbServerEndpoint"
+                    "server backend acquire() must return AdbServerEndpoint"
                 )
 
             try:
@@ -75,28 +76,28 @@ class AdbServerController:
                 )
             except BaseException:
                 try:
-                    self._backend.stop(resolved_endpoint)
+                    self._backend.release(resolved_endpoint)
                 except AdbServerNativeTerminationUnprovenError:
                     # Preserve the stronger native fact.  The controller never fabricated a
                     # domain identity, and the backend now requires external intervention.
                     raise
-                except BaseException as stop_error:
+                except BaseException as release_error:
                     raise AdbServerStartError(
-                        "ADB server identity creation failed and its native lifetime "
-                        "could not be stopped"
-                    ) from stop_error
+                        "ADB server identity creation failed and its backend attachment "
+                        "could not be released"
+                    ) from release_error
                 raise
 
             self._owned_server = server
             return server
 
     def retire(self, server: AdbServer) -> None:
-        """Retire exact controller ownership, then synchronously request native teardown.
+        """Retire exact controller ownership, then synchronously release its backend attachment.
 
         Once exact ownership is accepted it is relinquished under the controller lock and is never
-        restored, regardless of the backend stop outcome.  The potentially slow native teardown is
-        deliberately performed outside that lock so a successor ``provision()`` may reach the backend
-        while termination of the retired native lifetime is still in progress.
+        restored, regardless of the backend release outcome.  Potentially slow adapter-specific
+        disposal is deliberately performed outside that lock so a successor ``provision()`` may reach
+        the backend while release of the retired attachment is still in progress.
         """
 
         if not isinstance(server, AdbServer):
@@ -109,7 +110,7 @@ class AdbServerController:
                 )
             self._owned_server = None
 
-        self._backend.stop(server.endpoint)
+        self._backend.release(server.endpoint)
 
 
 __all__ = ["AdbServerController"]

@@ -24,6 +24,7 @@ from adb.api import (
 from adb.managed import AdbManagedRuntime
 from adb.server import (
     AdbServerBackend,
+    AdbServerBackendPhase,
     AdbServerControlError,
     AdbServerController,
     AdbServer,
@@ -94,6 +95,7 @@ __all__ = [
     "AdbRemoteCommandError",
     "AdbServerConnectionError",
     "AdbServerBackend",
+    "AdbServerBackendPhase",
     "AdbServerControlError",
     "AdbServerController",
     "AdbServerEndpoint",

@@ -6,23 +6,23 @@ class AdbServerControlError(RuntimeError):
 
 
 class AdbServerStartError(AdbServerControlError):
-    """A controller could not establish one fresh usable ADB server lifetime."""
+    """A controller could not acquire one fresh usable ADB server attachment."""
 
 
 class AdbServerStartDeferredError(AdbServerStartError):
-    """Starting a fresh server is temporarily blocked by native lifecycle state."""
+    """Acquiring a fresh server attachment is temporarily blocked by backend lifecycle state."""
 
 
 class AdbServerNativeLifetimeBusyError(AdbServerStartDeferredError):
-    """A prior native server lifetime still occupies the backend slot."""
+    """A prior server attachment still occupies the backend slot."""
 
 
 class AdbServerStopInProgressError(AdbServerStartDeferredError):
-    """A prior native server lifetime is currently being terminated."""
+    """A prior server attachment is currently being released."""
 
 
 class AdbServerStopError(AdbServerControlError):
-    """A requested native-server stop operation could not be accepted or completed."""
+    """A requested server-attachment release could not be accepted or completed."""
 
 
 class AdbServerNativeTerminationUnprovenError(AdbServerStartError, AdbServerStopError):

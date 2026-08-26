@@ -10,10 +10,11 @@ from adb.server.lifecycle.control.errors import (
     AdbServerStopError,
     AdbServerStopInProgressError,
 )
-from adb.server.lifecycle.control.backend import AdbServerBackend
+from adb.server.lifecycle.control.backend import AdbServerBackend, AdbServerBackendPhase
 
 __all__ = [
     "AdbServerBackend",
+    "AdbServerBackendPhase",
     "AdbServerControlError",
     "AdbServerController",
     "AdbServerNativeLifetimeBusyError",

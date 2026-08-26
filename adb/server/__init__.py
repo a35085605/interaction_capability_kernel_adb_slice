@@ -12,7 +12,7 @@ from adb.server.lifecycle.control.errors import (
     AdbServerStopError,
     AdbServerStopInProgressError,
 )
-from adb.server.lifecycle.control.backend import AdbServerBackend
+from adb.server.lifecycle.control.backend import AdbServerBackend, AdbServerBackendPhase
 from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerFailure,
@@ -38,6 +38,7 @@ from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 
 __all__ = [
     "AdbServerBackend",
+    "AdbServerBackendPhase",
     "AdbMdnsBackend",
     "AdbServerConnectionFailure",
     "AdbServerControlError",
