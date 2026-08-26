@@ -69,12 +69,7 @@ class AdbServerStartDeferredFailure(_AdbServerFailure):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendBusyFailure(AdbServerStartDeferredFailure):
-    """A backend attachment still occupies the backend attachment slot."""
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerStopInProgressFailure(AdbServerStartDeferredFailure):
-    """A retired domain lifetime's backend attachment is still being released."""
+    """A backend operation or owned attachment temporarily prevents fresh acquisition."""
 
 
 AdbServerRequestFailure: TypeAlias = (
@@ -108,6 +103,5 @@ __all__ = [
     "AdbServerRequestFailure",
     "AdbServerServiceFailure",
     "AdbServerStartDeferredFailure",
-    "AdbServerStopInProgressFailure",
     "AdbServerTimeoutFailure",
 ]

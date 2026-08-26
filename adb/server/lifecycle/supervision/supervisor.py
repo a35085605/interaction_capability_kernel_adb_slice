@@ -9,7 +9,6 @@ from adb.server.lifecycle.control.errors import (
     AdbServerBackendBusyError,
     AdbServerStartDeferredError,
     AdbServerStartError,
-    AdbServerStopInProgressError,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.failure import (
@@ -19,7 +18,6 @@ from adb.server.failure import (
     AdbServerBackendBusyFailure,
     AdbServerProcessExitedFailure,
     AdbServerStartDeferredFailure,
-    AdbServerStopInProgressFailure,
 )
 from adb.server.identity import AdbServer
 from adb.server.state import AdbServerState, AdbServerStateView
@@ -299,8 +297,6 @@ class AdbServerSupervisor:
                         return
                 try:
                     recovered = self._provision_server()
-                except AdbServerStopInProgressError as exc:
-                    deferred_failure = AdbServerStopInProgressFailure(str(exc))
                 except AdbServerBackendBusyError as exc:
                     deferred_failure = AdbServerBackendBusyFailure(str(exc))
                 except AdbServerStartDeferredError as exc:

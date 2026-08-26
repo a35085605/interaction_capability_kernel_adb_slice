@@ -23,11 +23,8 @@ from adb.api import (
 )
 from adb.managed import AdbManagedRuntime
 from adb.server import (
-    AdbServerAcquireInProgressError,
     AdbServerAttachmentMismatchError,
     AdbServerBackend,
-    AdbServerBackendLifecycle,
-    AdbServerBackendPhase,
     AdbServerControlError,
     AdbServerController,
     AdbServer,
@@ -43,7 +40,6 @@ from adb.server import (
     AdbServerStatusReader,
     AdbServerStopDeferredError,
     AdbServerStopError,
-    AdbServerStopInProgressError,
     AdbServerUnavailableError,
     SubprocessAdbServerBackend,
 )
@@ -99,9 +95,6 @@ __all__ = [
     "AdbRemoteCommandError",
     "AdbServerConnectionError",
     "AdbServerBackend",
-    "AdbServerBackendLifecycle",
-    "AdbServerBackendPhase",
-    "AdbServerAcquireInProgressError",
     "AdbServerAttachmentMismatchError",
     "AdbServerControlError",
     "AdbServerController",
@@ -119,7 +112,6 @@ __all__ = [
     "AdbServerStatusReader",
     "AdbServerStopDeferredError",
     "AdbServerStopError",
-    "AdbServerStopInProgressError",
     "AdbServerUnavailableError",
     "AdbServiceError",
     "AdbTimeoutError",

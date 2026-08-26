@@ -13,12 +13,13 @@ from adb._internal.client import AdbServiceClient
 from adb._internal.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.control.backend import (
-    AdbServerBackendLifecycle,
-    AdbServerBackendPhase,
-    require_backend_release_endpoint,
+from adb.server.lifecycle.control.backend import require_backend_release_endpoint
+from adb.server.lifecycle.control.errors import (
+    AdbServerBackendBusyError,
+    AdbServerNoAttachmentError,
+    AdbServerStartError,
+    AdbServerStopError,
 )
-from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
 from adb.server.status.reader import SmartSocketAdbServerStatusReader
 from eventing import EventPublisher
 
@@ -139,9 +140,9 @@ class SubprocessAdbServerBackend:
     """Provide one ADB server attachment backed by an owned child process.
 
     This adapter owns the foreground ADB server process it spawns, so ``release()`` terminates that
-    child.  Domain retirement and process termination remain independent: release publishes
-    :attr:`AdbServerBackendPhase.RELEASING` before slow terminate/wait work, allowing a concurrent
-    ``acquire()`` to fail fast rather than waiting behind disposal.  Failure to prove child-process
+    child.  Acquire and release operations are serialized by a non-blocking operation lock: a
+    concurrent request fails fast rather than waiting behind process startup or disposal.  Concrete
+    attachment ownership is represented solely by ``_lifetime``.  Failure to prove child-process
     termination poisons this adapter instance and requires external intervention.
     """
 
@@ -192,10 +193,7 @@ class SubprocessAdbServerBackend:
             raise TypeError("_status_reader must provide read()")
         self._status_reader = _status_reader
 
-        self._mutation_lock = Lock()
-        # Concrete process ownership never crosses this adapter boundary.  Lifecycle admission and
-        # caller-visible lifecycle failures are defined by the backend port, not by this adapter.
-        self._lifecycle = AdbServerBackendLifecycle()
+        self._operation_lock = Lock()
         self._lifetime: _SubprocessLifetime | None = None
         self._termination_unproven = False
 
@@ -210,107 +208,83 @@ class SubprocessAdbServerBackend:
                 "ADB acceptfd socket activation is unavailable on this platform; "
                 "a platform-specific server backend is required"
             )
+        if not self._operation_lock.acquire(blocking=False):
+            raise AdbServerBackendBusyError(
+                "another ADB server backend operation is already in progress"
+            )
 
-        with self._mutation_lock:
+        try:
             if self._termination_unproven:
                 raise AdbServerStartError(
                     "ADB subprocess backend cannot acquire while prior child-process cleanup "
                     "remains unresolved"
                 )
-            if (
-                self._lifecycle.phase is AdbServerBackendPhase.IDLE
-                and self._lifetime is not None
-            ):
-                raise RuntimeError("invalid ADB subprocess backend lifecycle state")
-            self._lifecycle.begin_acquire()
+            if self._lifetime is not None:
+                raise AdbServerBackendBusyError(
+                    "an ADB server backend attachment already occupies this backend slot"
+                )
 
-        lifetime: _SubprocessLifetime | None = None
-        try:
-            lifetime = self._create_lifetime(endpoint)
-            with self._mutation_lock:
-                if (
-                    self._lifecycle.phase is not AdbServerBackendPhase.ACQUIRING
-                    or self._lifetime is not None
-                ):
-                    raise RuntimeError("ADB subprocess backend state changed during acquire")
-                self._lifetime = lifetime
-
-            self._wait_until_ready(lifetime.endpoint, lifetime._process)
-        except BaseException:
-            if lifetime is not None:
-                try:
-                    lifetime.close()
-                except _SubprocessTerminationUnprovenError as close_exc:
-                    with self._mutation_lock:
-                        if self._lifetime is None:
-                            self._lifetime = lifetime
+            lifetime: _SubprocessLifetime | None = None
+            try:
+                lifetime = self._create_lifetime(endpoint)
+                self._wait_until_ready(lifetime.endpoint, lifetime._process)
+            except BaseException:
+                if lifetime is not None:
+                    try:
+                        lifetime.close()
+                    except _SubprocessTerminationUnprovenError as close_exc:
+                        self._lifetime = lifetime
                         self._termination_unproven = True
-                        self._lifecycle.abort_acquire()
-                    self._publish_termination_unproven(
-                        lifetime,
-                        operation="acquire_cleanup",
-                        error=close_exc,
-                    )
-                    raise AdbServerStartError(
-                        "ADB subprocess backend acquire failed and child-process cleanup "
-                        "could not be completed"
-                    ) from close_exc
-            with self._mutation_lock:
-                if self._lifetime is lifetime:
-                    self._lifetime = None
-                self._lifecycle.abort_acquire()
-            raise
+                        self._publish_termination_unproven(
+                            lifetime,
+                            operation="acquire_cleanup",
+                            error=close_exc,
+                        )
+                        raise AdbServerStartError(
+                            "ADB subprocess backend acquire failed and child-process cleanup "
+                            "could not be completed"
+                        ) from close_exc
+                raise
 
-        with self._mutation_lock:
-            if (
-                self._lifetime is not lifetime
-                or self._lifecycle.phase is not AdbServerBackendPhase.ACQUIRING
-            ):
-                raise RuntimeError("ADB subprocess backend state changed during acquire")
-            self._lifecycle.complete_acquire()
-        return lifetime.endpoint
+            self._lifetime = lifetime
+            self._termination_unproven = False
+            return lifetime.endpoint
+        finally:
+            self._operation_lock.release()
 
     def release(self, endpoint: AdbServerEndpoint) -> None:
         if not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint")
-
-        with self._mutation_lock:
-            lifetime = self._lifetime
-            # Preserve phase-defined rejection precedence: target identity is meaningful only for an
-            # ACTIVE attachment.  begin_release() publishes RELEASING only after these checks pass.
-            if self._lifecycle.phase is AdbServerBackendPhase.ACTIVE:
-                if lifetime is None:
-                    raise RuntimeError("active ADB subprocess backend has no owned attachment")
-                require_backend_release_endpoint(lifetime.endpoint, endpoint)
-            self._lifecycle.begin_release()
-            if lifetime is None:
-                raise RuntimeError("releasing ADB subprocess backend has no owned attachment")
-
-            # RELEASING is visible before slow terminate/wait work so a concurrent acquire() can
-            # enter this adapter and receive the port-defined fail-fast result.
+        if not self._operation_lock.acquire(blocking=False):
+            raise AdbServerBackendBusyError(
+                "another ADB server backend operation is already in progress"
+            )
 
         try:
-            lifetime.close()
-        except _SubprocessTerminationUnprovenError as close_exc:
-            with self._mutation_lock:
-                if self._lifetime is lifetime:
-                    self._termination_unproven = True
-                    self._lifecycle.abort_release()
-            self._publish_termination_unproven(
-                lifetime,
-                operation="release",
-                error=close_exc,
-            )
-            raise AdbServerStopError(
-                "ADB subprocess backend could not release its owned attachment"
-            ) from close_exc
+            lifetime = self._lifetime
+            if lifetime is None:
+                raise AdbServerNoAttachmentError(
+                    "no ADB server backend attachment is owned"
+                )
+            require_backend_release_endpoint(lifetime.endpoint, endpoint)
 
-        with self._mutation_lock:
-            if self._lifetime is not lifetime:
-                raise RuntimeError("ADB subprocess backend attachment changed during release")
+            try:
+                lifetime.close()
+            except _SubprocessTerminationUnprovenError as close_exc:
+                self._termination_unproven = True
+                self._publish_termination_unproven(
+                    lifetime,
+                    operation="release",
+                    error=close_exc,
+                )
+                raise AdbServerStopError(
+                    "ADB subprocess backend could not release its owned attachment"
+                ) from close_exc
+
             self._lifetime = None
             self._termination_unproven = False
-            self._lifecycle.complete_release()
+        finally:
+            self._operation_lock.release()
 
     def _publish_termination_unproven(
         self,

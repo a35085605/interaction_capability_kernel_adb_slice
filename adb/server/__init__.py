@@ -4,7 +4,6 @@ from adb.server.availability import AdbServerUnavailableError
 
 from adb.server.lifecycle.control.controller import AdbServerController
 from adb.server.lifecycle.control.errors import (
-    AdbServerAcquireInProgressError,
     AdbServerAttachmentMismatchError,
     AdbServerControlError,
     AdbServerBackendBusyError,
@@ -13,13 +12,8 @@ from adb.server.lifecycle.control.errors import (
     AdbServerStartError,
     AdbServerStopDeferredError,
     AdbServerStopError,
-    AdbServerStopInProgressError,
 )
-from adb.server.lifecycle.control.backend import (
-    AdbServerBackend,
-    AdbServerBackendLifecycle,
-    AdbServerBackendPhase,
-)
+from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerFailure,
@@ -33,7 +27,6 @@ from adb.server.failure import (
     AdbServerRequestFailure,
     AdbServerServiceFailure,
     AdbServerStartDeferredFailure,
-    AdbServerStopInProgressFailure,
     AdbServerTimeoutFailure,
 )
 from adb.server.identity import AdbServer, ServerEpoch, ServerEpochSequence
@@ -44,11 +37,8 @@ from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 
 __all__ = [
     "AdbServerBackend",
-    "AdbServerBackendLifecycle",
-    "AdbServerBackendPhase",
     "AdbMdnsBackend",
     "AdbServerConnectionFailure",
-    "AdbServerAcquireInProgressError",
     "AdbServerAttachmentMismatchError",
     "AdbServerControlError",
     "AdbServerController",
@@ -78,8 +68,6 @@ __all__ = [
     "AdbServerStatusReader",
     "AdbServerStopDeferredError",
     "AdbServerStopError",
-    "AdbServerStopInProgressError",
-    "AdbServerStopInProgressFailure",
     "AdbServerTimeoutFailure",
     "AdbServerUnavailableError",
     "AdbUsbBackend",

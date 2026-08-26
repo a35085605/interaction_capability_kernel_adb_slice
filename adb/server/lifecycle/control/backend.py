@@ -1,116 +1,9 @@
 from __future__ import annotations
 
-from enum import Enum, auto
 from typing import Protocol, runtime_checkable
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.control.errors import (
-    AdbServerAcquireInProgressError,
-    AdbServerAttachmentMismatchError,
-    AdbServerBackendBusyError,
-    AdbServerNoAttachmentError,
-    AdbServerStopInProgressError,
-)
-
-
-class AdbServerBackendPhase(Enum):
-    """Port-defined lifecycle phase for one backend-scoped server attachment."""
-
-    IDLE = auto()
-    ACQUIRING = auto()
-    ACTIVE = auto()
-    RELEASING = auto()
-
-
-class AdbServerBackendLifecycle:
-    """Port-owned lifecycle state machine shared by server backend adapters.
-
-    The lifecycle owns request-admission and transition semantics, but deliberately does not own a
-    synchronization primitive.  Adapters must invoke mutating methods while holding the same
-    mutation boundary that protects their concrete attachment state so phase changes and resource
-    ownership remain atomic from competing callers' perspective.
-    """
-
-    __slots__ = ("_phase",)
-
-    def __init__(self) -> None:
-        self._phase = AdbServerBackendPhase.IDLE
-
-    @property
-    def phase(self) -> AdbServerBackendPhase:
-        """Current backend attachment lifecycle phase."""
-
-        return self._phase
-
-    def begin_acquire(self) -> None:
-        """Admit an acquire request and enter ``ACQUIRING``."""
-
-        phase = self._phase
-        if phase is AdbServerBackendPhase.IDLE:
-            self._phase = AdbServerBackendPhase.ACQUIRING
-            return
-        if phase is AdbServerBackendPhase.RELEASING:
-            raise AdbServerStopInProgressError(
-                "the previous ADB server backend attachment is still releasing"
-            )
-        if phase in (AdbServerBackendPhase.ACQUIRING, AdbServerBackendPhase.ACTIVE):
-            raise AdbServerBackendBusyError(
-                "an ADB server backend attachment still occupies this backend slot"
-            )
-        raise RuntimeError(f"undefined ADB server backend acquire phase: {phase.name}")
-
-    def complete_acquire(self) -> None:
-        """Complete a successful acquire and enter ``ACTIVE``."""
-
-        if self._phase is not AdbServerBackendPhase.ACQUIRING:
-            raise RuntimeError(
-                f"cannot complete backend acquire from phase {self._phase.name}"
-            )
-        self._phase = AdbServerBackendPhase.ACTIVE
-
-    def abort_acquire(self) -> None:
-        """Abort a failed acquire and return to ``IDLE``."""
-
-        if self._phase is not AdbServerBackendPhase.ACQUIRING:
-            raise RuntimeError(f"cannot abort backend acquire from phase {self._phase.name}")
-        self._phase = AdbServerBackendPhase.IDLE
-
-    def begin_release(self) -> None:
-        """Admit a release request and enter ``RELEASING``."""
-
-        phase = self._phase
-        if phase is AdbServerBackendPhase.ACTIVE:
-            self._phase = AdbServerBackendPhase.RELEASING
-            return
-        if phase is AdbServerBackendPhase.IDLE:
-            raise AdbServerNoAttachmentError("no ADB server backend attachment is owned")
-        if phase is AdbServerBackendPhase.ACQUIRING:
-            raise AdbServerAcquireInProgressError(
-                "the requested ADB server backend attachment is still acquiring"
-            )
-        if phase is AdbServerBackendPhase.RELEASING:
-            raise AdbServerStopInProgressError(
-                "the requested ADB server backend attachment is already releasing"
-            )
-        raise RuntimeError(f"undefined ADB server backend release phase: {phase.name}")
-
-    def complete_release(self) -> None:
-        """Complete a successful release and return to ``IDLE``."""
-
-        if self._phase is not AdbServerBackendPhase.RELEASING:
-            raise RuntimeError(
-                f"cannot complete backend release from phase {self._phase.name}"
-            )
-        self._phase = AdbServerBackendPhase.IDLE
-
-    def abort_release(self) -> None:
-        """Abort a failed release and restore the still-owned ``ACTIVE`` attachment."""
-
-        if self._phase is not AdbServerBackendPhase.RELEASING:
-            raise RuntimeError(
-                f"cannot abort backend release from phase {self._phase.name}"
-            )
-        self._phase = AdbServerBackendPhase.ACTIVE
+from adb.server.lifecycle.control.errors import AdbServerAttachmentMismatchError
 
 
 def require_backend_release_endpoint(
@@ -133,8 +26,7 @@ def require_backend_release_endpoint(
 class AdbServerBackend(Protocol):
     """Acquire and release one backend-scoped usable ADB server attachment.
 
-    Implementations share the port-owned admission and transition semantics represented by
-    :class:`AdbServerBackendLifecycle`.  Concrete resource ownership remains adapter-defined.
+    Concrete resource ownership, operation exclusion, and cleanup semantics remain adapter-defined.
     Releasing an attachment relinquishes those backend resources; it does not imply that every
     backend must terminate an underlying ADB server process.
     """
@@ -151,7 +43,5 @@ class AdbServerBackend(Protocol):
 
 __all__ = [
     "AdbServerBackend",
-    "AdbServerBackendLifecycle",
-    "AdbServerBackendPhase",
     "require_backend_release_endpoint",
 ]

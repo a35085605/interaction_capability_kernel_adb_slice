@@ -10,7 +10,7 @@ class AdbServerStartError(AdbServerControlError):
 
 
 class AdbServerStartDeferredError(AdbServerStartError):
-    """Acquiring a fresh server attachment is temporarily blocked by lifecycle state."""
+    """Acquiring a fresh server attachment is temporarily blocked by current control state."""
 
 
 class AdbServerStopError(AdbServerControlError):
@@ -18,19 +18,11 @@ class AdbServerStopError(AdbServerControlError):
 
 
 class AdbServerStopDeferredError(AdbServerStopError):
-    """Releasing a server attachment is temporarily blocked by lifecycle state."""
+    """Releasing a server attachment is temporarily blocked by current control state."""
 
 
-class AdbServerBackendBusyError(AdbServerStartDeferredError):
-    """A backend attachment is acquiring or active, so a fresh acquire cannot begin."""
-
-
-class AdbServerAcquireInProgressError(AdbServerStopDeferredError):
-    """Release was requested while the backend attachment is still acquiring."""
-
-
-class AdbServerStopInProgressError(AdbServerStartDeferredError, AdbServerStopDeferredError):
-    """A backend attachment is currently being released."""
+class AdbServerBackendBusyError(AdbServerStartDeferredError, AdbServerStopDeferredError):
+    """Another backend operation or owned attachment prevents a request from beginning."""
 
 
 class AdbServerNoAttachmentError(AdbServerStopError):
@@ -42,7 +34,6 @@ class AdbServerAttachmentMismatchError(AdbServerStopError):
 
 
 __all__ = [
-    "AdbServerAcquireInProgressError",
     "AdbServerAttachmentMismatchError",
     "AdbServerBackendBusyError",
     "AdbServerControlError",
@@ -51,5 +42,4 @@ __all__ = [
     "AdbServerStartError",
     "AdbServerStopDeferredError",
     "AdbServerStopError",
-    "AdbServerStopInProgressError",
 ]
