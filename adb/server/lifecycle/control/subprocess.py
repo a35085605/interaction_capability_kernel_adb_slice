@@ -10,18 +10,14 @@ from adb._internal.server_subprocess import (
     _OwnedAdbServerProcess,
 )
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.control.errors import AdbServerAttachmentMismatchError
 from adb.server.lifecycle.control.backend import (
-    AdbServerAcquireFailed,
-    AdbServerAcquireResult,
-    AdbServerAcquireSatisfied,
-    AdbServerAcquireSucceeded,
+    AdbServerBackendFailed,
     AdbServerBackendOperation,
+    AdbServerBackendOperationBlocked,
     AdbServerBackendOperationInProgress,
-    AdbServerReleaseFailed,
-    AdbServerReleaseNotStaged,
-    AdbServerReleaseResult,
-    AdbServerReleaseSucceeded,
+    AdbServerBackendResult,
+    AdbServerBackendSatisfied,
+    AdbServerBackendSucceeded,
     require_backend_release_endpoint,
 )
 
@@ -62,13 +58,21 @@ class SubprocessAdbServerBackend:
     def _begin_operation(
         self,
         operation: AdbServerBackendOperation,
-    ) -> AdbServerBackendOperationInProgress | None:
+    ) -> AdbServerBackendOperationInProgress | AdbServerBackendOperationBlocked | None:
         with self._operation_state_lock:
             active_operation = self._active_operation
-            if active_operation is not None:
+            if active_operation is operation:
                 return AdbServerBackendOperationInProgress(
-                    active_operation,
-                    "another ADB server backend operation is already in progress",
+                    operation,
+                    f"ADB server backend {operation.value} is already in progress",
+                )
+            if active_operation is not None:
+                return AdbServerBackendOperationBlocked(
+                    (
+                        f"ADB server backend {operation.value} cannot begin while "
+                        f"{active_operation.value} is in progress"
+                    ),
+                    blocking_operation=active_operation,
                 )
             self._active_operation = operation
             return None
@@ -82,14 +86,14 @@ class SubprocessAdbServerBackend:
     def acquire(
         self,
         endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServerAcquireResult:
+    ) -> AdbServerBackendResult:
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint or None")
 
         operation = AdbServerBackendOperation.ACQUIRE
-        in_progress = self._begin_operation(operation)
-        if in_progress is not None:
-            return in_progress
+        unavailable = self._begin_operation(operation)
+        if unavailable is not None:
+            return unavailable
 
         try:
             attachment = self._attachment
@@ -100,15 +104,15 @@ class SubprocessAdbServerBackend:
                     self._attachment = None
                     self._attachment_usable = False
                 elif not self._attachment_usable:
-                    return AdbServerBackendOperationInProgress(
-                        AdbServerBackendOperation.RELEASE,
+                    return AdbServerBackendOperationBlocked(
                         "a prior ADB server backend cleanup is still converging",
+                        blocking_operation=AdbServerBackendOperation.RELEASE,
                     )
                 elif endpoint is None or attachment.endpoint == endpoint:
-                    return AdbServerAcquireSatisfied(attachment.endpoint)
+                    return AdbServerBackendSatisfied(attachment.endpoint)
                 else:
-                    raise AdbServerAttachmentMismatchError(
-                        "requested endpoint differs from the already acquired ADB server attachment"
+                    return AdbServerBackendOperationBlocked(
+                        "a different ADB server backend attachment is already staged"
                     )
 
             try:
@@ -116,47 +120,47 @@ class SubprocessAdbServerBackend:
             except _AdbServerSubprocessStartupCleanupUnconfirmed as exc:
                 self._attachment = exc.attachment
                 self._attachment_usable = False
-                return AdbServerAcquireFailed(
+                return AdbServerBackendFailed(
                     "ADB subprocess backend acquire failed and child-process cleanup "
                     "could not be completed"
                 )
             except _AdbServerSubprocessStartError as exc:
-                return AdbServerAcquireFailed(str(exc))
+                return AdbServerBackendFailed(str(exc))
 
             self._attachment = attachment
             self._attachment_usable = True
-            return AdbServerAcquireSucceeded(attachment.endpoint)
+            return AdbServerBackendSucceeded(attachment.endpoint)
         finally:
             self._end_operation(operation)
 
-    def release(self, endpoint: AdbServerEndpoint) -> AdbServerReleaseResult:
+    def release(self, endpoint: AdbServerEndpoint) -> AdbServerBackendResult:
         if not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint")
 
         operation = AdbServerBackendOperation.RELEASE
-        in_progress = self._begin_operation(operation)
-        if in_progress is not None:
-            return in_progress
+        unavailable = self._begin_operation(operation)
+        if unavailable is not None:
+            return unavailable
 
         try:
             attachment = self._attachment
             if attachment is None:
-                return AdbServerReleaseNotStaged(endpoint)
+                return AdbServerBackendSatisfied(endpoint)
             require_backend_release_endpoint(attachment.endpoint, endpoint)
 
             try:
                 attachment.close()
-            except _AdbServerSubprocessTerminationUnconfirmed as exc:
+            except _AdbServerSubprocessTerminationUnconfirmed:
                 # Keep ownership until termination is observable.  A failed release makes the
                 # attachment unavailable for a subsequent acquire even if its child is still alive.
                 self._attachment_usable = False
-                return AdbServerReleaseFailed(
+                return AdbServerBackendFailed(
                     "ADB subprocess backend could not release its owned attachment"
                 )
 
             self._attachment = None
             self._attachment_usable = False
-            return AdbServerReleaseSucceeded(endpoint)
+            return AdbServerBackendSucceeded(endpoint)
         finally:
             self._end_operation(operation)
 

@@ -22,7 +22,7 @@ class AdbServerStopDeferredError(AdbServerStopError):
 
 
 class AdbServerBackendBusyError(AdbServerStartDeferredError, AdbServerStopDeferredError):
-    """Another backend operation prevents a request from beginning."""
+    """An in-progress backend operation or unmet backend prerequisite defers a request."""
 
 
 class AdbServerNoAttachmentError(AdbServerStopError):

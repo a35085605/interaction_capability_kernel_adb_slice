@@ -25,8 +25,8 @@ class AdbServerBackendOperation(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerAcquireSucceeded:
-    """A fresh usable backend attachment was acquired."""
+class AdbServerBackendSucceeded:
+    """The requested backend operation ran and completed successfully."""
 
     endpoint: AdbServerEndpoint
 
@@ -36,8 +36,8 @@ class AdbServerAcquireSucceeded:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerAcquireSatisfied:
-    """The backend already owns the usable attachment requested by acquire()."""
+class AdbServerBackendSatisfied:
+    """The requested backend operation was unnecessary because its target state already holds."""
 
     endpoint: AdbServerEndpoint
 
@@ -48,7 +48,7 @@ class AdbServerAcquireSatisfied:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendOperationInProgress:
-    """A backend lifecycle operation or unresolved cleanup is still converging."""
+    """The same requested backend operation is already in progress."""
 
     operation: AdbServerBackendOperation
     diagnostic: str | None = None
@@ -61,8 +61,24 @@ class AdbServerBackendOperationInProgress:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerAcquireFailed:
-    """A backend acquire operation started but did not produce a usable attachment."""
+class AdbServerBackendOperationBlocked:
+    """The requested backend operation cannot begin because a prerequisite is unsatisfied."""
+
+    diagnostic: str
+    blocking_operation: AdbServerBackendOperation | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
+        if self.blocking_operation is not None and not isinstance(
+            self.blocking_operation,
+            AdbServerBackendOperation,
+        ):
+            raise TypeError("blocking_operation must be AdbServerBackendOperation or None")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerBackendFailed:
+    """The requested backend operation ran but did not complete successfully."""
 
     diagnostic: str
 
@@ -70,51 +86,12 @@ class AdbServerAcquireFailed:
         object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
 
 
-AdbServerAcquireResult: TypeAlias = (
-    AdbServerAcquireSucceeded
-    | AdbServerAcquireSatisfied
+AdbServerBackendResult: TypeAlias = (
+    AdbServerBackendSucceeded
+    | AdbServerBackendSatisfied
     | AdbServerBackendOperationInProgress
-    | AdbServerAcquireFailed
-)
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerReleaseSucceeded:
-    """The exact staged backend attachment was released."""
-
-    endpoint: AdbServerEndpoint
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerReleaseNotStaged:
-    """release() targeted an endpoint while no backend attachment was staged."""
-
-    endpoint: AdbServerEndpoint
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerReleaseFailed:
-    """A backend release operation started but did not complete successfully."""
-
-    diagnostic: str
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
-
-
-AdbServerReleaseResult: TypeAlias = (
-    AdbServerReleaseSucceeded
-    | AdbServerBackendOperationInProgress
-    | AdbServerReleaseNotStaged
-    | AdbServerReleaseFailed
+    | AdbServerBackendOperationBlocked
+    | AdbServerBackendFailed
 )
 
 
@@ -138,34 +115,32 @@ def require_backend_release_endpoint(
 class AdbServerBackend(Protocol):
     """Acquire and release one backend-scoped usable ADB server attachment.
 
-    Expected lifecycle outcomes are returned as result values.  Exceptions are reserved for
-    invalid calls and violated ownership contracts.  Concrete resource ownership, operation
-    exclusion, and cleanup semantics remain adapter-defined.  Releasing an attachment relinquishes
-    those backend resources; it does not imply that every backend must terminate an underlying
-    ADB server process.
+    Every operation reports one of five lifecycle outcomes: it completed, its target state was
+    already satisfied, the same operation is already in progress, a prerequisite currently blocks
+    it, or an attempted operation failed.  Exceptions are reserved for invalid calls and violated
+    ownership contracts.  Concrete resource ownership and cleanup semantics remain adapter-defined.
+    Releasing an attachment relinquishes those backend resources; it does not imply that every
+    backend must terminate an underlying ADB server process.
     """
 
     def acquire(
         self,
         endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServerAcquireResult:
+    ) -> AdbServerBackendResult:
         ...
 
-    def release(self, endpoint: AdbServerEndpoint) -> AdbServerReleaseResult:
+    def release(self, endpoint: AdbServerEndpoint) -> AdbServerBackendResult:
         ...
 
 
 __all__ = [
-    "AdbServerAcquireFailed",
-    "AdbServerAcquireResult",
-    "AdbServerAcquireSatisfied",
-    "AdbServerAcquireSucceeded",
     "AdbServerBackend",
+    "AdbServerBackendFailed",
     "AdbServerBackendOperation",
+    "AdbServerBackendOperationBlocked",
     "AdbServerBackendOperationInProgress",
-    "AdbServerReleaseFailed",
-    "AdbServerReleaseNotStaged",
-    "AdbServerReleaseResult",
-    "AdbServerReleaseSucceeded",
+    "AdbServerBackendResult",
+    "AdbServerBackendSatisfied",
+    "AdbServerBackendSucceeded",
     "require_backend_release_endpoint",
 ]

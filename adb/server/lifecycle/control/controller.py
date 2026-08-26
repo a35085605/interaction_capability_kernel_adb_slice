@@ -6,18 +6,15 @@ from adb.epoch import EpochIssuer
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch
 from adb.server.lifecycle.control.backend import (
-    AdbServerAcquireFailed,
-    AdbServerAcquireSatisfied,
-    AdbServerAcquireSucceeded,
     AdbServerBackend,
+    AdbServerBackendFailed,
+    AdbServerBackendOperationBlocked,
     AdbServerBackendOperationInProgress,
-    AdbServerReleaseFailed,
-    AdbServerReleaseNotStaged,
-    AdbServerReleaseSucceeded,
+    AdbServerBackendSatisfied,
+    AdbServerBackendSucceeded,
 )
 from adb.server.lifecycle.control.errors import (
     AdbServerBackendBusyError,
-    AdbServerNoAttachmentError,
     AdbServerStartDeferredError,
     AdbServerStartError,
     AdbServerStopError,
@@ -48,40 +45,46 @@ class AdbServerController:
         self._mutation_lock = Lock()
         self._owned_server: AdbServer | None = None
 
+    @staticmethod
+    def _raise_backend_busy(
+        result: AdbServerBackendOperationInProgress | AdbServerBackendOperationBlocked,
+        *,
+        requested_operation: str,
+    ) -> None:
+        if isinstance(result, AdbServerBackendOperationInProgress):
+            diagnostic = result.diagnostic or (
+                f"ADB server backend {requested_operation} is already in progress"
+            )
+        else:
+            diagnostic = result.diagnostic
+        raise AdbServerBackendBusyError(diagnostic)
+
     def _acquire_backend(
         self,
         endpoint: AdbServerEndpoint | None,
     ) -> AdbServerEndpoint:
         result = self._backend.acquire(endpoint)
-        if isinstance(result, AdbServerAcquireSucceeded):
+        if isinstance(result, (AdbServerBackendSucceeded, AdbServerBackendSatisfied)):
             return result.endpoint
-        if isinstance(result, AdbServerAcquireSatisfied):
-            raise AdbServerStartDeferredError(
-                "the ADB server backend already owns a usable attachment"
-            )
-        if isinstance(result, AdbServerBackendOperationInProgress):
-            raise AdbServerBackendBusyError(
-                result.diagnostic
-                or f"ADB server backend {result.operation.value} is already in progress"
-            )
-        if isinstance(result, AdbServerAcquireFailed):
+        if isinstance(
+            result,
+            (AdbServerBackendOperationInProgress, AdbServerBackendOperationBlocked),
+        ):
+            self._raise_backend_busy(result, requested_operation="acquire")
+        if isinstance(result, AdbServerBackendFailed):
             raise AdbServerStartError(result.diagnostic)
         raise TypeError("server backend acquire() returned an unsupported result")
 
     def _release_backend(self, endpoint: AdbServerEndpoint) -> None:
         result = self._backend.release(endpoint)
-        if isinstance(result, AdbServerReleaseSucceeded):
+        if isinstance(result, (AdbServerBackendSucceeded, AdbServerBackendSatisfied)):
             return
-        if isinstance(result, AdbServerBackendOperationInProgress):
-            raise AdbServerBackendBusyError(
-                result.diagnostic
-                or f"ADB server backend {result.operation.value} is already in progress"
-            )
-        if isinstance(result, AdbServerReleaseNotStaged):
-            raise AdbServerNoAttachmentError(
-                "no ADB server backend attachment is staged for release"
-            )
-        if isinstance(result, AdbServerReleaseFailed):
+        if isinstance(
+            result,
+            (AdbServerBackendOperationInProgress, AdbServerBackendOperationBlocked),
+        ):
+            self._raise_backend_busy(result, requested_operation="release")
+        if isinstance(result, AdbServerBackendFailed):
             raise AdbServerStopError(result.diagnostic)
         raise TypeError("server backend release() returned an unsupported result")
 
