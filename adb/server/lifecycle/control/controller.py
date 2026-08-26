@@ -15,20 +15,28 @@ from adb.server.lifecycle.control.backend import (
 )
 from adb.server.lifecycle.control.errors import (
     AdbServerBackendBusyError,
-    AdbServerStartDeferredError,
+    AdbServerControlError,
     AdbServerStartError,
     AdbServerStopError,
+)
+from adb.server.lifecycle.control.result import (
+    AdbServerProvisionDeferred,
+    AdbServerProvisionFailed,
+    AdbServerProvisionResult,
+    AdbServerProvisioned,
 )
 
 
 class AdbServerController:
     """Fabricate and retire exact domain server lifetimes over one server backend.
 
-    The controller owns at most one domain :class:`AdbServer` identity at a time.  Accepting
-    ``retire(server)`` irreversibly relinquishes that exact domain lifetime before backend release
-    is attempted.  Concrete resource ownership remains a backend concern: release may terminate an
-    owned server process, detach from a borrowed server, or dispose other adapter-owned resources.
-    A release failure never restores controller ownership or revives a retired server epoch.
+    The controller owns at most one domain :class:`AdbServer` identity at a time.  Expected
+    provisioning outcomes are translated from backend results into :class:`AdbServerProvisionResult`
+    values.  Accepting ``retire(server)`` irreversibly relinquishes that exact domain lifetime before
+    backend release is attempted.  Concrete resource ownership remains a backend concern: release may
+    terminate an owned server process, detach from a borrowed server, or dispose other adapter-owned
+    resources.  A release failure never restores controller ownership or revives a retired server
+    epoch.
     """
 
     def __init__(
@@ -46,23 +54,21 @@ class AdbServerController:
         self._owned_server: AdbServer | None = None
 
     @staticmethod
-    def _raise_backend_busy(
+    def _backend_busy_diagnostic(
         result: AdbServerBackendOperationInProgress | AdbServerBackendOperationBlocked,
         *,
         requested_operation: str,
-    ) -> None:
+    ) -> str:
         if isinstance(result, AdbServerBackendOperationInProgress):
-            diagnostic = result.diagnostic or (
+            return result.diagnostic or (
                 f"ADB server backend {requested_operation} is already in progress"
             )
-        else:
-            diagnostic = result.diagnostic
-        raise AdbServerBackendBusyError(diagnostic)
+        return result.diagnostic
 
     def _acquire_backend(
         self,
         endpoint: AdbServerEndpoint | None,
-    ) -> AdbServerEndpoint:
+    ) -> AdbServerEndpoint | AdbServerProvisionDeferred | AdbServerProvisionFailed:
         result = self._backend.acquire(endpoint)
         if isinstance(result, (AdbServerBackendSucceeded, AdbServerBackendSatisfied)):
             return result.endpoint
@@ -70,9 +76,11 @@ class AdbServerController:
             result,
             (AdbServerBackendOperationInProgress, AdbServerBackendOperationBlocked),
         ):
-            self._raise_backend_busy(result, requested_operation="acquire")
+            return AdbServerProvisionDeferred(
+                self._backend_busy_diagnostic(result, requested_operation="acquire")
+            )
         if isinstance(result, AdbServerBackendFailed):
-            raise AdbServerStartError(result.diagnostic)
+            return AdbServerProvisionFailed(result.diagnostic)
         raise TypeError("server backend acquire() returned an unsupported result")
 
     def _release_backend(self, endpoint: AdbServerEndpoint) -> None:
@@ -83,30 +91,43 @@ class AdbServerController:
             result,
             (AdbServerBackendOperationInProgress, AdbServerBackendOperationBlocked),
         ):
-            self._raise_backend_busy(result, requested_operation="release")
+            raise AdbServerBackendBusyError(
+                self._backend_busy_diagnostic(result, requested_operation="release")
+            )
         if isinstance(result, AdbServerBackendFailed):
             raise AdbServerStopError(result.diagnostic)
         raise TypeError("server backend release() returned an unsupported result")
 
-    def provision(self, endpoint: AdbServerEndpoint | None) -> AdbServer:
-        """Synchronously provision one fresh usable domain server lifetime at ``endpoint``."""
+    def provision(self, endpoint: AdbServerEndpoint | None) -> AdbServerProvisionResult:
+        """Synchronously attempt to provision one fresh usable domain server lifetime."""
 
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
             raise TypeError("endpoint must be AdbServerEndpoint or None")
 
         with self._mutation_lock:
             if self._owned_server is not None:
-                raise AdbServerStartDeferredError(
+                return AdbServerProvisionDeferred(
                     "the previous ADB server domain lifetime has not yet been relinquished"
                 )
 
-            resolved_endpoint = self._acquire_backend(endpoint)
+            acquire_result = self._acquire_backend(endpoint)
+            if isinstance(acquire_result, (AdbServerProvisionDeferred, AdbServerProvisionFailed)):
+                return acquire_result
+            resolved_endpoint = acquire_result
+
+            if endpoint is not None and resolved_endpoint != endpoint:
+                try:
+                    self._release_backend(resolved_endpoint)
+                except AdbServerControlError as release_error:
+                    return AdbServerProvisionFailed(
+                        "endpoint-constrained ADB server provisioning changed endpoint and its "
+                        f"backend attachment could not be released: {release_error}"
+                    )
+                return AdbServerProvisionFailed(
+                    "endpoint-constrained ADB server provisioning changed endpoint"
+                )
 
             try:
-                if endpoint is not None and resolved_endpoint != endpoint:
-                    raise AdbServerStartError(
-                        "endpoint-constrained ADB server provisioning changed endpoint"
-                    )
                 server = AdbServer(
                     resolved_endpoint,
                     self._server_epoch_issuer.issue(),
@@ -122,7 +143,7 @@ class AdbServerController:
                 raise
 
             self._owned_server = server
-            return server
+            return AdbServerProvisioned(server)
 
     def retire(self, server: AdbServer) -> None:
         """Retire exact controller ownership, then synchronously release its backend attachment.

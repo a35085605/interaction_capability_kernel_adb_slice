@@ -3,6 +3,12 @@
 from adb.server.availability import AdbServerUnavailableError
 
 from adb.server.lifecycle.control.controller import AdbServerController
+from adb.server.lifecycle.control.result import (
+    AdbServerProvisionDeferred,
+    AdbServerProvisionFailed,
+    AdbServerProvisionResult,
+    AdbServerProvisioned,
+)
 from adb.server.lifecycle.control.errors import (
     AdbServerAttachmentMismatchError,
     AdbServerControlError,
@@ -42,6 +48,10 @@ __all__ = [
     "AdbServerAttachmentMismatchError",
     "AdbServerControlError",
     "AdbServerController",
+    "AdbServerProvisionDeferred",
+    "AdbServerProvisionFailed",
+    "AdbServerProvisionResult",
+    "AdbServerProvisioned",
     "AdbServerEndpoint",
     "ServerEpoch",
     "ServerEpochSequence",

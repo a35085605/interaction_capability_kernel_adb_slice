@@ -5,19 +5,18 @@ from datetime import timedelta
 from random import random
 from threading import Lock, Thread, current_thread
 
-from adb.server.lifecycle.control.errors import (
-    AdbServerBackendBusyError,
-    AdbServerStartDeferredError,
-    AdbServerStartError,
+from adb.server.lifecycle.control.result import (
+    AdbServerProvisionDeferred,
+    AdbServerProvisionFailed,
+    AdbServerProvisionResult,
+    AdbServerProvisioned,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerLaunchFailure,
     AdbServerLivenessFailure,
-    AdbServerBackendBusyFailure,
     AdbServerProcessExitedFailure,
-    AdbServerStartDeferredFailure,
 )
 from adb.server.identity import AdbServer
 from adb.server.state import AdbServerState, AdbServerStateView
@@ -60,7 +59,7 @@ class AdbServerSupervisor:
     def __init__(
         self,
         server: AdbServer | AdbServerState,
-        provision_server: Callable[[], AdbServer],
+        provision_server: Callable[[], AdbServerProvisionResult],
         retire_server: Callable[[AdbServer], None],
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
@@ -273,11 +272,14 @@ class AdbServerSupervisor:
                 self._attempt_threads.discard(thread)
                 raise
 
-    def _provision_server(self) -> AdbServer:
-        server = self._provision_server_callback()
-        if not isinstance(server, AdbServer):
-            raise TypeError("provision_server callback must return AdbServer")
-        return server
+    def _provision_server(self) -> AdbServerProvisionResult:
+        result = self._provision_server_callback()
+        if not isinstance(
+            result,
+            (AdbServerProvisioned, AdbServerProvisionDeferred, AdbServerProvisionFailed),
+        ):
+            raise TypeError("provision_server callback must return AdbServerProvisionResult")
+        return result
 
     def _run_recovery_attempt(
         self,
@@ -285,7 +287,7 @@ class AdbServerSupervisor:
         attempt_number: int,
     ) -> None:
         active = current_thread()
-        deferred_failure: AdbServerStartDeferredFailure | None = None
+        provision_result: AdbServerProvisionResult | None = None
         launch_failure: AdbServerLaunchFailure | None = None
         launch_attempts = 0
         recovered_event: AdbServerRecovered | None = None
@@ -295,19 +297,10 @@ class AdbServerSupervisor:
                 with self._lock:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
-                try:
-                    recovered = self._provision_server()
-                except AdbServerBackendBusyError as exc:
-                    deferred_failure = AdbServerBackendBusyFailure(str(exc))
-                except AdbServerStartDeferredError as exc:
-                    deferred_failure = AdbServerStartDeferredFailure(str(exc))
-                except AdbServerStartError as exc:
-                    launch_failure = AdbServerLaunchFailure(str(exc))
-                    with self._lock:
-                        if self._recovery_is_current_locked(cycle_id):
-                            self._launch_attempts += 1
-                            launch_attempts = self._launch_attempts
-                else:
+
+                provision_result = self._provision_server()
+                if isinstance(provision_result, AdbServerProvisioned):
+                    recovered = provision_result.server
                     with self._lock:
                         if not self._recovery_is_current_locked(cycle_id):
                             return
@@ -318,6 +311,12 @@ class AdbServerSupervisor:
                         self._launch_attempts = 0
                         self._cycle_id = None
                         recovered_event = AdbServerRecovered(recovered)
+                elif isinstance(provision_result, AdbServerProvisionFailed):
+                    launch_failure = AdbServerLaunchFailure(provision_result.diagnostic)
+                    with self._lock:
+                        if self._recovery_is_current_locked(cycle_id):
+                            self._launch_attempts += 1
+                            launch_attempts = self._launch_attempts
 
             if recovered_event is not None:
                 if retry_token is not None:
@@ -325,15 +324,11 @@ class AdbServerSupervisor:
                 self._bus.publish(recovered_event)
                 return
 
-            if deferred_failure is not None:
+            if isinstance(provision_result, AdbServerProvisionDeferred):
                 with self._lock:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
-                self._schedule_deferred_retry(
-                    cycle_id,
-                    attempt_number,
-                    deferred_failure,
-                )
+                self._schedule_deferred_retry(cycle_id, attempt_number)
                 return
 
             if launch_failure is not None:
@@ -354,9 +349,8 @@ class AdbServerSupervisor:
         self,
         cycle_id: AdbServerRecoveryCycleId,
         attempt_number: int,
-        _failure: AdbServerStartDeferredFailure,
     ) -> None:
-        # Backend lifecycle contention is expected and does not consume launch-attempt budget.
+        # Provisioning deferral is expected and does not consume launch-attempt budget.
         self._schedule_retry(
             cycle_id,
             attempt_number + 1,
