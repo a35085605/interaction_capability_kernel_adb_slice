@@ -8,7 +8,6 @@ from adb.server.lifecycle.control.result import (
     AdbServerProvisioned,
 )
 from adb.server.lifecycle.control.errors import (
-    AdbServerAttachmentMismatchError,
     AdbServerControlError,
     AdbServerBackendBusyError,
     AdbServerStopError,
@@ -17,7 +16,6 @@ from adb.server.lifecycle.control.backend import AdbServerBackend
 
 __all__ = [
     "AdbServerBackend",
-    "AdbServerAttachmentMismatchError",
     "AdbServerControlError",
     "AdbServerController",
     "AdbServerProvisionDeferred",

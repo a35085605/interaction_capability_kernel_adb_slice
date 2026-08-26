@@ -5,7 +5,6 @@ from enum import Enum
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.control.errors import AdbServerAttachmentMismatchError
 
 
 def _normalize_diagnostic(value: object) -> str:
@@ -95,19 +94,23 @@ AdbServerBackendResult: TypeAlias = (
 )
 
 
-def require_backend_release_endpoint(
+class _AdbServerBackendEndpointMismatchError(RuntimeError):
+    """Requested release endpoint does not match the backend-owned endpoint."""
+
+
+def _require_owned_release_endpoint(
     owned: AdbServerEndpoint,
     requested: AdbServerEndpoint,
 ) -> None:
-    """Reject release of an endpoint other than the exact backend-owned attachment."""
+    """Reject release of an endpoint other than the exact backend-owned endpoint."""
 
     if not isinstance(owned, AdbServerEndpoint):
         raise TypeError("owned must be AdbServerEndpoint")
     if not isinstance(requested, AdbServerEndpoint):
         raise TypeError("requested must be AdbServerEndpoint")
     if owned != requested:
-        raise AdbServerAttachmentMismatchError(
-            "requested endpoint does not identify the owned ADB server backend attachment"
+        raise _AdbServerBackendEndpointMismatchError(
+            "requested endpoint does not identify the backend-owned ADB server endpoint"
         )
 
 
@@ -142,5 +145,4 @@ __all__ = [
     "AdbServerBackendResult",
     "AdbServerBackendSatisfied",
     "AdbServerBackendSucceeded",
-    "require_backend_release_endpoint",
 ]

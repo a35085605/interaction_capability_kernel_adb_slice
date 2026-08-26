@@ -13,12 +13,7 @@ class AdbServerBackendBusyError(AdbServerStopError):
     """Backend state temporarily prevents a requested server release."""
 
 
-class AdbServerAttachmentMismatchError(AdbServerStopError):
-    """A request targeted an endpoint other than the exact backend-owned attachment."""
-
-
 __all__ = [
-    "AdbServerAttachmentMismatchError",
     "AdbServerBackendBusyError",
     "AdbServerControlError",
     "AdbServerStopError",

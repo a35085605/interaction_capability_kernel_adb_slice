@@ -23,7 +23,6 @@ from adb.api import (
 )
 from adb.managed import AdbManagedRuntime
 from adb.server import (
-    AdbServerAttachmentMismatchError,
     AdbServerBackend,
     AdbServerControlError,
     AdbServerController,
@@ -95,7 +94,6 @@ __all__ = [
     "AdbRemoteCommandError",
     "AdbServerConnectionError",
     "AdbServerBackend",
-    "AdbServerAttachmentMismatchError",
     "AdbServerControlError",
     "AdbServerController",
     "AdbServerProvisionDeferred",

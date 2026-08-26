@@ -18,7 +18,7 @@ from adb.server.lifecycle.control.backend import (
     AdbServerBackendResult,
     AdbServerBackendSatisfied,
     AdbServerBackendSucceeded,
-    require_backend_release_endpoint,
+    _require_owned_release_endpoint,
 )
 
 
@@ -146,7 +146,7 @@ class SubprocessAdbServerBackend:
             attachment = self._attachment
             if attachment is None:
                 return AdbServerBackendSatisfied(endpoint)
-            require_backend_release_endpoint(attachment.endpoint, endpoint)
+            _require_owned_release_endpoint(attachment.endpoint, endpoint)
 
             try:
                 attachment.close()
