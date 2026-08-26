@@ -5,12 +5,23 @@ from threading import Lock
 from adb.epoch import EpochIssuer
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch
+from adb.server.lifecycle.control.backend import (
+    AdbServerAcquireFailed,
+    AdbServerAcquireSatisfied,
+    AdbServerAcquireSucceeded,
+    AdbServerBackend,
+    AdbServerBackendOperationInProgress,
+    AdbServerReleaseFailed,
+    AdbServerReleaseNotStaged,
+    AdbServerReleaseSucceeded,
+)
 from adb.server.lifecycle.control.errors import (
+    AdbServerBackendBusyError,
+    AdbServerNoAttachmentError,
     AdbServerStartDeferredError,
     AdbServerStartError,
     AdbServerStopError,
 )
-from adb.server.lifecycle.control.backend import AdbServerBackend
 
 
 class AdbServerController:
@@ -37,6 +48,43 @@ class AdbServerController:
         self._mutation_lock = Lock()
         self._owned_server: AdbServer | None = None
 
+    def _acquire_backend(
+        self,
+        endpoint: AdbServerEndpoint | None,
+    ) -> AdbServerEndpoint:
+        result = self._backend.acquire(endpoint)
+        if isinstance(result, AdbServerAcquireSucceeded):
+            return result.endpoint
+        if isinstance(result, AdbServerAcquireSatisfied):
+            raise AdbServerStartDeferredError(
+                "the ADB server backend already owns a usable attachment"
+            )
+        if isinstance(result, AdbServerBackendOperationInProgress):
+            raise AdbServerBackendBusyError(
+                result.diagnostic
+                or f"ADB server backend {result.operation.value} is already in progress"
+            )
+        if isinstance(result, AdbServerAcquireFailed):
+            raise AdbServerStartError(result.diagnostic)
+        raise TypeError("server backend acquire() returned an unsupported result")
+
+    def _release_backend(self, endpoint: AdbServerEndpoint) -> None:
+        result = self._backend.release(endpoint)
+        if isinstance(result, AdbServerReleaseSucceeded):
+            return
+        if isinstance(result, AdbServerBackendOperationInProgress):
+            raise AdbServerBackendBusyError(
+                result.diagnostic
+                or f"ADB server backend {result.operation.value} is already in progress"
+            )
+        if isinstance(result, AdbServerReleaseNotStaged):
+            raise AdbServerNoAttachmentError(
+                "no ADB server backend attachment is staged for release"
+            )
+        if isinstance(result, AdbServerReleaseFailed):
+            raise AdbServerStopError(result.diagnostic)
+        raise TypeError("server backend release() returned an unsupported result")
+
     def provision(self, endpoint: AdbServerEndpoint | None) -> AdbServer:
         """Synchronously provision one fresh usable domain server lifetime at ``endpoint``."""
 
@@ -49,11 +97,7 @@ class AdbServerController:
                     "the previous ADB server domain lifetime has not yet been relinquished"
                 )
 
-            resolved_endpoint = self._backend.acquire(endpoint)
-            if not isinstance(resolved_endpoint, AdbServerEndpoint):
-                raise TypeError(
-                    "server backend acquire() must return AdbServerEndpoint"
-                )
+            resolved_endpoint = self._acquire_backend(endpoint)
 
             try:
                 if endpoint is not None and resolved_endpoint != endpoint:
@@ -66,7 +110,7 @@ class AdbServerController:
                 )
             except BaseException:
                 try:
-                    self._backend.release(resolved_endpoint)
+                    self._release_backend(resolved_endpoint)
                 except BaseException as release_error:
                     raise AdbServerStartError(
                         "ADB server identity creation failed and its backend attachment "
@@ -96,7 +140,7 @@ class AdbServerController:
                 )
             self._owned_server = None
 
-        self._backend.release(server.endpoint)
+        self._release_backend(server.endpoint)
 
 
 __all__ = ["AdbServerController"]

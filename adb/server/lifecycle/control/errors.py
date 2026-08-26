@@ -22,15 +22,15 @@ class AdbServerStopDeferredError(AdbServerStopError):
 
 
 class AdbServerBackendBusyError(AdbServerStartDeferredError, AdbServerStopDeferredError):
-    """Another backend operation or owned attachment prevents a request from beginning."""
+    """Another backend operation prevents a request from beginning."""
 
 
 class AdbServerNoAttachmentError(AdbServerStopError):
-    """Release was requested while the backend owns no server attachment."""
+    """Release was requested while no server attachment is staged."""
 
 
 class AdbServerAttachmentMismatchError(AdbServerStopError):
-    """Release targeted an endpoint other than the exact backend-owned attachment."""
+    """A request targeted an endpoint other than the exact backend-owned attachment."""
 
 
 __all__ = [
