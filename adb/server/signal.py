@@ -8,7 +8,6 @@ from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerLaunchFailure,
     AdbServerLivenessFailure,
-    AdbServerNativeTerminationUnprovenFailure,
     AdbServerProcessExitedFailure,
 )
 from adb.server.identity import AdbServer, ServerEpoch
@@ -104,37 +103,8 @@ class AdbServerLost(_ServerSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerNativeTerminationCompleted(_ServerSignalProjection):
-    """Native termination of a retired ADB server was proven."""
-
-    server: AdbServer
-
-    def __post_init__(self) -> None:
-        _require_server(self.server)
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerNativeTerminationUnproven(_ServerSignalProjection):
-    """Backend-native termination cannot be proven and needs external intervention."""
-
-    server: AdbServer
-    failure: AdbServerNativeTerminationUnprovenFailure
-
-    def __post_init__(self) -> None:
-        _require_server(self.server)
-        if not isinstance(self.failure, AdbServerNativeTerminationUnprovenFailure):
-            raise TypeError(
-                "failure must be AdbServerNativeTerminationUnprovenFailure"
-            )
-
-
-@dataclass(frozen=True, slots=True)
 class AdbServerRecovered(_ServerSignalProjection):
-    """Signal carrying the recovered ADB server.
-
-    Publication order relative to native-termination signals for older epochs is intentionally
-    unspecified.  Consumers must use authoritative state plus epoch, not signal arrival order.
-    """
+    """Signal carrying the recovered ADB server."""
 
     server: AdbServer
 
@@ -181,8 +151,6 @@ AdbServerSignal: TypeAlias = (
     AdbServerReconciliationRequested
     | AdbServerRetired
     | AdbServerLost
-    | AdbServerNativeTerminationCompleted
-    | AdbServerNativeTerminationUnproven
     | AdbServerRecovered
     | AdbServerRecoveryRetryDue
     | AdbServerRecoveryExhausted
@@ -191,8 +159,6 @@ AdbServerSignal: TypeAlias = (
 
 __all__ = [
     "AdbServerLost",
-    "AdbServerNativeTerminationCompleted",
-    "AdbServerNativeTerminationUnproven",
     "AdbServerRecovered",
     "AdbServerRetired",
     "AdbServerReconciliationRequested",

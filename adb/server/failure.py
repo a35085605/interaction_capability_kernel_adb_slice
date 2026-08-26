@@ -59,7 +59,7 @@ class AdbServerProcessExitedFailure(_AdbServerFailure):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerLaunchFailure(_AdbServerFailure):
-    """Starting a fresh ADB server failed after a native launch was attempted."""
+    """Acquiring a fresh usable ADB server attachment failed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,18 +68,13 @@ class AdbServerStartDeferredFailure(_AdbServerFailure):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerNativeLifetimeBusyFailure(AdbServerStartDeferredFailure):
-    """A retired domain lifetime still occupies the backend native slot."""
+class AdbServerBackendBusyFailure(AdbServerStartDeferredFailure):
+    """A backend attachment still occupies the backend attachment slot."""
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerStopInProgressFailure(AdbServerStartDeferredFailure):
-    """A retired domain lifetime is still being terminated by the backend."""
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerNativeTerminationUnprovenFailure(_AdbServerFailure):
-    """Backend-native termination cannot be proven and requires external intervention."""
+    """A retired domain lifetime's backend attachment is still being released."""
 
 
 AdbServerRequestFailure: TypeAlias = (
@@ -93,7 +88,6 @@ AdbServerLifecycleFailure: TypeAlias = (
     AdbServerProcessExitedFailure
     | AdbServerLaunchFailure
     | AdbServerRecoveryDeferredFailure
-    | AdbServerNativeTerminationUnprovenFailure
 )
 AdbServerFailure: TypeAlias = AdbServerRequestFailure | AdbServerLifecycleFailure
 AdbServerLivenessFailure: TypeAlias = (
@@ -102,13 +96,12 @@ AdbServerLivenessFailure: TypeAlias = (
 
 
 __all__ = [
+    "AdbServerBackendBusyFailure",
     "AdbServerConnectionFailure",
     "AdbServerFailure",
     "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",
-    "AdbServerNativeLifetimeBusyFailure",
-    "AdbServerNativeTerminationUnprovenFailure",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",
     "AdbServerRecoveryDeferredFailure",

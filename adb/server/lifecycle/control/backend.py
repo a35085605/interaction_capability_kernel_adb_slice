@@ -7,8 +7,7 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.control.errors import (
     AdbServerAcquireInProgressError,
     AdbServerAttachmentMismatchError,
-    AdbServerNativeLifetimeBusyError,
-    AdbServerNativeTerminationUnprovenError,
+    AdbServerBackendBusyError,
     AdbServerNoAttachmentError,
     AdbServerStopInProgressError,
 )
@@ -21,7 +20,6 @@ class AdbServerBackendPhase(Enum):
     ACQUIRING = auto()
     ACTIVE = auto()
     RELEASING = auto()
-    INDETERMINATE = auto()
 
 
 class AdbServerBackendLifecycle:
@@ -29,8 +27,8 @@ class AdbServerBackendLifecycle:
 
     The lifecycle owns request-admission and transition semantics, but deliberately does not own a
     synchronization primitive.  Adapters must invoke mutating methods while holding the same
-    mutation boundary that protects their concrete attachment state so phase changes and native
-    resource ownership remain atomic from competing callers' perspective.
+    mutation boundary that protects their concrete attachment state so phase changes and resource
+    ownership remain atomic from competing callers' perspective.
     """
 
     __slots__ = ("_phase",)
@@ -48,7 +46,6 @@ class AdbServerBackendLifecycle:
         """Admit an acquire request and enter ``ACQUIRING``."""
 
         phase = self._phase
-        self._require_determinate(phase)
         if phase is AdbServerBackendPhase.IDLE:
             self._phase = AdbServerBackendPhase.ACQUIRING
             return
@@ -57,7 +54,7 @@ class AdbServerBackendLifecycle:
                 "the previous ADB server backend attachment is still releasing"
             )
         if phase in (AdbServerBackendPhase.ACQUIRING, AdbServerBackendPhase.ACTIVE):
-            raise AdbServerNativeLifetimeBusyError(
+            raise AdbServerBackendBusyError(
                 "an ADB server backend attachment still occupies this backend slot"
             )
         raise RuntimeError(f"undefined ADB server backend acquire phase: {phase.name}")
@@ -71,24 +68,17 @@ class AdbServerBackendLifecycle:
             )
         self._phase = AdbServerBackendPhase.ACTIVE
 
-    def abort_acquire(self, *, native_termination_proven: bool) -> None:
-        """Abort a failed acquire after native-resource cleanup has been attempted."""
+    def abort_acquire(self) -> None:
+        """Abort a failed acquire and return to ``IDLE``."""
 
         if self._phase is not AdbServerBackendPhase.ACQUIRING:
             raise RuntimeError(f"cannot abort backend acquire from phase {self._phase.name}")
-        if not isinstance(native_termination_proven, bool):
-            raise TypeError("native_termination_proven must be bool")
-        self._phase = (
-            AdbServerBackendPhase.IDLE
-            if native_termination_proven
-            else AdbServerBackendPhase.INDETERMINATE
-        )
+        self._phase = AdbServerBackendPhase.IDLE
 
     def begin_release(self) -> None:
         """Admit a release request and enter ``RELEASING``."""
 
         phase = self._phase
-        self._require_determinate(phase)
         if phase is AdbServerBackendPhase.ACTIVE:
             self._phase = AdbServerBackendPhase.RELEASING
             return
@@ -113,21 +103,14 @@ class AdbServerBackendLifecycle:
             )
         self._phase = AdbServerBackendPhase.IDLE
 
-    def fail_release_unproven(self) -> None:
-        """Poison the backend when release cannot prove native termination."""
+    def abort_release(self) -> None:
+        """Abort a failed release and restore the still-owned ``ACTIVE`` attachment."""
 
         if self._phase is not AdbServerBackendPhase.RELEASING:
             raise RuntimeError(
-                f"cannot fail backend release from phase {self._phase.name}"
+                f"cannot abort backend release from phase {self._phase.name}"
             )
-        self._phase = AdbServerBackendPhase.INDETERMINATE
-
-    @staticmethod
-    def _require_determinate(phase: AdbServerBackendPhase) -> None:
-        if phase is AdbServerBackendPhase.INDETERMINATE:
-            raise AdbServerNativeTerminationUnprovenError(
-                "the previous ADB server native lifetime termination remains unproven"
-            )
+        self._phase = AdbServerBackendPhase.ACTIVE
 
 
 def require_backend_release_endpoint(

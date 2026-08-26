@@ -6,8 +6,7 @@ from random import random
 from threading import Lock, Thread, current_thread
 
 from adb.server.lifecycle.control.errors import (
-    AdbServerNativeLifetimeBusyError,
-    AdbServerNativeTerminationUnprovenError,
+    AdbServerBackendBusyError,
     AdbServerStartDeferredError,
     AdbServerStartError,
     AdbServerStopInProgressError,
@@ -17,8 +16,7 @@ from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerLaunchFailure,
     AdbServerLivenessFailure,
-    AdbServerNativeLifetimeBusyFailure,
-    AdbServerNativeTerminationUnprovenFailure,
+    AdbServerBackendBusyFailure,
     AdbServerProcessExitedFailure,
     AdbServerStartDeferredFailure,
     AdbServerStopInProgressFailure,
@@ -27,8 +25,6 @@ from adb.server.identity import AdbServer
 from adb.server.state import AdbServerState, AdbServerStateView
 from adb.server.signal import (
     AdbServerRecoveryCycleId,
-    AdbServerNativeTerminationCompleted,
-    AdbServerNativeTerminationUnproven,
     AdbServerLost,
     AdbServerRecovered,
     AdbServerRetired,
@@ -213,9 +209,8 @@ class AdbServerSupervisor:
         if retired_server is None:
             return
 
-        # Domain retirement is authoritative immediately.  Native termination is independent and
-        # may race successor provisioning; consumers must use state.current plus epoch rather than
-        # native-termination signal order.
+        # Domain retirement is authoritative immediately.  Backend attachment disposal is
+        # independent and may race successor provisioning.
         try:
             self._bus.publish(AdbServerRetired(retired_server))
             self._bus.publish(AdbServerLost(retired_server, failure))
@@ -255,20 +250,7 @@ class AdbServerSupervisor:
                 self._attempt_threads.discard(active)
 
     def _dispose_retired_server(self, server: AdbServer) -> None:
-        try:
-            self._retire_server_callback(server)
-        except AdbServerNativeTerminationUnprovenError as exc:
-            # Only the backend may establish this terminal native fact.  Do not manufacture
-            # UNPROVEN from generic controller/ownership errors.
-            self._bus.publish(
-                AdbServerNativeTerminationUnproven(
-                    server,
-                    AdbServerNativeTerminationUnprovenFailure(str(exc)),
-                )
-            )
-            return
-
-        self._bus.publish(AdbServerNativeTerminationCompleted(server))
+        self._retire_server_callback(server)
 
     def _launch_recovery_attempt(
         self,
@@ -306,7 +288,6 @@ class AdbServerSupervisor:
     ) -> None:
         active = current_thread()
         deferred_failure: AdbServerStartDeferredFailure | None = None
-        unproven_failure: AdbServerNativeTerminationUnprovenFailure | None = None
         launch_failure: AdbServerLaunchFailure | None = None
         launch_attempts = 0
         recovered_event: AdbServerRecovered | None = None
@@ -320,10 +301,8 @@ class AdbServerSupervisor:
                     recovered = self._provision_server()
                 except AdbServerStopInProgressError as exc:
                     deferred_failure = AdbServerStopInProgressFailure(str(exc))
-                except AdbServerNativeLifetimeBusyError as exc:
-                    deferred_failure = AdbServerNativeLifetimeBusyFailure(str(exc))
-                except AdbServerNativeTerminationUnprovenError as exc:
-                    unproven_failure = AdbServerNativeTerminationUnprovenFailure(str(exc))
+                except AdbServerBackendBusyError as exc:
+                    deferred_failure = AdbServerBackendBusyFailure(str(exc))
                 except AdbServerStartDeferredError as exc:
                     deferred_failure = AdbServerStartDeferredFailure(str(exc))
                 except AdbServerStartError as exc:
@@ -348,12 +327,6 @@ class AdbServerSupervisor:
                 if retry_token is not None:
                     self._scheduler.cancel(retry_token)
                 self._bus.publish(recovered_event)
-                return
-
-            if unproven_failure is not None:
-                # NATIVE_TERMINATION_UNPROVEN is terminal for this backend scope.  The native
-                # termination signal is the external-intervention hook; do not spin recovery.
-                self._end_recovery_cycle(cycle_id)
                 return
 
             if deferred_failure is not None:
@@ -387,7 +360,7 @@ class AdbServerSupervisor:
         attempt_number: int,
         _failure: AdbServerStartDeferredFailure,
     ) -> None:
-        # Native convergence contention is expected and does not consume launch-attempt budget.
+        # Backend lifecycle contention is expected and does not consume launch-attempt budget.
         self._schedule_retry(
             cycle_id,
             attempt_number + 1,

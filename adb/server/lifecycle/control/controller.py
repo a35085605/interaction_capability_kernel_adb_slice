@@ -6,7 +6,6 @@ from adb.epoch import EpochIssuer
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer, ServerEpoch
 from adb.server.lifecycle.control.errors import (
-    AdbServerNativeTerminationUnprovenError,
     AdbServerStartDeferredError,
     AdbServerStartError,
     AdbServerStopError,
@@ -68,10 +67,6 @@ class AdbServerController:
             except BaseException:
                 try:
                     self._backend.release(resolved_endpoint)
-                except AdbServerNativeTerminationUnprovenError:
-                    # Preserve the stronger native fact.  The controller never fabricated a
-                    # domain identity, and the backend now requires external intervention.
-                    raise
                 except BaseException as release_error:
                     raise AdbServerStartError(
                         "ADB server identity creation failed and its backend attachment "

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import os
 import socket
 import subprocess
@@ -17,11 +18,9 @@ from adb.server.lifecycle.control.backend import (
     AdbServerBackendPhase,
     require_backend_release_endpoint,
 )
-from adb.server.lifecycle.control.errors import (
-    AdbServerNativeTerminationUnprovenError,
-    AdbServerStartError,
-)
+from adb.server.lifecycle.control.errors import AdbServerStartError, AdbServerStopError
 from adb.server.status.reader import SmartSocketAdbServerStatusReader
+from eventing import EventPublisher
 
 
 _MonotonicClock = Callable[[], float]
@@ -29,6 +28,36 @@ _Sleeper = Callable[[float], None]
 _PopenFactory = Callable[..., subprocess.Popen[bytes]]
 _Resolver = Callable[..., list[tuple[object, ...]]]
 _SocketFactory = Callable[[int, int, int], socket.socket]
+
+
+class _SubprocessTerminationUnprovenError(RuntimeError):
+    """Owned child-process termination could not be confirmed."""
+
+
+@dataclass(frozen=True, slots=True)
+class SubprocessAdbServerTerminationUnproven:
+    """Adapter-local signal that owned child-process termination was not confirmed."""
+
+    endpoint: AdbServerEndpoint
+    process_id: int | None
+    operation: str
+    diagnostic: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint")
+        if self.process_id is not None and (
+            isinstance(self.process_id, bool) or not isinstance(self.process_id, int)
+        ):
+            raise TypeError("process_id must be an integer or None")
+        if not isinstance(self.operation, str):
+            raise TypeError("operation must be a string")
+        if not self.operation.strip():
+            raise ValueError("operation must be a non-empty string")
+        if not isinstance(self.diagnostic, str):
+            raise TypeError("diagnostic must be a string")
+        if not self.diagnostic.strip():
+            raise ValueError("diagnostic must be a non-empty string")
 
 
 class _ServerStatusReader(Protocol):
@@ -76,7 +105,7 @@ class _SubprocessLifetime:
                 self._process.terminate()
             except OSError as exc:
                 if self._process.poll() is None:
-                    raise AdbServerNativeTerminationUnprovenError(
+                    raise _SubprocessTerminationUnprovenError(
                         f"failed to terminate ADB server child process at {self.endpoint.host}:"
                         f"{self.endpoint.port}: {exc}"
                     ) from exc
@@ -88,19 +117,19 @@ class _SubprocessLifetime:
                     self._process.kill()
                 except OSError as exc:
                     if self._process.poll() is None:
-                        raise AdbServerNativeTerminationUnprovenError(
+                        raise _SubprocessTerminationUnprovenError(
                             f"failed to kill ADB server child process at {self.endpoint.host}:"
                             f"{self.endpoint.port}: {exc}"
                         ) from exc
                 try:
                     self._process.wait(timeout=self._shutdown_timeout_seconds)
                 except subprocess.TimeoutExpired as exc:
-                    raise AdbServerNativeTerminationUnprovenError(
+                    raise _SubprocessTerminationUnprovenError(
                         "ADB server child process did not terminate after kill"
                     ) from exc
 
             if self._process.poll() is None:
-                raise AdbServerNativeTerminationUnprovenError(
+                raise _SubprocessTerminationUnprovenError(
                     "ADB server child-process termination was not confirmed"
                 )
             self._closed = True
@@ -123,6 +152,7 @@ class SubprocessAdbServerBackend:
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
         probe_interval_seconds: float = 0.05,
+        termination_signal_publisher: EventPublisher | None = None,
         _popen_factory: _PopenFactory = subprocess.Popen,
         _resolver: _Resolver = socket.getaddrinfo,
         _socket_factory: _SocketFactory = socket.socket,
@@ -133,6 +163,10 @@ class SubprocessAdbServerBackend:
     ) -> None:
         if not isinstance(_socket_activation_supported, bool):
             raise TypeError("_socket_activation_supported must be a bool")
+        if termination_signal_publisher is not None and not callable(
+            getattr(termination_signal_publisher, "publish", None)
+        ):
+            raise TypeError("termination_signal_publisher must satisfy EventPublisher or be None")
 
         self.executable = normalize_executable(executable)
         self.startup_timeout_seconds = normalize_timeout(startup_timeout_seconds)
@@ -144,6 +178,7 @@ class SubprocessAdbServerBackend:
         self._monotonic = _monotonic
         self._sleep = _sleep
         self._socket_activation_supported = _socket_activation_supported
+        self._termination_signal_publisher = termination_signal_publisher
 
         if _status_reader is None:
             read_timeout = min(0.25, self.startup_timeout_seconds)
@@ -162,6 +197,7 @@ class SubprocessAdbServerBackend:
         # caller-visible lifecycle failures are defined by the backend port, not by this adapter.
         self._lifecycle = AdbServerBackendLifecycle()
         self._lifetime: _SubprocessLifetime | None = None
+        self._termination_unproven = False
 
     def acquire(
         self,
@@ -176,6 +212,11 @@ class SubprocessAdbServerBackend:
             )
 
         with self._mutation_lock:
+            if self._termination_unproven:
+                raise AdbServerStartError(
+                    "ADB subprocess backend cannot acquire while prior child-process cleanup "
+                    "remains unresolved"
+                )
             if (
                 self._lifecycle.phase is AdbServerBackendPhase.IDLE
                 and self._lifetime is not None
@@ -199,18 +240,25 @@ class SubprocessAdbServerBackend:
             if lifetime is not None:
                 try:
                     lifetime.close()
-                except AdbServerNativeTerminationUnprovenError as close_exc:
+                except _SubprocessTerminationUnprovenError as close_exc:
                     with self._mutation_lock:
                         if self._lifetime is None:
                             self._lifetime = lifetime
-                        self._lifecycle.abort_acquire(native_termination_proven=False)
-                    raise AdbServerNativeTerminationUnprovenError(
-                        "ADB server acquire failed and native termination could not be proven"
+                        self._termination_unproven = True
+                        self._lifecycle.abort_acquire()
+                    self._publish_termination_unproven(
+                        lifetime,
+                        operation="acquire_cleanup",
+                        error=close_exc,
+                    )
+                    raise AdbServerStartError(
+                        "ADB subprocess backend acquire failed and child-process cleanup "
+                        "could not be completed"
                     ) from close_exc
             with self._mutation_lock:
                 if self._lifetime is lifetime:
                     self._lifetime = None
-                self._lifecycle.abort_acquire(native_termination_proven=True)
+                self._lifecycle.abort_acquire()
             raise
 
         with self._mutation_lock:
@@ -243,17 +291,53 @@ class SubprocessAdbServerBackend:
 
         try:
             lifetime.close()
-        except AdbServerNativeTerminationUnprovenError:
+        except _SubprocessTerminationUnprovenError as close_exc:
             with self._mutation_lock:
                 if self._lifetime is lifetime:
-                    self._lifecycle.fail_release_unproven()
-            raise
+                    self._termination_unproven = True
+                    self._lifecycle.abort_release()
+            self._publish_termination_unproven(
+                lifetime,
+                operation="release",
+                error=close_exc,
+            )
+            raise AdbServerStopError(
+                "ADB subprocess backend could not release its owned attachment"
+            ) from close_exc
 
         with self._mutation_lock:
             if self._lifetime is not lifetime:
                 raise RuntimeError("ADB subprocess backend attachment changed during release")
             self._lifetime = None
+            self._termination_unproven = False
             self._lifecycle.complete_release()
+
+    def _publish_termination_unproven(
+        self,
+        lifetime: _SubprocessLifetime,
+        *,
+        operation: str,
+        error: _SubprocessTerminationUnprovenError,
+    ) -> None:
+        publisher = self._termination_signal_publisher
+        if publisher is None:
+            return
+        process_id = getattr(lifetime._process, "pid", None)
+        if isinstance(process_id, bool) or not isinstance(process_id, int):
+            process_id = None
+        signal = SubprocessAdbServerTerminationUnproven(
+            endpoint=lifetime.endpoint,
+            process_id=process_id,
+            operation=operation,
+            diagnostic=str(error),
+        )
+        try:
+            publisher.publish(signal)
+        except Exception as publish_error:
+            error.add_note(
+                "termination-unproven signal publication also failed: "
+                f"{publish_error}"
+            )
 
     def _create_lifetime(
         self,
@@ -372,4 +456,7 @@ class SubprocessAdbServerBackend:
             self._sleep(min(self.probe_interval_seconds, remaining))
 
 
-__all__ = ["SubprocessAdbServerBackend"]
+__all__ = [
+    "SubprocessAdbServerBackend",
+    "SubprocessAdbServerTerminationUnproven",
+]

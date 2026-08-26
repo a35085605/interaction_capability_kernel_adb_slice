@@ -21,7 +21,7 @@ class AdbServerStopDeferredError(AdbServerStopError):
     """Releasing a server attachment is temporarily blocked by lifecycle state."""
 
 
-class AdbServerNativeLifetimeBusyError(AdbServerStartDeferredError):
+class AdbServerBackendBusyError(AdbServerStartDeferredError):
     """A backend attachment is acquiring or active, so a fresh acquire cannot begin."""
 
 
@@ -41,16 +41,11 @@ class AdbServerAttachmentMismatchError(AdbServerStopError):
     """Release targeted an endpoint other than the exact backend-owned attachment."""
 
 
-class AdbServerNativeTerminationUnprovenError(AdbServerStartError, AdbServerStopError):
-    """Native termination cannot be proven and requires external intervention."""
-
-
 __all__ = [
     "AdbServerAcquireInProgressError",
     "AdbServerAttachmentMismatchError",
+    "AdbServerBackendBusyError",
     "AdbServerControlError",
-    "AdbServerNativeLifetimeBusyError",
-    "AdbServerNativeTerminationUnprovenError",
     "AdbServerNoAttachmentError",
     "AdbServerStartDeferredError",
     "AdbServerStartError",
