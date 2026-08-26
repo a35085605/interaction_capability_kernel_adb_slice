@@ -2,31 +2,15 @@
 
 
 class AdbServerControlError(RuntimeError):
-    """Base error for ADB server lifecycle-control failures."""
-
-
-class AdbServerStartError(AdbServerControlError):
-    """A controller could not acquire one fresh usable ADB server attachment."""
-
-
-class AdbServerStartDeferredError(AdbServerStartError):
-    """Acquiring a fresh server attachment is temporarily blocked by current control state."""
+    """Base error for exceptional ADB server lifecycle-control failures."""
 
 
 class AdbServerStopError(AdbServerControlError):
-    """A requested server-attachment release could not be accepted or completed."""
+    """A requested server retirement or backend release could not be accepted or completed."""
 
 
-class AdbServerStopDeferredError(AdbServerStopError):
-    """Releasing a server attachment is temporarily blocked by current control state."""
-
-
-class AdbServerBackendBusyError(AdbServerStartDeferredError, AdbServerStopDeferredError):
-    """An in-progress backend operation or unmet backend prerequisite defers a request."""
-
-
-class AdbServerNoAttachmentError(AdbServerStopError):
-    """Release was requested while no server attachment is staged."""
+class AdbServerBackendBusyError(AdbServerStopError):
+    """Backend state temporarily prevents a requested server release."""
 
 
 class AdbServerAttachmentMismatchError(AdbServerStopError):
@@ -37,9 +21,5 @@ __all__ = [
     "AdbServerAttachmentMismatchError",
     "AdbServerBackendBusyError",
     "AdbServerControlError",
-    "AdbServerNoAttachmentError",
-    "AdbServerStartDeferredError",
-    "AdbServerStartError",
-    "AdbServerStopDeferredError",
     "AdbServerStopError",
 ]

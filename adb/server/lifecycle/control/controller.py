@@ -16,7 +16,6 @@ from adb.server.lifecycle.control.backend import (
 from adb.server.lifecycle.control.errors import (
     AdbServerBackendBusyError,
     AdbServerControlError,
-    AdbServerStartError,
     AdbServerStopError,
 )
 from adb.server.lifecycle.control.result import (
@@ -136,7 +135,7 @@ class AdbServerController:
                 try:
                     self._release_backend(resolved_endpoint)
                 except BaseException as release_error:
-                    raise AdbServerStartError(
+                    raise AdbServerControlError(
                         "ADB server identity creation failed and its backend attachment "
                         "could not be released"
                     ) from release_error
