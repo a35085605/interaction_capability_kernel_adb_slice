@@ -16,14 +16,14 @@ from adb.server.lifecycle.control.errors import (
 )
 from adb.server.lifecycle.control.backend import (
     AdbServerBackend,
+    AdbServerBackendLifecycle,
     AdbServerBackendPhase,
-    AdbServerBackendRequest,
 )
 
 __all__ = [
     "AdbServerBackend",
+    "AdbServerBackendLifecycle",
     "AdbServerBackendPhase",
-    "AdbServerBackendRequest",
     "AdbServerAcquireInProgressError",
     "AdbServerAttachmentMismatchError",
     "AdbServerControlError",

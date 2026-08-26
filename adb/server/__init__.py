@@ -18,8 +18,8 @@ from adb.server.lifecycle.control.errors import (
 )
 from adb.server.lifecycle.control.backend import (
     AdbServerBackend,
+    AdbServerBackendLifecycle,
     AdbServerBackendPhase,
-    AdbServerBackendRequest,
 )
 from adb.server.failure import (
     AdbServerConnectionFailure,
@@ -46,8 +46,8 @@ from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 
 __all__ = [
     "AdbServerBackend",
+    "AdbServerBackendLifecycle",
     "AdbServerBackendPhase",
-    "AdbServerBackendRequest",
     "AdbMdnsBackend",
     "AdbServerConnectionFailure",
     "AdbServerAcquireInProgressError",
