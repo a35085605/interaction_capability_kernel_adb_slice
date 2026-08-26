@@ -1,8 +1,8 @@
-"""Typed failures exposed by the ADB server lifecycle control boundary."""
+"""Typed domain failures exposed by the ADB server lifecycle control boundary."""
 
 
 class AdbServerControlError(RuntimeError):
-    """Base error for ADB server controller failures."""
+    """Base error for ADB server lifecycle-control failures."""
 
 
 class AdbServerStartError(AdbServerControlError):
@@ -10,19 +10,35 @@ class AdbServerStartError(AdbServerControlError):
 
 
 class AdbServerStartDeferredError(AdbServerStartError):
-    """Acquiring a fresh server attachment is temporarily blocked by backend lifecycle state."""
-
-
-class AdbServerNativeLifetimeBusyError(AdbServerStartDeferredError):
-    """A prior server attachment still occupies the backend slot."""
-
-
-class AdbServerStopInProgressError(AdbServerStartDeferredError):
-    """A prior server attachment is currently being released."""
+    """Acquiring a fresh server attachment is temporarily blocked by lifecycle state."""
 
 
 class AdbServerStopError(AdbServerControlError):
     """A requested server-attachment release could not be accepted or completed."""
+
+
+class AdbServerStopDeferredError(AdbServerStopError):
+    """Releasing a server attachment is temporarily blocked by lifecycle state."""
+
+
+class AdbServerNativeLifetimeBusyError(AdbServerStartDeferredError):
+    """A backend attachment is acquiring or active, so a fresh acquire cannot begin."""
+
+
+class AdbServerAcquireInProgressError(AdbServerStopDeferredError):
+    """Release was requested while the backend attachment is still acquiring."""
+
+
+class AdbServerStopInProgressError(AdbServerStartDeferredError, AdbServerStopDeferredError):
+    """A backend attachment is currently being released."""
+
+
+class AdbServerNoAttachmentError(AdbServerStopError):
+    """Release was requested while the backend owns no server attachment."""
+
+
+class AdbServerAttachmentMismatchError(AdbServerStopError):
+    """Release targeted an endpoint other than the exact backend-owned attachment."""
 
 
 class AdbServerNativeTerminationUnprovenError(AdbServerStartError, AdbServerStopError):
@@ -30,11 +46,15 @@ class AdbServerNativeTerminationUnprovenError(AdbServerStartError, AdbServerStop
 
 
 __all__ = [
+    "AdbServerAcquireInProgressError",
+    "AdbServerAttachmentMismatchError",
     "AdbServerControlError",
     "AdbServerNativeLifetimeBusyError",
     "AdbServerNativeTerminationUnprovenError",
+    "AdbServerNoAttachmentError",
     "AdbServerStartDeferredError",
     "AdbServerStartError",
+    "AdbServerStopDeferredError",
     "AdbServerStopError",
     "AdbServerStopInProgressError",
 ]

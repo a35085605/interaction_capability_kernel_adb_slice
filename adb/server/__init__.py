@@ -4,15 +4,23 @@ from adb.server.availability import AdbServerUnavailableError
 
 from adb.server.lifecycle.control.controller import AdbServerController
 from adb.server.lifecycle.control.errors import (
+    AdbServerAcquireInProgressError,
+    AdbServerAttachmentMismatchError,
     AdbServerControlError,
     AdbServerNativeLifetimeBusyError,
     AdbServerNativeTerminationUnprovenError,
+    AdbServerNoAttachmentError,
     AdbServerStartDeferredError,
     AdbServerStartError,
+    AdbServerStopDeferredError,
     AdbServerStopError,
     AdbServerStopInProgressError,
 )
-from adb.server.lifecycle.control.backend import AdbServerBackend, AdbServerBackendPhase
+from adb.server.lifecycle.control.backend import (
+    AdbServerBackend,
+    AdbServerBackendPhase,
+    AdbServerBackendRequest,
+)
 from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerFailure,
@@ -39,8 +47,11 @@ from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 __all__ = [
     "AdbServerBackend",
     "AdbServerBackendPhase",
+    "AdbServerBackendRequest",
     "AdbMdnsBackend",
     "AdbServerConnectionFailure",
+    "AdbServerAcquireInProgressError",
+    "AdbServerAttachmentMismatchError",
     "AdbServerControlError",
     "AdbServerController",
     "AdbServerEndpoint",
@@ -54,6 +65,7 @@ __all__ = [
     "AdbServerNativeLifetimeBusyError",
     "AdbServerNativeLifetimeBusyFailure",
     "AdbServerNativeTerminationUnprovenError",
+    "AdbServerNoAttachmentError",
     "AdbServerNativeTerminationUnprovenFailure",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",
@@ -68,6 +80,7 @@ __all__ = [
     "AdbServerStateWriter",
     "AdbServerStatus",
     "AdbServerStatusReader",
+    "AdbServerStopDeferredError",
     "AdbServerStopError",
     "AdbServerStopInProgressError",
     "AdbServerStopInProgressFailure",
