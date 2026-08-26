@@ -62,27 +62,14 @@ class AdbServerLaunchFailure(_AdbServerFailure):
     """Acquiring a fresh usable ADB server attachment failed."""
 
 
-@dataclass(frozen=True, slots=True)
-class AdbServerStartDeferredFailure(_AdbServerFailure):
-    """A fresh server cannot start yet because prior lifecycle work is still converging."""
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerBackendBusyFailure(AdbServerStartDeferredFailure):
-    """A backend operation or owned attachment temporarily prevents fresh acquisition."""
-
-
 AdbServerRequestFailure: TypeAlias = (
     AdbServerConnectionFailure
     | AdbServerTimeoutFailure
     | AdbServerProtocolFailure
     | AdbServerServiceFailure
 )
-AdbServerRecoveryDeferredFailure: TypeAlias = AdbServerStartDeferredFailure
 AdbServerLifecycleFailure: TypeAlias = (
-    AdbServerProcessExitedFailure
-    | AdbServerLaunchFailure
-    | AdbServerRecoveryDeferredFailure
+    AdbServerProcessExitedFailure | AdbServerLaunchFailure
 )
 AdbServerFailure: TypeAlias = AdbServerRequestFailure | AdbServerLifecycleFailure
 AdbServerLivenessFailure: TypeAlias = (
@@ -91,7 +78,6 @@ AdbServerLivenessFailure: TypeAlias = (
 
 
 __all__ = [
-    "AdbServerBackendBusyFailure",
     "AdbServerConnectionFailure",
     "AdbServerFailure",
     "AdbServerLaunchFailure",
@@ -99,9 +85,7 @@ __all__ = [
     "AdbServerLivenessFailure",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",
-    "AdbServerRecoveryDeferredFailure",
     "AdbServerRequestFailure",
     "AdbServerServiceFailure",
-    "AdbServerStartDeferredFailure",
     "AdbServerTimeoutFailure",
 ]

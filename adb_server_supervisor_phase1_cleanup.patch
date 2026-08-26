@@ -1,0 +1,83 @@
+diff --git a/adb/server/__init__.py b/adb/server/__init__.py
+index 5da2499..5b48c4d 100644
+--- a/adb/server/__init__.py
++++ b/adb/server/__init__.py
+@@ -22,13 +22,10 @@ from adb.server.failure import (
+     AdbServerLaunchFailure,
+     AdbServerLifecycleFailure,
+     AdbServerLivenessFailure,
+-    AdbServerBackendBusyFailure,
+     AdbServerProcessExitedFailure,
+     AdbServerProtocolFailure,
+-    AdbServerRecoveryDeferredFailure,
+     AdbServerRequestFailure,
+     AdbServerServiceFailure,
+-    AdbServerStartDeferredFailure,
+     AdbServerTimeoutFailure,
+ )
+ from adb.server.identity import AdbServer, ServerEpoch, ServerEpochSequence
+@@ -57,13 +54,10 @@ __all__ = [
+     "AdbServerLifecycleFailure",
+     "AdbServerLivenessFailure",
+     "AdbServerBackendBusyError",
+-    "AdbServerBackendBusyFailure",
+     "AdbServerProcessExitedFailure",
+     "AdbServerProtocolFailure",
+-    "AdbServerRecoveryDeferredFailure",
+     "AdbServerRequestFailure",
+     "AdbServerServiceFailure",
+-    "AdbServerStartDeferredFailure",
+     "AdbServerState",
+     "AdbServerStateView",
+     "AdbServerStateWriter",
+diff --git a/adb/server/failure.py b/adb/server/failure.py
+index 7650f4c..61ac07e 100644
+--- a/adb/server/failure.py
++++ b/adb/server/failure.py
+@@ -62,27 +62,14 @@ class AdbServerLaunchFailure(_AdbServerFailure):
+     """Acquiring a fresh usable ADB server attachment failed."""
+ 
+ 
+-@dataclass(frozen=True, slots=True)
+-class AdbServerStartDeferredFailure(_AdbServerFailure):
+-    """A fresh server cannot start yet because prior lifecycle work is still converging."""
+-
+-
+-@dataclass(frozen=True, slots=True)
+-class AdbServerBackendBusyFailure(AdbServerStartDeferredFailure):
+-    """A backend operation or owned attachment temporarily prevents fresh acquisition."""
+-
+-
+ AdbServerRequestFailure: TypeAlias = (
+     AdbServerConnectionFailure
+     | AdbServerTimeoutFailure
+     | AdbServerProtocolFailure
+     | AdbServerServiceFailure
+ )
+-AdbServerRecoveryDeferredFailure: TypeAlias = AdbServerStartDeferredFailure
+ AdbServerLifecycleFailure: TypeAlias = (
+-    AdbServerProcessExitedFailure
+-    | AdbServerLaunchFailure
+-    | AdbServerRecoveryDeferredFailure
++    AdbServerProcessExitedFailure | AdbServerLaunchFailure
+ )
+ AdbServerFailure: TypeAlias = AdbServerRequestFailure | AdbServerLifecycleFailure
+ AdbServerLivenessFailure: TypeAlias = (
+@@ -91,7 +78,6 @@ AdbServerLivenessFailure: TypeAlias = (
+ 
+ 
+ __all__ = [
+-    "AdbServerBackendBusyFailure",
+     "AdbServerConnectionFailure",
+     "AdbServerFailure",
+     "AdbServerLaunchFailure",
+@@ -99,9 +85,7 @@ __all__ = [
+     "AdbServerLivenessFailure",
+     "AdbServerProcessExitedFailure",
+     "AdbServerProtocolFailure",
+-    "AdbServerRecoveryDeferredFailure",
+     "AdbServerRequestFailure",
+     "AdbServerServiceFailure",
+-    "AdbServerStartDeferredFailure",
+     "AdbServerTimeoutFailure",
+ ]
