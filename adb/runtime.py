@@ -3,8 +3,11 @@ from __future__ import annotations
 from threading import RLock
 
 from adb.managed import AdbManagedRuntime
+from adb.server.endpoint import AdbServerEndpoint
+from adb.server.lifecycle.control.controller import AdbServerController
+from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
-from adb.server.provisioning import AdbServerProvisioningState
+from adb.server.identity import AdbServer
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
 from adb.server.state import AdbServerState
 from adb.transport.configuration import AdbConfiguredTransport
@@ -13,6 +16,7 @@ from adb.tracking.supervision.supervisor import AdbDevicesTrackingSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
 from eventing import EventBus, EventSubscriptionToken
+from scheduling import TemporalScheduler
 
 
 class AdbRuntime(AdbManagedRuntime):
@@ -28,9 +32,12 @@ class AdbRuntime(AdbManagedRuntime):
         server_state: AdbServerState,
         snapshot_state: AdbDevicesSnapshotState,
         *,
-        provisioning_state: AdbServerProvisioningState | None = None,
+        server_controller: AdbServerController,
+        server_provision_endpoint: AdbServerEndpoint | None = None,
         event_bus: EventBus | None = None,
-        server_supervisor: AdbServerSupervisor | None = None,
+        server_supervision_scheduler: TemporalScheduler[object] | None = None,
+        server_supervision_policy: AdbServerSupervisionPolicy | None = None,
+        server_recovery_enabled: bool = True,
         tracking_supervisor: AdbDevicesTrackingSupervisor | None = None,
         transport_supervisor: AdbConfiguredTransportSupervisor | None = None,
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
@@ -39,18 +46,30 @@ class AdbRuntime(AdbManagedRuntime):
             raise TypeError("server_state must be AdbServerState")
         if not isinstance(snapshot_state, AdbDevicesSnapshotState):
             raise TypeError("snapshot_state must be AdbDevicesSnapshotState")
-        if provisioning_state is not None and not isinstance(
-            provisioning_state, AdbServerProvisioningState
+        if not isinstance(server_controller, AdbServerController):
+            raise TypeError("server_controller must be AdbServerController")
+        if server_provision_endpoint is not None and not isinstance(
+            server_provision_endpoint, AdbServerEndpoint
         ):
             raise TypeError(
-                "provisioning_state must be AdbServerProvisioningState or None"
+                "server_provision_endpoint must be AdbServerEndpoint or None"
             )
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
-        if server_supervisor is not None and not isinstance(
-            server_supervisor, AdbServerSupervisor
+        if server_supervision_scheduler is not None and not isinstance(
+            server_supervision_scheduler, TemporalScheduler
         ):
-            raise TypeError("server_supervisor must be AdbServerSupervisor or None")
+            raise TypeError(
+                "server_supervision_scheduler must satisfy TemporalScheduler or be None"
+            )
+        if server_supervision_policy is None:
+            server_supervision_policy = AdbServerSupervisionPolicy()
+        if not isinstance(server_supervision_policy, AdbServerSupervisionPolicy):
+            raise TypeError(
+                "server_supervision_policy must be AdbServerSupervisionPolicy or None"
+            )
+        if not isinstance(server_recovery_enabled, bool):
+            raise TypeError("server_recovery_enabled must be bool")
         if tracking_supervisor is not None and not isinstance(
             tracking_supervisor, AdbDevicesTrackingSupervisor
         ):
@@ -73,14 +92,12 @@ class AdbRuntime(AdbManagedRuntime):
         if any(
             component is not None
             for component in (
-                server_supervisor,
+                server_supervision_scheduler,
                 tracking_supervisor,
                 transport_supervisor,
             )
         ) and event_bus is None:
             raise ValueError("supervised runtime components require an event bus")
-        if server_supervisor is not None and server_supervisor.server_state is not server_state:
-            raise ValueError("server supervisor must share the runtime server state")
         if (
             tracking_supervisor is not None
             and tracking_supervisor.server_state is not server_state
@@ -96,10 +113,26 @@ class AdbRuntime(AdbManagedRuntime):
         if transport_supervisor is not None and transport_supervisor.devices is not snapshot_state:
             raise ValueError("transport supervisor must share the runtime tracked-devices state")
 
-        super().__init__(server_state, provisioning_state=provisioning_state)
+        super().__init__(
+            server_state,
+            server_provision_endpoint=server_provision_endpoint,
+        )
         self._snapshot_state = snapshot_state
         self._event_bus = event_bus
-        self._server_supervisor = server_supervisor
+        self._server_controller = server_controller
+        self._server_supervisor: AdbServerSupervisor | None = None
+        if server_supervision_scheduler is not None:
+            if event_bus is None:
+                raise RuntimeError("validated server supervision requires an event bus")
+            self._server_supervisor = AdbServerSupervisor(
+                server_state,
+                provision_server=self._provision_server,
+                retire_server=self._retire_server,
+                event_bus=event_bus,
+                scheduler=server_supervision_scheduler,
+                policy=server_supervision_policy,
+                recovery_enabled=server_recovery_enabled,
+            )
         self._tracking_supervisor = tracking_supervisor
         self._transport_supervisor = transport_supervisor
         self._transport_supervision_policy = transport_supervision_policy
@@ -207,6 +240,12 @@ class AdbRuntime(AdbManagedRuntime):
         if self._server_supervisor is not None:
             self._server_supervisor.close()
         self._close_transport_registrations()
+
+    def _provision_server(self) -> AdbServer:
+        return self._server_controller.provision(self._server_provision_endpoint)
+
+    def _retire_server(self, server: AdbServer) -> None:
+        self._server_controller.retire(server)
 
     def _register_transport(
         self,

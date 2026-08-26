@@ -4,7 +4,6 @@ from threading import RLock
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
-from adb.server.provisioning import AdbServerProvisioningState
 from adb.server.state import AdbServerState, AdbServerStateView
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.lifecycle.supervision.policy import (
@@ -63,7 +62,7 @@ class AdbManagedRuntime:
         self,
         server: AdbServer | AdbServerState,
         *,
-        provisioning_state: AdbServerProvisioningState | None = None,
+        server_provision_endpoint: AdbServerEndpoint | None = None,
     ) -> None:
         if isinstance(server, AdbServerState):
             server_state = server
@@ -71,14 +70,14 @@ class AdbManagedRuntime:
             server_state = AdbServerState(server)
         else:
             raise TypeError("server must be AdbServer or AdbServerState")
-        if provisioning_state is None:
-            provisioning_state = AdbServerProvisioningState()
-        if not isinstance(provisioning_state, AdbServerProvisioningState):
+        if server_provision_endpoint is not None and not isinstance(
+            server_provision_endpoint, AdbServerEndpoint
+        ):
             raise TypeError(
-                "provisioning_state must be AdbServerProvisioningState or None"
+                "server_provision_endpoint must be AdbServerEndpoint or None"
             )
         self._server_state = server_state
-        self._provisioning_state = provisioning_state
+        self._server_provision_endpoint = server_provision_endpoint
         self._registration_lock = RLock()
         self._registrations: dict[AdbConfiguredTransport, RegisteredTransport] = {}
 
@@ -96,9 +95,9 @@ class AdbManagedRuntime:
 
     @property
     def required_endpoint(self) -> AdbServerEndpoint | None:
-        """Endpoint constraint applied to each newly provisioned server lifetime."""
+        """Runtime-owned endpoint supplied to each subsequent server provisioning attempt."""
 
-        return self._provisioning_state.required_endpoint
+        return self._server_provision_endpoint
 
     @property
     def current_endpoint(self) -> AdbServerEndpoint | None:

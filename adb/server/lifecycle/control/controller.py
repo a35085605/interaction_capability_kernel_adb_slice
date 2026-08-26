@@ -12,10 +12,6 @@ from adb.server.lifecycle.control.errors import (
     AdbServerStopError,
 )
 from adb.server.lifecycle.control.backend import AdbServerBackend
-from adb.server.provisioning import (
-    AdbServerProvisioningState,
-    AdbServerProvisioningView,
-)
 
 
 class AdbServerController:
@@ -32,28 +28,23 @@ class AdbServerController:
         self,
         backend: AdbServerBackend,
         server_epoch_issuer: EpochIssuer[ServerEpoch],
-        provisioning: AdbServerProvisioningView | None = None,
     ) -> None:
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("backend must satisfy AdbServerBackend")
         if not isinstance(server_epoch_issuer, EpochIssuer):
             raise TypeError("server_epoch_issuer must satisfy EpochIssuer")
-        if provisioning is None:
-            provisioning = AdbServerProvisioningState()
-        if not isinstance(provisioning, AdbServerProvisioningView):
-            raise TypeError("provisioning must satisfy AdbServerProvisioningView or be None")
-
         self._backend = backend
         self._server_epoch_issuer = server_epoch_issuer
-        self._provisioning = provisioning
         self._mutation_lock = Lock()
         self._owned_server: AdbServer | None = None
 
-    def provision(self) -> AdbServer:
-        """Synchronously provision one fresh usable domain server lifetime."""
+    def provision(self, endpoint: AdbServerEndpoint | None) -> AdbServer:
+        """Synchronously provision one fresh usable domain server lifetime at ``endpoint``."""
+
+        if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint or None")
 
         with self._mutation_lock:
-            endpoint = self._provisioning.required_endpoint
             if self._owned_server is not None:
                 raise AdbServerStartDeferredError(
                     "the previous ADB server domain lifetime has not yet been relinquished"

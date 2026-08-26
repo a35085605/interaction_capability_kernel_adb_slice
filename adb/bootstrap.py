@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
 
 from adb.epoch import EpochIssuer
 from adb.runtime import AdbRuntime
@@ -12,8 +11,6 @@ from adb.server.lifecycle.control.controller import AdbServerController
 from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
-from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
-from adb.server.provisioning import AdbServerProvisioningState
 from adb.server.state import AdbServerState
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshotEpoch,
@@ -37,20 +34,9 @@ from eventing import EventBus
 from scheduling import TemporalScheduler
 
 
-@runtime_checkable
-class _AdbServerLifecycleController(Protocol):
-    """Bootstrap-private structural type for one complete server lifecycle controller."""
-
-    def provision(self) -> AdbServer:
-        ...
-
-    def retire(self, server: AdbServer) -> None:
-        ...
-
-
 _AdbServerControllerFactory = Callable[
-    [EpochIssuer[ServerEpoch], AdbServerProvisioningState],
-    _AdbServerLifecycleController,
+    [EpochIssuer[ServerEpoch]],
+    AdbServerController,
 ]
 _AdbServerBackendFactory = Callable[[], AdbServerBackend]
 
@@ -61,8 +47,8 @@ def _default_server_backend_factory() -> AdbServerBackend:
 
 @dataclass(frozen=True, slots=True)
 class _BootstrapCore:
-    controller: _AdbServerLifecycleController
-    provisioning_state: AdbServerProvisioningState
+    controller: AdbServerController
+    server_provision_endpoint: AdbServerEndpoint | None
     server_state: AdbServerState
     snapshot_state: AdbDevicesSnapshotState
     devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch]
@@ -147,7 +133,8 @@ class AdbRuntimeBootstrap:
             return self._build_runtime(
                 core.server_state,
                 core.snapshot_state,
-                provisioning_state=core.provisioning_state,
+                server_controller=core.controller,
+                server_provision_endpoint=core.server_provision_endpoint,
                 transport_supervision_policy=self._transport_supervision_policy,
             )
         except BaseException:
@@ -184,14 +171,6 @@ class AdbRuntimeBootstrap:
 
         core = self._build_core()
         try:
-            server_supervisor = AdbServerSupervisor(
-                core.server_state,
-                controller=core.controller,
-                event_bus=event_bus,
-                scheduler=scheduler,
-                policy=self._server_supervision_policy,
-                recovery_enabled=self._server_recovery_enabled,
-            )
             tracking_supervisor = (
                 AdbDevicesTrackingSupervisor(
                     core.initial_server,
@@ -218,9 +197,12 @@ class AdbRuntimeBootstrap:
             return self._build_runtime(
                 core.server_state,
                 core.snapshot_state,
-                provisioning_state=core.provisioning_state,
+                server_controller=core.controller,
+                server_provision_endpoint=core.server_provision_endpoint,
                 event_bus=event_bus,
-                server_supervisor=server_supervisor,
+                server_supervision_scheduler=scheduler,
+                server_supervision_policy=self._server_supervision_policy,
+                server_recovery_enabled=self._server_recovery_enabled,
                 tracking_supervisor=tracking_supervisor,
                 transport_supervisor=transport_supervisor,
                 transport_supervision_policy=self._transport_supervision_policy,
@@ -235,7 +217,6 @@ class AdbRuntimeBootstrap:
     def _build_core(self) -> _BootstrapCore:
         server_epoch_issuer = ServerEpochSequence()
         devices_snapshot_epoch_issuer = AdbDevicesSnapshotEpochSequence()
-        provisioning_state = AdbServerProvisioningState(self._endpoint)
         controller_factory = self._server_controller_factory
         if controller_factory is None:
             backend = self._server_backend_factory()
@@ -243,31 +224,29 @@ class AdbRuntimeBootstrap:
                 raise TypeError(
                     "server backend factory must return AdbServerBackend"
                 )
-            controller: _AdbServerLifecycleController = AdbServerController(
+            controller = AdbServerController(
                 backend,
                 server_epoch_issuer,
-                provisioning_state,
             )
         else:
-            controller = controller_factory(server_epoch_issuer, provisioning_state)
+            controller = controller_factory(server_epoch_issuer)
 
-        if not isinstance(controller, _AdbServerLifecycleController):
+        if not isinstance(controller, AdbServerController):
             raise TypeError(
-                "server controller factory must return a complete server lifecycle controller"
+                "server controller factory must return AdbServerController"
             )
 
-        initial_server = controller.provision()
+        initial_server = controller.provision(self._endpoint)
         if not isinstance(initial_server, AdbServer):
             raise TypeError("server controller provision() must return AdbServer")
         try:
             if self._endpoint is not None and initial_server.endpoint != self._endpoint:
                 raise ValueError("endpoint-constrained initial server provisioning changed endpoint")
-            provisioning_state.set_required_endpoint(
-                initial_server.endpoint if self._pin_endpoint else None
-            )
             return _BootstrapCore(
                 controller=controller,
-                provisioning_state=provisioning_state,
+                server_provision_endpoint=(
+                    initial_server.endpoint if self._pin_endpoint else None
+                ),
                 server_state=AdbServerState(initial_server),
                 snapshot_state=AdbDevicesSnapshotState(),
                 devices_snapshot_epoch_issuer=devices_snapshot_epoch_issuer,

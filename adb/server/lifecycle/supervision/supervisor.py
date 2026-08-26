@@ -4,7 +4,6 @@ from collections.abc import Callable
 from datetime import timedelta
 from random import random
 from threading import Lock, Thread, current_thread
-from typing import Protocol, runtime_checkable
 
 from adb.server.lifecycle.control.errors import (
     AdbServerNativeLifetimeBusyError,
@@ -57,17 +56,6 @@ def _require_bool(value: object, *, field_name: str) -> bool:
     return value
 
 
-@runtime_checkable
-class _AdbServerLifecycleController(Protocol):
-    """Supervisor-private contract for one inseparable server lifecycle owner."""
-
-    def provision(self) -> AdbServer:
-        ...
-
-    def retire(self, server: AdbServer) -> None:
-        ...
-
-
 class AdbServerSupervisor:
     """Reconcile ADB server failures across successive server lifetimes.
 
@@ -78,7 +66,8 @@ class AdbServerSupervisor:
     def __init__(
         self,
         server: AdbServer | AdbServerState,
-        controller: _AdbServerLifecycleController,
+        provision_server: Callable[[], AdbServer],
+        retire_server: Callable[[AdbServer], None],
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
@@ -95,10 +84,10 @@ class AdbServerSupervisor:
             raise TypeError("server must be AdbServer or AdbServerState")
         if server_state.current is None:
             raise ValueError("server state must have an active initial server")
-        if not isinstance(controller, _AdbServerLifecycleController):
-            raise TypeError(
-                "controller must satisfy the complete ADB server lifecycle contract"
-            )
+        if not callable(provision_server):
+            raise TypeError("provision_server must be callable")
+        if not callable(retire_server):
+            raise TypeError("retire_server must be callable")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -114,7 +103,8 @@ class AdbServerSupervisor:
 
         self._server_state = server_state
         self._bus = event_bus
-        self._controller = controller
+        self._provision_server_callback = provision_server
+        self._retire_server_callback = retire_server
         self._scheduler = scheduler
         self._policy = policy
         self._random = _random
@@ -266,7 +256,7 @@ class AdbServerSupervisor:
 
     def _dispose_retired_server(self, server: AdbServer) -> None:
         try:
-            self._controller.retire(server)
+            self._retire_server_callback(server)
         except AdbServerNativeTerminationUnprovenError as exc:
             # Only the backend may establish this terminal native fact.  Do not manufacture
             # UNPROVEN from generic controller/ownership errors.
@@ -304,9 +294,9 @@ class AdbServerSupervisor:
                 raise
 
     def _provision_server(self) -> AdbServer:
-        server = self._controller.provision()
+        server = self._provision_server_callback()
         if not isinstance(server, AdbServer):
-            raise TypeError("server controller provision() must return AdbServer")
+            raise TypeError("provision_server callback must return AdbServer")
         return server
 
     def _run_recovery_attempt(
