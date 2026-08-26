@@ -7,11 +7,7 @@ from adb.server.lifecycle.control.result import (
     AdbServerProvisionResult,
     AdbServerProvisioned,
 )
-from adb.server.lifecycle.control.errors import (
-    AdbServerControlError,
-    AdbServerBackendBusyError,
-    AdbServerStopError,
-)
+from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.backend import AdbServerBackend
 
 __all__ = [
@@ -22,6 +18,4 @@ __all__ = [
     "AdbServerProvisionFailed",
     "AdbServerProvisionResult",
     "AdbServerProvisioned",
-    "AdbServerBackendBusyError",
-    "AdbServerStopError",
 ]

@@ -9,11 +9,7 @@ from adb.server.lifecycle.control.result import (
     AdbServerProvisionResult,
     AdbServerProvisioned,
 )
-from adb.server.lifecycle.control.errors import (
-    AdbServerControlError,
-    AdbServerBackendBusyError,
-    AdbServerStopError,
-)
+from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.failure import (
     AdbServerConnectionFailure,
@@ -51,7 +47,6 @@ __all__ = [
     "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",
-    "AdbServerBackendBusyError",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",
     "AdbServerRequestFailure",
@@ -61,7 +56,6 @@ __all__ = [
     "AdbServerStateWriter",
     "AdbServerStatus",
     "AdbServerStatusReader",
-    "AdbServerStopError",
     "AdbServerTimeoutFailure",
     "AdbServerUnavailableError",
     "AdbUsbBackend",

@@ -13,11 +13,7 @@ from adb.server.lifecycle.control.backend import (
     AdbServerBackendSatisfied,
     AdbServerBackendSucceeded,
 )
-from adb.server.lifecycle.control.errors import (
-    AdbServerBackendBusyError,
-    AdbServerControlError,
-    AdbServerStopError,
-)
+from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
@@ -32,10 +28,9 @@ class AdbServerController:
     The controller owns at most one domain :class:`AdbServer` identity at a time.  Expected
     provisioning outcomes are translated from backend results into :class:`AdbServerProvisionResult`
     values.  Accepting ``retire(server)`` irreversibly relinquishes that exact domain lifetime before
-    backend release is attempted.  Concrete resource ownership remains a backend concern: release may
-    terminate an owned server process, detach from a borrowed server, or dispose other adapter-owned
-    resources.  A release failure never restores controller ownership or revives a retired server
-    epoch.
+    backend release is attempted.  Concrete resource ownership and release semantics remain a backend
+    concern.  Backend release outcomes are not projected into controller-level
+    lifecycle errors because they do not determine whether the domain server lifetime is retired.
     """
 
     def __init__(
@@ -84,17 +79,17 @@ class AdbServerController:
 
     def _release_backend(self, endpoint: AdbServerEndpoint) -> None:
         result = self._backend.release(endpoint)
-        if isinstance(result, (AdbServerBackendSucceeded, AdbServerBackendSatisfied)):
-            return
         if isinstance(
             result,
-            (AdbServerBackendOperationInProgress, AdbServerBackendOperationBlocked),
+            (
+                AdbServerBackendSucceeded,
+                AdbServerBackendSatisfied,
+                AdbServerBackendOperationInProgress,
+                AdbServerBackendOperationBlocked,
+                AdbServerBackendFailed,
+            ),
         ):
-            raise AdbServerBackendBusyError(
-                self._backend_busy_diagnostic(result, requested_operation="release")
-            )
-        if isinstance(result, AdbServerBackendFailed):
-            raise AdbServerStopError(result.diagnostic)
+            return
         raise TypeError("server backend release() returned an unsupported result")
 
     def provision(self, endpoint: AdbServerEndpoint | None) -> AdbServerProvisionResult:
@@ -115,13 +110,7 @@ class AdbServerController:
             resolved_endpoint = acquire_result
 
             if endpoint is not None and resolved_endpoint != endpoint:
-                try:
-                    self._release_backend(resolved_endpoint)
-                except AdbServerControlError as release_error:
-                    return AdbServerProvisionFailed(
-                        "endpoint-constrained ADB server provisioning changed endpoint and its "
-                        f"backend attachment could not be released: {release_error}"
-                    )
+                self._release_backend(resolved_endpoint)
                 return AdbServerProvisionFailed(
                     "endpoint-constrained ADB server provisioning changed endpoint"
                 )
@@ -145,12 +134,11 @@ class AdbServerController:
             return AdbServerProvisioned(server)
 
     def retire(self, server: AdbServer) -> None:
-        """Retire exact controller ownership, then synchronously release its backend attachment.
+        """Retire exact controller ownership, then request backend attachment release.
 
         Once exact ownership is accepted it is relinquished under the controller lock and is never
-        restored, regardless of the backend release outcome.  Potentially slow adapter-specific
-        disposal is deliberately performed outside that lock so a successor ``provision()`` may reach
-        the backend while release of the retired attachment is still in progress.
+        restored, regardless of the backend release outcome.  The backend call is deliberately made
+        outside that lock so a successor ``provision()`` may reach the backend concurrently.
         """
 
         if not isinstance(server, AdbServer):
@@ -158,7 +146,7 @@ class AdbServerController:
 
         with self._mutation_lock:
             if self._owned_server != server:
-                raise AdbServerStopError(
+                raise AdbServerControlError(
                     "no exact owned ADB server lifetime matches the request"
                 )
             self._owned_server = None
