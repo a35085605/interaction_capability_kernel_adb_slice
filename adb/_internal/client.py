@@ -47,14 +47,6 @@ def _transport_service(selector: AdbTransportSelector) -> str:
     raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")
 
 
-def _feature_service(selector: AdbTransportSelector) -> str:
-    if isinstance(selector, AdbTransportBySerial):
-        return f"host-serial:{selector.serial.value}:features"
-    if isinstance(selector, AdbTransportById):
-        return f"host-transport-id:{selector.transport_id.value}:features"
-    raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")
-
-
 @dataclass(frozen=True, slots=True)
 class ShellV2Result:
     stdout: bytes
@@ -97,14 +89,6 @@ class AdbServiceClient:
             return self._read_protocol_string(sock, context=service)
         finally:
             self._close(sock)
-
-    def features(self, selector: AdbTransportSelector) -> frozenset[str]:
-        payload = self.host_query(_feature_service(selector))
-        try:
-            text = payload.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise AdbProtocolError("ADB feature list is not valid UTF-8") from exc
-        return frozenset(part for part in text.split(",") if part)
 
     def raw_exec(self, selector: AdbTransportSelector, command: str) -> bytes:
         """Private raw ``exec:`` primitive for fixed typed adapter commands."""
