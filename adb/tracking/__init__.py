@@ -23,6 +23,12 @@ from adb.tracking.signal import (
     AdbDevicesTrackingStarted,
     AdbDevicesTrackingStopped,
 )
+from adb.tracking.backend import (
+    AdbDevicesTrackingBackend,
+    AdbDevicesTrackingBackendStream,
+    SmartSocketAdbDevicesTrackingBackend,
+    SmartSocketAdbDevicesTrackingStream,
+)
 from adb.tracking.device_tracker import AdbDeviceTracker, AdbDeviceTrackerStream
 from adb.tracking.controller import (
     AdbDevicesTrackingController,
@@ -42,10 +48,14 @@ __all__ = [
     "AdbDevicesSnapshotState",
     "AdbDevicesSnapshotView",
     "AdbDevicesSnapshotWriter",
+    "AdbDevicesTrackingBackend",
+    "AdbDevicesTrackingBackendStream",
     "AdbDevicesTrackingController",
     "AdbDevicesTrackingFailed",
     "AdbDevicesTrackingFailure",
+    "SmartSocketAdbDevicesTrackingBackend",
     "SmartSocketAdbDevicesTrackingController",
+    "SmartSocketAdbDevicesTrackingStream",
     "AdbDevicesTrackingSignal",
     "AdbDevicesTrackingStarted",
     "AdbDevicesTrackingStopped",
