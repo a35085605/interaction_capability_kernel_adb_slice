@@ -46,12 +46,10 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 
 class AdbDevicesTrackingSupervisor:
-    """Maintain desired track-devices with single-use controllers.
+    """Maintain desired track-devices state across ADB server lifetimes.
 
-    Terminal controller or server events discard the current controller; a fresh server creates a
-    new controller, even when the replacement server uses a different endpoint. Controller startup
-    is a direct capability call: a successful ``start`` return means stream mode was established
-    and its initial snapshot was published for the current server lifetime.
+    Controllers are single-use; terminal or server-replacement events discard the current controller
+    and reconciliation creates a fresh one while tracking remains desired.
     """
 
     def __init__(
@@ -204,6 +202,8 @@ class AdbDevicesTrackingSupervisor:
                 raise
 
     def close(self) -> None:
+        """Stop tracking supervision and join in-flight startup attempts."""
+
         with self._lock:
             if self._closed:
                 return

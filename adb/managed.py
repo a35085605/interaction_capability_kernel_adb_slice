@@ -12,12 +12,10 @@ from adb.transport.lifecycle.supervision.policy import (
 
 
 class RegisteredTransport:
-    """Long-lived handle for one runtime-scoped transport registration.
+    """Runtime-scoped transport handle that survives ADB server replacement.
 
-    The handle survives replacement of the current :class:`AdbServer` lifetime.  Resolution
-    and recovery episodes do not: those are re-established from the current server/tracker
-    scope.  The handle remains registered until explicitly removed or until its owning runtime
-    is closed.
+    Resolution and recovery remain server-scoped; registration lasts until removal or runtime
+    close.
     """
 
     __slots__ = ("_runtime", "_configuration", "_is_registered")
@@ -49,13 +47,9 @@ class RegisteredTransport:
 
 
 class AdbManagedRuntime:
-    """Manage successive ADB server lifetimes within one runtime.
+    """Own configured transports across successive ADB server lifetimes.
 
-    The runtime is the long-lived owner of configured-transport registrations.  ``server`` is
-    only the current :class:`AdbServer` lifetime and may therefore be replaced, move to a
-    different endpoint, or become ``None`` while no usable server lifetime is active.
-    Registrations are independent of those replacements and persist until explicitly removed
-    or until the runtime is closed.
+    The current server may be replaced or absent without invalidating registrations.
     """
 
     def __init__(
@@ -115,11 +109,7 @@ class AdbManagedRuntime:
         raise NotImplementedError
 
     def close(self) -> None:
-        """Release runtime resources without stopping the current ADB server.
-
-        Concrete implementations must call :meth:`_close_transport_registrations` before
-        returning so all runtime-scoped handles become inactive.
-        """
+        """Release runtime resources and invalidate handles without stopping the server."""
         raise NotImplementedError
 
     # ------------------------------------------------------------------
@@ -131,12 +121,10 @@ class AdbManagedRuntime:
         configuration: AdbConfiguredTransport,
         policy: AdbConfiguredTransportSupervisionPolicy | None = None,
     ) -> RegisteredTransport:
-        """Add one runtime-scoped configured-transport registration.
+        """Register one transport for this runtime and return its long-lived handle.
 
-        The returned handle is long-lived and survives successive ``AdbServer`` lifetimes.
-        When an active tracker already has a current observation, adding a registration projects
-        that observation immediately. An absent configured TCP transport is reconciled through
-        automatic recovery when enabled; USB remains projection-only.
+        Current tracking evidence is projected immediately when available; optional TCP recovery
+        handles absence.
         """
 
         if not isinstance(configuration, AdbConfiguredTransport):
@@ -156,11 +144,7 @@ class AdbManagedRuntime:
             return registration
 
     def remove_transport(self, transport: RegisteredTransport) -> None:
-        """Remove one runtime-scoped registration permanently.
-
-        Removal invalidates any in-flight recovery result associated with the registration.
-        A later server replacement must not recreate the removed registration.
-        """
+        """Remove one registration and invalidate its in-flight recovery work."""
 
         with self._registration_lock:
             registration = self._require_owned_registration_locked(transport)

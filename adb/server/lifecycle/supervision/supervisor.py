@@ -52,8 +52,7 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 class AdbServerSupervisor:
     """Reconcile ADB server failures across successive server lifetimes.
 
-    Current-lifetime truth is committed to ``AdbServerState``.  Whether a retired server may
-    be automatically replaced is immutable composition-time configuration.
+    ``AdbServerState`` holds current-lifetime truth; automatic replacement is fixed at composition.
     """
 
     def __init__(
@@ -128,6 +127,8 @@ class AdbServerSupervisor:
 
     @property
     def recovery_enabled(self) -> bool:
+        """Whether retired servers may be replaced automatically."""
+
         with self._lock:
             return self._recovery_enabled
 

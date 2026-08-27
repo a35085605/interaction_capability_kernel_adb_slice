@@ -121,10 +121,9 @@ def resolve_configured_transport(
     configuration: AdbConfiguredTransport,
     record: AdbDevicesRecord,
 ) -> AdbConfiguredTransportResolution:
-    """Resolve a configured transport against a complete track-devices record.
+    """Resolve a configured transport against one complete track-devices record.
 
-    Exact USB/SOCKET matches are preferred; UNKNOWN connection types are used only when no
-    exact match exists for compatibility with older ADB servers.
+    Exact USB/SOCKET matches win; UNKNOWN connection types are fallback compatibility evidence.
     """
 
     if not isinstance(configuration, AdbConfiguredTransport):

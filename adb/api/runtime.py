@@ -46,6 +46,8 @@ class AdbRuntime(_InternalAdbRuntime):
         self,
         registration: AdbConfiguredTransportRegistration,
     ) -> AdbConfiguredTransportHandle:
+        """Register one declarative transport and return its runtime-bound handle."""
+
         if not isinstance(registration, AdbConfiguredTransportRegistration):
             raise TypeError("registration must be AdbConfiguredTransportRegistration")
         configuration = _configured_transport_from_registration(registration)
@@ -53,6 +55,8 @@ class AdbRuntime(_InternalAdbRuntime):
         return AdbConfiguredTransportHandle(self, registration, transport)
 
     def remove_transport(self, transport: AdbConfiguredTransportHandle) -> None:
+        """Remove one runtime-bound configured-transport registration."""
+
         if not isinstance(transport, AdbConfiguredTransportHandle):
             raise TypeError("transport must be AdbConfiguredTransportHandle")
         if transport._runtime is not self:

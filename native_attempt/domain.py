@@ -35,6 +35,8 @@ def _require_timezone_aware(value: object, *, field_name: str) -> datetime:
 
 
 class NativeAttemptStatus(str, Enum):
+    """Terminal execution status of one native attempt."""
+
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     TIMED_OUT = "timed_out"
@@ -50,10 +52,7 @@ class NativeCompletionScope(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class NativeAttemptResult:
-    """Terminal evidence from one native attempt.
-
-    Application-level effects are evaluated separately.
-    """
+    """Terminal native-attempt evidence; application effects are evaluated separately."""
 
     status: NativeAttemptStatus
     completion_scope: NativeCompletionScope | None

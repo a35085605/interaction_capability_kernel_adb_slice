@@ -81,10 +81,9 @@ def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class AdbTcpTransportEnsurePolicy:
-    """Polling policy for one bounded transport-readiness ensure operation.
+    """Policy for one bounded transport-readiness polling episode.
 
-    States not listed as acceptable or blocked remain waiting states. This preserves future
-    open-enum values without silently treating them as ready or permanently failed.
+    Unlisted device states remain pending rather than being treated as ready or blocked.
     """
 
     timeout_seconds: float
@@ -250,14 +249,14 @@ class AdbTcpTransportEnsureResult:
 class AdbTcpTransportEnsurer(Protocol):
     """Ensure bounded readiness for configured TCP transports.
 
-    Implementations used by supervision must support concurrent ensures for different
-    configured TCP transports.
+    Implementations used by supervision must allow concurrent ensures for distinct transports.
     """
 
     def ensure(
         self,
         operation: AdbTcpTransportEnsureReadiness,
     ) -> AdbTcpTransportEnsureResult:
+        """Ensure one configured TCP transport reaches a terminal readiness result."""
         ...
 
 
@@ -373,10 +372,10 @@ class _ReadinessEpisodeState:
 
 
 class AdbTcpTransportEnsureOrchestrator:
-    """Ensure one configured TCP transport reaches readiness before a deadline.
+    """Drive one configured TCP transport toward readiness before a deadline.
 
-    The orchestrator probes a fresh tracked-devices snapshot, performs at most one ``adb connect`` attempt
-    while the TCP transport is absent, and polls until a terminal state or timeout.
+    It probes fresh snapshots, attempts ``adb connect`` at most once while absent, and polls to a
+    terminal state or timeout.
     """
 
     def __init__(
@@ -409,6 +408,8 @@ class AdbTcpTransportEnsureOrchestrator:
         self,
         operation: AdbTcpTransportEnsureReadiness,
     ) -> AdbTcpTransportEnsureResult:
+        """Run one readiness episode and publish terminal evidence."""
+
         if not isinstance(operation, AdbTcpTransportEnsureReadiness):
             raise TypeError("operation must be AdbTcpTransportEnsureReadiness")
         if operation.server != self.server:

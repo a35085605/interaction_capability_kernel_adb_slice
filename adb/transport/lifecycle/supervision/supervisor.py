@@ -63,13 +63,10 @@ class _ConfiguredTransportRegistration:
 
 
 class AdbConfiguredTransportSupervisor:
-    """Project and reconcile runtime-scoped registrations from device observations.
+    """Project runtime-scoped transport registrations from device observations.
 
-    Registrations are long-lived and survive replacement of the current ``AdbServer``, including
-    replacements that use a different endpoint. Re-establishing observation within one server
-    lifetime does not reset transport resolution or invalidate recovery work; server replacement
-    does. USB registrations are projection-only; an optional TCP ensurer reconciles currently
-    absent TCP transports.
+    Registrations survive server replacement; projections and recovery work do not. USB
+    registrations are projection-only, while configured TCP recovery may reconcile observed absence.
     """
 
     def __init__(
@@ -142,6 +139,8 @@ class AdbConfiguredTransportSupervisor:
         return self._devices
 
     def start(self) -> None:
+        """Subscribe to tracking events used for configured-transport projection."""
+
         with self._lock:
             if self._closed:
                 raise RuntimeError("configured transport supervisor is closed")
@@ -159,12 +158,10 @@ class AdbConfiguredTransportSupervisor:
                 self._reset_server_lifetime_locked()
 
     def reconcile(self) -> None:
-        """Rebind long-lived registrations to the authoritative current server.
+        """Rebind registrations after authoritative server replacement.
 
-        Server replacement clears server-local resolution and invalidates recovery work
-        started for the previous lifetime, while preserving the registration set itself.
-        ``_projection_server`` records only which lifetime the derived registration state
-        currently belongs to; it is not a source of current-server truth.
+        Replacement clears server-local projections and fences recovery work without removing
+        registrations.
         """
 
         with self._lock:
@@ -181,6 +178,8 @@ class AdbConfiguredTransportSupervisor:
         configuration: AdbConfiguredTransport,
         policy: AdbConfiguredTransportSupervisionPolicy | None = None,
     ) -> None:
+        """Register one transport and project current tracking evidence when available."""
+
         if not isinstance(configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
         if policy is None:
@@ -241,6 +240,8 @@ class AdbConfiguredTransportSupervisor:
         self,
         configuration: AdbConfiguredTransport | AdbDeviceSerial,
     ) -> bool:
+        """Remove one registration and wait for any active recovery attempt."""
+
         if not isinstance(configuration, (AdbConfiguredTransport, AdbDeviceSerial)):
             raise TypeError("configuration must be AdbConfiguredTransport or AdbDeviceSerial")
         with self._lock:
@@ -274,6 +275,8 @@ class AdbConfiguredTransportSupervisor:
         return None if projection is None else projection.resolution
 
     def close(self) -> None:
+        """Stop supervision, drop registrations, and join active recovery workers."""
+
         with self._lock:
             if self._closed:
                 return

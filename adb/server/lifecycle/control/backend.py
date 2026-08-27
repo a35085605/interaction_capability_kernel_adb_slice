@@ -116,23 +116,22 @@ def _require_owned_release_endpoint(
 
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Acquire and release one backend-scoped usable ADB server attachment.
+    """Backend port for acquiring and releasing one usable ADB server attachment.
 
-    Every operation reports one of five lifecycle outcomes: it completed, its target state was
-    already satisfied, the same operation is already in progress, a prerequisite currently blocks
-    it, or an attempted operation failed.  Exceptions are reserved for invalid calls and violated
-    ownership contracts.  Concrete resource ownership and cleanup semantics remain adapter-defined.
-    Releasing an attachment relinquishes those backend resources; it does not imply that every
-    backend must terminate an underlying ADB server process.
+    Results represent success, satisfaction, contention, blocking, or failure; exceptions are
+    reserved for invalid calls and ownership violations. Release relinquishes backend resources
+    and need not terminate an underlying server process.
     """
 
     def acquire(
         self,
         endpoint: AdbServerEndpoint | None = None,
     ) -> AdbServerBackendResult:
+        """Acquire a usable attachment, optionally constrained to ``endpoint``."""
         ...
 
     def release(self, endpoint: AdbServerEndpoint) -> AdbServerBackendResult:
+        """Release the backend attachment identified by ``endpoint``."""
         ...
 
 

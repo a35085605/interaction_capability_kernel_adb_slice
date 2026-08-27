@@ -16,6 +16,8 @@ from adb.transport.selection import AdbDeviceSerial
 
 
 class AdbConfiguredTransportType(str, Enum):
+    """Transport kinds accepted by the public declarative registration API."""
+
     USB = "usb"
     TCP = "tcp"
 

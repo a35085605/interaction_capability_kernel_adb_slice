@@ -20,11 +20,9 @@ from scheduling import TemporalScheduler
 
 
 class AdbRuntime(AdbManagedRuntime):
-    """Runtime ownership boundary for one composed ADB capability graph.
+    """Runtime ownership boundary for the composed ADB capability graph.
 
-    The runtime exposes application-level lifecycle and registration operations while keeping
-    adapters, supervisors, and mutable state private.  ``AdbServerState`` is authoritative for
-    the current server lifetime; supervisors add optional automation around that state.
+    Server and device state are authoritative; supervisors provide optional lifecycle automation.
     """
 
     def __init__(

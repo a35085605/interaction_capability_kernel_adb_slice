@@ -66,22 +66,32 @@ class AdbOfflineTransportsReconnect:
 
 
 class AdbTcpConnector(Protocol):
+    """Execute explicit TCP transport connect attempts."""
+
     def connect(self, operation: AdbTcpConnect) -> NativeAttemptResult: ...
 
 
 class AdbTcpDisconnector(Protocol):
+    """Execute explicit TCP transport disconnect attempts."""
+
     def disconnect(self, operation: AdbTcpDisconnect) -> NativeAttemptResult: ...
 
 
 class AdbTransportReconnector(Protocol):
+    """Execute host-side reconnect attempts for selected transports."""
+
     def reconnect(self, operation: AdbTransportReconnect) -> NativeAttemptResult: ...
 
 
 class AdbDeviceSideReconnector(Protocol):
+    """Execute selected device-side adbd reconnect attempts."""
+
     def reconnect_device(self, operation: AdbDeviceSideReconnect) -> NativeAttemptResult: ...
 
 
 class AdbOfflineTransportsReconnector(Protocol):
+    """Execute host-side reconnect attempts for offline transports."""
+
     def reconnect_offline(self, operation: AdbOfflineTransportsReconnect) -> NativeAttemptResult: ...
 
 

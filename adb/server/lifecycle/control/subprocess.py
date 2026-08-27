@@ -23,11 +23,10 @@ from adb.server.lifecycle.control.backend import (
 
 
 class SubprocessAdbServerBackend:
-    """Adapt one owned foreground ADB server process to the server-backend domain port.
+    """Adapt one owned foreground ADB server process to the server-backend port.
 
-    Subprocess creation, socket activation, readiness probing, and process termination are private
-    infrastructure details.  This adapter owns only the backend-visible attachment slot and the
-    translation of infrastructure outcomes into lifecycle-control result values.
+    The adapter owns backend attachment state and translates subprocess outcomes into lifecycle
+    results.
     """
 
     def __init__(

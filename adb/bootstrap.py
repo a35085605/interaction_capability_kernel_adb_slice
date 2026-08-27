@@ -58,9 +58,8 @@ class _BootstrapCore:
 class AdbRuntimeBootstrap:
     """Composition root for one ADB runtime object graph.
 
-    Bootstrap owns implementation/configuration decisions but does not remain a second runtime
-    container.  Each build receives a fresh runtime-scoped epoch issuer, controller graph,
-    authoritative server state, and tracked-devices state.
+    Each build receives fresh runtime-scoped server and tracking state; bootstrap retains only
+    composition and configuration decisions.
     """
 
     def __init__(

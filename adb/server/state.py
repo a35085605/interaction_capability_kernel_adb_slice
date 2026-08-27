@@ -29,10 +29,8 @@ class AdbServerStateWriter(Protocol):
 class AdbServerState(AdbServerStateView, AdbServerStateWriter):
     """Thread-safe authoritative current-server state for one runtime.
 
-    A server lifetime must retire before a newer one can become current.  Epochs never move
-    backwards, and an already-retired lifetime cannot be resurrected.  The state deliberately
-    stores only runtime reality; desired-running intent, retry policy, and recovery episodes
-    belong to supervision.
+    Epochs advance monotonically: a lifetime must retire before a newer one can activate, and
+    retired lifetimes cannot become current again.
     """
 
     def __init__(self, initial: AdbServer | None = None) -> None:

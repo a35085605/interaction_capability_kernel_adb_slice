@@ -56,14 +56,10 @@ class AdbDevicesSnapshotWriter(Protocol):
 
 
 class AdbDevicesSnapshotState(AdbDevicesSnapshotView, AdbDevicesSnapshotWriter):
-    """Thread-safe authoritative current device observation for one runtime.
+    """Thread-safe authoritative device observation state for one runtime.
 
-    Snapshot identity is minted by observation producers, not by state. The state accepts only
-    monotonically newer runtime-scoped snapshot identities while retaining the exact source
-    ``AdbServer`` lifetime alongside the snapshot evidence.
-
-    Invalidating the current projection deliberately preserves ``latest_epoch`` so a stale or
-    replayed observation cannot become current merely because the visible projection was cleared.
+    Only newer snapshot epochs are accepted. Invalidating ``current`` preserves the epoch watermark
+    so stale observations cannot become current later.
     """
 
     def __init__(self) -> None:

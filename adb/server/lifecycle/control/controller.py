@@ -23,14 +23,10 @@ from adb.server.lifecycle.control.result import (
 
 
 class AdbServerController:
-    """Fabricate and retire exact domain server lifetimes over one server backend.
+    """Own one domain ADB server lifetime over a server backend.
 
-    The controller owns at most one domain :class:`AdbServer` identity at a time.  Expected
-    provisioning outcomes are translated from backend results into :class:`AdbServerProvisionResult`
-    values.  Accepting ``retire(server)`` irreversibly relinquishes that exact domain lifetime before
-    backend release is attempted.  Concrete resource ownership and release semantics remain a backend
-    concern.  Backend release outcomes are not projected into controller-level
-    lifecycle errors because they do not determine whether the domain server lifetime is retired.
+    Provisioning translates backend outcomes into domain results. Retiring a server relinquishes
+    domain ownership before backend release so successor provisioning can proceed independently.
     """
 
     def __init__(
@@ -134,12 +130,7 @@ class AdbServerController:
             return AdbServerProvisioned(server)
 
     def retire(self, server: AdbServer) -> None:
-        """Retire exact controller ownership, then request backend attachment release.
-
-        Once exact ownership is accepted it is relinquished under the controller lock and is never
-        restored, regardless of the backend release outcome.  The backend call is deliberately made
-        outside that lock so a successor ``provision()`` may reach the backend concurrently.
-        """
+        """Relinquish exact domain ownership before requesting backend release."""
 
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")

@@ -36,7 +36,11 @@ class AdbWirelessPair:
 
 
 class AdbWirelessPairer(Protocol):
-    def pair(self, operation: AdbWirelessPair) -> NativeAttemptResult: ...
+    """Execute wireless-debugging pairing attempts."""
+
+    def pair(self, operation: AdbWirelessPair) -> NativeAttemptResult:
+        """Execute one pairing attempt and return native completion evidence."""
+        ...
 
 
 __all__ = ["AdbWirelessPair", "AdbWirelessPairer"]
