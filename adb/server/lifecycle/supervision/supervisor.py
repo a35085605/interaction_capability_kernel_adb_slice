@@ -5,12 +5,8 @@ from datetime import timedelta
 from random import random
 from threading import Lock, Thread, current_thread
 
-from adb.server.lifecycle.control.result import (
-    AdbServerProvisionDeferred,
-    AdbServerProvisionFailed,
-    AdbServerProvisionResult,
-    AdbServerProvisioned,
-)
+from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
+from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.transition import (
     AdbServerRecoveryActivate,
@@ -66,8 +62,8 @@ class AdbServerSupervisor:
     def __init__(
         self,
         server: AdbServer | AdbServerState,
-        provision_server: Callable[[], AdbServerProvisionResult],
-        retire_server: Callable[[AdbServer], None],
+        provisioner: AdbServerProvisioner,
+        retirer: AdbServerRetirer,
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
@@ -84,10 +80,10 @@ class AdbServerSupervisor:
             raise TypeError("server must be AdbServer or AdbServerState")
         if server_state.current is None:
             raise ValueError("server state must have an active initial server")
-        if not callable(provision_server):
-            raise TypeError("provision_server must be callable")
-        if not callable(retire_server):
-            raise TypeError("retire_server must be callable")
+        if not isinstance(provisioner, AdbServerProvisioner):
+            raise TypeError("provisioner must be AdbServerProvisioner")
+        if not isinstance(retirer, AdbServerRetirer):
+            raise TypeError("retirer must be AdbServerRetirer")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -103,8 +99,8 @@ class AdbServerSupervisor:
 
         self._server_state = server_state
         self._bus = event_bus
-        self._provision_server_callback = provision_server
-        self._retire_server_callback = retire_server
+        self._provisioner = provisioner
+        self._retirer = retirer
         self._scheduler = scheduler
         self._policy = policy
         self._random = _random
@@ -255,7 +251,7 @@ class AdbServerSupervisor:
                 self._attempt_threads.discard(active)
 
     def _dispose_retired_server(self, server: AdbServer) -> None:
-        self._retire_server_callback(server)
+        self._retirer.retire(server)
 
     def _launch_recovery_attempt(
         self,
@@ -280,15 +276,6 @@ class AdbServerSupervisor:
                 self._attempt_threads.discard(thread)
                 raise
 
-    def _provision_server(self) -> AdbServerProvisionResult:
-        result = self._provision_server_callback()
-        if not isinstance(
-            result,
-            (AdbServerProvisioned, AdbServerProvisionDeferred, AdbServerProvisionFailed),
-        ):
-            raise TypeError("provision_server callback must return AdbServerProvisionResult")
-        return result
-
     def _run_recovery_attempt(
         self,
         cycle_id: AdbServerRecoveryCycleId,
@@ -306,7 +293,7 @@ class AdbServerSupervisor:
 
                 transition = transition_recovery(
                     attempt,
-                    self._provision_server(),
+                    self._provisioner.provision(),
                     max_attempts=self._policy.max_attempts,
                 )
 

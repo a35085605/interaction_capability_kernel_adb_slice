@@ -3,8 +3,8 @@ from __future__ import annotations
 from threading import RLock
 
 from adb.managed import AdbManagedRuntime
-from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.control.controller import AdbServerController
+from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
+from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.identity import AdbServer
@@ -30,8 +30,8 @@ class AdbRuntime(AdbManagedRuntime):
         server_state: AdbServerState,
         snapshot_state: AdbDevicesSnapshotState,
         *,
-        server_controller: AdbServerController,
-        server_provision_endpoint: AdbServerEndpoint | None = None,
+        server_provisioner: AdbServerProvisioner,
+        server_retirer: AdbServerRetirer,
         event_bus: EventBus | None = None,
         server_supervision_scheduler: TemporalScheduler[object] | None = None,
         server_supervision_policy: AdbServerSupervisionPolicy | None = None,
@@ -44,14 +44,10 @@ class AdbRuntime(AdbManagedRuntime):
             raise TypeError("server_state must be AdbServerState")
         if not isinstance(snapshot_state, AdbDevicesSnapshotState):
             raise TypeError("snapshot_state must be AdbDevicesSnapshotState")
-        if not isinstance(server_controller, AdbServerController):
-            raise TypeError("server_controller must be AdbServerController")
-        if server_provision_endpoint is not None and not isinstance(
-            server_provision_endpoint, AdbServerEndpoint
-        ):
-            raise TypeError(
-                "server_provision_endpoint must be AdbServerEndpoint or None"
-            )
+        if not isinstance(server_provisioner, AdbServerProvisioner):
+            raise TypeError("server_provisioner must be AdbServerProvisioner")
+        if not isinstance(server_retirer, AdbServerRetirer):
+            raise TypeError("server_retirer must be AdbServerRetirer")
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if server_supervision_scheduler is not None and not isinstance(
@@ -111,21 +107,17 @@ class AdbRuntime(AdbManagedRuntime):
         if transport_supervisor is not None and transport_supervisor.devices is not snapshot_state:
             raise ValueError("transport supervisor must share the runtime tracked-devices state")
 
-        super().__init__(
-            server_state,
-            server_provision_endpoint=server_provision_endpoint,
-        )
+        super().__init__(server_state)
         self._snapshot_state = snapshot_state
         self._event_bus = event_bus
-        self._server_controller = server_controller
         self._server_supervisor: AdbServerSupervisor | None = None
         if server_supervision_scheduler is not None:
             if event_bus is None:
                 raise RuntimeError("validated server supervision requires an event bus")
             self._server_supervisor = AdbServerSupervisor(
                 server_state,
-                provision_server=self._provision_server,
-                retire_server=self._retire_server,
+                provisioner=server_provisioner,
+                retirer=server_retirer,
                 event_bus=event_bus,
                 scheduler=server_supervision_scheduler,
                 policy=server_supervision_policy,
@@ -238,12 +230,6 @@ class AdbRuntime(AdbManagedRuntime):
         if self._server_supervisor is not None:
             self._server_supervisor.close()
         self._close_transport_registrations()
-
-    def _provision_server(self) -> AdbServer:
-        return self._server_controller.provision(self._server_provision_endpoint)
-
-    def _retire_server(self, server: AdbServer) -> None:
-        self._server_controller.retire(server)
 
     def _register_transport(
         self,

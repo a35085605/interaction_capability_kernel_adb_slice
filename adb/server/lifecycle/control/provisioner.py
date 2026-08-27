@@ -18,26 +18,34 @@ from adb.server.lifecycle.control.result import (
     AdbServerProvisionResult,
     AdbServerProvisioned,
 )
+from adb.server.lifecycle.control.retirer import _release_backend_attachment
 
 
-class AdbServerController:
-    """Translate ADB server backend lifecycle outcomes into domain operations.
-
-    Runtime server state owns domain lifetime truth; the controller only acquires and releases
-    backend attachments and creates fresh server identities.
-    """
+class AdbServerProvisioner:
+    """Provision fresh ADB server lifetimes under one fixed endpoint configuration."""
 
     def __init__(
         self,
         backend: AdbServerBackend,
         server_epoch_issuer: EpochIssuer[ServerEpoch],
+        *,
+        endpoint: AdbServerEndpoint | None,
     ) -> None:
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("backend must satisfy AdbServerBackend")
         if not isinstance(server_epoch_issuer, EpochIssuer):
             raise TypeError("server_epoch_issuer must satisfy EpochIssuer")
+        if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint or None")
         self._backend = backend
         self._server_epoch_issuer = server_epoch_issuer
+        self._endpoint = endpoint
+
+    @property
+    def endpoint(self) -> AdbServerEndpoint | None:
+        """Endpoint constraint bound to every provisioning attempt."""
+
+        return self._endpoint
 
     @staticmethod
     def _backend_busy_diagnostic(
@@ -53,9 +61,8 @@ class AdbServerController:
 
     def _acquire_backend(
         self,
-        endpoint: AdbServerEndpoint | None,
     ) -> AdbServerEndpoint | AdbServerProvisionDeferred | AdbServerProvisionFailed:
-        result = self._backend.acquire(endpoint)
+        result = self._backend.acquire(self._endpoint)
         if isinstance(result, (AdbServerBackendSucceeded, AdbServerBackendSatisfied)):
             return result.endpoint
         if isinstance(
@@ -69,34 +76,16 @@ class AdbServerController:
             return AdbServerProvisionFailed(result.diagnostic)
         raise TypeError("server backend acquire() returned an unsupported result")
 
-    def _release_backend(self, endpoint: AdbServerEndpoint) -> None:
-        result = self._backend.release(endpoint)
-        if isinstance(
-            result,
-            (
-                AdbServerBackendSucceeded,
-                AdbServerBackendSatisfied,
-                AdbServerBackendOperationInProgress,
-                AdbServerBackendOperationBlocked,
-                AdbServerBackendFailed,
-            ),
-        ):
-            return
-        raise TypeError("server backend release() returned an unsupported result")
-
-    def provision(self, endpoint: AdbServerEndpoint | None) -> AdbServerProvisionResult:
+    def provision(self) -> AdbServerProvisionResult:
         """Synchronously attempt to provision one fresh usable domain server lifetime."""
 
-        if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint or None")
-
-        acquire_result = self._acquire_backend(endpoint)
+        acquire_result = self._acquire_backend()
         if isinstance(acquire_result, (AdbServerProvisionDeferred, AdbServerProvisionFailed)):
             return acquire_result
         resolved_endpoint = acquire_result
 
-        if endpoint is not None and resolved_endpoint != endpoint:
-            self._release_backend(resolved_endpoint)
+        if self._endpoint is not None and resolved_endpoint != self._endpoint:
+            _release_backend_attachment(self._backend, resolved_endpoint)
             return AdbServerProvisionFailed(
                 "endpoint-constrained ADB server provisioning changed endpoint"
             )
@@ -108,7 +97,7 @@ class AdbServerController:
             )
         except BaseException:
             try:
-                self._release_backend(resolved_endpoint)
+                _release_backend_attachment(self._backend, resolved_endpoint)
             except BaseException as release_error:
                 raise AdbServerControlError(
                     "ADB server identity creation failed and its backend attachment "
@@ -118,13 +107,5 @@ class AdbServerController:
 
         return AdbServerProvisioned(server)
 
-    def retire(self, server: AdbServer) -> None:
-        """Request release of the backend attachment for one domain server lifetime."""
 
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
-
-        self._release_backend(server.endpoint)
-
-
-__all__ = ["AdbServerController"]
+__all__ = ["AdbServerProvisioner"]

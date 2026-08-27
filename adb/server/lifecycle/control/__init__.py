@@ -1,6 +1,7 @@
 """ADB server lifecycle control contracts, facade, and typed errors."""
 
-from adb.server.lifecycle.control.controller import AdbServerController
+from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
+from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
@@ -13,7 +14,8 @@ from adb.server.lifecycle.control.backend import AdbServerBackend
 __all__ = [
     "AdbServerBackend",
     "AdbServerControlError",
-    "AdbServerController",
+    "AdbServerProvisioner",
+    "AdbServerRetirer",
     "AdbServerProvisionDeferred",
     "AdbServerProvisionFailed",
     "AdbServerProvisionResult",

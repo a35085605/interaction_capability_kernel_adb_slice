@@ -6,9 +6,16 @@ from dataclasses import dataclass
 from adb.epoch import EpochIssuer
 from adb.runtime import AdbRuntime
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServer, ServerEpoch, ServerEpochSequence
-from adb.server.lifecycle.control.controller import AdbServerController
+from adb.server.identity import AdbServer, ServerEpochSequence
 from adb.server.lifecycle.control.backend import AdbServerBackend
+from adb.server.lifecycle.control.errors import AdbServerControlError
+from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
+from adb.server.lifecycle.control.retirer import AdbServerRetirer
+from adb.server.lifecycle.control.result import (
+    AdbServerProvisionDeferred,
+    AdbServerProvisionFailed,
+    AdbServerProvisioned,
+)
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.state import AdbServerState
@@ -34,10 +41,6 @@ from eventing import EventBus
 from scheduling import TemporalScheduler
 
 
-_AdbServerControllerFactory = Callable[
-    [EpochIssuer[ServerEpoch]],
-    AdbServerController,
-]
 _AdbServerBackendFactory = Callable[[], AdbServerBackend]
 
 
@@ -47,8 +50,8 @@ def _default_server_backend_factory() -> AdbServerBackend:
 
 @dataclass(frozen=True, slots=True)
 class _BootstrapCore:
-    controller: AdbServerController
-    server_provision_endpoint: AdbServerEndpoint | None
+    server_provisioner: AdbServerProvisioner
+    server_retirer: AdbServerRetirer
     server_state: AdbServerState
     snapshot_state: AdbDevicesSnapshotState
     devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch]
@@ -65,7 +68,6 @@ class AdbRuntimeBootstrap:
     def __init__(
         self,
         *,
-        server_controller_factory: _AdbServerControllerFactory | None = None,
         server_backend_factory: _AdbServerBackendFactory | None = None,
         endpoint: AdbServerEndpoint | None = None,
         pin_endpoint: bool = True,
@@ -74,14 +76,8 @@ class AdbRuntimeBootstrap:
         tracking_supervision_policy: AdbDevicesTrackingSupervisionPolicy | None = None,
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
     ) -> None:
-        if server_controller_factory is not None and not callable(server_controller_factory):
-            raise TypeError("server_controller_factory must be callable or None")
         if server_backend_factory is not None and not callable(server_backend_factory):
             raise TypeError("server_backend_factory must be callable or None")
-        if server_controller_factory is not None and server_backend_factory is not None:
-            raise ValueError(
-                "server_controller_factory and server_backend_factory are mutually exclusive"
-            )
         if server_backend_factory is None:
             server_backend_factory = _default_server_backend_factory
         if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
@@ -115,7 +111,6 @@ class AdbRuntimeBootstrap:
                 "AdbConfiguredTransportSupervisionPolicy or None"
             )
 
-        self._server_controller_factory = server_controller_factory
         self._server_backend_factory = server_backend_factory
         self._endpoint = endpoint
         self._pin_endpoint = pin_endpoint
@@ -132,12 +127,12 @@ class AdbRuntimeBootstrap:
             return self._build_runtime(
                 core.server_state,
                 core.snapshot_state,
-                server_controller=core.controller,
-                server_provision_endpoint=core.server_provision_endpoint,
+                server_provisioner=core.server_provisioner,
+                server_retirer=core.server_retirer,
                 transport_supervision_policy=self._transport_supervision_policy,
             )
         except BaseException:
-            core.controller.retire(core.initial_server)
+            core.server_retirer.retire(core.initial_server)
             raise
 
     def build_managed(
@@ -196,8 +191,8 @@ class AdbRuntimeBootstrap:
             return self._build_runtime(
                 core.server_state,
                 core.snapshot_state,
-                server_controller=core.controller,
-                server_provision_endpoint=core.server_provision_endpoint,
+                server_provisioner=core.server_provisioner,
+                server_retirer=core.server_retirer,
                 event_bus=event_bus,
                 server_supervision_scheduler=scheduler,
                 server_supervision_policy=self._server_supervision_policy,
@@ -207,7 +202,7 @@ class AdbRuntimeBootstrap:
                 transport_supervision_policy=self._transport_supervision_policy,
             )
         except BaseException:
-            core.controller.retire(core.initial_server)
+            core.server_retirer.retire(core.initial_server)
             raise
 
     def _build_runtime(self, *args: object, **kwargs: object) -> AdbRuntime:
@@ -216,43 +211,45 @@ class AdbRuntimeBootstrap:
     def _build_core(self) -> _BootstrapCore:
         server_epoch_issuer = ServerEpochSequence()
         devices_snapshot_epoch_issuer = AdbDevicesSnapshotEpochSequence()
-        controller_factory = self._server_controller_factory
-        if controller_factory is None:
-            backend = self._server_backend_factory()
-            if not isinstance(backend, AdbServerBackend):
-                raise TypeError(
-                    "server backend factory must return AdbServerBackend"
-                )
-            controller = AdbServerController(
-                backend,
-                server_epoch_issuer,
-            )
-        else:
-            controller = controller_factory(server_epoch_issuer)
+        backend = self._server_backend_factory()
+        if not isinstance(backend, AdbServerBackend):
+            raise TypeError("server backend factory must return AdbServerBackend")
 
-        if not isinstance(controller, AdbServerController):
-            raise TypeError(
-                "server controller factory must return AdbServerController"
+        server_retirer = AdbServerRetirer(backend)
+        initial_provisioner = AdbServerProvisioner(
+            backend,
+            server_epoch_issuer,
+            endpoint=self._endpoint,
+        )
+        initial_result = initial_provisioner.provision()
+        if isinstance(initial_result, AdbServerProvisionDeferred):
+            raise AdbServerControlError(
+                f"initial ADB server provisioning deferred: {initial_result.diagnostic}"
             )
+        if isinstance(initial_result, AdbServerProvisionFailed):
+            raise AdbServerControlError(
+                f"initial ADB server provisioning failed: {initial_result.diagnostic}"
+            )
+        if not isinstance(initial_result, AdbServerProvisioned):
+            raise TypeError("server provisioner returned an unsupported result")
 
-        initial_server = controller.provision(self._endpoint)
-        if not isinstance(initial_server, AdbServer):
-            raise TypeError("server controller provision() must return AdbServer")
+        initial_server = initial_result.server
         try:
-            if self._endpoint is not None and initial_server.endpoint != self._endpoint:
-                raise ValueError("endpoint-constrained initial server provisioning changed endpoint")
+            recovery_endpoint = initial_server.endpoint if self._pin_endpoint else None
             return _BootstrapCore(
-                controller=controller,
-                server_provision_endpoint=(
-                    initial_server.endpoint if self._pin_endpoint else None
+                server_provisioner=AdbServerProvisioner(
+                    backend,
+                    server_epoch_issuer,
+                    endpoint=recovery_endpoint,
                 ),
+                server_retirer=server_retirer,
                 server_state=AdbServerState(initial_server),
                 snapshot_state=AdbDevicesSnapshotState(),
                 devices_snapshot_epoch_issuer=devices_snapshot_epoch_issuer,
                 initial_server=initial_server,
             )
         except BaseException:
-            controller.retire(initial_server)
+            server_retirer.retire(initial_server)
             raise
 
 
@@ -262,5 +259,6 @@ def _is_event_bus(value: object) -> bool:
         and callable(getattr(value, "subscribe", None))
         and callable(getattr(value, "unsubscribe", None))
     )
+
 
 __all__ = ["AdbRuntimeBootstrap"]
