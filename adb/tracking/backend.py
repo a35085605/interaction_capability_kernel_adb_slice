@@ -10,7 +10,7 @@ from typing import Protocol, runtime_checkable
 
 from adb.tracking.snapshot.model import AdbDevicesRecord
 from adb._internal.framing import encode_service, parse_hex_length
-from adb._internal.proto import parse_devices_record
+from adb.tracking.snapshot.decoder import parse_devices_record
 from adb.errors import (
     AdbProtocolError,
     AdbServerConnectionError,

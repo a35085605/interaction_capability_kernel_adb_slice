@@ -49,7 +49,7 @@ class SmartSocketAdbDevicesSnapshotReader:
     def read(self, server: AdbServer) -> AdbDevicesSnapshot:
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
-        from adb._internal.proto import parse_devices_record
+        from adb.tracking.snapshot.decoder import parse_devices_record
 
         payload = self._client_factory(server).first_stream_frame(self._SERVICE)
         return AdbDevicesSnapshot(
