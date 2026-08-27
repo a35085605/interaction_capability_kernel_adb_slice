@@ -118,6 +118,7 @@ class AdbServerRecoveryRetryDue:
 
     cycle_id: AdbServerRecoveryCycleId
     attempt_number: int
+    launch_attempts: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.cycle_id, AdbServerRecoveryCycleId):
@@ -126,6 +127,10 @@ class AdbServerRecoveryRetryDue:
             raise TypeError("attempt_number must be an integer")
         if self.attempt_number <= 0:
             raise ValueError("attempt_number must be greater than zero")
+        if isinstance(self.launch_attempts, bool) or not isinstance(self.launch_attempts, int):
+            raise TypeError("launch_attempts must be an integer")
+        if self.launch_attempts < 0:
+            raise ValueError("launch_attempts must be greater than or equal to zero")
 
 
 @dataclass(frozen=True, slots=True)

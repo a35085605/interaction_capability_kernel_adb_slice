@@ -12,9 +12,17 @@ from adb.server.lifecycle.control.result import (
     AdbServerProvisioned,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
+from adb.server.lifecycle.supervision.transition import (
+    AdbServerRecoveryActivate,
+    AdbServerRecoveryAttempt,
+    AdbServerRecoveryDefer,
+    AdbServerRecoveryExhaust,
+    AdbServerRecoveryRetry,
+    AdbServerRecoveryTransition,
+    transition_recovery,
+)
 from adb.server.failure import (
     AdbServerConnectionFailure,
-    AdbServerLaunchFailure,
     AdbServerLivenessFailure,
     AdbServerProcessExitedFailure,
 )
@@ -108,7 +116,6 @@ class AdbServerSupervisor:
         self._recovery_enabled = recovery_enabled
         self._cycle_id: AdbServerRecoveryCycleId | None = None
         self._retry_token: ScheduleToken | None = None
-        self._launch_attempts = 0
         self._pending_retired_disposals: set[AdbServer] = set()
         self._attempt_threads: set[Thread] = set()
         self._closed = False
@@ -145,7 +152,7 @@ class AdbServerSupervisor:
                 if self.server is None and self._recovery_enabled:
                     launch_cycle = self._new_recovery_cycle_locked()
         if launch_cycle is not None:
-            self._launch_recovery_attempt(launch_cycle, attempt_number=1)
+            self._launch_recovery_attempt(launch_cycle, AdbServerRecoveryAttempt(1))
 
     def reconcile(self, failure: AdbServerLivenessFailure) -> None:
         """Retire the current server after terminal liveness failure and reconcile desired state."""
@@ -215,7 +222,7 @@ class AdbServerSupervisor:
         finally:
             self._launch_retired_disposal(retired_server)
             if launch_cycle is not None:
-                self._launch_recovery_attempt(launch_cycle, attempt_number=1)
+                self._launch_recovery_attempt(launch_cycle, AdbServerRecoveryAttempt(1))
 
     def _launch_retired_disposal(self, server: AdbServer) -> None:
         with self._mutation_lock:
@@ -253,14 +260,14 @@ class AdbServerSupervisor:
     def _launch_recovery_attempt(
         self,
         cycle_id: AdbServerRecoveryCycleId,
-        attempt_number: int,
+        attempt: AdbServerRecoveryAttempt,
     ) -> None:
         thread = self._thread_factory(
             target=self._run_recovery_attempt,
-            args=(cycle_id, attempt_number),
+            args=(cycle_id, attempt),
             name=(
                 "adb-server-recovery-"
-                f"{cycle_id.value[:12]}-{attempt_number}"
+                f"{cycle_id.value[:12]}-{attempt.attempt_number}"
             ),
         )
         with self._lock:
@@ -285,12 +292,10 @@ class AdbServerSupervisor:
     def _run_recovery_attempt(
         self,
         cycle_id: AdbServerRecoveryCycleId,
-        attempt_number: int,
+        attempt: AdbServerRecoveryAttempt,
     ) -> None:
         active = current_thread()
-        provision_result: AdbServerProvisionResult | None = None
-        launch_failure: AdbServerLaunchFailure | None = None
-        launch_attempts = 0
+        transition: AdbServerRecoveryTransition | None = None
         recovered_event: AdbServerRecovered | None = None
         retry_token: ScheduleToken | None = None
         try:
@@ -299,25 +304,22 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
 
-                provision_result = self._provision_server()
-                if isinstance(provision_result, AdbServerProvisioned):
-                    recovered = provision_result.server
+                transition = transition_recovery(
+                    attempt,
+                    self._provision_server(),
+                    max_attempts=self._policy.max_attempts,
+                )
+
+                if isinstance(transition, AdbServerRecoveryActivate):
                     with self._lock:
                         if not self._recovery_is_current_locked(cycle_id):
                             return
-                        if not self._server_state.activate(recovered):
+                        if not self._server_state.activate(transition.server):
                             return
                         retry_token = self._retry_token
                         self._retry_token = None
-                        self._launch_attempts = 0
                         self._cycle_id = None
-                        recovered_event = AdbServerRecovered(recovered)
-                elif isinstance(provision_result, AdbServerProvisionFailed):
-                    launch_failure = AdbServerLaunchFailure(provision_result.diagnostic)
-                    with self._lock:
-                        if self._recovery_is_current_locked(cycle_id):
-                            self._launch_attempts += 1
-                            launch_attempts = self._launch_attempts
+                        recovered_event = AdbServerRecovered(transition.server)
 
             if recovered_event is not None:
                 if retry_token is not None:
@@ -325,73 +327,45 @@ class AdbServerSupervisor:
                 self._bus.publish(recovered_event)
                 return
 
-            if isinstance(provision_result, AdbServerProvisionDeferred):
-                with self._lock:
-                    if not self._recovery_is_current_locked(cycle_id):
-                        return
-                self._schedule_deferred_retry(cycle_id, attempt_number)
+            if isinstance(transition, AdbServerRecoveryDefer):
+                self._schedule_retry(
+                    cycle_id,
+                    transition.next_attempt,
+                    self._policy.deferred_retry_seconds,
+                )
                 return
 
-            if launch_failure is not None:
-                with self._lock:
-                    if not self._recovery_is_current_locked(cycle_id):
-                        return
-                self._schedule_launch_retry_or_exhaust(
+            if isinstance(transition, AdbServerRecoveryRetry):
+                self._schedule_retry(
                     cycle_id,
-                    attempt_number,
-                    launch_attempts,
-                    launch_failure,
+                    transition.next_attempt,
+                    self._retry_delay(transition.next_attempt.launch_attempts),
+                )
+                return
+
+            if isinstance(transition, AdbServerRecoveryExhaust):
+                self._end_recovery_cycle(cycle_id)
+                self._bus.publish(
+                    AdbServerRecoveryExhausted(
+                        cycle_id,
+                        transition.attempts,
+                        transition.failure,
+                    )
                 )
         finally:
             with self._lock:
                 self._attempt_threads.discard(active)
 
-    def _schedule_deferred_retry(
-        self,
-        cycle_id: AdbServerRecoveryCycleId,
-        attempt_number: int,
-    ) -> None:
-        # Provisioning deferral is expected and does not consume launch-attempt budget.
-        self._schedule_retry(
-            cycle_id,
-            attempt_number + 1,
-            self._policy.deferred_retry_seconds,
-        )
-
-    def _schedule_launch_retry_or_exhaust(
-        self,
-        cycle_id: AdbServerRecoveryCycleId,
-        attempt_number: int,
-        launch_attempts: int,
-        failure: AdbServerLaunchFailure,
-    ) -> None:
-        max_attempts = self._policy.max_attempts
-        if max_attempts is not None and launch_attempts >= max_attempts:
-            self._end_recovery_cycle(cycle_id)
-            self._bus.publish(
-                AdbServerRecoveryExhausted(
-                    cycle_id,
-                    launch_attempts,
-                    failure,
-                )
-            )
-            return
-
-        self._schedule_retry(
-            cycle_id,
-            attempt_number + 1,
-            self._retry_delay(launch_attempts),
-        )
-
     def _schedule_retry(
         self,
         cycle_id: AdbServerRecoveryCycleId,
-        next_attempt_number: int,
+        next_attempt: AdbServerRecoveryAttempt,
         delay_seconds: float,
     ) -> None:
         retry_event = AdbServerRecoveryRetryDue(
             cycle_id,
-            next_attempt_number,
+            next_attempt.attempt_number,
+            next_attempt.launch_attempts,
         )
         token = self._scheduler.schedule_after(
             timedelta(seconds=delay_seconds),
@@ -434,14 +408,19 @@ class AdbServerSupervisor:
             if not self._recovery_is_current_locked(event.cycle_id):
                 return
             self._retry_token = None
-        self._launch_recovery_attempt(event.cycle_id, event.attempt_number)
+        self._launch_recovery_attempt(
+            event.cycle_id,
+            AdbServerRecoveryAttempt(
+                event.attempt_number,
+                event.launch_attempts,
+            ),
+        )
 
     def _new_recovery_cycle_locked(self) -> AdbServerRecoveryCycleId:
         if self._cycle_id is not None:
             return self._cycle_id
         cycle_id = AdbServerRecoveryCycleId.new()
         self._cycle_id = cycle_id
-        self._launch_attempts = 0
         return cycle_id
 
     def _end_recovery_cycle(self, cycle_id: AdbServerRecoveryCycleId) -> None:
@@ -450,7 +429,6 @@ class AdbServerSupervisor:
                 return
             retry_token = self._retry_token
             self._retry_token = None
-            self._launch_attempts = 0
             self._cycle_id = None
         if retry_token is not None:
             self._scheduler.cancel(retry_token)
@@ -458,7 +436,6 @@ class AdbServerSupervisor:
     def _invalidate_recovery_locked(self) -> ScheduleToken | None:
         retry_token = self._retry_token
         self._retry_token = None
-        self._launch_attempts = 0
         self._cycle_id = None
         return retry_token
 
