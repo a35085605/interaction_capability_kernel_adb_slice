@@ -3,9 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import IntEnum
 from numbers import Integral
-from typing import Literal
-
-from adb.transport.selection import AdbTransportId
 
 
 class AdbConnectionState(IntEnum):
@@ -65,9 +62,9 @@ def _normalize_open_enum(
 class AdbTrackedDevice:
     """One observed AOSP ``adb_host.proto.Device`` track-devices row.
 
-    The row is observation data, not a stable device identity. ``transport_id`` is
-    server-local when non-zero; zero means unavailable. Unknown enum values are preserved as
-    integers.
+    The row is observation data, not a stable device identity. ``transport_id`` preserves the
+    raw signed AOSP protobuf ``int64`` value; domain validation happens only when an observed ID
+    is converted to ``AdbTransportId``. Unknown enum values are preserved as integers.
     """
 
     serial: str = ""
@@ -79,7 +76,7 @@ class AdbTrackedDevice:
     connection_type: AdbConnectionType | int = AdbConnectionType.UNKNOWN
     negotiated_speed: int = 0
     max_speed: int = 0
-    transport_id: AdbTransportId | Literal[0] = 0
+    transport_id: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -121,22 +118,11 @@ class AdbTrackedDevice:
                 ),
             )
 
-        transport_id = self.transport_id
-        if isinstance(transport_id, AdbTransportId):
-            pass
-        elif isinstance(transport_id, bool) or not isinstance(transport_id, Integral):
-            raise TypeError(
-                "ADB device transport_id must be AdbTransportId or integer zero"
-            )
-        else:
-            raw_transport_id = int(transport_id)
-            if raw_transport_id < 0:
-                raise ValueError("ADB device transport_id cannot be negative")
-            object.__setattr__(
-                self,
-                "transport_id",
-                0 if raw_transport_id == 0 else AdbTransportId(raw_transport_id),
-            )
+        object.__setattr__(
+            self,
+            "transport_id",
+            _require_int(self.transport_id, field_name="ADB device transport_id"),
+        )
 
 
 @dataclass(frozen=True, slots=True)

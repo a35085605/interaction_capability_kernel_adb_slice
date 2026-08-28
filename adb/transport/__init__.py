@@ -37,11 +37,10 @@ from adb.transport.resolution import (
     AdbConfiguredTransportResolutionStatus,
     resolve_configured_transport,
 )
+from adb.transport.identity import AdbDeviceSerial, AdbTransportId
 from adb.transport.selection import (
-    AdbDeviceSerial,
     AdbTransportById,
     AdbTransportBySerial,
-    AdbTransportId,
     AdbTransportSelector,
 )
 

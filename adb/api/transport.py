@@ -12,7 +12,7 @@ from adb.transport.configuration import (
 from adb.transport.lifecycle.supervision.policy import (
     AdbConfiguredTransportSupervisionPolicy,
 )
-from adb.transport.selection import AdbDeviceSerial
+from adb.transport.identity import AdbDeviceSerial
 
 
 class AdbConfiguredTransportType(str, Enum):

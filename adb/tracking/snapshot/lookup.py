@@ -40,7 +40,7 @@ def find_tracked_device(
         matches = [
             device
             for device in record.devices
-            if device.transport_id == selector.transport_id
+            if device.transport_id == selector.transport_id.value
         ]
     else:
         raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")

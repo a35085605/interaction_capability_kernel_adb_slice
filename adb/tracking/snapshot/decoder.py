@@ -8,8 +8,6 @@ from adb.tracking.snapshot.model import (
     AdbDevicesRecord,
     AdbTrackedDevice,
 )
-from adb.transport.selection import AdbTransportId
-
 
 _DEVICE_STRING_FIELDS = {
     1: "serial",
@@ -94,10 +92,7 @@ def _decode_device(payload: bytes) -> AdbTrackedDevice:
                 raise AdbProtocolError(
                     f"ADB Device transport_id has wire type {wire_type}, expected 0"
                 )
-            raw_transport_id = _decode_int64(reader.read_varint())
-            values["transport_id"] = (
-                0 if raw_transport_id == 0 else AdbTransportId(raw_transport_id)
-            )
+            values["transport_id"] = _decode_int64(reader.read_varint())
             continue
 
         reader.skip(wire_type)

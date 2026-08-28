@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
-from adb.transport.selection import AdbDeviceSerial
+from adb.transport.identity import AdbDeviceSerial
 
 if TYPE_CHECKING:
     from adb.tracking.snapshot.model import AdbConnectionType

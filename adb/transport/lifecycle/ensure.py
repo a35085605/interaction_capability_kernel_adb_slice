@@ -27,7 +27,7 @@ from adb.transport.resolution import (
     resolve_configured_transport,
 )
 from adb.transport.lifecycle.control.port import AdbTcpConnect, AdbTcpConnector
-from adb.transport.selection import AdbDeviceSerial
+from adb.transport.identity import AdbDeviceSerial
 from eventing import EventPublisher
 from native_attempt import NativeAttemptResult, NativeAttemptStatus
 

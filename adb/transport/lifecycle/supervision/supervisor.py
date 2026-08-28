@@ -40,7 +40,7 @@ from adb.tracking.signal import (
     AdbDevicesTrackingStarted,
     AdbDevicesTrackingStopped,
 )
-from adb.transport.selection import AdbDeviceSerial
+from adb.transport.identity import AdbDeviceSerial
 from eventing import EventBus, EventSubscriptionToken
 
 

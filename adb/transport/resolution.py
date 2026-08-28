@@ -5,6 +5,7 @@ from enum import Enum
 
 from adb.server.identity import AdbServer
 from adb.transport.configuration import AdbConfiguredTransport
+from adb.transport.identity import AdbTransportId
 from adb.tracking.snapshot.identity import AdbDevicesSnapshotEpoch
 from adb.tracking.snapshot.model import (
     AdbConnectionType,
@@ -86,6 +87,19 @@ class AdbConfiguredTransportResolution:
             if self.status is AdbConfiguredTransportResolutionStatus.RESOLVED
             else None
         )
+
+    @property
+    def transport_id(self) -> AdbTransportId | None:
+        """Convert a resolved raw AOSP transport ID into the domain identity.
+
+        Zero means the observation did not provide a usable transport identity. Any other value
+        crosses the domain boundary here and is validated by ``AdbTransportId``.
+        """
+
+        row = self.row
+        if row is None or row.transport_id == 0:
+            return None
+        return AdbTransportId(row.transport_id)
 
 
 @dataclass(frozen=True, slots=True)
