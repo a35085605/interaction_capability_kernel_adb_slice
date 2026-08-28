@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
-from adb._internal.client import AdbServiceClient
+from adb.protocol.smart_socket.client import AdbServiceClient
 from adb.server.status.decoder import parse_server_status
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.status.model import AdbServerStatus

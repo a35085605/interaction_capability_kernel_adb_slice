@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from adb._internal.client import AdbServiceClient
+from adb.protocol.smart_socket.client import AdbServiceClient
 from adb.errors import AdbProtocolError
 from adb.server.identity import AdbServer
 from adb.transport.features import AdbTransportFeatures

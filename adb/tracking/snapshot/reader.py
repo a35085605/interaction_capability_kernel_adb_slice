@@ -11,7 +11,7 @@ from adb.tracking.snapshot.identity import (
 )
 
 if TYPE_CHECKING:
-    from adb._internal.client import AdbServiceClient
+    from adb.protocol.smart_socket.client import AdbServiceClient
 
 
 class AdbDevicesSnapshotReader(Protocol):
@@ -25,7 +25,7 @@ _ClientFactory = Callable[[AdbServer], "AdbServiceClient"]
 
 
 def _default_client_factory(server: AdbServer) -> AdbServiceClient:
-    from adb._internal.client import AdbServiceClient
+    from adb.protocol.smart_socket.client import AdbServiceClient
 
     return AdbServiceClient(server.endpoint)
 

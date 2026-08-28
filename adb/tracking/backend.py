@@ -9,7 +9,7 @@ from time import monotonic
 from typing import Protocol, runtime_checkable
 
 from adb.tracking.snapshot.model import AdbDevicesRecord
-from adb._internal.framing import encode_service, parse_hex_length
+from adb.protocol.smart_socket.framing import encode_service, parse_hex_length
 from adb.tracking.snapshot.decoder import parse_devices_record
 from adb.errors import (
     AdbProtocolError,

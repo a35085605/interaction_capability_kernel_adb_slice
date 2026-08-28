@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from adb._internal.protobuf_wire import ProtoReader
+from adb.protocol.protobuf import ProtoReader
 from adb.errors import AdbProtocolError
 from adb.tracking.snapshot.model import (
     AdbConnectionState,

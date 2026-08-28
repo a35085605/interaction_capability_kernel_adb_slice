@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from adb._internal.subprocess import (
+from adb.cli.subprocess import (
     normalize_executable,
     normalize_timeout,
     run_adb,

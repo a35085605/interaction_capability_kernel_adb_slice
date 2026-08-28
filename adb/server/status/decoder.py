@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from adb._internal.protobuf_wire import ProtoReader
+from adb.protocol.protobuf import ProtoReader
 from adb.errors import AdbProtocolError
 from adb.server.status.model import AdbMdnsBackend, AdbServerStatus, AdbUsbBackend
 
