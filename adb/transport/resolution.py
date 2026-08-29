@@ -7,7 +7,7 @@ from adb.server.identity import AdbServer
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.identity import AdbTransportId
 from adb.tracking.snapshot.identity import AdbDevicesSnapshotEpoch
-from adb.tracking.snapshot.model import (
+from adb.aosp.tracking.model import (
     AdbConnectionType,
     AdbDevicesRecord,
     AdbTrackedDevice,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from adb.epoch import Epoch, EpochSequence
-from adb.tracking.snapshot.model import AdbDevicesRecord
+from adb.aosp.tracking.model import AdbDevicesRecord
 
 
 class AdbDevicesSnapshotEpoch(Epoch):

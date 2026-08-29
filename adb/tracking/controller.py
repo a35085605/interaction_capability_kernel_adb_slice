@@ -10,13 +10,14 @@ from adb.errors import (
     AdbServerConnectionError,
     AdbServiceError,
 )
+from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServer
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
 )
-from adb.tracking.snapshot.model import AdbDevicesRecord
-from adb.tracking.backend import (
+from adb.aosp.tracking.model import AdbDevicesRecord
+from adb.aosp.tracking.backend import (
     AdbDevicesTrackingBackend,
     AdbDevicesTrackingBackendStream,
     SmartSocketAdbDevicesTrackingBackend,
@@ -31,7 +32,7 @@ from adb.tracking.signal import (
 from eventing import EventPublisher
 
 
-_TrackingBackendFactory = Callable[[AdbServer], AdbDevicesTrackingBackend]
+_TrackingBackendFactory = Callable[[AdbServerEndpoint], AdbDevicesTrackingBackend]
 _ThreadFactory = Callable[..., Thread]
 
 
@@ -218,18 +219,18 @@ class SmartSocketAdbDevicesTrackingController:
         factory = self._backend_factory
         backend = (
             SmartSocketAdbDevicesTrackingBackend(
-                self.server,
+                self.endpoint,
                 startup_timeout_seconds=self.startup_timeout_seconds,
             )
             if factory is None
-            else factory(self.server)
+            else factory(self.endpoint)
         )
         if not isinstance(backend, AdbDevicesTrackingBackend):
             raise TypeError(
                 "tracking backend factory must return AdbDevicesTrackingBackend"
             )
-        if backend.server != self.server:
-            raise ValueError("tracking backend factory returned a mismatched server lifetime")
+        if backend.endpoint != self.endpoint:
+            raise ValueError("tracking backend factory returned a mismatched server endpoint")
         return backend
 
     def _abort_start(self, backend: AdbDevicesTrackingBackend) -> None:

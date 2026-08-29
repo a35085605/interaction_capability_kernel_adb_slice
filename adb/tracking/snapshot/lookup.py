@@ -4,7 +4,7 @@ from typing import Protocol
 
 from adb.server.identity import AdbServer
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot
-from adb.tracking.snapshot.model import AdbDevicesRecord, AdbTrackedDevice
+from adb.aosp.tracking.model import AdbDevicesRecord, AdbTrackedDevice
 from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
 from adb.transport.selection import (
     AdbTransportById,

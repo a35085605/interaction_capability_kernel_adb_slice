@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from adb.protocol.protobuf import ProtoReader
+from adb.aosp.protocol.protobuf import ProtoReader
 from adb.errors import AdbProtocolError
-from adb.server.status.model import AdbMdnsBackend, AdbServerStatus, AdbUsbBackend
+from adb.aosp.server.status.model import AdbMdnsBackend, AdbServerStatus, AdbUsbBackend
 
 
 _SERVER_STRING_FIELDS = {

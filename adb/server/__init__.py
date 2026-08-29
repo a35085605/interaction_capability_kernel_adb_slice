@@ -27,7 +27,7 @@ from adb.server.failure import (
 from adb.server.identity import AdbServer, ServerEpoch, ServerEpochSequence
 from adb.server.state import AdbServerState, AdbServerStateView, AdbServerStateWriter
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
+from adb.aosp.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 
 __all__ = [

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, TypeAlias
 from adb.transport.identity import AdbDeviceSerial
 
 if TYPE_CHECKING:
-    from adb.tracking.snapshot.model import AdbConnectionType
+    from adb.aosp.tracking.model import AdbConnectionType
 
 
 def _normalize_required_text(value: object, *, field_name: str) -> str:
@@ -101,7 +101,7 @@ class AdbConfiguredTransport:
     def expected_connection_type(self) -> AdbConnectionType:
         """Observed ADB connection type required by this configured transport."""
 
-        from adb.tracking.snapshot.model import AdbConnectionType
+        from adb.aosp.tracking.model import AdbConnectionType
 
         if isinstance(self.transport, AdbUsbTransportConfiguration):
             return AdbConnectionType.USB

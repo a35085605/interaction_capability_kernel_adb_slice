@@ -11,7 +11,7 @@ from adb.tracking.snapshot.identity import (
 )
 
 if TYPE_CHECKING:
-    from adb.protocol.smart_socket.client import AdbServiceClient
+    from adb.aosp.protocol.smart_socket.client import AdbServiceClient
 
 
 class AdbDevicesSnapshotReader(Protocol):
@@ -25,7 +25,7 @@ _ClientFactory = Callable[[AdbServer], "AdbServiceClient"]
 
 
 def _default_client_factory(server: AdbServer) -> AdbServiceClient:
-    from adb.protocol.smart_socket.client import AdbServiceClient
+    from adb.aosp.protocol.smart_socket.client import AdbServiceClient
 
     return AdbServiceClient(server.endpoint)
 
@@ -49,7 +49,7 @@ class SmartSocketAdbDevicesSnapshotReader:
     def read(self, server: AdbServer) -> AdbDevicesSnapshot:
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
-        from adb.tracking.snapshot.decoder import parse_devices_record
+        from adb.aosp.tracking.decoder import parse_devices_record
 
         payload = self._client_factory(server).first_stream_frame(self._SERVICE)
         return AdbDevicesSnapshot(

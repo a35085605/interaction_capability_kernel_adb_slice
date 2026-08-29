@@ -1,6 +1,6 @@
 """Compatibility aliases for the pre-backend tracking implementation names."""
 
-from adb.tracking.backend import (
+from adb.aosp.tracking.backend import (
     SmartSocketAdbDevicesTrackingBackend,
     SmartSocketAdbDevicesTrackingStream,
 )

@@ -8,15 +8,15 @@ from threading import Lock
 from time import monotonic
 from typing import Protocol, runtime_checkable
 
-from adb.tracking.snapshot.model import AdbDevicesRecord
-from adb.protocol.smart_socket.framing import encode_service, parse_hex_length
-from adb.tracking.snapshot.decoder import parse_devices_record
+from adb.aosp.tracking.model import AdbDevicesRecord
+from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
+from adb.aosp.tracking.decoder import parse_devices_record
 from adb.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.server.identity import AdbServer
+from adb.server.endpoint import AdbServerEndpoint
 
 
 _SERVICE = "host:track-devices-proto-binary"
@@ -63,7 +63,7 @@ class AdbDevicesTrackingBackend(Protocol):
     """
 
     @property
-    def server(self) -> AdbServer:
+    def endpoint(self) -> AdbServerEndpoint:
         ...
 
     def open(self) -> AdbDevicesTrackingBackendStream | None:
@@ -124,13 +124,12 @@ class SmartSocketAdbDevicesTrackingBackend:
 
     def __init__(
         self,
-        server: AdbServer,
+        endpoint: AdbServerEndpoint,
         startup_timeout_seconds: float = 5.0,
     ) -> None:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
-        self.server = server
-        self.endpoint = server.endpoint
+        if not isinstance(endpoint, AdbServerEndpoint):
+            raise TypeError("endpoint must be AdbServerEndpoint")
+        self.endpoint = endpoint
         self.startup_timeout_seconds = _normalize_startup_timeout(
             startup_timeout_seconds
         )

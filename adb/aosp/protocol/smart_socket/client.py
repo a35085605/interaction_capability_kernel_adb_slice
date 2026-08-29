@@ -16,7 +16,7 @@ from adb.errors import (
     AdbTransportNotFoundError,
     AdbTransportUnavailableError,
 )
-from adb.protocol.smart_socket.framing import encode_service, parse_hex_length
+from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
 from adb.server.endpoint import AdbServerEndpoint
 from adb.transport.selection import (
     AdbTransportById,

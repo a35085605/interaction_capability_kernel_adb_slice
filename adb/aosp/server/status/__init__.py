@@ -1,11 +1,11 @@
 """ADB server status facts and read contracts."""
 
-from adb.server.status.model import (
+from adb.aosp.server.status.model import (
     AdbMdnsBackend,
     AdbServerStatus,
     AdbUsbBackend,
 )
-from adb.server.status.reader import AdbServerStatusReader
+from adb.aosp.server.status.reader import AdbServerStatusReader
 
 __all__ = [
     "AdbMdnsBackend",

@@ -10,7 +10,7 @@ from adb.tracking.snapshot.lookup import (
     SnapshotAdbTrackedDeviceLookup,
     find_tracked_device,
 )
-from adb.tracking.snapshot.model import (
+from adb.aosp.tracking.model import (
     AdbConnectionState,
     AdbConnectionType,
     AdbDevicesRecord,
