@@ -3,8 +3,22 @@ from __future__ import annotations
 from threading import RLock
 
 from adb.runtime.managed import AdbManagedRuntime
+from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
+from adb.server.lifecycle.control.result import (
+    AdbServerProvisionDeferred,
+    AdbServerProvisionFailed,
+    AdbServerProvisioned,
+)
+from adb.server.lifecycle.supervision.intent import (
+    AdbServerActivateIntent,
+    AdbServerDisposeIntent,
+    AdbServerLifecycleIntent,
+    AdbServerLifecycleIntentResult,
+    AdbServerProvisionIntent,
+    AdbServerRetireIntent,
+)
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.identity import AdbServer
@@ -38,6 +52,7 @@ class AdbRuntime(AdbManagedRuntime):
         tracking_supervisor: AdbDevicesTrackingSupervisor | None = None,
         transport_supervisor: AdbConfiguredTransportSupervisor | None = None,
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
+        _bootstrap_server: bool = False,
     ) -> None:
         if not isinstance(state, AdbRuntimeState):
             raise TypeError("state must be AdbRuntimeState")
@@ -61,6 +76,8 @@ class AdbRuntime(AdbManagedRuntime):
             )
         if not isinstance(server_recovery_enabled, bool):
             raise TypeError("server_recovery_enabled must be bool")
+        if not isinstance(_bootstrap_server, bool):
+            raise TypeError("_bootstrap_server must be bool")
         if tracking_supervisor is not None and not isinstance(
             tracking_supervisor, AdbDevicesTrackingSupervisor
         ):
@@ -107,14 +124,18 @@ class AdbRuntime(AdbManagedRuntime):
         super().__init__(state.server)
         self._state = state
         self._event_bus = event_bus
+        self._server_provisioner = server_provisioner
+        self._server_retirer = server_retirer
+        self._server_lifecycle_lock = RLock()
+        if _bootstrap_server:
+            self._bootstrap_initial_server()
+
         self._server_supervisor: AdbServerSupervisor | None = None
         if server_supervision_scheduler is not None:
             if event_bus is None:
                 raise RuntimeError("validated server supervision requires an event bus")
             self._server_supervisor = AdbServerSupervisor(
-                state.server,
-                provisioner=server_provisioner,
-                retirer=server_retirer,
+                self,
                 event_bus=event_bus,
                 scheduler=server_supervision_scheduler,
                 policy=server_supervision_policy,
@@ -135,6 +156,133 @@ class AdbRuntime(AdbManagedRuntime):
         """Read-only current server-bound tracked-devices observation for this runtime."""
 
         return self._state.devices
+
+    def dispatch_server_lifecycle_intent(
+        self,
+        intent: AdbServerLifecycleIntent,
+    ) -> AdbServerLifecycleIntentResult:
+        """Interpret one server lifecycle intent against runtime-owned controls and state."""
+
+        if isinstance(intent, AdbServerProvisionIntent):
+            with self._server_lifecycle_lock:
+                if self._state.server.current is not None:
+                    return AdbServerProvisionDeferred(
+                        "ADB runtime already has an active server lifetime"
+                    )
+                return self._server_provisioner.provision()
+
+        if isinstance(intent, AdbServerActivateIntent):
+            with self._server_lifecycle_lock:
+                return self._state.server.activate(intent.server)
+
+        if isinstance(intent, AdbServerRetireIntent):
+            with self._server_lifecycle_lock:
+                return self._state.server.retire(intent.server)
+
+        if isinstance(intent, AdbServerDisposeIntent):
+            # Backend disposal is deliberately independent of the authoritative state lock so a
+            # retired attachment may be released while its successor is being provisioned.
+            self._server_retirer.retire(intent.server)
+            return None
+
+        raise TypeError("unsupported ADB server lifecycle intent")
+
+    def _bootstrap_initial_server(self) -> None:
+        """Provision and activate the initial server through the runtime lifecycle authority."""
+
+        if self._state.server.current is not None:
+            raise ValueError("bootstrap server provisioning requires empty runtime server state")
+
+        result = self.dispatch_server_lifecycle_intent(AdbServerProvisionIntent())
+        if isinstance(result, AdbServerProvisionDeferred):
+            raise AdbServerControlError(
+                f"initial ADB server provisioning deferred: {result.diagnostic}"
+            )
+        if isinstance(result, AdbServerProvisionFailed):
+            raise AdbServerControlError(
+                f"initial ADB server provisioning failed: {result.diagnostic}"
+            )
+        if not isinstance(result, AdbServerProvisioned):
+            raise TypeError("server provisioner returned an unsupported result")
+
+        server = result.server
+        try:
+            activated = self.dispatch_server_lifecycle_intent(
+                AdbServerActivateIntent(server)
+            )
+        except BaseException:
+            self.dispatch_server_lifecycle_intent(AdbServerDisposeIntent(server))
+            raise
+        if activated:
+            return
+
+        self.dispatch_server_lifecycle_intent(AdbServerDisposeIntent(server))
+        raise AdbServerControlError(
+            "initial ADB server provisioning could not commit its server lifetime"
+        )
+
+    def _replace_server_provisioner(
+        self,
+        provisioner: AdbServerProvisioner,
+    ) -> None:
+        """Replace the pre-start provisioning policy while preserving runtime ownership."""
+
+        if not isinstance(provisioner, AdbServerProvisioner):
+            raise TypeError("provisioner must be AdbServerProvisioner")
+        with self._runtime_lock:
+            if self._closed or self._started or self._starting:
+                raise RuntimeError(
+                    "ADB server provisioner can only be replaced before runtime start"
+                )
+            self._server_provisioner = provisioner
+
+    def _install_auxiliary_supervisors(
+        self,
+        tracking_supervisor: AdbDevicesTrackingSupervisor | None,
+        transport_supervisor: AdbConfiguredTransportSupervisor | None,
+    ) -> None:
+        """Install bootstrap-composed tracking and transport supervisors before start."""
+
+        if tracking_supervisor is not None and not isinstance(
+            tracking_supervisor, AdbDevicesTrackingSupervisor
+        ):
+            raise TypeError("tracking_supervisor must be AdbDevicesTrackingSupervisor or None")
+        if transport_supervisor is not None and not isinstance(
+            transport_supervisor, AdbConfiguredTransportSupervisor
+        ):
+            raise TypeError(
+                "transport_supervisor must be AdbConfiguredTransportSupervisor or None"
+            )
+        if (
+            tracking_supervisor is not None
+            and tracking_supervisor.server_state is not self._state.server
+        ):
+            raise ValueError("tracking supervisor must share the runtime server state")
+        if (
+            tracking_supervisor is not None
+            and tracking_supervisor.devices is not self._state.devices
+        ):
+            raise ValueError("tracking supervisor must share the runtime tracked-devices state")
+        if (
+            transport_supervisor is not None
+            and transport_supervisor.server_state is not self._state.server
+        ):
+            raise ValueError("transport supervisor must share the runtime server state")
+        if (
+            transport_supervisor is not None
+            and transport_supervisor.devices is not self._state.devices
+        ):
+            raise ValueError("transport supervisor must share the runtime tracked-devices state")
+
+        with self._runtime_lock:
+            if self._closed or self._started or self._starting:
+                raise RuntimeError(
+                    "runtime supervisors can only be installed before runtime start"
+                )
+            if self._tracking_supervisor is not None or self._transport_supervisor is not None:
+                raise RuntimeError("runtime auxiliary supervisors are already configured")
+            self._tracking_supervisor = tracking_supervisor
+            self._transport_supervisor = transport_supervisor
 
     @property
     def started(self) -> bool:

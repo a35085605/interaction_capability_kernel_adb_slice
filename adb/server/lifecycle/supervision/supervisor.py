@@ -5,8 +5,13 @@ from datetime import timedelta
 from random import random
 from threading import Lock, Thread, current_thread
 
-from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
-from adb.server.lifecycle.control.retirer import AdbServerRetirer
+from adb.server.lifecycle.supervision.intent import (
+    AdbServerActivateIntent,
+    AdbServerDisposeIntent,
+    AdbServerLifecycleIntentDispatcher,
+    AdbServerProvisionIntent,
+    AdbServerRetireIntent,
+)
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.transition import (
     AdbServerRecoveryActivate,
@@ -23,7 +28,7 @@ from adb.server.failure import (
     AdbServerProcessExitedFailure,
 )
 from adb.server.identity import AdbServer
-from adb.server.state import AdbServerState, AdbServerStateView
+from adb.server.state import AdbServerStateView
 from adb.server.signal import (
     AdbServerRecoveryCycleId,
     AdbServerLost,
@@ -56,14 +61,13 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 class AdbServerSupervisor:
     """Reconcile ADB server failures across successive server lifetimes.
 
-    ``AdbServerState`` holds current-lifetime truth; automatic replacement is fixed at composition.
+    The supervisor owns recovery policy and scheduling only.  Runtime lifecycle intents are the
+    sole path for provisioning, retirement, backend disposal, and authoritative state mutation.
     """
 
     def __init__(
         self,
-        server: AdbServer | AdbServerState,
-        provisioner: AdbServerProvisioner,
-        retirer: AdbServerRetirer,
+        runtime: AdbServerLifecycleIntentDispatcher,
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
@@ -72,18 +76,12 @@ class AdbServerSupervisor:
         _random: _RandomSource = random,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if isinstance(server, AdbServerState):
-            server_state = server
-        elif isinstance(server, AdbServer):
-            server_state = AdbServerState(server)
-        else:
-            raise TypeError("server must be AdbServer or AdbServerState")
-        if server_state.current is None:
-            raise ValueError("server state must have an active initial server")
-        if not isinstance(provisioner, AdbServerProvisioner):
-            raise TypeError("provisioner must be AdbServerProvisioner")
-        if not isinstance(retirer, AdbServerRetirer):
-            raise TypeError("retirer must be AdbServerRetirer")
+        if not isinstance(runtime, AdbServerLifecycleIntentDispatcher):
+            raise TypeError(
+                "runtime must satisfy AdbServerLifecycleIntentDispatcher"
+            )
+        if runtime.server is None:
+            raise ValueError("runtime must have an active initial server")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -97,10 +95,8 @@ class AdbServerSupervisor:
             field_name="recovery_enabled",
         )
 
-        self._server_state = server_state
+        self._runtime = runtime
         self._bus = event_bus
-        self._provisioner = provisioner
-        self._retirer = retirer
         self._scheduler = scheduler
         self._policy = policy
         self._random = _random
@@ -120,13 +116,13 @@ class AdbServerSupervisor:
     def server(self) -> AdbServer | None:
         """Current server lifetime from the runtime authoritative state."""
 
-        return self._server_state.current
+        return self._runtime.server
 
     @property
     def server_state(self) -> AdbServerStateView:
-        """Read-only authoritative state used by this supervisor."""
+        """Read-only authoritative state projection provided by the owning runtime."""
 
-        return self._server_state
+        return self._runtime.server_state
 
     @property
     def recovery_enabled(self) -> bool:
@@ -200,7 +196,10 @@ class AdbServerSupervisor:
 
             if server is not None:
                 with self._lock:
-                    if not self._server_state.retire(server):
+                    retired = self._runtime.dispatch_server_lifecycle_intent(
+                        AdbServerRetireIntent(server)
+                    )
+                    if not retired:
                         return
                     retired_server = server
                     self._pending_retired_disposals.add(server)
@@ -251,7 +250,7 @@ class AdbServerSupervisor:
                 self._attempt_threads.discard(active)
 
     def _dispose_retired_server(self, server: AdbServer) -> None:
-        self._retirer.retire(server)
+        self._runtime.dispatch_server_lifecycle_intent(AdbServerDisposeIntent(server))
 
     def _launch_recovery_attempt(
         self,
@@ -291,22 +290,35 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
 
+                provision_result = self._runtime.dispatch_server_lifecycle_intent(
+                    AdbServerProvisionIntent()
+                )
                 transition = transition_recovery(
                     attempt,
-                    self._provisioner.provision(),
+                    provision_result,
                     max_attempts=self._policy.max_attempts,
                 )
 
                 if isinstance(transition, AdbServerRecoveryActivate):
                     with self._lock:
                         if not self._recovery_is_current_locked(cycle_id):
-                            return
-                        if not self._server_state.activate(transition.server):
-                            return
-                        retry_token = self._retry_token
-                        self._retry_token = None
-                        self._cycle_id = None
-                        recovered_event = AdbServerRecovered(transition.server)
+                            stale_server = transition.server
+                        elif self._runtime.dispatch_server_lifecycle_intent(
+                            AdbServerActivateIntent(transition.server)
+                        ):
+                            stale_server = None
+                            retry_token = self._retry_token
+                            self._retry_token = None
+                            self._cycle_id = None
+                            recovered_event = AdbServerRecovered(transition.server)
+                        else:
+                            stale_server = transition.server
+
+                    if stale_server is not None:
+                        self._runtime.dispatch_server_lifecycle_intent(
+                            AdbServerDisposeIntent(stale_server)
+                        )
+                        return
 
             if recovered_event is not None:
                 if retry_token is not None:

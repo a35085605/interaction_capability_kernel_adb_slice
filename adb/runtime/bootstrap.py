@@ -6,17 +6,15 @@ from dataclasses import dataclass
 from adb.epoch import EpochIssuer
 from adb.runtime.core import AdbRuntime
 from adb.server.address import AdbServerTcpAddress
-from adb.server.identity import AdbServer, ServerEpochSequence
+from adb.server.identity import ServerEpochSequence
 from adb.server.lifecycle.control.backend import AdbServerBackend
-from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
-from adb.server.lifecycle.control.result import (
-    AdbServerProvisionDeferred,
-    AdbServerProvisionFailed,
-    AdbServerProvisioned,
-)
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
+from adb.server.lifecycle.supervision.intent import (
+    AdbServerDisposeIntent,
+    AdbServerRetireIntent,
+)
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.state import AdbServerState
 from adb.runtime.state import AdbRuntimeState
@@ -51,11 +49,12 @@ def _default_server_backend_factory() -> AdbServerBackend:
 
 @dataclass(frozen=True, slots=True)
 class _BootstrapCore:
+    server_backend: AdbServerBackend
+    server_epoch_issuer: ServerEpochSequence
     server_provisioner: AdbServerProvisioner
     server_retirer: AdbServerRetirer
     runtime_state: AdbRuntimeState
     devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch]
-    initial_server: AdbServer
 
 
 class AdbRuntimeBootstrap:
@@ -123,15 +122,20 @@ class AdbRuntimeBootstrap:
         """Build a runtime with lifecycle capabilities but no supervision automation."""
 
         core = self._build_core()
+        runtime: AdbRuntime | None = None
         try:
-            return self._build_runtime(
+            runtime = self._build_runtime(
                 core.runtime_state,
                 server_provisioner=core.server_provisioner,
                 server_retirer=core.server_retirer,
                 transport_supervision_policy=self._transport_supervision_policy,
+                _bootstrap_server=True,
             )
+            self._configure_recovery_provisioner(runtime, core)
+            return runtime
         except BaseException:
-            core.server_retirer.retire(core.initial_server)
+            if runtime is not None:
+                self._dispose_failed_runtime(runtime)
             raise
 
     def build_managed(
@@ -163,10 +167,27 @@ class AdbRuntimeBootstrap:
             )
 
         core = self._build_core()
+        runtime: AdbRuntime | None = None
         try:
+            runtime = self._build_runtime(
+                core.runtime_state,
+                server_provisioner=core.server_provisioner,
+                server_retirer=core.server_retirer,
+                event_bus=event_bus,
+                server_supervision_scheduler=scheduler,
+                server_supervision_policy=self._server_supervision_policy,
+                server_recovery_enabled=self._server_recovery_enabled,
+                transport_supervision_policy=self._transport_supervision_policy,
+                _bootstrap_server=True,
+            )
+            self._configure_recovery_provisioner(runtime, core)
+            initial_server = runtime.server
+            if initial_server is None:
+                raise RuntimeError("bootstrapped ADB runtime has no initial server")
+
             tracking_supervisor = (
                 AdbDevicesTrackingSupervisor(
-                    core.initial_server,
+                    initial_server,
                     event_bus,
                     self._tracking_supervision_policy,
                     server_state=core.runtime_state.server,
@@ -178,7 +199,7 @@ class AdbRuntimeBootstrap:
             )
             transport_supervisor = (
                 AdbConfiguredTransportSupervisor(
-                    core.initial_server,
+                    initial_server,
                     event_bus,
                     tcp_transport_ensurer,
                     server_state=core.runtime_state.server,
@@ -187,20 +208,14 @@ class AdbRuntimeBootstrap:
                 if configured_transports
                 else None
             )
-            return self._build_runtime(
-                core.runtime_state,
-                server_provisioner=core.server_provisioner,
-                server_retirer=core.server_retirer,
-                event_bus=event_bus,
-                server_supervision_scheduler=scheduler,
-                server_supervision_policy=self._server_supervision_policy,
-                server_recovery_enabled=self._server_recovery_enabled,
-                tracking_supervisor=tracking_supervisor,
-                transport_supervisor=transport_supervisor,
-                transport_supervision_policy=self._transport_supervision_policy,
+            runtime._install_auxiliary_supervisors(
+                tracking_supervisor,
+                transport_supervisor,
             )
+            return runtime
         except BaseException:
-            core.server_retirer.retire(core.initial_server)
+            if runtime is not None:
+                self._dispose_failed_runtime(runtime)
             raise
 
     def _build_runtime(self, *args: object, **kwargs: object) -> AdbRuntime:
@@ -213,44 +228,47 @@ class AdbRuntimeBootstrap:
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("server backend factory must return AdbServerBackend")
 
-        server_retirer = AdbServerRetirer(backend)
-        initial_provisioner = AdbServerProvisioner(
-            backend,
-            server_epoch_issuer,
-            endpoint=self._endpoint,
+        return _BootstrapCore(
+            server_backend=backend,
+            server_epoch_issuer=server_epoch_issuer,
+            server_provisioner=AdbServerProvisioner(
+                backend,
+                server_epoch_issuer,
+                endpoint=self._endpoint,
+            ),
+            server_retirer=AdbServerRetirer(backend),
+            runtime_state=AdbRuntimeState(
+                server=AdbServerState(),
+                devices=AdbDevicesSnapshotState(),
+            ),
+            devices_snapshot_epoch_issuer=devices_snapshot_epoch_issuer,
         )
-        initial_result = initial_provisioner.provision()
-        if isinstance(initial_result, AdbServerProvisionDeferred):
-            raise AdbServerControlError(
-                f"initial ADB server provisioning deferred: {initial_result.diagnostic}"
-            )
-        if isinstance(initial_result, AdbServerProvisionFailed):
-            raise AdbServerControlError(
-                f"initial ADB server provisioning failed: {initial_result.diagnostic}"
-            )
-        if not isinstance(initial_result, AdbServerProvisioned):
-            raise TypeError("server provisioner returned an unsupported result")
 
-        initial_server = initial_result.server
-        try:
-            recovery_endpoint = initial_server.endpoint if self._pin_endpoint else None
-            return _BootstrapCore(
-                server_provisioner=AdbServerProvisioner(
-                    backend,
-                    server_epoch_issuer,
-                    endpoint=recovery_endpoint,
-                ),
-                server_retirer=server_retirer,
-                runtime_state=AdbRuntimeState(
-                    server=AdbServerState(initial_server),
-                    devices=AdbDevicesSnapshotState(),
-                ),
-                devices_snapshot_epoch_issuer=devices_snapshot_epoch_issuer,
-                initial_server=initial_server,
+    def _configure_recovery_provisioner(
+        self,
+        runtime: AdbRuntime,
+        core: _BootstrapCore,
+    ) -> None:
+        initial_server = runtime.server
+        if initial_server is None:
+            raise RuntimeError("bootstrapped ADB runtime has no initial server")
+        recovery_endpoint = initial_server.endpoint if self._pin_endpoint else None
+        runtime._replace_server_provisioner(
+            AdbServerProvisioner(
+                core.server_backend,
+                core.server_epoch_issuer,
+                endpoint=recovery_endpoint,
             )
-        except BaseException:
-            server_retirer.retire(initial_server)
-            raise
+        )
+
+    @staticmethod
+    def _dispose_failed_runtime(runtime: AdbRuntime) -> None:
+        runtime.close()
+        server = runtime.server
+        if server is None:
+            return
+        if runtime.dispatch_server_lifecycle_intent(AdbServerRetireIntent(server)):
+            runtime.dispatch_server_lifecycle_intent(AdbServerDisposeIntent(server))
 
 
 def _is_event_bus(value: object) -> bool:
