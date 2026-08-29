@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from adb.aosp.errors import AdbProtocolError
 from adb.aosp.protocol.smart_socket.client import AdbServiceClient
 from adb.aosp.protocol.smart_socket.services import (
     transport_features_by_id_service,
     transport_features_by_serial_service,
 )
+from adb.aosp.transport.features import parse_transport_features
 from adb.server.identity import AdbServer
 from adb.transport.features import AdbTransportFeatures
 from adb.transport.selection import (
@@ -32,14 +32,6 @@ def _feature_service(selector: AdbTransportSelector) -> str:
     raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")
 
 
-def _decode_features(payload: bytes) -> frozenset[str]:
-    try:
-        text = payload.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise AdbProtocolError("ADB feature list is not valid UTF-8") from exc
-    return frozenset(part for part in text.split(",") if part)
-
-
 class SmartSocketAdbTransportFeaturesReader:
     """One-shot feature reader for one selected transport."""
 
@@ -50,7 +42,7 @@ class SmartSocketAdbTransportFeaturesReader:
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
         payload = self._client_factory(server).host_query(_feature_service(selector))
-        return AdbTransportFeatures(_decode_features(payload))
+        return parse_transport_features(payload)
 
 
 __all__ = ["SmartSocketAdbTransportFeaturesReader"]

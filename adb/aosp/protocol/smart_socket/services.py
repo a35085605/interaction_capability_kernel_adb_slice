@@ -5,6 +5,7 @@ from numbers import Integral
 
 _TRANSPORT_BY_SERIAL_PREFIX = "host:transport:"
 _TRANSPORT_BY_ID_PREFIX = "host:transport-id:"
+TRACK_DEVICES_PROTO_BINARY_SERVICE = "host:track-devices-proto-binary"
 
 
 def _require_service_text(value: object, *, field_name: str) -> str:
@@ -58,6 +59,7 @@ def is_transport_selection_service(service: str) -> bool:
 
 
 __all__ = [
+    "TRACK_DEVICES_PROTO_BINARY_SERVICE",
     "is_transport_selection_service",
     "transport_by_id_service",
     "transport_by_serial_service",

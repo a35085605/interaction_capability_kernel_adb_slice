@@ -8,18 +8,16 @@ from threading import Lock
 from time import monotonic
 from typing import Protocol, runtime_checkable
 
-from adb.aosp.tracking.model import Devices
-from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
-from adb.aosp.tracking.decoder import parse_devices
 from adb.aosp.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
     AdbServiceError,
 )
+from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
+from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
 from adb.aosp.server.address import AdbServerTcpAddress
-
-
-_SERVICE = "host:track-devices-proto-binary"
+from adb.aosp.tracking.decoder import parse_devices
+from adb.aosp.tracking.model import Devices
 
 
 class _TrackingBackendClosed(Exception):
@@ -313,7 +311,7 @@ class SmartSocketAdbDevicesTrackingBackend:
             ) from exc
 
     def _handshake(self, sock: socket.socket, deadline: float) -> None:
-        request = encode_service(_SERVICE)
+        request = encode_service(TRACK_DEVICES_PROTO_BINARY_SERVICE)
         self._send_all(sock, request, deadline)
         status = self._recv_exact(sock, 4, deadline=deadline)
         if status == b"OKAY":
@@ -332,7 +330,7 @@ class SmartSocketAdbDevicesTrackingBackend:
                     "ADB service error is not valid UTF-8"
                 ) from exc
             raise AdbServiceError(
-                _SERVICE,
+                TRACK_DEVICES_PROTO_BINARY_SERVICE,
                 detail or "ADB server rejected track-devices",
             )
         raise AdbProtocolError(

@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
+from adb.aosp.tracking.reader import AdbDevicesReader, SmartSocketAdbDevicesReader
 from adb.epoch import EpochIssuer
 from adb.server.identity import AdbServer
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
 )
-
-if TYPE_CHECKING:
-    from adb.aosp.protocol.smart_socket.client import AdbServiceClient
 
 
 class AdbDevicesSnapshotReader(Protocol):
@@ -21,39 +18,29 @@ class AdbDevicesSnapshotReader(Protocol):
         ...
 
 
-_ClientFactory = Callable[[AdbServer], "AdbServiceClient"]
-
-
-def _default_client_factory(server: AdbServer) -> AdbServiceClient:
-    from adb.aosp.protocol.smart_socket.client import AdbServiceClient
-
-    return AdbServiceClient(server.endpoint)
-
-
 class SmartSocketAdbDevicesSnapshotReader:
-    """One-shot track-devices snapshot reader from the first protobuf tracker frame."""
-
-    _SERVICE = "host:track-devices-proto-binary"
+    """Identify one native AOSP devices observation as a domain snapshot."""
 
     def __init__(
         self,
         *,
         devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch],
-        _client_factory: _ClientFactory = _default_client_factory,
+        _devices_reader: AdbDevicesReader | None = None,
     ) -> None:
         if not isinstance(devices_snapshot_epoch_issuer, EpochIssuer):
             raise TypeError("devices_snapshot_epoch_issuer must satisfy EpochIssuer")
+        if _devices_reader is None:
+            _devices_reader = SmartSocketAdbDevicesReader()
+        if not isinstance(_devices_reader, AdbDevicesReader):
+            raise TypeError("_devices_reader must satisfy AdbDevicesReader")
         self._devices_snapshot_epoch_issuer = devices_snapshot_epoch_issuer
-        self._client_factory = _client_factory
+        self._devices_reader = _devices_reader
 
     def read(self, server: AdbServer) -> AdbDevicesSnapshot:
         if not isinstance(server, AdbServer):
             raise TypeError("server must be AdbServer")
-        from adb.aosp.tracking.decoder import parse_devices
-
-        payload = self._client_factory(server).first_stream_frame(self._SERVICE)
         return AdbDevicesSnapshot(
-            payload=parse_devices(payload),
+            payload=self._devices_reader.read(server.endpoint),
             epoch=self._devices_snapshot_epoch_issuer.issue(),
         )
 
