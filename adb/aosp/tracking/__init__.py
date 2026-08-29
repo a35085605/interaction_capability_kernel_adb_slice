@@ -1,3 +1,5 @@
-"""AOSP track-devices records, decoding, and low-level streaming."""
+"""AOSP ``track-devices`` protocol models, decoding, and low-level streaming."""
 
-__all__: list[str] = []
+from adb.aosp.tracking.model import ConnectionState, ConnectionType, Device, Devices
+
+__all__ = ["ConnectionState", "ConnectionType", "Device", "Devices"]

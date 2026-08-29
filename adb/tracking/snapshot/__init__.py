@@ -1,4 +1,4 @@
-"""ADB tracked-device records, snapshot identity, state, readers, and queries."""
+"""Domain-identified ADB device snapshots, state, readers, and queries."""
 
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
@@ -9,12 +9,6 @@ from adb.tracking.snapshot.lookup import (
     AdbTrackedDeviceLookup,
     SnapshotAdbTrackedDeviceLookup,
     find_tracked_device,
-)
-from adb.aosp.tracking.model import (
-    AdbConnectionState,
-    AdbConnectionType,
-    AdbDevicesRecord,
-    AdbTrackedDevice,
 )
 from adb.tracking.snapshot.reader import (
     AdbDevicesSnapshotReader,
@@ -28,10 +22,7 @@ from adb.tracking.snapshot.state import (
 )
 
 __all__ = [
-    "AdbConnectionState",
-    "AdbConnectionType",
     "AdbDevicesObservation",
-    "AdbDevicesRecord",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotEpoch",
     "AdbDevicesSnapshotEpochSequence",
@@ -39,7 +30,6 @@ __all__ = [
     "AdbDevicesSnapshotState",
     "AdbDevicesSnapshotView",
     "AdbDevicesSnapshotWriter",
-    "AdbTrackedDevice",
     "AdbTrackedDeviceLookup",
     "SmartSocketAdbDevicesSnapshotReader",
     "SnapshotAdbTrackedDeviceLookup",

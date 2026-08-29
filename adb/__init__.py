@@ -42,10 +42,7 @@ from adb.server import (
     SubprocessAdbServerBackend,
 )
 from adb.tracking import (
-    AdbConnectionState,
-    AdbConnectionType,
     AdbDevicesObservation,
-    AdbDevicesRecord,
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
     AdbDevicesSnapshotEpochSequence,
@@ -53,7 +50,6 @@ from adb.tracking import (
     AdbDevicesSnapshotState,
     AdbDevicesSnapshotView,
     AdbDevicesSnapshotWriter,
-    AdbTrackedDevice,
     AdbTrackedDeviceLookup,
 )
 from adb.transport import (
@@ -70,11 +66,8 @@ __all__ = [
     "AdbConfiguredTransportHandle",
     "AdbConfiguredTransportRegistration",
     "AdbConfiguredTransportType",
-    "AdbConnectionState",
-    "AdbConnectionType",
     "AdbDeviceSerial",
     "AdbDevicesObservation",
-    "AdbDevicesRecord",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotEpoch",
     "AdbDevicesSnapshotEpochSequence",
@@ -111,7 +104,6 @@ __all__ = [
     "AdbServerUnavailableError",
     "AdbServiceError",
     "AdbTimeoutError",
-    "AdbTrackedDevice",
     "AdbTrackedDeviceLookup",
     "AdbTransportAmbiguousError",
     "AdbTransportById",

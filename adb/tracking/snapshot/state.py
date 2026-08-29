@@ -6,7 +6,6 @@ from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServer
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot, AdbDevicesSnapshotEpoch
-from adb.aosp.tracking.model import AdbDevicesRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,12 +26,6 @@ class AdbDevicesObservation:
         """Runtime-scoped identity of the underlying snapshot."""
 
         return self.snapshot.epoch
-
-    @property
-    def record(self) -> AdbDevicesRecord:
-        """Complete tracked-devices record carried by the underlying snapshot."""
-
-        return self.snapshot.record
 
 
 @runtime_checkable

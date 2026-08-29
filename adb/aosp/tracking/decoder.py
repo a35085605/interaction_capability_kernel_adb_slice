@@ -3,10 +3,10 @@ from __future__ import annotations
 from adb.aosp.protocol.protobuf import ProtoReader
 from adb.aosp.errors import AdbProtocolError
 from adb.aosp.tracking.model import (
-    AdbConnectionState,
-    AdbConnectionType,
-    AdbDevicesRecord,
-    AdbTrackedDevice,
+    ConnectionState,
+    ConnectionType,
+    Devices,
+    Device,
 )
 
 _DEVICE_STRING_FIELDS = {
@@ -35,7 +35,7 @@ def _decode_int64(raw: int) -> int:
     return raw
 
 
-def _decode_device(payload: bytes) -> AdbTrackedDevice:
+def _decode_device(payload: bytes) -> Device:
     reader = ProtoReader(payload)
     values: dict[str, object] = {}
 
@@ -60,7 +60,7 @@ def _decode_device(payload: bytes) -> AdbTrackedDevice:
                 )
             raw_state = reader.read_varint()
             try:
-                values["state"] = AdbConnectionState(raw_state)
+                values["state"] = ConnectionState(raw_state)
             except ValueError:
                 values["state"] = raw_state
             continue
@@ -73,7 +73,7 @@ def _decode_device(payload: bytes) -> AdbTrackedDevice:
                 )
             raw_type = reader.read_varint()
             try:
-                values["connection_type"] = AdbConnectionType(raw_type)
+                values["connection_type"] = ConnectionType(raw_type)
             except ValueError:
                 values["connection_type"] = raw_type
             continue
@@ -97,12 +97,12 @@ def _decode_device(payload: bytes) -> AdbTrackedDevice:
 
         reader.skip(wire_type)
 
-    return AdbTrackedDevice(**values)
+    return Device(**values)
 
 
-def parse_devices_record(payload: bytes) -> AdbDevicesRecord:
+def parse_devices(payload: bytes) -> Devices:
     reader = ProtoReader(payload)
-    devices: list[AdbTrackedDevice] = []
+    devices: list[Device] = []
 
     while not reader.done:
         field_number, wire_type = reader.read_key()
@@ -115,7 +115,7 @@ def parse_devices_record(payload: bytes) -> AdbDevicesRecord:
             continue
         reader.skip(wire_type)
 
-    return AdbDevicesRecord(tuple(devices))
+    return Devices(tuple(devices))
 
 
-__all__ = ["parse_devices_record"]
+__all__ = ["parse_devices"]

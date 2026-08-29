@@ -35,7 +35,6 @@ from adb.transport.resolution import (
     AdbConfiguredTransportProjection,
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
-    resolve_configured_transport,
 )
 from adb.transport.identity import AdbDeviceSerial, AdbTransportId
 from adb.transport.selection import (
@@ -78,5 +77,4 @@ __all__ = [
     "AdbTransportReconnector",
     "AdbTransportSelector",
     "AdbUsbTransportConfiguration",
-    "resolve_configured_transport",
 ]

@@ -1,10 +1,7 @@
 """ADB track-devices observations, state, and streaming lifetimes."""
 
 from adb.tracking.snapshot import (
-    AdbConnectionState,
-    AdbConnectionType,
     AdbDevicesObservation,
-    AdbDevicesRecord,
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
     AdbDevicesSnapshotEpochSequence,
@@ -12,7 +9,6 @@ from adb.tracking.snapshot import (
     AdbDevicesSnapshotState,
     AdbDevicesSnapshotView,
     AdbDevicesSnapshotWriter,
-    AdbTrackedDevice,
     AdbTrackedDeviceLookup,
 )
 from adb.tracking.signal import (
@@ -36,10 +32,7 @@ from adb.tracking.controller import (
 )
 
 __all__ = [
-    "AdbConnectionState",
-    "AdbConnectionType",
     "AdbDevicesObservation",
-    "AdbDevicesRecord",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotEpoch",
     "AdbDevicesSnapshotEpochSequence",
@@ -59,7 +52,6 @@ __all__ = [
     "AdbDevicesTrackingSignal",
     "AdbDevicesTrackingStarted",
     "AdbDevicesTrackingStopped",
-    "AdbTrackedDevice",
     "AdbTrackedDeviceLookup",
     "AdbDeviceTrackerStream",
     "AdbDeviceTracker",

@@ -26,7 +26,6 @@ from adb.transport.resolution import (
     AdbConfiguredTransportProjection,
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
-    resolve_configured_transport,
 )
 from adb.transport.lifecycle.ensure import (
     AdbTcpTransportEnsureReadiness,
@@ -368,9 +367,8 @@ class AdbConfiguredTransportSupervisor:
         if observation.server != self._projection_server:
             raise ValueError("device observation does not match projection server lifetime")
         previous = registration.projection
-        resolution = resolve_configured_transport(
-            registration.configuration,
-            observation.record,
+        resolution = observation.snapshot.resolve_configured_transport(
+            registration.configuration
         )
         current = AdbConfiguredTransportProjection(
             server=observation.server,

@@ -16,7 +16,7 @@ from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
 )
-from adb.aosp.tracking.model import AdbDevicesRecord
+from adb.aosp.tracking.model import Devices
 from adb.aosp.tracking.backend import (
     AdbDevicesTrackingBackend,
     AdbDevicesTrackingBackendStream,
@@ -317,12 +317,12 @@ class SmartSocketAdbDevicesTrackingController:
         if startup_succeeded and terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
-    def _snapshot(self, record: AdbDevicesRecord) -> AdbDevicesSnapshot:
-        if not isinstance(record, AdbDevicesRecord):
-            raise TypeError("record must be AdbDevicesRecord")
+    def _snapshot(self, payload: Devices) -> AdbDevicesSnapshot:
+        if not isinstance(payload, Devices):
+            raise TypeError("payload must be AOSP Devices")
         return AdbDevicesSnapshot(
-            record,
-            self._devices_snapshot_epoch_issuer.issue(),
+            payload=payload,
+            epoch=self._devices_snapshot_epoch_issuer.issue(),
         )
 
     def _can_publish_from(self, backend: AdbDevicesTrackingBackend) -> bool:

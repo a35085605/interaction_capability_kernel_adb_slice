@@ -8,9 +8,9 @@ from threading import Lock
 from time import monotonic
 from typing import Protocol, runtime_checkable
 
-from adb.aosp.tracking.model import AdbDevicesRecord
+from adb.aosp.tracking.model import Devices
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
-from adb.aosp.tracking.decoder import parse_devices_record
+from adb.aosp.tracking.decoder import parse_devices
 from adb.aosp.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
@@ -35,8 +35,8 @@ def _normalize_startup_timeout(value: object) -> float:
     return timeout
 
 
-def _parse_record(payload: bytes) -> AdbDevicesRecord:
-    return parse_devices_record(payload)
+def _parse_record(payload: bytes) -> Devices:
+    return parse_devices(payload)
 
 
 @runtime_checkable
@@ -44,10 +44,10 @@ class AdbDevicesTrackingBackendStream(Protocol):
     """Established backend stream yielding complete tracked-device records."""
 
     @property
-    def initial_record(self) -> AdbDevicesRecord:
+    def initial_record(self) -> Devices:
         ...
 
-    def records(self) -> Iterator[AdbDevicesRecord]:
+    def records(self) -> Iterator[Devices]:
         ...
 
     def close(self) -> None:
@@ -86,16 +86,16 @@ class SmartSocketAdbDevicesTrackingStream:
         self,
         backend: "SmartSocketAdbDevicesTrackingBackend",
         stream_socket: socket.socket,
-        initial_record: AdbDevicesRecord,
+        initial_record: Devices,
     ) -> None:
-        if not isinstance(initial_record, AdbDevicesRecord):
-            raise TypeError("initial_record must be AdbDevicesRecord")
+        if not isinstance(initial_record, Devices):
+            raise TypeError("initial_record must be Devices")
         self._backend = backend
         self._socket = stream_socket
         self.initial_record = initial_record
         self._closed = False
 
-    def records(self) -> Iterator[AdbDevicesRecord]:
+    def records(self) -> Iterator[Devices]:
         """Yield complete records until the stream closes or tracking fails."""
 
         if self._closed:

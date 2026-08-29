@@ -8,9 +8,8 @@ from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.identity import AdbTransportId
 from adb.tracking.snapshot.identity import AdbDevicesSnapshotEpoch
 from adb.aosp.tracking.model import (
-    AdbConnectionType,
-    AdbDevicesRecord,
-    AdbTrackedDevice,
+    ConnectionType,
+    Device,
 )
 
 
@@ -28,20 +27,20 @@ class AdbConfiguredTransportResolution:
     """Resolution of one configured transport against track-devices evidence."""
 
     configuration: AdbConfiguredTransport
-    matches: tuple[AdbTrackedDevice, ...]
-    type_mismatches: tuple[AdbTrackedDevice, ...] = ()
+    matches: tuple[Device, ...]
+    type_mismatches: tuple[Device, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
         if not isinstance(self.matches, tuple) or not all(
-            isinstance(row, AdbTrackedDevice) for row in self.matches
+            isinstance(row, Device) for row in self.matches
         ):
-            raise TypeError("matches must be a tuple of AdbTrackedDevice values")
+            raise TypeError("matches must be a tuple of Device values")
         if not isinstance(self.type_mismatches, tuple) or not all(
-            isinstance(row, AdbTrackedDevice) for row in self.type_mismatches
+            isinstance(row, Device) for row in self.type_mismatches
         ):
-            raise TypeError("type_mismatches must be a tuple of AdbTrackedDevice values")
+            raise TypeError("type_mismatches must be a tuple of Device values")
         if any(
             row.serial != self.configuration.serial.value
             for row in (*self.matches, *self.type_mismatches)
@@ -51,7 +50,7 @@ class AdbConfiguredTransportResolution:
             row.connection_type
             not in (
                 self.configuration.expected_connection_type,
-                AdbConnectionType.UNKNOWN,
+                ConnectionType.UNKNOWN,
             )
             for row in self.matches
         ):
@@ -60,7 +59,7 @@ class AdbConfiguredTransportResolution:
             row.connection_type
             in (
                 self.configuration.expected_connection_type,
-                AdbConnectionType.UNKNOWN,
+                ConnectionType.UNKNOWN,
             )
             for row in self.type_mismatches
         ):
@@ -81,7 +80,7 @@ class AdbConfiguredTransportResolution:
         return AdbConfiguredTransportResolutionStatus.AMBIGUOUS
 
     @property
-    def row(self) -> AdbTrackedDevice | None:
+    def row(self) -> Device | None:
         return (
             self.matches[0]
             if self.status is AdbConfiguredTransportResolutionStatus.RESOLVED
@@ -127,56 +126,13 @@ class AdbConfiguredTransportProjection:
         return self.resolution.status
 
     @property
-    def row(self) -> AdbTrackedDevice | None:
+    def row(self) -> Device | None:
         return self.resolution.row
 
-
-def resolve_configured_transport(
-    configuration: AdbConfiguredTransport,
-    record: AdbDevicesRecord,
-) -> AdbConfiguredTransportResolution:
-    """Resolve a configured transport against one complete track-devices record.
-
-    Exact USB/SOCKET matches win; UNKNOWN connection types are fallback compatibility evidence.
-    """
-
-    if not isinstance(configuration, AdbConfiguredTransport):
-        raise TypeError("configuration must be AdbConfiguredTransport")
-    if not isinstance(record, AdbDevicesRecord):
-        raise TypeError("record must be AdbDevicesRecord")
-
-    serial_matches = tuple(
-        row for row in record.devices if row.serial == configuration.serial.value
-    )
-    exact_matches = tuple(
-        row
-        for row in serial_matches
-        if row.connection_type is configuration.expected_connection_type
-    )
-    unknown_matches = tuple(
-        row
-        for row in serial_matches
-        if row.connection_type is AdbConnectionType.UNKNOWN
-    )
-    # Older ADB servers may not report connection type. Prefer exact evidence whenever it is
-    # available, and use UNKNOWN rows only as a compatibility fallback.
-    matches = exact_matches if exact_matches else unknown_matches
-    type_mismatches = tuple(
-        row
-        for row in serial_matches
-        if row.connection_type
-        not in (configuration.expected_connection_type, AdbConnectionType.UNKNOWN)
-    )
-    return AdbConfiguredTransportResolution(
-        configuration=configuration,
-        matches=matches,
-        type_mismatches=type_mismatches,
-    )
 
 
 __all__ = [
     "AdbConfiguredTransportProjection",
     "AdbConfiguredTransportResolution",
     "AdbConfiguredTransportResolutionStatus",
-    "resolve_configured_transport",
 ]

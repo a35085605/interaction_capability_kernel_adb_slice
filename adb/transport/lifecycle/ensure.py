@@ -17,14 +17,13 @@ from adb.transport.configuration import (
 )
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot
 from adb.aosp.tracking.model import (
-    AdbConnectionState,
-    AdbConnectionType,
-    AdbTrackedDevice,
+    ConnectionState,
+    ConnectionType,
+    Device,
 )
 from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
 from adb.transport.resolution import (
     AdbConfiguredTransportResolutionStatus,
-    resolve_configured_transport,
 )
 from adb.transport.lifecycle.control.port import AdbTcpConnect, AdbTcpConnector
 from adb.transport.identity import AdbDeviceSerial
@@ -41,12 +40,12 @@ def _normalize_positive_seconds(value: object, *, field_name: str) -> float:
     return normalized
 
 
-def _normalize_state(value: object, *, field_name: str) -> AdbConnectionState | int:
+def _normalize_state(value: object, *, field_name: str) -> ConnectionState | int:
     if isinstance(value, bool) or not isinstance(value, Integral):
         raise TypeError(f"{field_name} values must be integers")
     raw = int(value)
     try:
-        return AdbConnectionState(raw)
+        return ConnectionState(raw)
     except ValueError:
         return raw
 
@@ -56,7 +55,7 @@ def _normalize_states(
     *,
     field_name: str,
     allow_empty: bool,
-) -> frozenset[AdbConnectionState | int]:
+) -> frozenset[ConnectionState | int]:
     if not isinstance(value, frozenset):
         raise TypeError(f"{field_name} must be a frozenset")
     normalized = frozenset(
@@ -87,8 +86,8 @@ class AdbTcpTransportEnsurePolicy:
     """
 
     timeout_seconds: float
-    acceptable_states: frozenset[AdbConnectionState | int]
-    blocked_states: frozenset[AdbConnectionState | int] = frozenset()
+    acceptable_states: frozenset[ConnectionState | int]
+    blocked_states: frozenset[ConnectionState | int] = frozenset()
     probe_interval_seconds: float = 0.5
 
     def __post_init__(self) -> None:
@@ -186,7 +185,7 @@ class AdbTcpTransportEnsureResult:
     presence_satisfaction: AdbTcpTransportPresenceSatisfaction | None
     attempts: tuple[NativeAttemptResult, ...]
     final_snapshot: AdbDevicesSnapshot | None = None
-    final_row: AdbTrackedDevice | None = None
+    final_row: Device | None = None
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
@@ -212,19 +211,19 @@ class AdbTcpTransportEnsureResult:
             self.final_snapshot, AdbDevicesSnapshot
         ):
             raise TypeError("final_snapshot must be AdbDevicesSnapshot or None")
-        if self.final_row is not None and not isinstance(self.final_row, AdbTrackedDevice):
-            raise TypeError("final_row must be AdbTrackedDevice or None")
+        if self.final_row is not None and not isinstance(self.final_row, Device):
+            raise TypeError("final_row must be Device or None")
         if self.final_row is not None:
             if (
                 self.final_snapshot is None
-                or self.final_row not in self.final_snapshot.record.devices
+                or self.final_row not in self.final_snapshot.payload.devices
             ):
                 raise ValueError("final_row must belong to final_snapshot")
             if self.final_row.serial != self.operation.serial.value:
                 raise ValueError("final_row serial must match ensure operation")
             if self.final_row.connection_type not in (
                 self.operation.configuration.expected_connection_type,
-                AdbConnectionType.UNKNOWN,
+                ConnectionType.UNKNOWN,
             ):
                 raise ValueError("final_row connection type must match configured transport")
         object.__setattr__(
@@ -273,7 +272,7 @@ class _ReadinessEpisodeState:
     presence: AdbTcpTransportPresenceSatisfaction | None = None
     satisfaction: AdbTcpTransportReadinessSatisfaction | None = None
     final_snapshot: AdbDevicesSnapshot | None = None
-    final_row: AdbTrackedDevice | None = None
+    final_row: Device | None = None
     diagnostic: str | None = None
     probes_attempted: int = 0
     connect_attempted: bool = False
@@ -296,10 +295,7 @@ class _ReadinessEpisodeState:
         self.probes_attempted += 1
         self.final_snapshot = snapshot
 
-        resolution = resolve_configured_transport(
-            self.operation.configuration,
-            snapshot.record,
-        )
+        resolution = snapshot.resolve_configured_transport(self.operation.configuration)
         self.latest_resolution_status = resolution.status
 
         if resolution.status is AdbConfiguredTransportResolutionStatus.AMBIGUOUS:

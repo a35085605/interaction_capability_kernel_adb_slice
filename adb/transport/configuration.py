@@ -7,7 +7,7 @@ from adb.aosp.transport.address import AdbConnectAddress
 from adb.transport.identity import AdbDeviceSerial
 
 if TYPE_CHECKING:
-    from adb.aosp.tracking.model import AdbConnectionType
+    from adb.aosp.tracking.model import ConnectionType
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,14 +76,14 @@ class AdbConfiguredTransport:
         return None
 
     @property
-    def expected_connection_type(self) -> AdbConnectionType:
+    def expected_connection_type(self) -> ConnectionType:
         """Observed ADB connection type required by this configured transport."""
 
-        from adb.aosp.tracking.model import AdbConnectionType
+        from adb.aosp.tracking.model import ConnectionType
 
         if isinstance(self.transport, AdbUsbTransportConfiguration):
-            return AdbConnectionType.USB
-        return AdbConnectionType.SOCKET
+            return ConnectionType.USB
+        return ConnectionType.SOCKET
 
 
 __all__ = [

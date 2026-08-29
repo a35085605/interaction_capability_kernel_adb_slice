@@ -5,8 +5,8 @@ from enum import IntEnum
 from numbers import Integral
 
 
-class AdbConnectionState(IntEnum):
-    """AOSP ``adb_host.proto.ConnectionState`` values."""
+class ConnectionState(IntEnum):
+    """AOSP ``adb.proto.ConnectionState`` values from ``adb_host.proto``."""
 
     ANY = 0
     CONNECTING = 1
@@ -23,8 +23,8 @@ class AdbConnectionState(IntEnum):
     RESCUE = 12
 
 
-class AdbConnectionType(IntEnum):
-    """AOSP ``adb_host.proto.ConnectionType`` values."""
+class ConnectionType(IntEnum):
+    """AOSP ``adb.proto.ConnectionType`` values from ``adb_host.proto``."""
 
     UNKNOWN = 0
     USB = 1
@@ -54,26 +54,26 @@ def _normalize_open_enum(
         return enum_type(raw)
     except ValueError:
         # Proto3 enums are open: preserve future AOSP values numerically instead
-        # of inventing an UNKNOWN interpretation or rejecting the whole snapshot.
+        # of inventing an UNKNOWN interpretation or rejecting the whole payload.
         return raw
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTrackedDevice:
-    """One observed AOSP ``adb_host.proto.Device`` track-devices row.
+class Device:
+    """One AOSP ``adb.proto.Device`` value observed from ``track-devices``.
 
-    The row is observation data, not a stable device identity. ``transport_id`` preserves the
-    raw signed AOSP protobuf ``int64`` value; domain validation happens only when an observed ID
-    is converted to ``AdbTransportId``. Unknown enum values are preserved as integers.
+    This is protocol evidence, not a stable domain device identity. ``transport_id`` preserves
+    the raw signed protobuf ``int64``; domain validation happens only when a consumer interprets
+    it as an ``AdbTransportId``. Unknown enum values are preserved as integers.
     """
 
     serial: str = ""
-    state: AdbConnectionState | int = AdbConnectionState.ANY
+    state: ConnectionState | int = ConnectionState.ANY
     bus_address: str = ""
     product: str = ""
     model: str = ""
     device: str = ""
-    connection_type: AdbConnectionType | int = AdbConnectionType.UNKNOWN
+    connection_type: ConnectionType | int = ConnectionType.UNKNOWN
     negotiated_speed: int = 0
     max_speed: int = 0
     transport_id: int = 0
@@ -84,7 +84,7 @@ class AdbTrackedDevice:
             "state",
             _normalize_open_enum(
                 self.state,
-                AdbConnectionState,
+                ConnectionState,
                 field_name="ADB connection state",
             ),
         )
@@ -93,7 +93,7 @@ class AdbTrackedDevice:
             "connection_type",
             _normalize_open_enum(
                 self.connection_type,
-                AdbConnectionType,
+                ConnectionType,
                 field_name="ADB connection type",
             ),
         )
@@ -126,22 +126,17 @@ class AdbTrackedDevice:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesRecord:
-    """Complete AOSP ``adb_host.proto.Devices`` track-devices record."""
+class Devices:
+    """AOSP ``adb.proto.Devices`` payload from ``adb_host.proto``."""
 
-    devices: tuple[AdbTrackedDevice, ...] = field(default_factory=tuple)
+    devices: tuple[Device, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not isinstance(self.devices, tuple):
             raise TypeError("ADB devices must be a tuple")
         for index, device in enumerate(self.devices):
-            if not isinstance(device, AdbTrackedDevice):
-                raise TypeError(f"ADB devices[{index}] must be AdbTrackedDevice")
+            if not isinstance(device, Device):
+                raise TypeError(f"ADB devices[{index}] must be Device")
 
 
-__all__ = [
-    "AdbConnectionState",
-    "AdbConnectionType",
-    "AdbDevicesRecord",
-    "AdbTrackedDevice",
-]
+__all__ = ["ConnectionState", "ConnectionType", "Device", "Devices"]
