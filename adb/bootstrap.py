@@ -19,6 +19,7 @@ from adb.server.lifecycle.control.result import (
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.state import AdbServerState
+from adb.state import AdbRuntimeState
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshotEpoch,
     AdbDevicesSnapshotEpochSequence,
@@ -52,8 +53,7 @@ def _default_server_backend_factory() -> AdbServerBackend:
 class _BootstrapCore:
     server_provisioner: AdbServerProvisioner
     server_retirer: AdbServerRetirer
-    server_state: AdbServerState
-    snapshot_state: AdbDevicesSnapshotState
+    runtime_state: AdbRuntimeState
     devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch]
     initial_server: AdbServer
 
@@ -125,8 +125,7 @@ class AdbRuntimeBootstrap:
         core = self._build_core()
         try:
             return self._build_runtime(
-                core.server_state,
-                core.snapshot_state,
+                core.runtime_state,
                 server_provisioner=core.server_provisioner,
                 server_retirer=core.server_retirer,
                 transport_supervision_policy=self._transport_supervision_policy,
@@ -170,9 +169,9 @@ class AdbRuntimeBootstrap:
                     core.initial_server,
                     event_bus,
                     self._tracking_supervision_policy,
-                    server_state=core.server_state,
+                    server_state=core.runtime_state.server,
                     devices_snapshot_epoch_issuer=core.devices_snapshot_epoch_issuer,
-                    snapshot_state=core.snapshot_state,
+                    snapshot_state=core.runtime_state.devices,
                 )
                 if track_devices
                 else None
@@ -182,15 +181,14 @@ class AdbRuntimeBootstrap:
                     core.initial_server,
                     event_bus,
                     tcp_transport_ensurer,
-                    server_state=core.server_state,
-                    devices=core.snapshot_state,
+                    server_state=core.runtime_state.server,
+                    devices=core.runtime_state.devices,
                 )
                 if configured_transports
                 else None
             )
             return self._build_runtime(
-                core.server_state,
-                core.snapshot_state,
+                core.runtime_state,
                 server_provisioner=core.server_provisioner,
                 server_retirer=core.server_retirer,
                 event_bus=event_bus,
@@ -243,8 +241,10 @@ class AdbRuntimeBootstrap:
                     endpoint=recovery_endpoint,
                 ),
                 server_retirer=server_retirer,
-                server_state=AdbServerState(initial_server),
-                snapshot_state=AdbDevicesSnapshotState(),
+                runtime_state=AdbRuntimeState(
+                    server=AdbServerState(initial_server),
+                    devices=AdbDevicesSnapshotState(),
+                ),
                 devices_snapshot_epoch_issuer=devices_snapshot_epoch_issuer,
                 initial_server=initial_server,
             )

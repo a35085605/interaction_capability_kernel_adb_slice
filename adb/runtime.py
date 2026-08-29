@@ -9,9 +9,9 @@ from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.identity import AdbServer
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
-from adb.server.state import AdbServerState
+from adb.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
-from adb.tracking.snapshot.state import AdbDevicesSnapshotState, AdbDevicesSnapshotView
+from adb.tracking.snapshot.state import AdbDevicesSnapshotView
 from adb.tracking.supervision.supervisor import AdbDevicesTrackingSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
@@ -27,8 +27,7 @@ class AdbRuntime(AdbManagedRuntime):
 
     def __init__(
         self,
-        server_state: AdbServerState,
-        snapshot_state: AdbDevicesSnapshotState,
+        state: AdbRuntimeState,
         *,
         server_provisioner: AdbServerProvisioner,
         server_retirer: AdbServerRetirer,
@@ -40,10 +39,8 @@ class AdbRuntime(AdbManagedRuntime):
         transport_supervisor: AdbConfiguredTransportSupervisor | None = None,
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
     ) -> None:
-        if not isinstance(server_state, AdbServerState):
-            raise TypeError("server_state must be AdbServerState")
-        if not isinstance(snapshot_state, AdbDevicesSnapshotState):
-            raise TypeError("snapshot_state must be AdbDevicesSnapshotState")
+        if not isinstance(state, AdbRuntimeState):
+            raise TypeError("state must be AdbRuntimeState")
         if not isinstance(server_provisioner, AdbServerProvisioner):
             raise TypeError("server_provisioner must be AdbServerProvisioner")
         if not isinstance(server_retirer, AdbServerRetirer):
@@ -94,28 +91,28 @@ class AdbRuntime(AdbManagedRuntime):
             raise ValueError("supervised runtime components require an event bus")
         if (
             tracking_supervisor is not None
-            and tracking_supervisor.server_state is not server_state
+            and tracking_supervisor.server_state is not state.server
         ):
             raise ValueError("tracking supervisor must share the runtime server state")
-        if tracking_supervisor is not None and tracking_supervisor.devices is not snapshot_state:
+        if tracking_supervisor is not None and tracking_supervisor.devices is not state.devices:
             raise ValueError("tracking supervisor must share the runtime tracked-devices state")
         if (
             transport_supervisor is not None
-            and transport_supervisor.server_state is not server_state
+            and transport_supervisor.server_state is not state.server
         ):
             raise ValueError("transport supervisor must share the runtime server state")
-        if transport_supervisor is not None and transport_supervisor.devices is not snapshot_state:
+        if transport_supervisor is not None and transport_supervisor.devices is not state.devices:
             raise ValueError("transport supervisor must share the runtime tracked-devices state")
 
-        super().__init__(server_state)
-        self._snapshot_state = snapshot_state
+        super().__init__(state.server)
+        self._state = state
         self._event_bus = event_bus
         self._server_supervisor: AdbServerSupervisor | None = None
         if server_supervision_scheduler is not None:
             if event_bus is None:
                 raise RuntimeError("validated server supervision requires an event bus")
             self._server_supervisor = AdbServerSupervisor(
-                server_state,
+                state.server,
                 provisioner=server_provisioner,
                 retirer=server_retirer,
                 event_bus=event_bus,
@@ -137,7 +134,7 @@ class AdbRuntime(AdbManagedRuntime):
     def devices(self) -> AdbDevicesSnapshotView:
         """Read-only current server-bound tracked-devices observation for this runtime."""
 
-        return self._snapshot_state
+        return self._state.devices
 
     @property
     def started(self) -> bool:
