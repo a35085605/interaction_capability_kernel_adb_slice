@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from adb.bootstrap import AdbRuntimeBootstrap as _InternalAdbRuntimeBootstrap
-from adb.managed import RegisteredTransport as _RegisteredTransport
-from adb.runtime import AdbRuntime as _InternalAdbRuntime
+from adb.runtime import (
+    AdbRuntime as _InternalAdbRuntime,
+    AdbRuntimeBootstrap as _InternalAdbRuntimeBootstrap,
+    RegisteredTransport as _RegisteredTransport,
+)
 
 # Load the internal runtime graph before the public transport boundary to preserve package
 # initialization order.

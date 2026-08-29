@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from threading import RLock
 
-from adb.managed import AdbManagedRuntime
+from adb.runtime.managed import AdbManagedRuntime
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.identity import AdbServer
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
-from adb.state import AdbRuntimeState
+from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.state import AdbDevicesSnapshotView
 from adb.tracking.supervision.supervisor import AdbDevicesTrackingSupervisor

@@ -21,7 +21,7 @@ from adb.api import (
     AdbRuntimeBootstrap,
     AdbServerTcpAddress,
 )
-from adb.managed import AdbManagedRuntime
+from adb.runtime import AdbManagedRuntime
 from adb.server import (
     AdbServerBackend,
     AdbServerControlError,

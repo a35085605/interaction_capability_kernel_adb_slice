@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from adb.epoch import EpochIssuer
-from adb.runtime import AdbRuntime
+from adb.runtime.core import AdbRuntime
 from adb.server.address import AdbServerTcpAddress
 from adb.server.identity import AdbServer, ServerEpochSequence
 from adb.server.lifecycle.control.backend import AdbServerBackend
@@ -19,7 +19,7 @@ from adb.server.lifecycle.control.result import (
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.state import AdbServerState
-from adb.state import AdbRuntimeState
+from adb.runtime.state import AdbRuntimeState
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshotEpoch,
     AdbDevicesSnapshotEpochSequence,
