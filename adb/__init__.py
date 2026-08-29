@@ -19,7 +19,7 @@ from adb.api import (
     AdbConfiguredTransportType,
     AdbRuntime,
     AdbRuntimeBootstrap,
-    AdbServerAddress,
+    AdbServerTcpAddress,
 )
 from adb.managed import AdbManagedRuntime
 from adb.server import (
@@ -100,7 +100,7 @@ __all__ = [
     "AdbServerProvisionFailed",
     "AdbServerProvisionResult",
     "AdbServerProvisioned",
-    "AdbServerAddress",
+    "AdbServerTcpAddress",
     "AdbServer",
     "ServerEpoch",
     "ServerEpochSequence",

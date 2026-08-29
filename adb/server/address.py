@@ -1,5 +1,5 @@
 """Compatibility import for the canonical AOSP smart-socket address value."""
 
-from adb.aosp.server.address import AdbServerAddress
+from adb.aosp.server.address import AdbServerTcpAddress
 
-__all__ = ["AdbServerAddress"]
+__all__ = ["AdbServerTcpAddress"]

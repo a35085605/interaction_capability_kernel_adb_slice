@@ -10,7 +10,7 @@ from adb.errors import (
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.server.address import AdbServerAddress
+from adb.server.address import AdbServerTcpAddress
 from adb.server.identity import AdbServer
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
@@ -32,7 +32,7 @@ from adb.tracking.signal import (
 from eventing import EventPublisher
 
 
-_TrackingBackendFactory = Callable[[AdbServerAddress], AdbDevicesTrackingBackend]
+_TrackingBackendFactory = Callable[[AdbServerTcpAddress], AdbDevicesTrackingBackend]
 _ThreadFactory = Callable[..., Thread]
 
 

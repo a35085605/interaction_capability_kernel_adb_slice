@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from adb.server.address import AdbServerAddress
+from adb.server.address import AdbServerTcpAddress
 from adb.server.identity import AdbServer
 from adb.server.lifecycle.control.backend import (
     AdbServerBackend,
@@ -14,7 +14,7 @@ from adb.server.lifecycle.control.backend import (
 
 def _release_backend_attachment(
     backend: AdbServerBackend,
-    endpoint: AdbServerAddress,
+    endpoint: AdbServerTcpAddress,
 ) -> None:
     result = backend.release(endpoint)
     if isinstance(

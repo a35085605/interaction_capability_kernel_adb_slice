@@ -16,7 +16,7 @@ from adb.aosp.errors import (
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.aosp.server.address import AdbServerAddress
+from adb.aosp.server.address import AdbServerTcpAddress
 
 
 _SERVICE = "host:track-devices-proto-binary"
@@ -63,7 +63,7 @@ class AdbDevicesTrackingBackend(Protocol):
     """
 
     @property
-    def address(self) -> AdbServerAddress:
+    def address(self) -> AdbServerTcpAddress:
         ...
 
     def open(self) -> AdbDevicesTrackingBackendStream | None:
@@ -124,11 +124,11 @@ class SmartSocketAdbDevicesTrackingBackend:
 
     def __init__(
         self,
-        address: AdbServerAddress,
+        address: AdbServerTcpAddress,
         startup_timeout_seconds: float = 5.0,
     ) -> None:
-        if not isinstance(address, AdbServerAddress):
-            raise TypeError("address must be AdbServerAddress")
+        if not isinstance(address, AdbServerTcpAddress):
+            raise TypeError("address must be AdbServerTcpAddress")
         self.address = address
         self.startup_timeout_seconds = _normalize_startup_timeout(
             startup_timeout_seconds

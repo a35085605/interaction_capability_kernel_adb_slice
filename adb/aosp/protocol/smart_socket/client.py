@@ -14,7 +14,7 @@ from adb.aosp.errors import (
     AdbTimeoutError,
 )
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
-from adb.aosp.server.address import AdbServerAddress
+from adb.aosp.server.address import AdbServerTcpAddress
 
 
 _SHELL_STDOUT = 1
@@ -43,13 +43,13 @@ class AdbServiceClient:
 
     def __init__(
         self,
-        address: AdbServerAddress,
+        address: AdbServerTcpAddress,
         timeout_seconds: float = 5.0,
         *,
         _socket_factory: Callable[..., socket.socket] = socket.create_connection,
     ) -> None:
-        if not isinstance(address, AdbServerAddress):
-            raise TypeError("address must be AdbServerAddress")
+        if not isinstance(address, AdbServerTcpAddress):
+            raise TypeError("address must be AdbServerTcpAddress")
         self.address = address
         self.timeout_seconds = _normalize_timeout(timeout_seconds)
         self._socket_factory = _socket_factory

@@ -9,7 +9,7 @@ from time import monotonic, sleep
 from typing import Protocol, runtime_checkable
 
 from adb.errors import AdbError
-from adb.server.address import AdbServerAddress
+from adb.server.address import AdbServerTcpAddress
 from adb.server.identity import AdbServer
 from adb.transport.configuration import (
     AdbConfiguredTransport,
@@ -143,7 +143,7 @@ class AdbTcpTransportEnsureReadiness:
             raise TypeError("policy must be AdbTcpTransportEnsurePolicy")
 
     @property
-    def endpoint(self) -> AdbServerAddress:
+    def endpoint(self) -> AdbServerTcpAddress:
         return self.server.endpoint
 
     @property
