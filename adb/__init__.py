@@ -21,7 +21,7 @@ from adb.api import (
     AdbRuntimeBootstrap,
     AdbServerTcpAddress,
 )
-from adb.runtime import AdbManagedRuntime
+from adb.runtime import AdbManagedRuntime, AdbServerLifecycleRuntimeFacade
 from adb.server import (
     AdbServerBackend,
     AdbServerControlError,
@@ -35,6 +35,8 @@ from adb.server import (
     ServerEpoch,
     ServerEpochSequence,
     AdbServerState,
+    AdbServerStateSnapshot,
+    AdbServerStateTransition,
     AdbServerStateView,
     AdbServerStateWriter,
     AdbServerStatusReader,
@@ -80,6 +82,7 @@ __all__ = [
     "EpochSequence",
     "AdbError",
     "AdbManagedRuntime",
+    "AdbServerLifecycleRuntimeFacade",
     "AdbRuntimeBootstrap",
     "AdbRuntime",
     "AdbProtocolError",
@@ -97,6 +100,8 @@ __all__ = [
     "AdbServer",
     "ServerEpoch",
     "ServerEpochSequence",
+    "AdbServerStateSnapshot",
+    "AdbServerStateTransition",
     "AdbServerStateWriter",
     "AdbServerStateView",
     "AdbServerState",

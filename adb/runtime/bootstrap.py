@@ -11,10 +11,7 @@ from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
-from adb.server.lifecycle.supervision.intent import (
-    AdbServerDisposeIntent,
-    AdbServerRetireIntent,
-)
+from adb.server.lifecycle.supervision.intent import AdbServerRetireIntent
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.state import AdbServerState
 from adb.runtime.state import AdbRuntimeState
@@ -267,8 +264,7 @@ class AdbRuntimeBootstrap:
         server = runtime.server
         if server is None:
             return
-        if runtime.dispatch_server_lifecycle_intent(AdbServerRetireIntent(server)):
-            runtime.dispatch_server_lifecycle_intent(AdbServerDisposeIntent(server))
+        runtime.dispatch_server_lifecycle_intent(AdbServerRetireIntent(server))
 
 
 def _is_event_bus(value: object) -> bool:

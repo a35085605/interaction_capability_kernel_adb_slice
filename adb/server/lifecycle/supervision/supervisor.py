@@ -6,15 +6,13 @@ from random import random
 from threading import Lock, Thread, current_thread
 
 from adb.server.lifecycle.supervision.intent import (
-    AdbServerActivateIntent,
-    AdbServerDisposeIntent,
     AdbServerLifecycleIntentDispatcher,
     AdbServerProvisionIntent,
     AdbServerRetireIntent,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.transition import (
-    AdbServerRecoveryActivate,
+    AdbServerRecoverySucceeded,
     AdbServerRecoveryAttempt,
     AdbServerRecoveryDefer,
     AdbServerRecoveryExhaust,
@@ -62,7 +60,7 @@ class AdbServerSupervisor:
     """Reconcile ADB server failures across successive server lifetimes.
 
     The supervisor owns recovery policy and scheduling only.  Runtime lifecycle intents are the
-    sole path for provisioning, retirement, backend disposal, and authoritative state mutation.
+    sole path for complete provisioning and retirement transactions.
     """
 
     def __init__(
@@ -108,7 +106,6 @@ class AdbServerSupervisor:
         self._recovery_enabled = recovery_enabled
         self._cycle_id: AdbServerRecoveryCycleId | None = None
         self._retry_token: ScheduleToken | None = None
-        self._pending_retired_disposals: set[AdbServer] = set()
         self._attempt_threads: set[Thread] = set()
         self._closed = False
 
@@ -170,15 +167,11 @@ class AdbServerSupervisor:
                 subscriptions = self._subscriptions
                 self._subscriptions = ()
                 retry_token = self._invalidate_recovery_locked()
-                pending_retired = tuple(self._pending_retired_disposals)
-                self._pending_retired_disposals.clear()
                 attempt_threads = tuple(self._attempt_threads)
         for token in subscriptions:
             self._bus.unsubscribe(token)
         if retry_token is not None:
             self._scheduler.cancel(retry_token)
-        for server in pending_retired:
-            self._dispose_retired_server(server)
         for thread in attempt_threads:
             if thread is not current_thread():
                 thread.join()
@@ -195,62 +188,25 @@ class AdbServerSupervisor:
                 server = self.server
 
             if server is not None:
+                retired = self._runtime.dispatch_server_lifecycle_intent(
+                    AdbServerRetireIntent(server)
+                )
+                if not retired:
+                    return
+                retired_server = server
                 with self._lock:
-                    retired = self._runtime.dispatch_server_lifecycle_intent(
-                        AdbServerRetireIntent(server)
-                    )
-                    if not retired:
-                        return
-                    retired_server = server
-                    self._pending_retired_disposals.add(server)
                     if self._recovery_enabled and self._cycle_id is None:
                         launch_cycle = self._new_recovery_cycle_locked()
 
         if retired_server is None:
             return
 
-        # Domain retirement is authoritative immediately.  Backend attachment disposal is
-        # independent and may race successor provisioning.
         try:
             self._bus.publish(AdbServerRetired(retired_server))
             self._bus.publish(AdbServerLost(retired_server, failure))
         finally:
-            self._launch_retired_disposal(retired_server)
             if launch_cycle is not None:
                 self._launch_recovery_attempt(launch_cycle, AdbServerRecoveryAttempt(1))
-
-    def _launch_retired_disposal(self, server: AdbServer) -> None:
-        with self._mutation_lock:
-            with self._lock:
-                if server not in self._pending_retired_disposals:
-                    return
-                thread = self._thread_factory(
-                    target=self._run_retired_disposal,
-                    args=(server,),
-                    name=(
-                        "adb-server-close-"
-                        f"{server.endpoint.host}-{server.endpoint.port}-{server.epoch}"
-                    ),
-                )
-                self._attempt_threads.add(thread)
-                try:
-                    thread.start()
-                except BaseException:
-                    self._attempt_threads.discard(thread)
-                    raise
-                else:
-                    self._pending_retired_disposals.remove(server)
-
-    def _run_retired_disposal(self, server: AdbServer) -> None:
-        active = current_thread()
-        try:
-            self._dispose_retired_server(server)
-        finally:
-            with self._lock:
-                self._attempt_threads.discard(active)
-
-    def _dispose_retired_server(self, server: AdbServer) -> None:
-        self._runtime.dispatch_server_lifecycle_intent(AdbServerDisposeIntent(server))
 
     def _launch_recovery_attempt(
         self,
@@ -299,26 +255,14 @@ class AdbServerSupervisor:
                     max_attempts=self._policy.max_attempts,
                 )
 
-                if isinstance(transition, AdbServerRecoveryActivate):
+                if isinstance(transition, AdbServerRecoverySucceeded):
                     with self._lock:
                         if not self._recovery_is_current_locked(cycle_id):
-                            stale_server = transition.server
-                        elif self._runtime.dispatch_server_lifecycle_intent(
-                            AdbServerActivateIntent(transition.server)
-                        ):
-                            stale_server = None
-                            retry_token = self._retry_token
-                            self._retry_token = None
-                            self._cycle_id = None
-                            recovered_event = AdbServerRecovered(transition.server)
-                        else:
-                            stale_server = transition.server
-
-                    if stale_server is not None:
-                        self._runtime.dispatch_server_lifecycle_intent(
-                            AdbServerDisposeIntent(stale_server)
-                        )
-                        return
+                            return
+                        retry_token = self._retry_token
+                        self._retry_token = None
+                        self._cycle_id = None
+                        recovered_event = AdbServerRecovered(transition.server)
 
             if recovered_event is not None:
                 if retry_token is not None:

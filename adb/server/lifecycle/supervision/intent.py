@@ -10,23 +10,12 @@ from adb.server.state import AdbServerStateView
 
 @dataclass(frozen=True, slots=True)
 class AdbServerProvisionIntent:
-    """Request one server provisioning attempt from the owning runtime."""
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerActivateIntent:
-    """Request authoritative activation of one provisioned server lifetime."""
-
-    server: AdbServer
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServer):
-            raise TypeError("server must be AdbServer")
+    """Request one complete provision-and-commit transaction from the owning runtime."""
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRetireIntent:
-    """Request authoritative retirement of one exact current server lifetime."""
+    """Request retirement and backend release of one exact current server lifetime."""
 
     server: AdbServer
 
@@ -35,24 +24,8 @@ class AdbServerRetireIntent:
             raise TypeError("server must be AdbServer")
 
 
-@dataclass(frozen=True, slots=True)
-class AdbServerDisposeIntent:
-    """Request backend attachment release for one retired or abandoned lifetime."""
-
-    server: AdbServer
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServer):
-            raise TypeError("server must be AdbServer")
-
-
-AdbServerLifecycleIntent: TypeAlias = (
-    AdbServerProvisionIntent
-    | AdbServerActivateIntent
-    | AdbServerRetireIntent
-    | AdbServerDisposeIntent
-)
-AdbServerLifecycleIntentResult: TypeAlias = AdbServerProvisionResult | bool | None
+AdbServerLifecycleIntent: TypeAlias = AdbServerProvisionIntent | AdbServerRetireIntent
+AdbServerLifecycleIntentResult: TypeAlias = AdbServerProvisionResult | bool
 
 
 @runtime_checkable
@@ -78,20 +51,8 @@ class AdbServerLifecycleIntentDispatcher(Protocol):
     @overload
     def dispatch_server_lifecycle_intent(
         self,
-        intent: AdbServerActivateIntent,
-    ) -> bool: ...
-
-    @overload
-    def dispatch_server_lifecycle_intent(
-        self,
         intent: AdbServerRetireIntent,
     ) -> bool: ...
-
-    @overload
-    def dispatch_server_lifecycle_intent(
-        self,
-        intent: AdbServerDisposeIntent,
-    ) -> None: ...
 
     def dispatch_server_lifecycle_intent(
         self,
@@ -100,8 +61,6 @@ class AdbServerLifecycleIntentDispatcher(Protocol):
 
 
 __all__ = [
-    "AdbServerActivateIntent",
-    "AdbServerDisposeIntent",
     "AdbServerLifecycleIntent",
     "AdbServerLifecycleIntentDispatcher",
     "AdbServerLifecycleIntentResult",

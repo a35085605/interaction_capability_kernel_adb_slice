@@ -12,17 +12,14 @@ from adb.server.lifecycle.control.result import (
     AdbServerProvisioned,
 )
 from adb.server.lifecycle.supervision.intent import (
-    AdbServerActivateIntent,
-    AdbServerDisposeIntent,
     AdbServerLifecycleIntent,
     AdbServerLifecycleIntentResult,
     AdbServerProvisionIntent,
-    AdbServerRetireIntent,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
-from adb.server.identity import AdbServer
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
+from adb.runtime.server_lifecycle import AdbServerLifecycleRuntimeFacade
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.state import AdbDevicesSnapshotView
@@ -124,9 +121,11 @@ class AdbRuntime(AdbManagedRuntime):
         super().__init__(state.server)
         self._state = state
         self._event_bus = event_bus
-        self._server_provisioner = server_provisioner
-        self._server_retirer = server_retirer
-        self._server_lifecycle_lock = RLock()
+        self._server_lifecycle = AdbServerLifecycleRuntimeFacade(
+            state,
+            provisioner=server_provisioner,
+            retirer=server_retirer,
+        )
         if _bootstrap_server:
             self._bootstrap_initial_server()
 
@@ -161,34 +160,12 @@ class AdbRuntime(AdbManagedRuntime):
         self,
         intent: AdbServerLifecycleIntent,
     ) -> AdbServerLifecycleIntentResult:
-        """Interpret one server lifecycle intent against runtime-owned controls and state."""
+        """Dispatch one complete server lifecycle transaction through the runtime facade."""
 
-        if isinstance(intent, AdbServerProvisionIntent):
-            with self._server_lifecycle_lock:
-                if self._state.server.current is not None:
-                    return AdbServerProvisionDeferred(
-                        "ADB runtime already has an active server lifetime"
-                    )
-                return self._server_provisioner.provision()
-
-        if isinstance(intent, AdbServerActivateIntent):
-            with self._server_lifecycle_lock:
-                return self._state.server.activate(intent.server)
-
-        if isinstance(intent, AdbServerRetireIntent):
-            with self._server_lifecycle_lock:
-                return self._state.server.retire(intent.server)
-
-        if isinstance(intent, AdbServerDisposeIntent):
-            # Backend disposal is deliberately independent of the authoritative state lock so a
-            # retired attachment may be released while its successor is being provisioned.
-            self._server_retirer.retire(intent.server)
-            return None
-
-        raise TypeError("unsupported ADB server lifecycle intent")
+        return self._server_lifecycle.dispatch(intent)
 
     def _bootstrap_initial_server(self) -> None:
-        """Provision and activate the initial server through the runtime lifecycle authority."""
+        """Provision and commit the initial server through the runtime lifecycle authority."""
 
         if self._state.server.current is not None:
             raise ValueError("bootstrap server provisioning requires empty runtime server state")
@@ -203,23 +180,11 @@ class AdbRuntime(AdbManagedRuntime):
                 f"initial ADB server provisioning failed: {result.diagnostic}"
             )
         if not isinstance(result, AdbServerProvisioned):
-            raise TypeError("server provisioner returned an unsupported result")
-
-        server = result.server
-        try:
-            activated = self.dispatch_server_lifecycle_intent(
-                AdbServerActivateIntent(server)
+            raise TypeError("server lifecycle facade returned an unsupported provision result")
+        if self._state.server.current != result.server:
+            raise AdbServerControlError(
+                "initial ADB server provisioning did not commit its server lifetime"
             )
-        except BaseException:
-            self.dispatch_server_lifecycle_intent(AdbServerDisposeIntent(server))
-            raise
-        if activated:
-            return
-
-        self.dispatch_server_lifecycle_intent(AdbServerDisposeIntent(server))
-        raise AdbServerControlError(
-            "initial ADB server provisioning could not commit its server lifetime"
-        )
 
     def _replace_server_provisioner(
         self,
@@ -234,7 +199,7 @@ class AdbRuntime(AdbManagedRuntime):
                 raise RuntimeError(
                     "ADB server provisioner can only be replaced before runtime start"
                 )
-            self._server_provisioner = provisioner
+            self._server_lifecycle.replace_provisioner(provisioner)
 
     def _install_auxiliary_supervisors(
         self,

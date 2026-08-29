@@ -44,8 +44,8 @@ class AdbServerRecoveryAttempt:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerRecoveryActivate:
-    """A provisioned server is ready for authoritative activation."""
+class AdbServerRecoverySucceeded:
+    """A provisioned server has already committed as the authoritative runtime lifetime."""
 
     server: AdbServer
 
@@ -74,7 +74,7 @@ class AdbServerRecoveryExhaust:
 
 
 AdbServerRecoveryTransition: TypeAlias = (
-    AdbServerRecoveryActivate
+    AdbServerRecoverySucceeded
     | AdbServerRecoveryDefer
     | AdbServerRecoveryRetry
     | AdbServerRecoveryExhaust
@@ -98,7 +98,7 @@ def transition_recovery(
             raise ValueError("max_attempts must be greater than zero")
 
     if isinstance(result, AdbServerProvisioned):
-        return AdbServerRecoveryActivate(result.server)
+        return AdbServerRecoverySucceeded(result.server)
 
     if isinstance(result, AdbServerProvisionDeferred):
         return AdbServerRecoveryDefer(attempt.after_deferral())
@@ -115,7 +115,7 @@ def transition_recovery(
 
 
 __all__ = [
-    "AdbServerRecoveryActivate",
+    "AdbServerRecoverySucceeded",
     "AdbServerRecoveryAttempt",
     "AdbServerRecoveryDefer",
     "AdbServerRecoveryExhaust",
