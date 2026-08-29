@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from adb.errors import AdbProtocolError
+from adb.aosp.errors import AdbProtocolError
 
 
 _HEX_DIGITS = frozenset(b"0123456789abcdefABCDEF")

@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import math
 import subprocess
+from typing import TYPE_CHECKING
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.transport.selection import AdbTransportById, AdbTransportBySerial, AdbTransportSelector
 from native_attempt import NativeAttemptResult, NativeAttemptStatus, NativeCompletionScope
+
+if TYPE_CHECKING:
+    from adb.transport.selection import AdbTransportSelector
 
 
 def normalize_executable(value: object) -> str:
@@ -28,6 +31,8 @@ def normalize_timeout(value: object) -> float:
 
 
 def selector_args(selector: AdbTransportSelector) -> list[str]:
+    from adb.transport.selection import AdbTransportById, AdbTransportBySerial
+
     if isinstance(selector, AdbTransportBySerial):
         return ["-s", selector.serial.value]
     if isinstance(selector, AdbTransportById):

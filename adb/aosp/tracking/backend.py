@@ -11,12 +11,12 @@ from typing import Protocol, runtime_checkable
 from adb.aosp.tracking.model import AdbDevicesRecord
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
 from adb.aosp.tracking.decoder import parse_devices_record
-from adb.errors import (
+from adb.aosp.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.server.endpoint import AdbServerEndpoint
+from adb.aosp.server.endpoint import AdbServerEndpoint
 
 
 _SERVICE = "host:track-devices-proto-binary"

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from adb.aosp.errors import AdbProtocolError
 from adb.aosp.protocol.smart_socket.client import AdbServiceClient
-from adb.errors import AdbProtocolError
+from adb.aosp.protocol.smart_socket.services import (
+    transport_features_by_id_service,
+    transport_features_by_serial_service,
+)
 from adb.server.identity import AdbServer
 from adb.transport.features import AdbTransportFeatures
 from adb.transport.selection import (
@@ -22,9 +26,9 @@ def _default_client_factory(server: AdbServer) -> AdbServiceClient:
 
 def _feature_service(selector: AdbTransportSelector) -> str:
     if isinstance(selector, AdbTransportBySerial):
-        return f"host-serial:{selector.serial.value}:features"
+        return transport_features_by_serial_service(selector.serial.value)
     if isinstance(selector, AdbTransportById):
-        return f"host-transport-id:{selector.transport_id.value}:features"
+        return transport_features_by_id_service(selector.transport_id.value)
     raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")
 
 

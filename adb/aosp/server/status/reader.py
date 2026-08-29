@@ -5,7 +5,7 @@ from typing import Protocol
 
 from adb.aosp.protocol.smart_socket.client import AdbServiceClient
 from adb.aosp.server.status.decoder import parse_server_status
-from adb.server.endpoint import AdbServerEndpoint
+from adb.aosp.server.endpoint import AdbServerEndpoint
 from adb.aosp.server.status.model import AdbServerStatus
 
 

@@ -7,22 +7,14 @@ import socket
 import struct
 from typing import Callable
 
-from adb.errors import (
+from adb.aosp.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
     AdbServiceError,
     AdbTimeoutError,
-    AdbTransportAmbiguousError,
-    AdbTransportNotFoundError,
-    AdbTransportUnavailableError,
 )
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
-from adb.server.endpoint import AdbServerEndpoint
-from adb.transport.selection import (
-    AdbTransportById,
-    AdbTransportBySerial,
-    AdbTransportSelector,
-)
+from adb.aosp.server.endpoint import AdbServerEndpoint
 
 
 _SHELL_STDOUT = 1
@@ -37,14 +29,6 @@ def _normalize_timeout(value: object) -> float:
     if not isfinite(timeout) or timeout <= 0:
         raise ValueError("ADB timeout must be finite and greater than zero")
     return timeout
-
-
-def _transport_service(selector: AdbTransportSelector) -> str:
-    if isinstance(selector, AdbTransportBySerial):
-        return f"host:transport:{selector.serial.value}"
-    if isinstance(selector, AdbTransportById):
-        return f"host:transport-id:{selector.transport_id.value}"
-    raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,23 +74,23 @@ class AdbServiceClient:
         finally:
             self._close(sock)
 
-    def raw_exec(self, selector: AdbTransportSelector, command: str) -> bytes:
-        """Private raw ``exec:`` primitive for fixed typed adapter commands."""
+    def raw_exec(self, transport_service: str, command: str) -> bytes:
+        """Private raw ``exec:`` primitive after one native transport selection service."""
 
         sock = self._connect()
         try:
-            self._select_transport(sock, selector)
+            self._select_transport(sock, transport_service)
             self._request(sock, f"exec:{command}")
             return self._read_until_eof(sock)
         finally:
             self._close(sock)
 
-    def shell_v2(self, selector: AdbTransportSelector, command: str) -> ShellV2Result:
-        """Private shell-v2 primitive with stdout/stderr/exit-code separation."""
+    def shell_v2(self, transport_service: str, command: str) -> ShellV2Result:
+        """Private shell-v2 primitive after one native transport selection service."""
 
         sock = self._connect()
         try:
-            self._select_transport(sock, selector)
+            self._select_transport(sock, transport_service)
             self._request(sock, f"shell,v2,raw:{command}")
             stdout = bytearray()
             stderr = bytearray()
@@ -152,16 +136,10 @@ class AdbServiceClient:
                 f"failed to connect to ADB server {self.endpoint.host}:{self.endpoint.port}: {exc}"
             ) from exc
 
-    def _select_transport(self, sock: socket.socket, selector: AdbTransportSelector) -> None:
-        self._request(sock, _transport_service(selector), transport_selection=True)
+    def _select_transport(self, sock: socket.socket, transport_service: str) -> None:
+        self._request(sock, transport_service)
 
-    def _request(
-        self,
-        sock: socket.socket,
-        service: str,
-        *,
-        transport_selection: bool = False,
-    ) -> None:
+    def _request(self, sock: socket.socket, service: str) -> None:
         try:
             sock.sendall(encode_service(service))
         except socket.timeout as exc:
@@ -181,29 +159,7 @@ class AdbServiceClient:
             detail = detail_raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise AdbProtocolError("ADB service error is not valid UTF-8") from exc
-        if transport_selection:
-            self._raise_transport_error(service, detail)
         raise AdbServiceError(service, detail or "request rejected")
-
-    def _raise_transport_error(self, service: str, detail: str) -> None:
-        lowered = detail.lower()
-        if "more than one" in lowered or "multiple devices" in lowered:
-            raise AdbTransportAmbiguousError(service, detail)
-        if (
-            "not found" in lowered
-            or "no devices" in lowered
-            or "no device" in lowered
-            or "unknown transport" in lowered
-        ):
-            raise AdbTransportNotFoundError(service, detail)
-        if (
-            "offline" in lowered
-            or "unauthorized" in lowered
-            or "no permissions" in lowered
-            or "permission" in lowered
-        ):
-            raise AdbTransportUnavailableError(service, detail)
-        raise AdbTransportUnavailableError(service, detail or "transport unavailable")
 
     def _read_protocol_string(self, sock: socket.socket, *, context: str) -> bytes:
         length = parse_hex_length(self._recv_exact(sock, 4), context=context)

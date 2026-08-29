@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from adb.errors import AdbProtocolError
+from adb.aosp.errors import AdbProtocolError
 
 
 class ProtoReader:
