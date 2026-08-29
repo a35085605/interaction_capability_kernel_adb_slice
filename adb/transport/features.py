@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from adb.aosp.transport.features import AdbTransportFeatures
-from adb.server.identity import AdbServer
+from adb.server.address import AdbServerTcpAddress
 from adb.transport.selection import AdbTransportSelector
 
 
@@ -12,7 +12,7 @@ class AdbTransportFeaturesReader(Protocol):
 
     def read(
         self,
-        server: AdbServer,
+        endpoint: AdbServerTcpAddress,
         selector: AdbTransportSelector,
     ) -> AdbTransportFeatures:
         ...

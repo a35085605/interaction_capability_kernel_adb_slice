@@ -10,7 +10,8 @@ from adb.server.failure import (
     AdbServerLivenessFailure,
     AdbServerProcessExitedFailure,
 )
-from adb.server.identity import AdbServer, ServerEpoch
+from adb.server.epoch import ServerEpoch
+from adb.server.lifetime import AdbServerLifetime
 from adb.server.address import AdbServerTcpAddress
 
 
@@ -42,14 +43,14 @@ _LIVENESS_FAILURE_TYPES = (
 )
 
 
-def _require_server(value: object) -> AdbServer:
-    if not isinstance(value, AdbServer):
-        raise TypeError("server must be AdbServer")
+def _require_server(value: object) -> AdbServerLifetime:
+    if not isinstance(value, AdbServerLifetime):
+        raise TypeError("server must be AdbServerLifetime")
     return value
 
 
 class _ServerSignalProjection:
-    server: AdbServer
+    server: AdbServerLifetime
 
     @property
     def endpoint(self) -> AdbServerTcpAddress:
@@ -64,7 +65,7 @@ class _ServerSignalProjection:
 class AdbServerReconciliationRequested(_ServerSignalProjection):
     """Request reconciliation after terminal server liveness failure."""
 
-    server: AdbServer
+    server: AdbServerLifetime
     failure: AdbServerLivenessFailure
 
     def __post_init__(self) -> None:
@@ -80,7 +81,7 @@ class AdbServerReconciliationRequested(_ServerSignalProjection):
 class AdbServerRetired(_ServerSignalProjection):
     """One ADB server domain lifetime is no longer usable."""
 
-    server: AdbServer
+    server: AdbServerLifetime
 
     def __post_init__(self) -> None:
         _require_server(self.server)
@@ -90,7 +91,7 @@ class AdbServerRetired(_ServerSignalProjection):
 class AdbServerLost(_ServerSignalProjection):
     """Failure evidence explaining why one already-retired server lifetime was lost."""
 
-    server: AdbServer
+    server: AdbServerLifetime
     failure: AdbServerLivenessFailure
 
     def __post_init__(self) -> None:
@@ -106,7 +107,7 @@ class AdbServerLost(_ServerSignalProjection):
 class AdbServerRecovered(_ServerSignalProjection):
     """Signal carrying the recovered ADB server."""
 
-    server: AdbServer
+    server: AdbServerLifetime
 
     def __post_init__(self) -> None:
         _require_server(self.server)

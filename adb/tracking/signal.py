@@ -5,13 +5,14 @@ from enum import Enum
 from typing import TypeAlias
 
 from adb.server.address import AdbServerTcpAddress
-from adb.server.identity import AdbServer, ServerEpoch
+from adb.server.epoch import ServerEpoch
+from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot
 
 
-def _require_server(value: object) -> AdbServer:
-    if not isinstance(value, AdbServer):
-        raise TypeError("server must be AdbServer")
+def _require_server(value: object) -> AdbServerLifetime:
+    if not isinstance(value, AdbServerLifetime):
+        raise TypeError("server must be AdbServerLifetime")
     return value
 
 
@@ -35,7 +36,7 @@ class AdbDevicesTrackingFailure(str, Enum):
 
 
 class _TrackingServerSignalProjection:
-    server: AdbServer
+    server: AdbServerLifetime
 
     @property
     def server_endpoint(self) -> AdbServerTcpAddress:
@@ -50,7 +51,7 @@ class _TrackingServerSignalProjection:
 class AdbDevicesTrackingStarted(_TrackingServerSignalProjection):
     """Signal that device tracking entered stream mode for one server lifetime."""
 
-    server: AdbServer
+    server: AdbServerLifetime
 
     def __post_init__(self) -> None:
         _require_server(self.server)
@@ -60,7 +61,7 @@ class AdbDevicesTrackingStarted(_TrackingServerSignalProjection):
 class AdbDevicesTrackingStopped(_TrackingServerSignalProjection):
     """Signal that device tracking ended without implying transport disappearance."""
 
-    server: AdbServer
+    server: AdbServerLifetime
 
     def __post_init__(self) -> None:
         _require_server(self.server)
@@ -70,7 +71,7 @@ class AdbDevicesTrackingStopped(_TrackingServerSignalProjection):
 class AdbDevicesTrackingFailed(_TrackingServerSignalProjection):
     """Signal that device tracking failed without synthesizing server state."""
 
-    server: AdbServer
+    server: AdbServerLifetime
     failure: AdbDevicesTrackingFailure
     diagnostic: str | None = None
 
@@ -92,7 +93,7 @@ class AdbDevicesTrackingFailed(_TrackingServerSignalProjection):
 class AdbDevicesSnapshotObserved(_TrackingServerSignalProjection):
     """Signal carrying one complete snapshot observed from one server lifetime."""
 
-    server: AdbServer
+    server: AdbServerLifetime
     snapshot: AdbDevicesSnapshot
 
     def __post_init__(self) -> None:

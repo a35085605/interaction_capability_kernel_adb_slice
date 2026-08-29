@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from adb.server.address import AdbServerTcpAddress
-from adb.server.identity import AdbServer
 from adb.server.lifecycle.control.backend import (
     AdbServerBackend,
     AdbServerBackendFailed,
@@ -32,19 +31,19 @@ def _release_backend_attachment(
 
 
 class AdbServerRetirer:
-    """Release backend attachments belonging to retired ADB server lifetimes."""
+    """Release backend attachments by ADB server endpoint."""
 
     def __init__(self, backend: AdbServerBackend) -> None:
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("backend must satisfy AdbServerBackend")
         self._backend = backend
 
-    def retire(self, server: AdbServer) -> None:
-        """Request release of the backend attachment for one domain server lifetime."""
+    def retire(self, endpoint: AdbServerTcpAddress) -> None:
+        """Request release of the backend attachment identified by ``endpoint``."""
 
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
-        _release_backend_attachment(self._backend, server.endpoint)
+        if not isinstance(endpoint, AdbServerTcpAddress):
+            raise TypeError("endpoint must be AdbServerTcpAddress")
+        _release_backend_attachment(self._backend, endpoint)
 
 
 __all__ = ["AdbServerRetirer"]

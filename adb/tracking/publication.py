@@ -3,7 +3,7 @@ from __future__ import annotations
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
-from adb.server.identity import AdbServer
+from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import AdbServerStateView
 from adb.tracking.snapshot.state import (
     AdbDevicesObservation,
@@ -54,7 +54,7 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
         self._server_state = server_state
         self._publisher = publisher
         self._lock = Lock()
-        self._active_server: AdbServer | None = None
+        self._active_server: AdbServerLifetime | None = None
 
     def publish(self, event: object) -> None:
         accepted = True
@@ -68,7 +68,7 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
         if accepted:
             self._publisher.publish(event)
 
-    def end_tracking(self, server: AdbServer) -> bool:
+    def end_tracking(self, server: AdbServerLifetime) -> bool:
         """End observation for one server without changing the last committed observation."""
 
         self._require_server(server)
@@ -78,7 +78,7 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
             self._active_server = None
             return True
 
-    def _begin_tracking(self, server: AdbServer) -> bool:
+    def _begin_tracking(self, server: AdbServerLifetime) -> bool:
         self._require_server(server)
         with self._lock:
             if self._server_state.current != server:
@@ -102,9 +102,9 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
             )
 
     @staticmethod
-    def _require_server(server: AdbServer) -> None:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+    def _require_server(server: AdbServerLifetime) -> None:
+        if not isinstance(server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
 
 
 __all__ = ["AdbDevicesSnapshotStateBackedTrackingPublisher"]

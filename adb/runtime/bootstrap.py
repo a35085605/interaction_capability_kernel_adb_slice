@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from adb.epoch import EpochIssuer
 from adb.runtime.core import AdbRuntime
 from adb.server.address import AdbServerTcpAddress
-from adb.server.identity import ServerEpochSequence
+from adb.server.epoch import ServerEpochSequence
 from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer

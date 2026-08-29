@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
-from adb.server.identity import AdbServer
+from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot, AdbDevicesSnapshotEpoch
 
 
@@ -12,12 +12,12 @@ from adb.tracking.snapshot.identity import AdbDevicesSnapshot, AdbDevicesSnapsho
 class AdbDevicesObservation:
     """One complete tracked-devices snapshot bound to its source server lifetime."""
 
-    server: AdbServer
+    server: AdbServerLifetime
     snapshot: AdbDevicesSnapshot
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(self.server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
         if not isinstance(self.snapshot, AdbDevicesSnapshot):
             raise TypeError("snapshot must be AdbDevicesSnapshot")
 

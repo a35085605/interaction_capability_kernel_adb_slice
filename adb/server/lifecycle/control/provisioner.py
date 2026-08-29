@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from adb.epoch import EpochIssuer
 from adb.server.address import AdbServerTcpAddress
-from adb.server.identity import AdbServer, ServerEpoch
+from adb.server.epoch import ServerEpoch
+from adb.server.lifetime import AdbServerLifetime
 from adb.server.lifecycle.control.backend import (
     AdbServerBackend,
     AdbServerBackendFailed,
@@ -91,7 +92,7 @@ class AdbServerProvisioner:
             )
 
         try:
-            server = AdbServer(
+            server = AdbServerLifetime(
                 resolved_endpoint,
                 self._server_epoch_issuer.issue(),
             )
@@ -100,7 +101,7 @@ class AdbServerProvisioner:
                 _release_backend_attachment(self._backend, resolved_endpoint)
             except BaseException as release_error:
                 raise AdbServerControlError(
-                    "ADB server identity creation failed and its backend attachment "
+                    "ADB server lifetime creation failed and its backend attachment "
                     "could not be released"
                 ) from release_error
             raise

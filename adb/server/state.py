@@ -4,20 +4,21 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
-from adb.server.identity import AdbServer, ServerEpoch
+from adb.server.epoch import ServerEpoch
+from adb.server.lifetime import AdbServerLifetime
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerStateSnapshot:
     """Immutable T0 observation of one runtime's authoritative server state."""
 
-    current: AdbServer | None
+    current: AdbServerLifetime | None
     latest_epoch: ServerEpoch | None
     revision: int
 
     def __post_init__(self) -> None:
-        if self.current is not None and not isinstance(self.current, AdbServer):
-            raise TypeError("current must be AdbServer or None")
+        if self.current is not None and not isinstance(self.current, AdbServerLifetime):
+            raise TypeError("current must be AdbServerLifetime or None")
         if self.latest_epoch is not None and not isinstance(self.latest_epoch, ServerEpoch):
             raise TypeError("latest_epoch must be ServerEpoch or None")
         if isinstance(self.revision, bool) or not isinstance(self.revision, int):
@@ -33,13 +34,13 @@ class AdbServerStateTransition:
     """Requested T0 -> T1 authoritative current-server transition."""
 
     before: AdbServerStateSnapshot
-    after: AdbServer | None
+    after: AdbServerLifetime | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.before, AdbServerStateSnapshot):
             raise TypeError("before must be AdbServerStateSnapshot")
-        if self.after is not None and not isinstance(self.after, AdbServer):
-            raise TypeError("after must be AdbServer or None")
+        if self.after is not None and not isinstance(self.after, AdbServerLifetime):
+            raise TypeError("after must be AdbServerLifetime or None")
 
 
 @runtime_checkable
@@ -47,7 +48,7 @@ class AdbServerStateView(Protocol):
     """Read-only current ADB server lifetime projection for one runtime."""
 
     @property
-    def current(self) -> AdbServer | None: ...
+    def current(self) -> AdbServerLifetime | None: ...
 
     @property
     def latest_epoch(self) -> ServerEpoch | None: ...
@@ -59,9 +60,9 @@ class AdbServerStateWriter(Protocol):
 
     def commit(self, transition: AdbServerStateTransition) -> bool: ...
 
-    def activate(self, server: AdbServer) -> bool: ...
+    def activate(self, server: AdbServerLifetime) -> bool: ...
 
-    def retire(self, server: AdbServer) -> bool: ...
+    def retire(self, server: AdbServerLifetime) -> bool: ...
 
 
 class AdbServerState(AdbServerStateView, AdbServerStateWriter):
@@ -73,16 +74,16 @@ class AdbServerState(AdbServerStateView, AdbServerStateWriter):
     before a newer one can activate, and retired lifetimes cannot become current again.
     """
 
-    def __init__(self, initial: AdbServer | None = None) -> None:
-        if initial is not None and not isinstance(initial, AdbServer):
-            raise TypeError("initial must be AdbServer or None")
+    def __init__(self, initial: AdbServerLifetime | None = None) -> None:
+        if initial is not None and not isinstance(initial, AdbServerLifetime):
+            raise TypeError("initial must be AdbServerLifetime or None")
         self._lock = Lock()
         self._current = initial
         self._latest_epoch = None if initial is None else initial.epoch
         self._revision = 0
 
     @property
-    def current(self) -> AdbServer | None:
+    def current(self) -> AdbServerLifetime | None:
         with self._lock:
             return self._current
 
@@ -129,18 +130,18 @@ class AdbServerState(AdbServerStateView, AdbServerStateWriter):
             self._revision += 1
             return True
 
-    def activate(self, server: AdbServer) -> bool:
+    def activate(self, server: AdbServerLifetime) -> bool:
         """Compatibility helper that commits a fresh lifetime against an immediate T0 snapshot."""
 
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
         return self.commit(AdbServerStateTransition(self.snapshot(), server))
 
-    def retire(self, server: AdbServer) -> bool:
+    def retire(self, server: AdbServerLifetime) -> bool:
         """Compatibility helper that clears only the exact current server lifetime."""
 
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
         before = self.snapshot()
         if before.current != server:
             return False

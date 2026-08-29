@@ -11,7 +11,7 @@ from adb.errors import (
     AdbServiceError,
 )
 from adb.server.address import AdbServerTcpAddress
-from adb.server.identity import AdbServer
+from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
@@ -47,7 +47,7 @@ class AdbDevicesTrackingController(Protocol):
     """Control one devices-tracking lifetime for one ADB server lifetime."""
 
     @property
-    def server(self) -> AdbServer:
+    def server(self) -> AdbServerLifetime:
         ...
 
     @property
@@ -74,7 +74,7 @@ class SmartSocketAdbDevicesTrackingController:
 
     def __init__(
         self,
-        server: AdbServer,
+        server: AdbServerLifetime,
         publisher: EventPublisher,
         startup_timeout_seconds: float = 5.0,
         *,
@@ -83,8 +83,8 @@ class SmartSocketAdbDevicesTrackingController:
         _device_tracker_factory: _TrackingBackendFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
         if not isinstance(devices_snapshot_epoch_issuer, EpochIssuer):

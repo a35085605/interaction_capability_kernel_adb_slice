@@ -87,7 +87,7 @@ class AdbServerLifecycleRuntimeFacade:
 
         # A candidate that lost its T0 comparison never became authoritative.  Cleanup is outside
         # the facade lock so a newer runtime transition is not blocked by backend release work.
-        self._retirer.retire(stale_server)
+        self._retirer.retire(stale_server.endpoint)
         return AdbServerProvisionDeferred(
             "ADB runtime server state changed before provisioned lifetime could commit"
         )
@@ -103,7 +103,7 @@ class AdbServerLifecycleRuntimeFacade:
 
         # Domain retirement is authoritative before backend cleanup begins.  Releasing outside the
         # facade lock permits successor provisioning to race cleanup, matching runtime semantics.
-        self._retirer.retire(server)
+        self._retirer.retire(server.endpoint)
         return True
 
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from adb.server.failure import AdbServerLaunchFailure
-from adb.server.identity import AdbServer
+from adb.server.lifetime import AdbServerLifetime
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
@@ -47,7 +47,7 @@ class AdbServerRecoveryAttempt:
 class AdbServerRecoverySucceeded:
     """A provisioned server has already committed as the authoritative runtime lifetime."""
 
-    server: AdbServer
+    server: AdbServerLifetime
 
 
 @dataclass(frozen=True, slots=True)

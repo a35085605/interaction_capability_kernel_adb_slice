@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from adb.server.identity import AdbServer
+from adb.server.lifetime import AdbServerLifetime
 from adb.transport.lifecycle.control.port import (
     AdbDeviceSideReconnect,
     AdbOfflineTransportsReconnect,
@@ -20,13 +20,13 @@ from native_attempt import NativeAttemptResult
 class AdbTransportCommandCompleted:
     """Signal carrying one server-bound ADB transport control attempt result."""
 
-    server: AdbServer
+    server: AdbServerLifetime
     operation: AdbTransportCommandOperation
     result: NativeAttemptResult
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(self.server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
         if not isinstance(
             self.operation,
             (

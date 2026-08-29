@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from adb.aosp.tracking.model import Device
-from adb.server.identity import AdbServer
+from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot
 from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
 from adb.transport.selection import (
@@ -18,7 +18,7 @@ class AdbTrackedDeviceLookup(Protocol):
 
     def find(
         self,
-        server: AdbServer,
+        server: AdbServerLifetime,
         selector: AdbTransportSelector,
     ) -> Device | None:
         ...
@@ -62,10 +62,12 @@ class SnapshotAdbTrackedDeviceLookup:
 
     def find(
         self,
-        server: AdbServer,
+        server: AdbServerLifetime,
         selector: AdbTransportSelector,
     ) -> Device | None:
-        snapshot = self.snapshot_reader.read(server)
+        if not isinstance(server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
+        snapshot = self.snapshot_reader.read(server.endpoint)
         if not isinstance(snapshot, AdbDevicesSnapshot):
             raise TypeError("snapshot reader must return AdbDevicesSnapshot")
         return find_tracked_device(snapshot, selector)

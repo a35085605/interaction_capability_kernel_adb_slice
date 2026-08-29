@@ -6,7 +6,7 @@ from threading import Lock, Thread, current_thread
 from adb.epoch import EpochIssuer
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from adb.server.failure import AdbServerConnectionFailure
-from adb.server.identity import AdbServer
+from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import AdbServerStateView
 from adb.tracking.supervision.policy import AdbDevicesTrackingSupervisionPolicy
 from adb.server.signal import (
@@ -34,7 +34,7 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 _ThreadFactory = Callable[..., Thread]
 _ControllerFactory = Callable[
-    [AdbServer, EventPublisher, EpochIssuer[AdbDevicesSnapshotEpoch]],
+    [AdbServerLifetime, EventPublisher, EpochIssuer[AdbDevicesSnapshotEpoch]],
     AdbDevicesTrackingController,
 ]
 
@@ -54,7 +54,7 @@ class AdbDevicesTrackingSupervisor:
 
     def __init__(
         self,
-        server: AdbServer,
+        server: AdbServerLifetime,
         event_bus: EventBus,
         policy: AdbDevicesTrackingSupervisionPolicy,
         *,
@@ -64,8 +64,8 @@ class AdbDevicesTrackingSupervisor:
         _controller_factory: _ControllerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -109,7 +109,7 @@ class AdbDevicesTrackingSupervisor:
         self._closed = False
 
     @property
-    def server(self) -> AdbServer | None:
+    def server(self) -> AdbServerLifetime | None:
         """Current server lifetime from the runtime authoritative state."""
 
         return self._server_state.current
@@ -236,7 +236,7 @@ class AdbDevicesTrackingSupervisor:
 
     def _on_tracking_failed(self, event: AdbDevicesTrackingFailed) -> None:
         request_server_reconciliation = False
-        failed_server: AdbServer | None = None
+        failed_server: AdbServerLifetime | None = None
         with self._lock:
             current = self._controller
             if self._closed or current is None or event.server != current.server:
@@ -334,7 +334,7 @@ class AdbDevicesTrackingSupervisor:
         diagnostic: str | None = None,
     ) -> bool:
         request_server_reconciliation = False
-        reconciliation_server: AdbServer | None = None
+        reconciliation_server: AdbServerLifetime | None = None
         controller_to_stop: AdbDevicesTrackingController | None = None
         publish_failure = False
 
@@ -384,12 +384,12 @@ class AdbDevicesTrackingSupervisor:
 
     def _create_controller_locked(
         self,
-        server: AdbServer,
+        server: AdbServerLifetime,
     ) -> AdbDevicesTrackingController:
         if self._controller is not None:
             raise RuntimeError("a controller already exists")
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
         factory = self._controller_factory
         controller = (
             SmartSocketAdbDevicesTrackingController(

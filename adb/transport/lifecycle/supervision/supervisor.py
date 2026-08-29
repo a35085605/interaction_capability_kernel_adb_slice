@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Lock, Thread, current_thread
 
-from adb.server.identity import AdbServer
+from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import AdbServerStateView
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.signal import (
@@ -70,7 +70,7 @@ class AdbConfiguredTransportSupervisor:
 
     def __init__(
         self,
-        server: AdbServer,
+        server: AdbServerLifetime,
         event_bus: EventBus,
         tcp_ensurer: AdbTcpTransportEnsurer | None,
         *,
@@ -78,8 +78,8 @@ class AdbConfiguredTransportSupervisor:
         devices: AdbDevicesSnapshotView | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -96,7 +96,7 @@ class AdbConfiguredTransportSupervisor:
         if not isinstance(devices, AdbDevicesSnapshotView):
             raise TypeError("devices must satisfy AdbDevicesSnapshotView or be None")
         self._server_state = server_state
-        self._projection_server: AdbServer | None = server
+        self._projection_server: AdbServerLifetime | None = server
         self._bus = event_bus
         self._tcp_ensurer = tcp_ensurer
         self._devices = devices
@@ -120,7 +120,7 @@ class AdbConfiguredTransportSupervisor:
         # Per-registration tokens fence late recovery results without coupling independent ensures.
 
     @property
-    def server(self) -> AdbServer | None:
+    def server(self) -> AdbServerLifetime | None:
         """Current server lifetime from the runtime authoritative state."""
 
         return self._server_state.current
@@ -445,7 +445,7 @@ class AdbConfiguredTransportSupervisor:
     def _run_recovery(
         self,
         configuration: AdbConfiguredTransport,
-        server: AdbServer,
+        server: AdbServerLifetime,
         recovery_token: object,
     ) -> None:
         try:

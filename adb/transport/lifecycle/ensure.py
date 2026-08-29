@@ -10,7 +10,7 @@ from typing import Protocol, runtime_checkable
 
 from adb.errors import AdbError
 from adb.server.address import AdbServerTcpAddress
-from adb.server.identity import AdbServer
+from adb.server.lifetime import AdbServerLifetime
 from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
@@ -127,13 +127,13 @@ class AdbTcpTransportEnsurePolicy:
 class AdbTcpTransportEnsureReadiness:
     """Request bounded readiness verification against one server lifetime."""
 
-    server: AdbServer
+    server: AdbServerLifetime
     configuration: AdbConfiguredTransport
     policy: AdbTcpTransportEnsurePolicy
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(self.server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
         if not isinstance(self.configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
         if not isinstance(self.configuration.transport, AdbTcpTransportConfiguration):
@@ -376,7 +376,7 @@ class AdbTcpTransportEnsureOrchestrator:
 
     def __init__(
         self,
-        server: AdbServer,
+        server: AdbServerLifetime,
         snapshot_reader: AdbDevicesSnapshotReader,
         connector: AdbTcpConnector,
         publisher: EventPublisher,
@@ -384,8 +384,8 @@ class AdbTcpTransportEnsureOrchestrator:
         _monotonic: _MonotonicClock = monotonic,
         _sleep: _Sleeper = sleep,
     ) -> None:
-        if not isinstance(server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(server, AdbServerLifetime):
+            raise TypeError("server must be AdbServerLifetime")
         if not callable(getattr(snapshot_reader, "read", None)):
             raise TypeError("snapshot_reader must provide read()")
         if not callable(getattr(connector, "connect", None)):
@@ -417,7 +417,7 @@ class AdbTcpTransportEnsureOrchestrator:
 
         while True:
             try:
-                snapshot = self._snapshot_reader.read(self.server)
+                snapshot = self._snapshot_reader.read(self.endpoint)
             except AdbError as exc:
                 episode.record_probe_failure(exc)
             else:

@@ -9,7 +9,7 @@ from adb.cli.subprocess import (
     selector_args,
     server_args,
 )
-from adb.server.identity import AdbServer
+from adb.server.address import AdbServerTcpAddress
 from adb.transport.lifecycle.control.port import (
     AdbDeviceSideReconnect,
     AdbOfflineTransportsReconnect,
@@ -22,15 +22,15 @@ from native_attempt import NativeAttemptResult
 
 @dataclass(frozen=True, slots=True)
 class SubprocessAdbTransportController:
-    """Execute one server-bound transport lifecycle command per bounded CLI attempt."""
+    """Execute one endpoint-bound transport lifecycle command per bounded CLI attempt."""
 
-    server: AdbServer
+    endpoint: AdbServerTcpAddress
     executable: str = "adb"
     timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServer):
-            raise TypeError("server must be AdbServer")
+        if not isinstance(self.endpoint, AdbServerTcpAddress):
+            raise TypeError("endpoint must be AdbServerTcpAddress")
         object.__setattr__(self, "executable", normalize_executable(self.executable))
         object.__setattr__(self, "timeout_seconds", normalize_timeout(self.timeout_seconds))
 
@@ -40,7 +40,7 @@ class SubprocessAdbTransportController:
         return run_adb(
             self.executable,
             self.timeout_seconds,
-            [*server_args(self.server.endpoint), "connect", operation.address.value],
+            [*server_args(self.endpoint), "connect", operation.address.value],
         )
 
     def disconnect(self, operation: AdbTcpDisconnect) -> NativeAttemptResult:
@@ -49,7 +49,7 @@ class SubprocessAdbTransportController:
         return run_adb(
             self.executable,
             self.timeout_seconds,
-            [*server_args(self.server.endpoint), "disconnect", operation.address.value],
+            [*server_args(self.endpoint), "disconnect", operation.address.value],
         )
 
     def reconnect(self, operation: AdbTransportReconnect) -> NativeAttemptResult:
@@ -58,7 +58,7 @@ class SubprocessAdbTransportController:
         return run_adb(
             self.executable,
             self.timeout_seconds,
-            [*server_args(self.server.endpoint), *selector_args(operation.selector), "reconnect"],
+            [*server_args(self.endpoint), *selector_args(operation.selector), "reconnect"],
         )
 
     def reconnect_device(self, operation: AdbDeviceSideReconnect) -> NativeAttemptResult:
@@ -68,7 +68,7 @@ class SubprocessAdbTransportController:
             self.executable,
             self.timeout_seconds,
             [
-                *server_args(self.server.endpoint),
+                *server_args(self.endpoint),
                 *selector_args(operation.selector),
                 "reconnect",
                 "device",
@@ -81,7 +81,7 @@ class SubprocessAdbTransportController:
         return run_adb(
             self.executable,
             self.timeout_seconds,
-            [*server_args(self.server.endpoint), "reconnect", "offline"],
+            [*server_args(self.endpoint), "reconnect", "offline"],
         )
 
 
