@@ -7,9 +7,10 @@ from adb.server.identity import AdbServer
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.identity import AdbTransportId
 from adb.tracking.snapshot.identity import AdbDevicesSnapshotEpoch
-from adb.aosp.tracking.model import (
-    ConnectionType,
-    Device,
+from adb.aosp.tracking.model import Device
+from adb.tracking.snapshot.interpretation import (
+    AdbObservedTransportCompatibility,
+    classify_observed_transport,
 )
 
 
@@ -47,23 +48,17 @@ class AdbConfiguredTransportResolution:
         ):
             raise ValueError("resolution rows must match configured serial")
         if any(
-            row.connection_type
-            not in (
-                self.configuration.expected_connection_type,
-                ConnectionType.UNKNOWN,
-            )
+            classify_observed_transport(self.configuration, row)
+            is AdbObservedTransportCompatibility.MISMATCH
             for row in self.matches
         ):
-            raise ValueError("matches must have the configured connection type")
+            raise ValueError("matches must be compatible with the configured transport type")
         if any(
-            row.connection_type
-            in (
-                self.configuration.expected_connection_type,
-                ConnectionType.UNKNOWN,
-            )
+            classify_observed_transport(self.configuration, row)
+            is not AdbObservedTransportCompatibility.MISMATCH
             for row in self.type_mismatches
         ):
-            raise ValueError("type_mismatches must have a different connection type")
+            raise ValueError("type_mismatches must have a different transport type")
 
     @property
     def status(self) -> AdbConfiguredTransportResolutionStatus:

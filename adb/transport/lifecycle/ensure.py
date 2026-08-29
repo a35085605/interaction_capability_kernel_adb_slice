@@ -16,12 +16,12 @@ from adb.transport.configuration import (
     AdbTcpTransportConfiguration,
 )
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot
-from adb.aosp.tracking.model import (
-    ConnectionState,
-    ConnectionType,
-    Device,
-)
+from adb.aosp.tracking.model import ConnectionState, Device
 from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
+from adb.tracking.snapshot.interpretation import (
+    AdbObservedTransportCompatibility,
+    classify_observed_transport,
+)
 from adb.transport.resolution import (
     AdbConfiguredTransportResolutionStatus,
 )
@@ -221,11 +221,11 @@ class AdbTcpTransportEnsureResult:
                 raise ValueError("final_row must belong to final_snapshot")
             if self.final_row.serial != self.operation.serial.value:
                 raise ValueError("final_row serial must match ensure operation")
-            if self.final_row.connection_type not in (
-                self.operation.configuration.expected_connection_type,
-                ConnectionType.UNKNOWN,
+            if (
+                classify_observed_transport(self.operation.configuration, self.final_row)
+                is AdbObservedTransportCompatibility.MISMATCH
             ):
-                raise ValueError("final_row connection type must match configured transport")
+                raise ValueError("final_row transport type must match configured transport")
         object.__setattr__(
             self,
             "diagnostic",

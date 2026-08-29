@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from enum import Enum
+from typing import TypeAlias
 
 from adb.aosp.transport.address import AdbConnectAddress
 from adb.transport.identity import AdbDeviceSerial
 
-if TYPE_CHECKING:
-    from adb.aosp.tracking.model import ConnectionType
+
+class AdbTransportType(str, Enum):
+    """Domain transport kinds supported by configured ADB transports."""
+
+    USB = "usb"
+    TCP = "tcp"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,19 +81,18 @@ class AdbConfiguredTransport:
         return None
 
     @property
-    def expected_connection_type(self) -> ConnectionType:
-        """Observed ADB connection type required by this configured transport."""
-
-        from adb.aosp.tracking.model import ConnectionType
+    def type(self) -> AdbTransportType:
+        """Domain transport kind for this configuration."""
 
         if isinstance(self.transport, AdbUsbTransportConfiguration):
-            return ConnectionType.USB
-        return ConnectionType.SOCKET
+            return AdbTransportType.USB
+        return AdbTransportType.TCP
 
 
 __all__ = [
     "AdbConfiguredTransport",
     "AdbTcpTransportConfiguration",
     "AdbTransportConfiguration",
+    "AdbTransportType",
     "AdbUsbTransportConfiguration",
 ]

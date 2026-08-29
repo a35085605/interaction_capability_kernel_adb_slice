@@ -209,11 +209,11 @@ class AdbConfiguredTransportSupervisor:
                 raise ValueError("ADB configured transport is already registered")
             if any(
                 candidate.serial == configuration.serial
-                and candidate.expected_connection_type is configuration.expected_connection_type
+                and candidate.type is configuration.type
                 for candidate in self._registrations
             ):
                 raise ValueError(
-                    "ADB configured transport serial and connection type are already registered"
+                    "ADB configured transport serial and transport type are already registered"
                 )
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration

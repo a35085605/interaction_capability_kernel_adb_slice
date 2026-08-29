@@ -3,8 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from adb.aosp.tracking.model import ConnectionType, Devices
+from adb.aosp.tracking.model import Devices
 from adb.epoch import Epoch, EpochSequence
+from adb.tracking.snapshot.interpretation import (
+    AdbObservedTransportCompatibility,
+    classify_observed_transport,
+)
 
 if TYPE_CHECKING:
     from adb.transport.configuration import AdbConfiguredTransport
@@ -47,7 +51,7 @@ class AdbDevicesSnapshot:
     ) -> AdbConfiguredTransportResolution:
         """Interpret this AOSP observation against one configured transport.
 
-        Exact USB/SOCKET evidence wins. AOSP ``UNKNOWN`` connection types are compatibility
+        Exact domain USB/TCP evidence wins. AOSP ``UNKNOWN`` connection types are compatibility
         fallback evidence when no exact typed row is present.
         """
 
@@ -60,22 +64,25 @@ class AdbDevicesSnapshot:
         serial_matches = tuple(
             row for row in self.payload.devices if row.serial == configuration.serial.value
         )
+        classified = tuple(
+            (row, classify_observed_transport(configuration, row))
+            for row in serial_matches
+        )
         exact_matches = tuple(
             row
-            for row in serial_matches
-            if row.connection_type is configuration.expected_connection_type
+            for row, compatibility in classified
+            if compatibility is AdbObservedTransportCompatibility.MATCH
         )
-        unknown_matches = tuple(
+        unspecified_matches = tuple(
             row
-            for row in serial_matches
-            if row.connection_type is ConnectionType.UNKNOWN
+            for row, compatibility in classified
+            if compatibility is AdbObservedTransportCompatibility.UNSPECIFIED
         )
-        matches = exact_matches if exact_matches else unknown_matches
+        matches = exact_matches if exact_matches else unspecified_matches
         type_mismatches = tuple(
             row
-            for row in serial_matches
-            if row.connection_type
-            not in (configuration.expected_connection_type, ConnectionType.UNKNOWN)
+            for row, compatibility in classified
+            if compatibility is AdbObservedTransportCompatibility.MISMATCH
         )
         return AdbConfiguredTransportResolution(
             configuration=configuration,

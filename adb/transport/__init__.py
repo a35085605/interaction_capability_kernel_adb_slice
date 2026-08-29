@@ -5,6 +5,7 @@ from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
     AdbTransportConfiguration,
+    AdbTransportType,
     AdbUsbTransportConfiguration,
 )
 from adb.transport.features import (
@@ -76,5 +77,6 @@ __all__ = [
     "AdbTransportReconnect",
     "AdbTransportReconnector",
     "AdbTransportSelector",
+    "AdbTransportType",
     "AdbUsbTransportConfiguration",
 ]
