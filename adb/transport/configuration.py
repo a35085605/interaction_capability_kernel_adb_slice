@@ -3,33 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
+from adb.aosp.transport.address import AdbConnectAddress
 from adb.transport.identity import AdbDeviceSerial
 
 if TYPE_CHECKING:
     from adb.aosp.tracking.model import AdbConnectionType
-
-
-def _normalize_required_text(value: object, *, field_name: str) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{field_name} must be a string")
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{field_name} cannot be empty")
-    return normalized
-
-
-@dataclass(frozen=True, slots=True, order=True)
-class AdbTcpAddress:
-    """Explicit TCP address accepted by ADB connect/disconnect commands."""
-
-    value: str
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "value",
-            _normalize_required_text(self.value, field_name="ADB TCP address"),
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,19 +25,19 @@ class AdbUsbTransportConfiguration:
 class AdbTcpTransportConfiguration:
     """Configuration for one serial-selected TCP ADB transport.
 
-    ``serial`` identifies the transport for selection and tracking; ``address`` is used only
-    for ``adb connect`` when the serial is absent. The reported serial may differ from the
+    ``serial`` identifies the transport for selection and tracking; ``connect_address`` is used
+    only for ``adb connect`` when the serial is absent. The reported serial may differ from the
     connect address.
     """
 
     serial: AdbDeviceSerial
-    address: AdbTcpAddress
+    connect_address: AdbConnectAddress
 
     def __post_init__(self) -> None:
         if not isinstance(self.serial, AdbDeviceSerial):
             raise TypeError("serial must be AdbDeviceSerial")
-        if not isinstance(self.address, AdbTcpAddress):
-            raise TypeError("address must be AdbTcpAddress")
+        if not isinstance(self.connect_address, AdbConnectAddress):
+            raise TypeError("connect_address must be AdbConnectAddress")
 
 
 AdbTransportConfiguration: TypeAlias = (
@@ -90,11 +68,11 @@ class AdbConfiguredTransport:
         return self.transport.serial
 
     @property
-    def connect_address(self) -> AdbTcpAddress | None:
-        """Explicit TCP connect address when this configured transport uses TCP."""
+    def connect_address(self) -> AdbConnectAddress | None:
+        """Explicit native connect address when this configured transport uses TCP."""
 
         if isinstance(self.transport, AdbTcpTransportConfiguration):
-            return self.transport.address
+            return self.transport.connect_address
         return None
 
     @property
@@ -110,7 +88,6 @@ class AdbConfiguredTransport:
 
 __all__ = [
     "AdbConfiguredTransport",
-    "AdbTcpAddress",
     "AdbTcpTransportConfiguration",
     "AdbTransportConfiguration",
     "AdbUsbTransportConfiguration",

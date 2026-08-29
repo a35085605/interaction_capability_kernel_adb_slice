@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from adb.epoch import Epoch, EpochSequence
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.address import AdbServerAddress
 
 
 class ServerEpoch(Epoch):
@@ -26,12 +26,12 @@ class AdbServer:
     The epoch distinguishes successive server lifetimes.
     """
 
-    endpoint: AdbServerEndpoint
+    endpoint: AdbServerAddress
     epoch: ServerEpoch
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(self.endpoint, AdbServerAddress):
+            raise TypeError("endpoint must be AdbServerAddress")
         if not isinstance(self.epoch, ServerEpoch):
             raise TypeError("epoch must be ServerEpoch")
 

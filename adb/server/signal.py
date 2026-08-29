@@ -11,7 +11,7 @@ from adb.server.failure import (
     AdbServerProcessExitedFailure,
 )
 from adb.server.identity import AdbServer, ServerEpoch
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.address import AdbServerAddress
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -52,7 +52,7 @@ class _ServerSignalProjection:
     server: AdbServer
 
     @property
-    def endpoint(self) -> AdbServerEndpoint:
+    def endpoint(self) -> AdbServerAddress:
         return self.server.endpoint
 
     @property

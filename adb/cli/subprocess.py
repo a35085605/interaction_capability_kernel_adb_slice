@@ -5,7 +5,7 @@ import math
 import subprocess
 from typing import TYPE_CHECKING
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.address import AdbServerAddress
 from native_attempt import NativeAttemptResult, NativeAttemptStatus, NativeCompletionScope
 
 if TYPE_CHECKING:
@@ -40,9 +40,9 @@ def selector_args(selector: AdbTransportSelector) -> list[str]:
     raise TypeError("selector must be an ADB transport selector")
 
 
-def server_args(endpoint: AdbServerEndpoint) -> list[str]:
-    if not isinstance(endpoint, AdbServerEndpoint):
-        raise TypeError("endpoint must be AdbServerEndpoint")
+def server_args(endpoint: AdbServerAddress) -> list[str]:
+    if not isinstance(endpoint, AdbServerAddress):
+        raise TypeError("endpoint must be AdbServerAddress")
     return ["-H", endpoint.host, "-P", str(endpoint.port)]
 
 

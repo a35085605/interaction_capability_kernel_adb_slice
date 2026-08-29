@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from adb.epoch import EpochIssuer
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.address import AdbServerAddress
 from adb.server.identity import AdbServer, ServerEpoch
 from adb.server.lifecycle.control.backend import (
     AdbServerBackend,
@@ -29,20 +29,20 @@ class AdbServerProvisioner:
         backend: AdbServerBackend,
         server_epoch_issuer: EpochIssuer[ServerEpoch],
         *,
-        endpoint: AdbServerEndpoint | None,
+        endpoint: AdbServerAddress | None,
     ) -> None:
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("backend must satisfy AdbServerBackend")
         if not isinstance(server_epoch_issuer, EpochIssuer):
             raise TypeError("server_epoch_issuer must satisfy EpochIssuer")
-        if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint or None")
+        if endpoint is not None and not isinstance(endpoint, AdbServerAddress):
+            raise TypeError("endpoint must be AdbServerAddress or None")
         self._backend = backend
         self._server_epoch_issuer = server_epoch_issuer
         self._endpoint = endpoint
 
     @property
-    def endpoint(self) -> AdbServerEndpoint | None:
+    def endpoint(self) -> AdbServerAddress | None:
         """Endpoint constraint bound to every provisioning attempt."""
 
         return self._endpoint
@@ -61,7 +61,7 @@ class AdbServerProvisioner:
 
     def _acquire_backend(
         self,
-    ) -> AdbServerEndpoint | AdbServerProvisionDeferred | AdbServerProvisionFailed:
+    ) -> AdbServerAddress | AdbServerProvisionDeferred | AdbServerProvisionFailed:
         result = self._backend.acquire(self._endpoint)
         if isinstance(result, (AdbServerBackendSucceeded, AdbServerBackendSatisfied)):
             return result.endpoint

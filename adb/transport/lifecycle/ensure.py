@@ -9,7 +9,7 @@ from time import monotonic, sleep
 from typing import Protocol, runtime_checkable
 
 from adb.errors import AdbError
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.address import AdbServerAddress
 from adb.server.identity import AdbServer
 from adb.transport.configuration import (
     AdbConfiguredTransport,
@@ -143,7 +143,7 @@ class AdbTcpTransportEnsureReadiness:
             raise TypeError("policy must be AdbTcpTransportEnsurePolicy")
 
     @property
-    def endpoint(self) -> AdbServerEndpoint:
+    def endpoint(self) -> AdbServerAddress:
         return self.server.endpoint
 
     @property
@@ -449,7 +449,7 @@ class AdbTcpTransportEnsureOrchestrator:
         transport = configuration.transport
         if not isinstance(transport, AdbTcpTransportConfiguration):
             raise ValueError("TCP ensure requires an AdbTcpTransportConfiguration")
-        operation = AdbTcpConnect(transport.address)
+        operation = AdbTcpConnect(transport.connect_address)
         result = self._connector.connect(operation)
         if not isinstance(result, NativeAttemptResult):
             raise TypeError("connector must return NativeAttemptResult")

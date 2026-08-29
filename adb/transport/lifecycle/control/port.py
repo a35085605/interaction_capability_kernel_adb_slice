@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias
 
-from adb.transport.configuration import AdbTcpAddress
+from adb.aosp.transport.address import AdbConnectAddress
 from adb.transport.selection import (
     AdbTransportById,
     AdbTransportBySerial,
@@ -20,24 +20,24 @@ def _require_selector(value: object) -> AdbTransportSelector:
 
 @dataclass(frozen=True, slots=True)
 class AdbTcpConnect:
-    """Request one native attempt to connect one explicit TCP ADB endpoint."""
+    """Request one native attempt to connect one explicit TCP ADB address."""
 
-    address: AdbTcpAddress
+    address: AdbConnectAddress
 
     def __post_init__(self) -> None:
-        if not isinstance(self.address, AdbTcpAddress):
-            raise TypeError("address must be AdbTcpAddress")
+        if not isinstance(self.address, AdbConnectAddress):
+            raise TypeError("address must be AdbConnectAddress")
 
 
 @dataclass(frozen=True, slots=True)
 class AdbTcpDisconnect:
-    """Request one native attempt to disconnect one explicit TCP ADB endpoint."""
+    """Request one native attempt to disconnect one explicit TCP ADB address."""
 
-    address: AdbTcpAddress
+    address: AdbConnectAddress
 
     def __post_init__(self) -> None:
-        if not isinstance(self.address, AdbTcpAddress):
-            raise TypeError("address must be AdbTcpAddress")
+        if not isinstance(self.address, AdbConnectAddress):
+            raise TypeError("address must be AdbConnectAddress")
 
 
 @dataclass(frozen=True, slots=True)

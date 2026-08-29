@@ -11,7 +11,7 @@ from typing import Protocol
 from adb.cli.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
 from adb.aosp.protocol.smart_socket.client import AdbServiceClient
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.address import AdbServerAddress
 from adb.server.lifecycle.control.backend import (
     AdbServerBackendFailed,
     AdbServerBackendOperation,
@@ -33,7 +33,7 @@ _SocketFactory = Callable[[int, int, int], socket.socket]
 
 
 class _ServerStatusReader(Protocol):
-    def read(self, endpoint: AdbServerEndpoint) -> object: ...
+    def read(self, endpoint: AdbServerAddress) -> object: ...
 
 
 class _AdbServerSubprocessStartError(RuntimeError):
@@ -71,12 +71,12 @@ class _OwnedAdbServerProcess:
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: AdbServerAddress,
         process: subprocess.Popen[bytes],
         shutdown_timeout_seconds: float,
     ) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(endpoint, AdbServerAddress):
+            raise TypeError("endpoint must be AdbServerAddress")
         self.endpoint = endpoint
         self._process = process
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
@@ -176,7 +176,7 @@ class _AdbServerSubprocessFactory:
 
     def create(
         self,
-        endpoint: AdbServerEndpoint | None,
+        endpoint: AdbServerAddress | None,
     ) -> _OwnedAdbServerProcess:
         if not self._socket_activation_supported:
             raise _AdbServerSubprocessStartError(
@@ -200,7 +200,7 @@ class _AdbServerSubprocessFactory:
 
     def _launch(
         self,
-        endpoint: AdbServerEndpoint | None,
+        endpoint: AdbServerAddress | None,
     ) -> _OwnedAdbServerProcess:
         reservation, resolved_endpoint = self._reserve_listener(endpoint)
         try:
@@ -234,8 +234,8 @@ class _AdbServerSubprocessFactory:
 
     def _reserve_listener(
         self,
-        endpoint: AdbServerEndpoint | None,
-    ) -> tuple[socket.socket, AdbServerEndpoint]:
+        endpoint: AdbServerAddress | None,
+    ) -> tuple[socket.socket, AdbServerAddress]:
         host = endpoint.host if endpoint is not None else "127.0.0.1"
         port = endpoint.port if endpoint is not None else 0
 
@@ -269,7 +269,7 @@ class _AdbServerSubprocessFactory:
                 listener.bind(sockaddr)
                 listener.listen(socket.SOMAXCONN)
                 bound = listener.getsockname()
-                resolved = AdbServerEndpoint(str(bound[0]), int(bound[1]))
+                resolved = AdbServerAddress(str(bound[0]), int(bound[1]))
                 return listener, resolved
             except OSError as exc:
                 failures.append(str(exc))
@@ -285,7 +285,7 @@ class _AdbServerSubprocessFactory:
 
     def _wait_until_ready(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: AdbServerAddress,
         process: subprocess.Popen[bytes],
     ) -> None:
         deadline = self._monotonic() + self.startup_timeout_seconds
@@ -378,10 +378,10 @@ class SubprocessAdbServerBackend:
 
     def acquire(
         self,
-        endpoint: AdbServerEndpoint | None = None,
+        endpoint: AdbServerAddress | None = None,
     ) -> AdbServerBackendResult:
-        if endpoint is not None and not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint or None")
+        if endpoint is not None and not isinstance(endpoint, AdbServerAddress):
+            raise TypeError("endpoint must be AdbServerAddress or None")
 
         operation = AdbServerBackendOperation.ACQUIRE
         unavailable = self._begin_operation(operation)
@@ -426,9 +426,9 @@ class SubprocessAdbServerBackend:
         finally:
             self._end_operation(operation)
 
-    def release(self, endpoint: AdbServerEndpoint) -> AdbServerBackendResult:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+    def release(self, endpoint: AdbServerAddress) -> AdbServerBackendResult:
+        if not isinstance(endpoint, AdbServerAddress):
+            raise TypeError("endpoint must be AdbServerAddress")
 
         operation = AdbServerBackendOperation.RELEASE
         unavailable = self._begin_operation(operation)

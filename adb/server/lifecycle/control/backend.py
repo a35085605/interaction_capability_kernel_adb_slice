@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.address import AdbServerAddress
 
 
 def _normalize_diagnostic(value: object) -> str:
@@ -27,22 +27,22 @@ class AdbServerBackendOperation(str, Enum):
 class AdbServerBackendSucceeded:
     """The requested backend operation ran and completed successfully."""
 
-    endpoint: AdbServerEndpoint
+    endpoint: AdbServerAddress
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(self.endpoint, AdbServerAddress):
+            raise TypeError("endpoint must be AdbServerAddress")
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendSatisfied:
     """The requested backend operation was unnecessary because its target state already holds."""
 
-    endpoint: AdbServerEndpoint
+    endpoint: AdbServerAddress
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
+        if not isinstance(self.endpoint, AdbServerAddress):
+            raise TypeError("endpoint must be AdbServerAddress")
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,15 +99,15 @@ class _AdbServerBackendEndpointMismatchError(RuntimeError):
 
 
 def _require_owned_release_endpoint(
-    owned: AdbServerEndpoint,
-    requested: AdbServerEndpoint,
+    owned: AdbServerAddress,
+    requested: AdbServerAddress,
 ) -> None:
     """Reject release of an endpoint other than the exact backend-owned endpoint."""
 
-    if not isinstance(owned, AdbServerEndpoint):
-        raise TypeError("owned must be AdbServerEndpoint")
-    if not isinstance(requested, AdbServerEndpoint):
-        raise TypeError("requested must be AdbServerEndpoint")
+    if not isinstance(owned, AdbServerAddress):
+        raise TypeError("owned must be AdbServerAddress")
+    if not isinstance(requested, AdbServerAddress):
+        raise TypeError("requested must be AdbServerAddress")
     if owned != requested:
         raise _AdbServerBackendEndpointMismatchError(
             "requested endpoint does not identify the backend-owned ADB server endpoint"
@@ -125,12 +125,12 @@ class AdbServerBackend(Protocol):
 
     def acquire(
         self,
-        endpoint: AdbServerEndpoint | None = None,
+        endpoint: AdbServerAddress | None = None,
     ) -> AdbServerBackendResult:
         """Acquire a usable attachment, optionally constrained to ``endpoint``."""
         ...
 
-    def release(self, endpoint: AdbServerEndpoint) -> AdbServerBackendResult:
+    def release(self, endpoint: AdbServerAddress) -> AdbServerBackendResult:
         """Release the backend attachment identified by ``endpoint``."""
         ...
 

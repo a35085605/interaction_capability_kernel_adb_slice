@@ -4,7 +4,7 @@ from adb.api.runtime import (
     AdbConfiguredTransportHandle,
     AdbRuntime,
     AdbRuntimeBootstrap,
-    AdbServerEndpoint,
+    AdbServerAddress,
 )
 from adb.api.transport import (
     AdbConfiguredTransportRegistration,
@@ -17,5 +17,5 @@ __all__ = [
     "AdbConfiguredTransportType",
     "AdbRuntime",
     "AdbRuntimeBootstrap",
-    "AdbServerEndpoint",
+    "AdbServerAddress",
 ]

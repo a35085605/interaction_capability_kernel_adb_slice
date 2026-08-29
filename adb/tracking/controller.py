@@ -10,7 +10,7 @@ from adb.errors import (
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.server.endpoint import AdbServerEndpoint
+from adb.server.address import AdbServerAddress
 from adb.server.identity import AdbServer
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
@@ -32,7 +32,7 @@ from adb.tracking.signal import (
 from eventing import EventPublisher
 
 
-_TrackingBackendFactory = Callable[[AdbServerEndpoint], AdbDevicesTrackingBackend]
+_TrackingBackendFactory = Callable[[AdbServerAddress], AdbDevicesTrackingBackend]
 _ThreadFactory = Callable[..., Thread]
 
 
@@ -229,7 +229,7 @@ class SmartSocketAdbDevicesTrackingController:
             raise TypeError(
                 "tracking backend factory must return AdbDevicesTrackingBackend"
             )
-        if backend.endpoint != self.endpoint:
+        if backend.address != self.endpoint:
             raise ValueError("tracking backend factory returned a mismatched server endpoint")
         return backend
 

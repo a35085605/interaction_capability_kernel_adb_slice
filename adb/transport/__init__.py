@@ -1,8 +1,8 @@
 """ADB transport configuration, lifecycle, selection, resolution, and capabilities."""
 
+from adb.aosp.transport.address import AdbConnectAddress
 from adb.transport.configuration import (
     AdbConfiguredTransport,
-    AdbTcpAddress,
     AdbTcpTransportConfiguration,
     AdbTransportConfiguration,
     AdbUsbTransportConfiguration,
@@ -54,7 +54,7 @@ __all__ = [
     "AdbDeviceSideReconnector",
     "AdbOfflineTransportsReconnect",
     "AdbOfflineTransportsReconnector",
-    "AdbTcpAddress",
+    "AdbConnectAddress",
     "AdbTcpConnect",
     "AdbTcpConnector",
     "AdbTcpDisconnect",

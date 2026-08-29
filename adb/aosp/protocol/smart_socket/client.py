@@ -14,7 +14,7 @@ from adb.aosp.errors import (
     AdbTimeoutError,
 )
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
-from adb.aosp.server.endpoint import AdbServerEndpoint
+from adb.aosp.server.address import AdbServerAddress
 
 
 _SHELL_STDOUT = 1
@@ -43,14 +43,14 @@ class AdbServiceClient:
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
+        address: AdbServerAddress,
         timeout_seconds: float = 5.0,
         *,
         _socket_factory: Callable[..., socket.socket] = socket.create_connection,
     ) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-        self.endpoint = endpoint
+        if not isinstance(address, AdbServerAddress):
+            raise TypeError("address must be AdbServerAddress")
+        self.address = address
         self.timeout_seconds = _normalize_timeout(timeout_seconds)
         self._socket_factory = _socket_factory
 
@@ -124,7 +124,7 @@ class AdbServiceClient:
     def _connect(self) -> socket.socket:
         try:
             sock = self._socket_factory(
-                (self.endpoint.host, self.endpoint.port),
+                (self.address.host, self.address.port),
                 timeout=self.timeout_seconds,
             )
             sock.settimeout(self.timeout_seconds)
@@ -133,7 +133,7 @@ class AdbServiceClient:
             raise AdbTimeoutError("timed out connecting to the ADB server") from exc
         except OSError as exc:
             raise AdbServerConnectionError(
-                f"failed to connect to ADB server {self.endpoint.host}:{self.endpoint.port}: {exc}"
+                f"failed to connect to ADB server {self.address.host}:{self.address.port}: {exc}"
             ) from exc
 
     def _select_transport(self, sock: socket.socket, transport_service: str) -> None:

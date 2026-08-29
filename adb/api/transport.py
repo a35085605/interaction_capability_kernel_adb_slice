@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from adb.aosp.transport.address import AdbConnectAddress
 from adb.transport.configuration import (
     AdbConfiguredTransport,
-    AdbTcpAddress,
     AdbTcpTransportConfiguration,
     AdbUsbTransportConfiguration,
 )
@@ -28,7 +28,7 @@ class AdbConfiguredTransportRegistration:
 
     serial: AdbDeviceSerial
     type: AdbConfiguredTransportType
-    connect_address: AdbTcpAddress | None = None
+    connect_address: AdbConnectAddress | None = None
     policy: AdbConfiguredTransportSupervisionPolicy = field(
         default_factory=AdbConfiguredTransportSupervisionPolicy
     )
@@ -39,9 +39,9 @@ class AdbConfiguredTransportRegistration:
         if not isinstance(self.type, AdbConfiguredTransportType):
             raise TypeError("type must be AdbConfiguredTransportType")
         if self.connect_address is not None and not isinstance(
-            self.connect_address, AdbTcpAddress
+            self.connect_address, AdbConnectAddress
         ):
-            raise TypeError("connect_address must be AdbTcpAddress or None")
+            raise TypeError("connect_address must be AdbConnectAddress or None")
         if not isinstance(self.policy, AdbConfiguredTransportSupervisionPolicy):
             raise TypeError("policy must be AdbConfiguredTransportSupervisionPolicy")
 
@@ -72,7 +72,7 @@ def _configured_transport_from_registration(
             raise RuntimeError("validated TCP registration lost its connect_address")
         transport = AdbTcpTransportConfiguration(
             serial=registration.serial,
-            address=connect_address,
+            connect_address=connect_address,
         )
     return AdbConfiguredTransport(transport)
 

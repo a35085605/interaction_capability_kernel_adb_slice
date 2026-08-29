@@ -16,7 +16,7 @@ from adb.aosp.errors import (
     AdbServerConnectionError,
     AdbServiceError,
 )
-from adb.aosp.server.endpoint import AdbServerEndpoint
+from adb.aosp.server.address import AdbServerAddress
 
 
 _SERVICE = "host:track-devices-proto-binary"
@@ -63,7 +63,7 @@ class AdbDevicesTrackingBackend(Protocol):
     """
 
     @property
-    def endpoint(self) -> AdbServerEndpoint:
+    def address(self) -> AdbServerAddress:
         ...
 
     def open(self) -> AdbDevicesTrackingBackendStream | None:
@@ -124,12 +124,12 @@ class SmartSocketAdbDevicesTrackingBackend:
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
+        address: AdbServerAddress,
         startup_timeout_seconds: float = 5.0,
     ) -> None:
-        if not isinstance(endpoint, AdbServerEndpoint):
-            raise TypeError("endpoint must be AdbServerEndpoint")
-        self.endpoint = endpoint
+        if not isinstance(address, AdbServerAddress):
+            raise TypeError("address must be AdbServerAddress")
+        self.address = address
         self.startup_timeout_seconds = _normalize_startup_timeout(
             startup_timeout_seconds
         )
@@ -230,15 +230,15 @@ class SmartSocketAdbDevicesTrackingBackend:
     def _connect(self) -> tuple[socket.socket, float]:
         try:
             addresses = socket.getaddrinfo(
-                self.endpoint.host,
-                self.endpoint.port,
+                self.address.host,
+                self.address.port,
                 type=socket.SOCK_STREAM,
             )
         except OSError as exc:
             if self._is_closed():
                 raise _TrackingBackendClosed from exc
             raise AdbServerConnectionError(
-                f"failed to resolve ADB server endpoint {self.endpoint.host!r}"
+                f"failed to resolve ADB server address {self.address.host!r}"
             ) from exc
 
         if self._is_closed():
@@ -288,7 +288,7 @@ class SmartSocketAdbDevicesTrackingBackend:
 
         detail = str(last_error) if last_error is not None else "no address candidates"
         raise AdbServerConnectionError(
-            f"failed to connect to ADB server endpoint: {detail}"
+            f"failed to connect to ADB server address: {detail}"
         )
 
     def _set_deadline_timeout(self, sock: socket.socket, deadline: float) -> None:
