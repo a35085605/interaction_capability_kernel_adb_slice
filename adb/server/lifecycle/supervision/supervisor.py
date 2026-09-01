@@ -56,10 +56,8 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 
 
 class AdbServerSupervisor:
-    """Reconcile ADB server failures across successive server lifetimes.
-
-    The supervisor owns recovery policy and scheduling only. Complete provisioning and retirement
-    transactions remain owned by the runtime lifecycle API.
+    """Reconcile ADB server failures across lifetimes using recovery policy and scheduling while
+    the runtime lifecycle API owns transactions.
     """
 
     def __init__(
@@ -116,7 +114,7 @@ class AdbServerSupervisor:
 
     @property
     def server_state(self) -> AdbServerStateView:
-        """Read-only authoritative state projection provided by the owning runtime."""
+        """Authoritative server-state view provided by the owning runtime."""
 
         return self._runtime.server_state
 
@@ -156,7 +154,7 @@ class AdbServerSupervisor:
         self._retire_current_and_maybe_recover(failure)
 
     def close(self) -> None:
-        """Stop supervision without terminating the current healthy server."""
+        """Stop supervision while preserving the current healthy server."""
 
         with self._mutation_lock:
             with self._lock:

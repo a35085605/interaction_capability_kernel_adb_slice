@@ -36,10 +36,7 @@ from scheduling import TemporalScheduler
 
 
 class AdbRuntime(AdbManagedRuntime):
-    """Runtime ownership boundary for the composed ADB capability graph.
-
-    Server and device state are authoritative; supervisors provide optional lifecycle automation.
-    """
+    """Own the composed ADB capability graph and its authoritative server and device state."""
 
     def __init__(
         self,
@@ -161,7 +158,7 @@ class AdbRuntime(AdbManagedRuntime):
 
     @property
     def devices(self) -> AdbDevicesSnapshotView:
-        """Read-only current server-bound tracked-devices observation for this runtime."""
+        """Current server-bound tracked-devices observation exposed by this runtime."""
 
         return self._state.devices
 
@@ -348,7 +345,7 @@ class AdbRuntime(AdbManagedRuntime):
             self._starting = False
 
     def close(self) -> None:
-        """Release runtime infrastructure without stopping the current healthy server."""
+        """Release runtime infrastructure while preserving the current healthy server."""
 
         with self._runtime_lock:
             if self._closed:

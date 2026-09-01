@@ -8,11 +8,7 @@ from adb.server.epoch import ServerEpoch
 
 @dataclass(frozen=True, slots=True)
 class AdbServerLifetime:
-    """Immutable association of one runtime server identity with its endpoint.
-
-    ``epoch`` is the runtime-scoped lifetime identity. ``endpoint`` is the
-    connection target used by infrastructure for that lifetime.
-    """
+    """Immutable pairing of a runtime-scoped server epoch with its connection endpoint."""
 
     endpoint: TcpAddress
     epoch: ServerEpoch

@@ -71,9 +71,8 @@ def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class AdbTcpTransportEnsurePolicy:
-    """Policy for one bounded transport-readiness polling episode.
-
-    Unlisted device states remain pending rather than being treated as ready or blocked.
+    """Configure one bounded transport-readiness polling episode with non-terminal states remaining
+    pending.
     """
 
     timeout_seconds: float
@@ -168,7 +167,7 @@ class AdbTcpTransportPresenceSatisfaction(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbTcpTransportEnsureResult:
-    """Terminal polling evidence without collapsing command success into readiness."""
+    """Terminal polling evidence that records command outcome and readiness independently."""
 
     operation: AdbTcpTransportEnsureReadiness
     status: AdbTcpTransportEnsureStatus
@@ -242,9 +241,8 @@ class AdbTcpTransportEnsureResult:
 
 @runtime_checkable
 class AdbTcpTransportEnsurer(Protocol):
-    """Ensure bounded readiness for configured TCP transports.
-
-    Implementations used by supervision must allow concurrent ensures for distinct transports.
+    """Ensure bounded readiness for configured TCP transports with concurrent episodes for distinct
+    transports.
     """
 
     def ensure(
@@ -364,10 +362,8 @@ class _ReadinessEpisodeState:
 
 
 class AdbTcpTransportEnsureOrchestrator:
-    """Drive one configured TCP transport toward readiness before a deadline.
-
-    It probes fresh snapshots, attempts ``adb connect`` at most once while absent, and polls to a
-    terminal state or timeout.
+    """Drive one configured TCP transport toward readiness before a deadline by probing snapshots,
+    issuing at most one ``adb connect``, and polling to a terminal state.
     """
 
     def __init__(

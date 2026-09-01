@@ -12,10 +12,8 @@ from adb.transport.lifecycle.supervision.policy import (
 
 
 class RegisteredTransport:
-    """Runtime-scoped transport handle that survives ADB server replacement.
-
-    Resolution and recovery remain server-scoped; registration lasts until removal or runtime
-    close.
+    """Runtime-scoped configured transport handle spanning server lifetimes while resolution and
+    recovery remain server-scoped.
     """
 
     __slots__ = ("_runtime", "_configuration", "_is_registered")
@@ -31,7 +29,7 @@ class RegisteredTransport:
 
     @property
     def configuration(self) -> AdbConfiguredTransport:
-        """Server-independent configured transport owned by this registration."""
+        """Configured transport owned by this runtime registration."""
 
         return self._configuration
 
@@ -47,9 +45,8 @@ class RegisteredTransport:
 
 
 class AdbManagedRuntime:
-    """Own configured transports across successive ADB server lifetimes.
-
-    The current server may be replaced or absent without invalidating registrations.
+    """Own runtime-scoped configured transport registrations across successive ADB server
+    lifetimes.
     """
 
     def __init__(
@@ -74,7 +71,7 @@ class AdbManagedRuntime:
 
     @property
     def server_state(self) -> AdbServerStateView:
-        """Read-only authoritative server-state projection for this runtime."""
+        """Authoritative server-state view for this runtime."""
 
         return self._server_state
 
@@ -94,7 +91,7 @@ class AdbManagedRuntime:
         raise NotImplementedError
 
     def close(self) -> None:
-        """Release runtime resources and invalidate handles without stopping the server."""
+        """Release runtime resources, invalidate handles, and preserve the current server."""
         raise NotImplementedError
 
     # ------------------------------------------------------------------
@@ -106,10 +103,8 @@ class AdbManagedRuntime:
         configuration: AdbConfiguredTransport,
         policy: AdbConfiguredTransportSupervisionPolicy | None = None,
     ) -> RegisteredTransport:
-        """Register one transport for this runtime and return its long-lived handle.
-
-        Current tracking evidence is projected immediately when available; optional TCP recovery
-        handles absence.
+        """Register one transport and return its runtime-scoped handle, projecting current tracking
+        evidence and optional TCP recovery.
         """
 
         if not isinstance(configuration, AdbConfiguredTransport):

@@ -63,11 +63,8 @@ def _normalize_open_enum(
 
 @dataclass(frozen=True, slots=True)
 class Device:
-    """One AOSP ``adb.proto.Device`` value observed from ``track-devices``.
-
-    This is protocol evidence, not a stable domain device identity. ``transport_id`` preserves
-    the raw signed protobuf ``int64``; domain validation happens only when a consumer interprets
-    it as an ``AdbTransportId``. Unknown enum values are preserved as integers.
+    """Protocol-level AOSP ``adb.proto.Device`` evidence preserving raw transport IDs and open enum
+    values for domain translation.
     """
 
     serial: str = ""

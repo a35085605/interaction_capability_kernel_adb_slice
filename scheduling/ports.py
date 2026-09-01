@@ -20,11 +20,8 @@ class CalendarSchedule(Protocol):
 
 @runtime_checkable
 class TemporalScheduler(Protocol[ScheduledEventT]):
-    """Register data events for non-polling temporal delivery.
-
-    Implementations wait efficiently and deliver events through configured
-    orchestration or event-queue infrastructure. They must not invoke domain
-    control effects directly.
+    """Deliver scheduled data events efficiently through orchestration or event-queue
+    infrastructure while orchestration owns domain control effects.
     """
 
     def schedule_at(

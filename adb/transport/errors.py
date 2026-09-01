@@ -13,10 +13,8 @@ from adb.errors import (
 def translate_transport_selection_error(
     error: AdbServiceError,
 ) -> AdbTransportSelectionError | None:
-    """Translate a native transport-selection FAIL into its domain classification.
-
-    Non-selection service failures are deliberately left untranslated so an ``exec:`` or
-    ``shell:`` failure cannot be mistaken for failure to select the transport.
+    """Translate a native transport-selection FAIL into its domain classification while preserving
+    other service failures as command failures.
     """
 
     if not isinstance(error, AdbServiceError):

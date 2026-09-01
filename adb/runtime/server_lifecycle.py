@@ -27,17 +27,7 @@ from adb.server.state import AdbServerStateSnapshot, AdbServerStateTransition
 
 
 class AdbServerLifecycleRuntimeFacade:
-    """Runtime-owned server lifecycle transaction facade.
-
-    Infrastructure control operates only on endpoints.  The runtime captures the execution T0,
-    interprets control results, issues fresh server epochs, builds candidate lifetimes, and asks
-    authoritative state to commit the exact T0 -> T1 transition.
-
-    Public lifecycle operations use the state observed at execution time.  Conditional operations
-    accept an already captured runtime T0 and reject it before any infrastructure side effect when
-    it is stale.  Both forms enter the same transaction core, avoiding a validate-then-execute
-    race between intent interpretation and lifecycle work.
-    """
+    """Coordinate authoritative T0-to-T1 ADB server lifecycle transactions for one runtime."""
 
     def __init__(
         self,
@@ -72,7 +62,9 @@ class AdbServerLifecycleRuntimeFacade:
         self,
         expected: AdbServerStateSnapshot,
     ) -> AdbServerProvisionTransactionResult | None:
-        """Provision only when ``expected`` is still the execution T0; return ``None`` if stale."""
+        """Conditionally provision from ``expected`` as execution T0, returning ``None`` for stale
+        state.
+        """
 
         if not isinstance(expected, AdbServerStateSnapshot):
             raise TypeError("expected must be AdbServerStateSnapshot")
@@ -84,7 +76,7 @@ class AdbServerLifecycleRuntimeFacade:
         return self._retire(expected=None, expected_server=None)
 
     def retire_if_current(self, expected: AdbServerStateSnapshot) -> bool:
-        """Retire only when ``expected`` is still the execution T0."""
+        """Conditionally retire ``expected`` as execution T0 when it matches authoritative state."""
 
         if not isinstance(expected, AdbServerStateSnapshot):
             raise TypeError("expected must be AdbServerStateSnapshot")
@@ -94,7 +86,7 @@ class AdbServerLifecycleRuntimeFacade:
         self,
         intent: AdbServerLifecycleIntent,
     ) -> AdbServerLifecycleIntentResult:
-        """Compatibility intent entry point for complete runtime-owned transactions."""
+        """Dispatch one complete runtime-owned server lifecycle intent transaction."""
 
         if isinstance(intent, AdbServerProvisionIntent):
             return self.provision()

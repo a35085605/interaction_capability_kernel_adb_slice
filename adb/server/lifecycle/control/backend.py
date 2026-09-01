@@ -61,7 +61,7 @@ class AdbServerBackendOperationInProgress:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendOperationBlocked:
-    """The requested backend operation cannot begin because a prerequisite is unsatisfied."""
+    """Backend result indicating an unsatisfied operation prerequisite."""
 
     diagnostic: str
     blocking_operation: AdbServerBackendOperation | None = None
@@ -77,7 +77,7 @@ class AdbServerBackendOperationBlocked:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendFailed:
-    """The requested backend operation ran but did not complete successfully."""
+    """Backend result indicating an unsuccessful completed operation attempt."""
 
     diagnostic: str
 
@@ -95,7 +95,7 @@ AdbServerBackendResult: TypeAlias = (
 
 
 class _AdbServerBackendEndpointMismatchError(RuntimeError):
-    """Requested release endpoint does not match the backend-owned endpoint."""
+    """Ownership error for a release endpoint different from the backend-owned endpoint."""
 
 
 def _require_owned_release_endpoint(
@@ -116,11 +116,8 @@ def _require_owned_release_endpoint(
 
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Backend port for acquiring and releasing one usable ADB server attachment.
-
-    Results represent success, satisfaction, contention, blocking, or failure; exceptions are
-    reserved for invalid calls and ownership violations. Release relinquishes backend resources
-    and need not terminate an underlying server process.
+    """Own acquisition and release of one usable ADB server attachment and report lifecycle
+    operation outcomes.
     """
 
     def acquire(

@@ -49,10 +49,8 @@ class AdbDevicesSnapshot:
         self,
         configuration: AdbConfiguredTransport,
     ) -> AdbConfiguredTransportResolution:
-        """Resolve one configured transport against this domain observation set.
-
-        Exact USB/TCP evidence wins. An unspecified observed transport kind is compatibility
-        fallback evidence when no exact typed row is present.
+        """Resolve one configured transport using exact typed evidence first and unspecified
+        transport kinds as fallback evidence.
         """
 
         from adb.transport.configuration import AdbConfiguredTransport

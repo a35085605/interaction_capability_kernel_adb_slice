@@ -31,10 +31,8 @@ class AdbDeviceSerial:
 
 
 class AdbTransportId(int):
-    """ADB-server-local transport identity.
-
-    Domain transport IDs are positive integers allocated by one ADB server. AOSP protobuf
-    observations remain raw signed ``int64`` values until they cross into this domain identity.
+    """Positive ADB-server-local transport identity validated from raw AOSP signed ``int64``
+    values.
     """
 
     def __new__(cls, value: object) -> "AdbTransportId":

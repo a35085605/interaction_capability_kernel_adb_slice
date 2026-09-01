@@ -18,11 +18,8 @@ def classify_observed_transport(
     configuration: AdbConfiguredTransport,
     row: AdbTrackedTransportObservation,
 ) -> AdbObservedTransportCompatibility:
-    """Compare one domain transport observation with one configured transport.
-
-    An unspecified observed kind remains compatible fallback evidence. Recognized kinds compare
-    directly with the configured domain transport type. Future native kinds are preserved by the
-    adapter as unrecognized observations and remain mismatches until explicitly supported.
+    """Classify one observed transport by recognized type match, unspecified fallback, or
+    unrecognized native-kind mismatch.
     """
 
     if not isinstance(configuration, AdbConfiguredTransport):

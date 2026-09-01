@@ -14,7 +14,7 @@ class AdbTransportSelectionError(AdbServiceError):
 
 
 class AdbTransportNotFoundError(AdbTransportSelectionError):
-    """The requested transport was not present in the selected ADB server."""
+    """Transport-selection failure for a requested transport absent from the selected ADB server."""
 
 
 class AdbTransportAmbiguousError(AdbTransportSelectionError):
@@ -22,11 +22,11 @@ class AdbTransportAmbiguousError(AdbTransportSelectionError):
 
 
 class AdbTransportUnavailableError(AdbTransportSelectionError):
-    """The selected transport exists but cannot currently serve the request."""
+    """Transport-selection failure for an existing transport that is currently unavailable."""
 
 
 class AdbRemoteCommandError(AdbError):
-    """A typed read-only remote command completed with a non-zero exit code."""
+    """Failure from a typed read-only remote command with a non-zero exit code."""
 
     def __init__(
         self,

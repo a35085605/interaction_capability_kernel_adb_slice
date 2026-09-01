@@ -28,7 +28,7 @@ class AdbServerProvisioned:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerProvisionDeferred:
-    """Provisioning cannot proceed yet because lifecycle work is still converging."""
+    """Provisioning result indicating lifecycle work is still converging."""
 
     diagnostic: str
 
@@ -45,7 +45,7 @@ class AdbServerProvisionDeferred:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerProvisionFailed:
-    """A provisioning attempt ran but did not produce a usable ADB server endpoint."""
+    """Provisioning result indicating that an attempt produced no usable ADB server endpoint."""
 
     diagnostic: str
 

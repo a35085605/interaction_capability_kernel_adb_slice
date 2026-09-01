@@ -79,7 +79,7 @@ class AdbServerReconciliationRequested(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRetired(_ServerSignalProjection):
-    """One ADB server domain lifetime is no longer usable."""
+    """Signal one retired ADB server domain lifetime."""
 
     server: AdbServerLifetime
 

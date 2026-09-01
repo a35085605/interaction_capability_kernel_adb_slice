@@ -64,12 +64,8 @@ class AdbDevicesTrackingController(Protocol):
 
 
 class SmartSocketAdbDevicesTrackingController:
-    """Control one smart-socket track-devices stream for one server lifetime.
-
-    ``start`` establishes the stream, synchronously publishes its initial complete snapshot,
-    and returns that snapshot. Subsequent snapshots are consumed by the worker. A controller is
-    single-use. Stop or failure is terminal; ``stop`` closes the tracking backend and joins the
-    worker before returning.
+    """Single-use controller for one smart-socket track-devices stream, publishing initial and
+    subsequent snapshots until terminal stop or failure.
     """
 
     def __init__(

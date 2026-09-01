@@ -27,12 +27,8 @@ class AdbTransportState(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbObservedTransportKind:
-    """Open domain value describing an observed ADB transport kind.
-
-    A recognized observation carries ``transport_type``. An explicitly unspecified
-    observation carries neither field. A future native kind that this library does not yet
-    understand carries only ``native_code`` so forward-compatible evidence is not collapsed
-    into the unspecified case.
+    """Open domain value for an observed ADB transport kind, carrying a recognized type, an
+    unspecified representation, or a retained native code.
     """
 
     transport_type: AdbTransportType | None = None
@@ -77,11 +73,8 @@ class AdbObservedTransportKind:
 
 @dataclass(frozen=True, slots=True)
 class AdbObservedTransportState:
-    """Open domain value describing an observed ADB transport state.
-
-    Native AOSP ``ANY`` is represented as unspecified. Known states are translated to
-    ``AdbTransportState``. Future native state values retain only their numeric code so protocol
-    evolution does not leak native enums into domain policy.
+    """Open domain value for an observed ADB transport state, carrying a recognized state, an
+    unspecified representation, or a retained native code.
     """
 
     transport_state: AdbTransportState | None = None
@@ -126,14 +119,8 @@ class AdbObservedTransportState:
 
 @dataclass(frozen=True, slots=True)
 class AdbTrackedTransportObservation:
-    """Domain observation of one transport reported by an ADB server.
-
-    ``serial_text`` preserves the observed serial text exactly. It is intentionally not an
-    ``AdbDeviceSerial`` because native observations may omit or otherwise provide a value that
-    does not satisfy the stable domain identity invariant. Native transport kind and state values
-    cross the protocol boundary before this value is created; unknown native values remain
-    explicit open-domain evidence. ``transport_id`` is present only when the native observation
-    contains a valid positive server-local transport identity.
+    """Domain observation preserving protocol serial text, open kind/state evidence, and validated
+    positive server-local transport identity.
     """
 
     serial_text: str

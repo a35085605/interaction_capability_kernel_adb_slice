@@ -29,11 +29,8 @@ class _AdbDevicesSnapshotStateAccess(
 
 
 class AdbDevicesSnapshotStateBackedTrackingPublisher:
-    """Commit current-server tracking observations into snapshot state before publication.
-
-    ``AdbServerStateView`` remains the current-lifetime authority. Accepted snapshots are stored
-    as server-bound ``AdbDevicesObservation`` values so downstream readers retain provenance
-    without treating the observation's server as current-server truth.
+    """Commit current-server tracking observations into snapshot state before publication while
+    retaining server provenance.
     """
 
     def __init__(
@@ -69,7 +66,7 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
             self._publisher.publish(event)
 
     def end_tracking(self, server: AdbServerLifetime) -> bool:
-        """End observation for one server without changing the last committed observation."""
+        """End tracking for one server while preserving the last committed observation."""
 
         self._require_server(server)
         with self._lock:

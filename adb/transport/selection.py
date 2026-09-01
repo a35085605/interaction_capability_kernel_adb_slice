@@ -8,10 +8,7 @@ from adb.transport.identity import AdbDeviceSerial, AdbTransportId
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportBySerial:
-    """Select a transport by its ADB serial.
-
-    Selection does not require tracked-devices lookup or conversion to a transport ID.
-    """
+    """Select an ADB transport by serial."""
 
     serial: AdbDeviceSerial
 

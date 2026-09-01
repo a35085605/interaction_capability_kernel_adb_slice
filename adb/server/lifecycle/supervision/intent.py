@@ -39,7 +39,7 @@ class AdbServerLifecycleIntentDispatcher(Protocol):
 
     @property
     def server_state(self) -> AdbServerStateView:
-        """Return the runtime's read-only authoritative server-state projection."""
+        """Return the runtime's authoritative server-state view."""
         ...
 
     def provision_server(self) -> AdbServerProvisionTransactionResult:

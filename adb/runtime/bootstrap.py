@@ -54,11 +54,7 @@ class _BootstrapCore:
 
 
 class AdbRuntimeBootstrap:
-    """Composition root for one ADB runtime object graph.
-
-    Each build receives fresh runtime-scoped server and tracking state; bootstrap retains only
-    composition and configuration decisions.
-    """
+    """Build fresh runtime-scoped ADB object graphs from retained composition configuration."""
 
     def __init__(
         self,

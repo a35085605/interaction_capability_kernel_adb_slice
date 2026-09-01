@@ -41,11 +41,11 @@ class _AdbServerSubprocessStartError(RuntimeError):
 
 
 class _AdbServerSubprocessTerminationUnconfirmed(RuntimeError):
-    """Owned child-process termination could not be confirmed."""
+    """Failure to confirm termination of an owned child process."""
 
 
 class _AdbServerSubprocessStartupCleanupUnconfirmed(_AdbServerSubprocessStartError):
-    """Startup failed and cleanup could not prove that the owned child terminated."""
+    """Startup-cleanup failure with unconfirmed owned-child termination."""
 
     def __init__(
         self,
@@ -131,7 +131,7 @@ class _OwnedAdbServerProcess:
 
 
 class _AdbServerSubprocessFactory:
-    """Create ready foreground ADB server processes behind infrastructure-only seams."""
+    """Create ready foreground ADB server processes through infrastructure seams."""
 
     def __init__(
         self,
@@ -318,10 +318,8 @@ class _AdbServerSubprocessFactory:
             self._sleep(min(self.probe_interval_seconds, remaining))
 
 class SubprocessAdbServerBackend:
-    """Adapt one owned foreground ADB server process to the server-backend port.
-
-    The adapter owns backend attachment state and translates subprocess outcomes into lifecycle
-    results.
+    """Own a foreground ADB server process attachment and translate subprocess outcomes into
+    lifecycle results.
     """
 
     def __init__(

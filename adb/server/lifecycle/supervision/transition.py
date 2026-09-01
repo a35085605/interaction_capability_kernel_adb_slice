@@ -54,7 +54,7 @@ class AdbServerRecoverySucceeded:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryDefer:
-    """Provisioning was deferred without consuming launch-attempt budget."""
+    """Provisioning deferral that preserves launch-attempt budget."""
 
     next_attempt: AdbServerRecoveryAttempt
 

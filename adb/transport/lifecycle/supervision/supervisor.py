@@ -61,10 +61,8 @@ class _ConfiguredTransportRegistration:
 
 
 class AdbConfiguredTransportSupervisor:
-    """Project runtime-scoped transport registrations from device observations.
-
-    Registrations survive server replacement; projections and recovery work do not. USB
-    registrations are projection-only, while configured TCP recovery may reconcile observed absence.
+    """Project runtime-scoped transport registrations onto server-scoped device observations with
+    optional TCP absence recovery.
     """
 
     def __init__(
@@ -126,7 +124,7 @@ class AdbConfiguredTransportSupervisor:
 
     @property
     def server_state(self) -> AdbServerStateView:
-        """Read-only authoritative server state shared with the owning runtime."""
+        """Authoritative server-state view shared with the owning runtime."""
 
         return self._server_state
 
@@ -156,10 +154,8 @@ class AdbConfiguredTransportSupervisor:
                 self._reset_server_lifetime_locked()
 
     def reconcile(self) -> None:
-        """Rebind registrations after authoritative server replacement.
-
-        Replacement clears server-local projections and fences recovery work without removing
-        registrations.
+        """Rebind runtime-scoped registrations to the current server lifetime and reset
+        server-scoped projection and recovery state.
         """
 
         with self._lock:

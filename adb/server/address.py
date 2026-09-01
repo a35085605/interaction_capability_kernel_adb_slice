@@ -1,10 +1,10 @@
-"""Compatibility address values for the ADB server API."""
+"""ADB server address values."""
 
 from networking import TcpAddress
 
 
 class AdbServerTcpAddress(TcpAddress):
-    """Compatibility TCP address retaining the historical ADB server defaults."""
+    """TCP address for an ADB server, defaulting to localhost:5037."""
 
     __slots__ = ()
 

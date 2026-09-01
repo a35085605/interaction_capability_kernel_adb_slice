@@ -45,7 +45,7 @@ class AdbServerStateTransition:
 
 @runtime_checkable
 class AdbServerStateView(Protocol):
-    """Read-only current ADB server lifetime projection for one runtime."""
+    """Authoritative current-server lifetime view for one runtime."""
 
     @property
     def current(self) -> AdbServerLifetime | None: ...
@@ -62,12 +62,8 @@ class AdbServerStateWriter(Protocol):
 
 
 class AdbServerState(AdbServerStateView, AdbServerStateWriter):
-    """Thread-safe authoritative current-server state for one runtime.
-
-    State mutation is compare-and-commit against an immutable snapshot.  The monotonically
-    increasing revision fences ABA sequences such as ``None -> server -> None`` while an external
-    lifecycle side effect is in flight.  Epochs also advance monotonically: a lifetime must retire
-    before a newer one can activate, and retired lifetimes cannot become current again.
+    """Thread-safe authoritative current-server state with monotonic revisions and epochs
+    preserving lifetime ordering.
     """
 
     def __init__(self, initial: AdbServerLifetime | None = None) -> None:
@@ -95,7 +91,7 @@ class AdbServerState(AdbServerStateView, AdbServerStateWriter):
             return self._snapshot_locked()
 
     def commit(self, transition: AdbServerStateTransition) -> bool:
-        """Commit T1 only when the supplied T0 still exactly matches authoritative state."""
+        """Commit T1 when the supplied T0 exactly matches authoritative state."""
 
         if not isinstance(transition, AdbServerStateTransition):
             raise TypeError("transition must be AdbServerStateTransition")

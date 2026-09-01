@@ -104,11 +104,7 @@ class AdbDevicesTrackingBackendStream(Protocol):
 
 @runtime_checkable
 class AdbDevicesTrackingBackend(Protocol):
-    """Backend port for one server-bound ADB devices-tracking attachment.
-
-    Backends establish and release the low-level tracking stream only. They do not retry,
-    reconnect, issue snapshot identities, publish events, or supervise server replacement.
-    """
+    """Own one low-level ADB devices-tracking stream attachment for a server lifetime."""
 
     @property
     def address(self) -> TcpAddress:
@@ -124,11 +120,8 @@ class AdbDevicesTrackingBackend(Protocol):
 
 
 class SmartSocketAdbDevicesTrackingStream:
-    """One established blocking ADB device-tracker stream.
-
-    Native payloads are translated at the adapter boundary. ``initial_record`` is the first
-    complete domain observation set read while the tracker is still under its startup deadline;
-    ``records`` yields only subsequent translated observation sets.
+    """Blocking ADB device-tracker stream with an initial observation set followed by translated
+    records.
     """
 
     def __init__(
@@ -169,11 +162,8 @@ class SmartSocketAdbDevicesTrackingStream:
 
 
 class SmartSocketAdbDevicesTrackingBackend:
-    """Smart-socket implementation of the devices-tracking backend port.
-
-    Native AOSP ``adb_host.proto.Devices`` payloads are decoded and translated to domain
-    observations before leaving this adapter. The backend does not retry or reconnect; lifecycle
-    policy belongs to higher layers.
+    """Establish smart-socket tracking streams and translate AOSP device payloads into domain
+    observations.
     """
 
     def __init__(

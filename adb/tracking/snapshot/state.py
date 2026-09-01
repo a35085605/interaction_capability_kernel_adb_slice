@@ -30,7 +30,7 @@ class AdbDevicesObservation:
 
 @runtime_checkable
 class AdbDevicesSnapshotView(Protocol):
-    """Read-only authoritative server-bound device observation for one runtime."""
+    """Authoritative server-bound device-observation view for one runtime."""
 
     @property
     def current(self) -> AdbDevicesObservation | None: ...
@@ -49,10 +49,8 @@ class AdbDevicesSnapshotWriter(Protocol):
 
 
 class AdbDevicesSnapshotState(AdbDevicesSnapshotView, AdbDevicesSnapshotWriter):
-    """Thread-safe authoritative device observation state for one runtime.
-
-    Only newer snapshot epochs are accepted. Invalidating ``current`` preserves the epoch watermark
-    so stale observations cannot become current later.
+    """Thread-safe authoritative device-observation state advancing monotonically by snapshot epoch
+    and preserving its epoch watermark.
     """
 
     def __init__(self) -> None:

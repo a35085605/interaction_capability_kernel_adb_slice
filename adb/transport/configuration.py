@@ -28,11 +28,8 @@ class AdbUsbTransportConfiguration:
 
 @dataclass(frozen=True, slots=True)
 class AdbTcpTransportConfiguration:
-    """Configuration for one serial-selected TCP ADB transport.
-
-    ``serial`` identifies the transport for selection and tracking; ``connect_address`` is used
-    only for ``adb connect`` when the serial is absent. The reported serial may differ from the
-    connect address.
+    """Configure one serial-selected TCP ADB transport with a connect target used to establish
+    absent serials.
     """
 
     serial: AdbDeviceSerial
@@ -52,10 +49,7 @@ AdbTransportConfiguration: TypeAlias = (
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransport:
-    """Server-independent configuration for one ADB transport.
-
-    The serial is the stable selection identity; transport IDs are server-local runtime facts.
-    """
+    """Stable serial-based ADB transport configuration with server-local runtime transport IDs."""
 
     transport: AdbTransportConfiguration
 

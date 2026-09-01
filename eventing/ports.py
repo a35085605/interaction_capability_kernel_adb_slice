@@ -11,7 +11,9 @@ EventT = TypeVar("EventT")
 
 @runtime_checkable
 class EventPublisher(Protocol):
-    """Publish immutable data events without owning their behavioral semantics."""
+    """Publish immutable data events while behavioral semantics remain with orchestration and
+    consumers.
+    """
 
     def publish(self, event: object) -> None: ...
 

@@ -59,7 +59,7 @@ class AdbDevicesTrackingStarted(_TrackingServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingStopped(_TrackingServerSignalProjection):
-    """Signal that device tracking ended without implying transport disappearance."""
+    """Signal that device tracking ended while preserving the last observed transport evidence."""
 
     server: AdbServerLifetime
 
@@ -69,7 +69,7 @@ class AdbDevicesTrackingStopped(_TrackingServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesTrackingFailed(_TrackingServerSignalProjection):
-    """Signal that device tracking failed without synthesizing server state."""
+    """Signal a device-tracking failure while preserving authoritative server state."""
 
     server: AdbServerLifetime
     failure: AdbDevicesTrackingFailure

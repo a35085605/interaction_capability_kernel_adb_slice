@@ -6,7 +6,7 @@ class AdbError(RuntimeError):
 
 
 class AdbServerConnectionError(AdbError):
-    """The configured ADB server smart-socket session could not be established or used."""
+    """Failure to establish or use the configured ADB server smart-socket session."""
 
 
 class AdbTimeoutError(AdbServerConnectionError):

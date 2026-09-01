@@ -46,10 +46,8 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 
 class AdbDevicesTrackingSupervisor:
-    """Maintain desired track-devices state across ADB server lifetimes.
-
-    Controllers are single-use; terminal or server-replacement events discard the current controller
-    and reconciliation creates a fresh one while tracking remains desired.
+    """Maintain desired track-devices state across server lifetimes by reconciling fresh single-use
+    controllers.
     """
 
     def __init__(
@@ -116,7 +114,7 @@ class AdbDevicesTrackingSupervisor:
 
     @property
     def server_state(self) -> AdbServerStateView:
-        """Read-only authoritative server state shared with the owning runtime."""
+        """Authoritative server-state view shared with the owning runtime."""
 
         return self._server_state
 
