@@ -16,8 +16,8 @@ from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
 )
-from adb.aosp.tracking.model import Devices
-from adb.aosp.tracking.backend import (
+from adb.aosp.model.tracking import Devices
+from adb.adapters.aosp.tracking import (
     AdbDevicesTrackingBackend,
     AdbDevicesTrackingBackendStream,
     SmartSocketAdbDevicesTrackingBackend,

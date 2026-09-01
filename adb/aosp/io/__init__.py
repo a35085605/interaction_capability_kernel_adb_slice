@@ -1,4 +1,4 @@
-"""Compatibility imports for the relocated AOSP smart-socket I/O client."""
+"""AOSP ADB native I/O primitives independent of domain models."""
 
 from adb.aosp.io.smart_socket import AdbServiceClient, ShellV2Result
 

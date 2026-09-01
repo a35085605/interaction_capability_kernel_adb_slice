@@ -23,7 +23,7 @@ from adb.tracking.signal import (
     AdbDevicesTrackingStarted,
     AdbDevicesTrackingStopped,
 )
-from adb.aosp.tracking.backend import (
+from adb.adapters.aosp.tracking import (
     AdbDevicesTrackingBackend,
     AdbDevicesTrackingBackendStream,
     SmartSocketAdbDevicesTrackingBackend,

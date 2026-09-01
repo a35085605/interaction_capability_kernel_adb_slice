@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from adb.aosp.tracking.model import Device
+from adb.aosp.model.tracking import Device
 from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot
 from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader

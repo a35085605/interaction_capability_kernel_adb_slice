@@ -38,7 +38,8 @@ from adb.server.state import (
     AdbServerStateWriter,
 )
 from adb.server.address import AdbServerTcpAddress
-from adb.aosp.server.status import AdbMdnsBackend, AdbServerStatus, AdbServerStatusReader, AdbUsbBackend
+from adb.aosp.model.server_status import AdbMdnsBackend, AdbServerStatus, AdbUsbBackend
+from adb.adapters.aosp.server_status import AdbServerStatusReader
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 
 __all__ = [

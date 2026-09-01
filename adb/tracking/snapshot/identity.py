@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from adb.aosp.tracking.model import Devices
+from adb.aosp.model.tracking import Devices
 from adb.epoch import Epoch, EpochSequence
 from adb.tracking.snapshot.interpretation import (
     AdbObservedTransportCompatibility,

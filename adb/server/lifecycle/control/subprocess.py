@@ -10,7 +10,7 @@ from typing import Protocol
 
 from adb.cli.subprocess import normalize_executable, normalize_timeout
 from adb.errors import AdbError
-from adb.aosp.protocol.smart_socket.client import AdbServiceClient
+from adb.aosp.io.smart_socket import AdbServiceClient
 from adb.server.address import AdbServerTcpAddress
 from adb.server.lifecycle.control.backend import (
     AdbServerBackendFailed,
@@ -22,7 +22,7 @@ from adb.server.lifecycle.control.backend import (
     AdbServerBackendSucceeded,
     _require_owned_release_endpoint,
 )
-from adb.aosp.server.status.reader import SmartSocketAdbServerStatusReader
+from adb.adapters.aosp.server_status import SmartSocketAdbServerStatusReader
 
 
 _MonotonicClock = Callable[[], float]

@@ -7,7 +7,7 @@ from adb.server.lifetime import AdbServerLifetime
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.identity import AdbTransportId
 from adb.tracking.snapshot.identity import AdbDevicesSnapshotEpoch
-from adb.aosp.tracking.model import Device
+from adb.aosp.model.tracking import Device
 from adb.tracking.snapshot.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,

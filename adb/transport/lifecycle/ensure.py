@@ -16,7 +16,7 @@ from adb.transport.configuration import (
     AdbTcpTransportConfiguration,
 )
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot
-from adb.aosp.tracking.model import ConnectionState, Device
+from adb.aosp.model.tracking import ConnectionState, Device
 from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
 from adb.tracking.snapshot.interpretation import (
     AdbObservedTransportCompatibility,

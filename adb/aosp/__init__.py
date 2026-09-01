@@ -1,3 +1,3 @@
-"""Low-level AOSP ADB protocol facts and native-facing primitives."""
+"""AOSP ADB protocol facts, raw models, and domain-independent native I/O."""
 
 __all__: list[str] = []

@@ -1,11 +1,12 @@
-"""AOSP ``track-devices`` protocol models, decoding, and low-level streaming."""
+"""Compatibility facade for relocated AOSP tracking model and adapter APIs."""
 
-from adb.aosp.tracking.model import ConnectionState, ConnectionType, Device, Devices
-from adb.aosp.tracking.reader import AdbDevicesReader, SmartSocketAdbDevicesReader
-from adb.aosp.tracking.observation import (
+from adb.adapters.aosp.tracking import (
+    AdbDevicesReader,
+    SmartSocketAdbDevicesReader,
     to_tracked_transport_observation,
     to_tracked_transport_observations,
 )
+from adb.aosp.model.tracking import ConnectionState, ConnectionType, Device, Devices
 
 __all__ = [
     "AdbDevicesReader",

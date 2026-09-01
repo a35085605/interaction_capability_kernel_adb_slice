@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import isfinite
+from numbers import Integral, Real
+import socket
+import struct
+from typing import Callable
+
+from adb.aosp.errors import (
+    AdbProtocolError,
+    AdbServerConnectionError,
+    AdbServiceError,
+    AdbTimeoutError,
+)
+from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
+
+
+_SHELL_STDOUT = 1
+_SHELL_STDERR = 2
+_SHELL_EXIT = 3
+
+
+def _normalize_host(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("ADB server host must be a string")
+    host = value.strip()
+    if not host:
+        raise ValueError("ADB server host cannot be empty")
+    return host
+
+
+def _normalize_port(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError("ADB server port must be an integer")
+    port = int(value)
+    if not 1 <= port <= 65535:
+        raise ValueError("ADB server port must be between 1 and 65535")
+    return port
+
+
+def _normalize_timeout(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError("ADB timeout must be a real number")
+    timeout = float(value)
+    if not isfinite(timeout) or timeout <= 0:
+        raise ValueError("ADB timeout must be finite and greater than zero")
+    return timeout
+
+
+@dataclass(frozen=True, slots=True)
+class ShellV2Result:
+    stdout: bytes
+    stderr: bytes
+    exit_code: int
+
+
+class AdbServiceClient:
+    """Low-level ADB smart-socket client independent of domain endpoint types."""
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        timeout_seconds: float = 5.0,
+        *,
+        _socket_factory: Callable[..., socket.socket] = socket.create_connection,
+    ) -> None:
+        self.host = _normalize_host(host)
+        self.port = _normalize_port(port)
+        self.timeout_seconds = _normalize_timeout(timeout_seconds)
+        self._socket_factory = _socket_factory
+
+    def host_query(self, service: str) -> bytes:
+        """Run one length-prefixed host query and return its payload."""
+
+        sock = self._connect()
+        try:
+            self._request(sock, service)
+            return self._read_protocol_string(sock, context=service)
+        finally:
+            self._close(sock)
+
+    def first_stream_frame(self, service: str) -> bytes:
+        """Read the first length-prefixed frame from a host streaming service."""
+
+        sock = self._connect()
+        try:
+            self._request(sock, service)
+            return self._read_protocol_string(sock, context=service)
+        finally:
+            self._close(sock)
+
+    def raw_exec(self, transport_service: str, command: str) -> bytes:
+        """Private raw ``exec:`` primitive after one native transport selection service."""
+
+        sock = self._connect()
+        try:
+            self._select_transport(sock, transport_service)
+            self._request(sock, f"exec:{command}")
+            return self._read_until_eof(sock)
+        finally:
+            self._close(sock)
+
+    def shell_v2(self, transport_service: str, command: str) -> ShellV2Result:
+        """Private shell-v2 primitive after one native transport selection service."""
+
+        sock = self._connect()
+        try:
+            self._select_transport(sock, transport_service)
+            self._request(sock, f"shell,v2,raw:{command}")
+            stdout = bytearray()
+            stderr = bytearray()
+            exit_code: int | None = None
+
+            while True:
+                first = self._recv_up_to(sock, 1)
+                if not first:
+                    break
+                header = first + self._recv_exact(sock, 4)
+                packet_id = header[0]
+                size = struct.unpack("<I", header[1:])[0]
+                payload = self._recv_exact(sock, size)
+                if packet_id == _SHELL_STDOUT:
+                    stdout.extend(payload)
+                elif packet_id == _SHELL_STDERR:
+                    stderr.extend(payload)
+                elif packet_id == _SHELL_EXIT:
+                    if len(payload) != 1:
+                        raise AdbProtocolError("ADB shell-v2 exit packet must contain one byte")
+                    if exit_code is not None:
+                        raise AdbProtocolError("ADB shell-v2 emitted multiple exit packets")
+                    exit_code = payload[0]
+
+            if exit_code is None:
+                raise AdbProtocolError("ADB shell-v2 stream ended without an exit packet")
+            return ShellV2Result(bytes(stdout), bytes(stderr), exit_code)
+        finally:
+            self._close(sock)
+
+    def _connect(self) -> socket.socket:
+        try:
+            sock = self._socket_factory(
+                (self.host, self.port),
+                timeout=self.timeout_seconds,
+            )
+            sock.settimeout(self.timeout_seconds)
+            return sock
+        except socket.timeout as exc:
+            raise AdbTimeoutError("timed out connecting to the ADB server") from exc
+        except OSError as exc:
+            raise AdbServerConnectionError(
+                f"failed to connect to ADB server {self.host}:{self.port}: {exc}"
+            ) from exc
+
+    def _select_transport(self, sock: socket.socket, transport_service: str) -> None:
+        self._request(sock, transport_service)
+
+    def _request(self, sock: socket.socket, service: str) -> None:
+        try:
+            sock.sendall(encode_service(service))
+        except socket.timeout as exc:
+            raise AdbTimeoutError(f"timed out sending ADB service {service!r}") from exc
+        except OSError as exc:
+            raise AdbServerConnectionError(
+                f"failed to send ADB service {service!r}: {exc}"
+            ) from exc
+
+        status = self._recv_exact(sock, 4)
+        if status == b"OKAY":
+            return
+        if status != b"FAIL":
+            raise AdbProtocolError(f"unexpected ADB service status: {status!r}")
+        detail_raw = self._read_protocol_string(sock, context="service error")
+        try:
+            detail = detail_raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise AdbProtocolError("ADB service error is not valid UTF-8") from exc
+        raise AdbServiceError(service, detail or "request rejected")
+
+    def _read_protocol_string(self, sock: socket.socket, *, context: str) -> bytes:
+        length = parse_hex_length(self._recv_exact(sock, 4), context=context)
+        return self._recv_exact(sock, length)
+
+    def _recv_exact(self, sock: socket.socket, size: int) -> bytes:
+        chunks: list[bytes] = []
+        remaining = size
+        while remaining:
+            chunk = self._recv_up_to(sock, remaining)
+            if not chunk:
+                raise AdbServerConnectionError("unexpected EOF from ADB smart-socket")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    def _recv_up_to(self, sock: socket.socket, size: int) -> bytes:
+        try:
+            return sock.recv(size)
+        except socket.timeout as exc:
+            raise AdbTimeoutError("ADB smart-socket read timed out") from exc
+        except OSError as exc:
+            raise AdbServerConnectionError(f"ADB smart-socket read failed: {exc}") from exc
+
+    def _read_until_eof(self, sock: socket.socket) -> bytes:
+        chunks: list[bytes] = []
+        while True:
+            chunk = self._recv_up_to(sock, 65536)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+
+    @staticmethod
+    def _close(sock: socket.socket) -> None:
+        try:
+            sock.close()
+        except OSError:
+            pass
+
+
+__all__ = ["AdbServiceClient", "ShellV2Result"]

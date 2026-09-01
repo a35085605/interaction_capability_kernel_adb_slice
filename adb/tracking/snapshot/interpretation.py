@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from adb.aosp.tracking.model import ConnectionType, Device
+from adb.aosp.model.tracking import ConnectionType, Device
 from adb.transport.configuration import AdbConfiguredTransport, AdbTransportType
 
 

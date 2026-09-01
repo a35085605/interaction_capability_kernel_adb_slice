@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from adb.aosp.tracking.reader import AdbDevicesReader, SmartSocketAdbDevicesReader
+from adb.adapters.aosp.tracking import AdbDevicesReader, SmartSocketAdbDevicesReader
 from adb.epoch import EpochIssuer
 from adb.server.address import AdbServerTcpAddress
 from adb.tracking.snapshot.identity import (
