@@ -60,10 +60,6 @@ class AdbServerStateWriter(Protocol):
 
     def commit(self, transition: AdbServerStateTransition) -> bool: ...
 
-    def activate(self, server: AdbServerLifetime) -> bool: ...
-
-    def retire(self, server: AdbServerLifetime) -> bool: ...
-
 
 class AdbServerState(AdbServerStateView, AdbServerStateWriter):
     """Thread-safe authoritative current-server state for one runtime.
@@ -129,23 +125,6 @@ class AdbServerState(AdbServerStateView, AdbServerStateWriter):
             self._latest_epoch = server.epoch
             self._revision += 1
             return True
-
-    def activate(self, server: AdbServerLifetime) -> bool:
-        """Compatibility helper that commits a fresh lifetime against an immediate T0 snapshot."""
-
-        if not isinstance(server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
-        return self.commit(AdbServerStateTransition(self.snapshot(), server))
-
-    def retire(self, server: AdbServerLifetime) -> bool:
-        """Compatibility helper that clears only the exact current server lifetime."""
-
-        if not isinstance(server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
-        before = self.snapshot()
-        if before.current != server:
-            return False
-        return self.commit(AdbServerStateTransition(before, None))
 
     def _snapshot_locked(self) -> AdbServerStateSnapshot:
         return AdbServerStateSnapshot(

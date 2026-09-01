@@ -80,7 +80,6 @@ class SmartSocketAdbDevicesTrackingController:
         *,
         devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch],
         _backend_factory: _TrackingBackendFactory | None = None,
-        _device_tracker_factory: _TrackingBackendFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(server, AdbServerLifetime):
@@ -91,12 +90,6 @@ class SmartSocketAdbDevicesTrackingController:
             raise TypeError("devices_snapshot_epoch_issuer must satisfy EpochIssuer")
         if _backend_factory is not None and not callable(_backend_factory):
             raise TypeError("_backend_factory must be callable or None")
-        if _device_tracker_factory is not None and not callable(_device_tracker_factory):
-            raise TypeError("_device_tracker_factory must be callable or None")
-        if _backend_factory is not None and _device_tracker_factory is not None:
-            raise ValueError(
-                "_backend_factory and _device_tracker_factory cannot both be provided"
-            )
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
         self.server = server
@@ -104,11 +97,7 @@ class SmartSocketAdbDevicesTrackingController:
         self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
         self._devices_snapshot_epoch_issuer = devices_snapshot_epoch_issuer
-        self._backend_factory = (
-            _backend_factory
-            if _backend_factory is not None
-            else _device_tracker_factory
-        )
+        self._backend_factory = _backend_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
         self._started = False

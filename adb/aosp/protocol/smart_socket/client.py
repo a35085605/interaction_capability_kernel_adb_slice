@@ -1,5 +1,0 @@
-"""Compatibility imports for the relocated AOSP smart-socket I/O client."""
-
-from adb.aosp.io.smart_socket import AdbServiceClient, ShellV2Result
-
-__all__ = ["AdbServiceClient", "ShellV2Result"]

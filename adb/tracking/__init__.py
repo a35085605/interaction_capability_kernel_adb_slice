@@ -31,7 +31,6 @@ from adb.adapters.aosp.tracking import (
     SmartSocketAdbDevicesTrackingBackend,
     SmartSocketAdbDevicesTrackingStream,
 )
-from adb.tracking.device_tracker import AdbDeviceTracker, AdbDeviceTrackerStream
 from adb.tracking.controller import (
     AdbDevicesTrackingController,
     SmartSocketAdbDevicesTrackingController,
@@ -63,6 +62,4 @@ __all__ = [
     "AdbTrackedDeviceLookup",
     "AdbTrackedTransportObservation",
     "AdbTransportState",
-    "AdbDeviceTrackerStream",
-    "AdbDeviceTracker",
 ]

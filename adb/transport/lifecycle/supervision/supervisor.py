@@ -24,7 +24,6 @@ from adb.tracking.snapshot.state import (
 )
 from adb.transport.resolution import (
     AdbConfiguredTransportProjection,
-    AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
 )
 from adb.transport.lifecycle.ensure import (
@@ -263,15 +262,6 @@ class AdbConfiguredTransportSupervisor:
             key = self._resolve_registration_key_locked(configuration)
             registration = None if key is None else self._registrations.get(key)
             return None if registration is None else registration.projection
-
-    def resolution(
-        self,
-        configuration: AdbConfiguredTransport | AdbDeviceSerial,
-    ) -> AdbConfiguredTransportResolution | None:
-        """Compatibility view of the latest projection's bare resolution evidence."""
-
-        projection = self.projection(configuration)
-        return None if projection is None else projection.resolution
 
     def close(self) -> None:
         """Stop supervision, drop registrations, and join active recovery workers."""
