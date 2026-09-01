@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from adb.server.address import AdbServerTcpAddress
+from networking import TcpAddress
 from adb.server.epoch import ServerEpoch
 
 
@@ -14,12 +14,12 @@ class AdbServerLifetime:
     connection target used by infrastructure for that lifetime.
     """
 
-    endpoint: AdbServerTcpAddress
+    endpoint: TcpAddress
     epoch: ServerEpoch
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerTcpAddress):
-            raise TypeError("endpoint must be AdbServerTcpAddress")
+        if not isinstance(self.endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
         if not isinstance(self.epoch, ServerEpoch):
             raise TypeError("epoch must be ServerEpoch")
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from adb.server.address import AdbServerTcpAddress
+from networking import TcpAddress
 from adb.server.lifecycle.control.backend import (
     AdbServerBackend,
     AdbServerBackendFailed,
@@ -25,17 +25,17 @@ class AdbServerProvisioner:
         self,
         backend: AdbServerBackend,
         *,
-        endpoint: AdbServerTcpAddress | None,
+        endpoint: TcpAddress | None,
     ) -> None:
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("backend must satisfy AdbServerBackend")
-        if endpoint is not None and not isinstance(endpoint, AdbServerTcpAddress):
-            raise TypeError("endpoint must be AdbServerTcpAddress or None")
+        if endpoint is not None and not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress or None")
         self._backend = backend
         self._endpoint = endpoint
 
     @property
-    def endpoint(self) -> AdbServerTcpAddress | None:
+    def endpoint(self) -> TcpAddress | None:
         """Endpoint constraint bound to every provisioning attempt."""
 
         return self._endpoint
@@ -54,7 +54,7 @@ class AdbServerProvisioner:
 
     def _acquire_backend(
         self,
-    ) -> AdbServerTcpAddress | AdbServerProvisionDeferred | AdbServerProvisionFailed:
+    ) -> TcpAddress | AdbServerProvisionDeferred | AdbServerProvisionFailed:
         result = self._backend.acquire(self._endpoint)
         if isinstance(result, (AdbServerBackendSucceeded, AdbServerBackendSatisfied)):
             return result.endpoint

@@ -1,34 +1,15 @@
-from __future__ import annotations
+"""Compatibility address values for the ADB server API."""
 
-from dataclasses import dataclass
-from numbers import Integral
-
-
-def _normalize_required_text(value: object, *, field_name: str) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{field_name} must be a string, got {type(value).__name__}")
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{field_name} cannot be empty")
-    return normalized
+from networking import TcpAddress
 
 
-@dataclass(frozen=True, slots=True, order=True)
-class AdbServerTcpAddress:
-    """TCP endpoint of one host-side ADB server."""
+class AdbServerTcpAddress(TcpAddress):
+    """Compatibility TCP address retaining the historical ADB server defaults."""
 
-    host: str = "localhost"
-    port: int = 5037
+    __slots__ = ()
 
-    def __post_init__(self) -> None:
-        host = _normalize_required_text(self.host, field_name="ADB server TCP address host")
-        if isinstance(self.port, bool) or not isinstance(self.port, Integral):
-            raise TypeError("ADB server TCP address port must be an integer")
-        port = int(self.port)
-        if not 1 <= port <= 65535:
-            raise ValueError("ADB server TCP address port must be between 1 and 65535")
-        object.__setattr__(self, "host", host)
-        object.__setattr__(self, "port", port)
+    def __init__(self, host: str = "localhost", port: int = 5037) -> None:
+        super().__init__(host, port)
 
 
 __all__ = ["AdbServerTcpAddress"]

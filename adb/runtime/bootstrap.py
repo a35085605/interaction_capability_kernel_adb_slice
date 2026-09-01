@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from adb.epoch import EpochIssuer
 from adb.runtime.core import AdbRuntime
-from adb.server.address import AdbServerTcpAddress
+from networking import TcpAddress
 from adb.server.epoch import ServerEpochSequence
 from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
@@ -64,7 +64,7 @@ class AdbRuntimeBootstrap:
         self,
         *,
         server_backend_factory: _AdbServerBackendFactory | None = None,
-        endpoint: AdbServerTcpAddress | None = None,
+        endpoint: TcpAddress | None = None,
         pin_endpoint: bool = True,
         server_recovery_enabled: bool = True,
         server_supervision_policy: AdbServerSupervisionPolicy | None = None,
@@ -75,8 +75,8 @@ class AdbRuntimeBootstrap:
             raise TypeError("server_backend_factory must be callable or None")
         if server_backend_factory is None:
             server_backend_factory = _default_server_backend_factory
-        if endpoint is not None and not isinstance(endpoint, AdbServerTcpAddress):
-            raise TypeError("endpoint must be AdbServerTcpAddress or None")
+        if endpoint is not None and not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress or None")
         if not isinstance(pin_endpoint, bool):
             raise TypeError("pin_endpoint must be bool")
         if not isinstance(server_recovery_enabled, bool):

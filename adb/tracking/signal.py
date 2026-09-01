@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TypeAlias
 
-from adb.server.address import AdbServerTcpAddress
+from networking import TcpAddress
 from adb.server.epoch import ServerEpoch
 from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot
@@ -39,7 +39,7 @@ class _TrackingServerSignalProjection:
     server: AdbServerLifetime
 
     @property
-    def server_endpoint(self) -> AdbServerTcpAddress:
+    def server_endpoint(self) -> TcpAddress:
         return self.server.endpoint
 
     @property

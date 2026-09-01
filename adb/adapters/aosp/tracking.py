@@ -23,7 +23,7 @@ from adb.aosp.model.tracking import (
     parse_devices,
 )
 from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
-from adb.server.address import AdbServerTcpAddress
+from networking import TcpAddress
 from adb.tracking.observation import (
     AdbObservedTransportKind,
     AdbObservedTransportState,
@@ -57,15 +57,15 @@ class AdbDevicesReader(Protocol):
 
     def read(
         self,
-        address: AdbServerTcpAddress,
+        address: TcpAddress,
     ) -> tuple[AdbTrackedTransportObservation, ...]:
         ...
 
 
-_ClientFactory = Callable[[AdbServerTcpAddress], AdbServiceClient]
+_ClientFactory = Callable[[TcpAddress], AdbServiceClient]
 
 
-def _default_client_factory(address: AdbServerTcpAddress) -> AdbServiceClient:
+def _default_client_factory(address: TcpAddress) -> AdbServiceClient:
     return AdbServiceClient(address.host, address.port)
 
 
@@ -77,10 +77,10 @@ class SmartSocketAdbDevicesReader:
 
     def read(
         self,
-        address: AdbServerTcpAddress,
+        address: TcpAddress,
     ) -> tuple[AdbTrackedTransportObservation, ...]:
-        if not isinstance(address, AdbServerTcpAddress):
-            raise TypeError("address must be AdbServerTcpAddress")
+        if not isinstance(address, TcpAddress):
+            raise TypeError("address must be TcpAddress")
         payload = self._client_factory(address).first_stream_frame(
             TRACK_DEVICES_PROTO_BINARY_SERVICE
         )
@@ -111,7 +111,7 @@ class AdbDevicesTrackingBackend(Protocol):
     """
 
     @property
-    def address(self) -> AdbServerTcpAddress:
+    def address(self) -> TcpAddress:
         ...
 
     def open(self) -> AdbDevicesTrackingBackendStream | None:
@@ -178,11 +178,11 @@ class SmartSocketAdbDevicesTrackingBackend:
 
     def __init__(
         self,
-        address: AdbServerTcpAddress,
+        address: TcpAddress,
         startup_timeout_seconds: float = 5.0,
     ) -> None:
-        if not isinstance(address, AdbServerTcpAddress):
-            raise TypeError("address must be AdbServerTcpAddress")
+        if not isinstance(address, TcpAddress):
+            raise TypeError("address must be TcpAddress")
         self.address = address
         self.startup_timeout_seconds = _normalize_startup_timeout(
             startup_timeout_seconds

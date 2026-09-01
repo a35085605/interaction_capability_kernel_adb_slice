@@ -12,7 +12,7 @@ from adb.server.failure import (
 )
 from adb.server.epoch import ServerEpoch
 from adb.server.lifetime import AdbServerLifetime
-from adb.server.address import AdbServerTcpAddress
+from networking import TcpAddress
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -53,7 +53,7 @@ class _ServerSignalProjection:
     server: AdbServerLifetime
 
     @property
-    def endpoint(self) -> AdbServerTcpAddress:
+    def endpoint(self) -> TcpAddress:
         return self.server.endpoint
 
     @property

@@ -4,7 +4,7 @@ from typing import Protocol
 
 from adb.adapters.aosp.tracking import AdbDevicesReader, SmartSocketAdbDevicesReader
 from adb.epoch import EpochIssuer
-from adb.server.address import AdbServerTcpAddress
+from networking import TcpAddress
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
@@ -14,7 +14,7 @@ from adb.tracking.snapshot.identity import (
 class AdbDevicesSnapshotReader(Protocol):
     """Read one freshly identified complete ADB track-devices snapshot."""
 
-    def read(self, endpoint: AdbServerTcpAddress) -> AdbDevicesSnapshot:
+    def read(self, endpoint: TcpAddress) -> AdbDevicesSnapshot:
         ...
 
 
@@ -36,9 +36,9 @@ class SmartSocketAdbDevicesSnapshotReader:
         self._devices_snapshot_epoch_issuer = devices_snapshot_epoch_issuer
         self._devices_reader = _devices_reader
 
-    def read(self, endpoint: AdbServerTcpAddress) -> AdbDevicesSnapshot:
-        if not isinstance(endpoint, AdbServerTcpAddress):
-            raise TypeError("endpoint must be AdbServerTcpAddress")
+    def read(self, endpoint: TcpAddress) -> AdbDevicesSnapshot:
+        if not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
         return AdbDevicesSnapshot(
             observations=self._devices_reader.read(endpoint),
             epoch=self._devices_snapshot_epoch_issuer.issue(),

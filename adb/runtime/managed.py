@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from threading import RLock
 
-from adb.server.address import AdbServerTcpAddress
+from networking import TcpAddress
 from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import AdbServerState, AdbServerStateView
 from adb.transport.configuration import AdbConfiguredTransport
@@ -79,7 +79,7 @@ class AdbManagedRuntime:
         return self._server_state
 
     @property
-    def current_endpoint(self) -> AdbServerTcpAddress | None:
+    def current_endpoint(self) -> TcpAddress | None:
         """Endpoint of the current server lifetime, if one is active."""
 
         server = self.server

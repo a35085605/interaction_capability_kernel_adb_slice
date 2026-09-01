@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb.server.address import AdbServerTcpAddress
+from networking import TcpAddress
 
 
 def _normalize_diagnostic(value: object) -> str:
@@ -27,22 +27,22 @@ class AdbServerBackendOperation(str, Enum):
 class AdbServerBackendSucceeded:
     """The requested backend operation ran and completed successfully."""
 
-    endpoint: AdbServerTcpAddress
+    endpoint: TcpAddress
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerTcpAddress):
-            raise TypeError("endpoint must be AdbServerTcpAddress")
+        if not isinstance(self.endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendSatisfied:
     """The requested backend operation was unnecessary because its target state already holds."""
 
-    endpoint: AdbServerTcpAddress
+    endpoint: TcpAddress
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, AdbServerTcpAddress):
-            raise TypeError("endpoint must be AdbServerTcpAddress")
+        if not isinstance(self.endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,15 +99,15 @@ class _AdbServerBackendEndpointMismatchError(RuntimeError):
 
 
 def _require_owned_release_endpoint(
-    owned: AdbServerTcpAddress,
-    requested: AdbServerTcpAddress,
+    owned: TcpAddress,
+    requested: TcpAddress,
 ) -> None:
     """Reject release of an endpoint other than the exact backend-owned endpoint."""
 
-    if not isinstance(owned, AdbServerTcpAddress):
-        raise TypeError("owned must be AdbServerTcpAddress")
-    if not isinstance(requested, AdbServerTcpAddress):
-        raise TypeError("requested must be AdbServerTcpAddress")
+    if not isinstance(owned, TcpAddress):
+        raise TypeError("owned must be TcpAddress")
+    if not isinstance(requested, TcpAddress):
+        raise TypeError("requested must be TcpAddress")
     if owned != requested:
         raise _AdbServerBackendEndpointMismatchError(
             "requested endpoint does not identify the backend-owned ADB server endpoint"
@@ -125,12 +125,12 @@ class AdbServerBackend(Protocol):
 
     def acquire(
         self,
-        endpoint: AdbServerTcpAddress | None = None,
+        endpoint: TcpAddress | None = None,
     ) -> AdbServerBackendResult:
         """Acquire a usable attachment, optionally constrained to ``endpoint``."""
         ...
 
-    def release(self, endpoint: AdbServerTcpAddress) -> AdbServerBackendResult:
+    def release(self, endpoint: TcpAddress) -> AdbServerBackendResult:
         """Release the backend attachment identified by ``endpoint``."""
         ...
 
