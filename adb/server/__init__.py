@@ -32,7 +32,7 @@ from adb.server.epoch import ServerEpoch
 from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import (
     AdbServerState,
-    AdbServerStateSnapshot,
+    AdbServerStateStore,
     AdbServerStateView,
     AdbServerStateWriter,
 )
@@ -66,7 +66,7 @@ __all__ = [
     "AdbServerRequestFailure",
     "AdbServerServiceFailure",
     "AdbServerState",
-    "AdbServerStateSnapshot",
+    "AdbServerStateStore",
     "AdbServerStateView",
     "AdbServerStateWriter",
     "AdbServerStatus",

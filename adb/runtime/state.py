@@ -3,9 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.epoch import ServerEpoch
 from adb.server.lifetime import AdbServerLifetime
-from adb.server.state import AdbServerState, AdbServerStateSnapshot
+from adb.server.state import AdbServerState, AdbServerStateStore
 from adb.tracking.snapshot.state import AdbTransportListSnapshotState
 
 
@@ -13,16 +12,16 @@ from adb.tracking.snapshot.state import AdbTransportListSnapshotState
 class AdbRuntimeState:
     """Authoritative server and transport-list snapshot state owned by one ADB runtime."""
 
-    server: AdbServerState
+    server: AdbServerStateStore
     transport_list: AdbTransportListSnapshotState
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServerState):
-            raise TypeError("server must be AdbServerState")
+        if not isinstance(self.server, AdbServerStateStore):
+            raise TypeError("server must be AdbServerStateStore")
         if not isinstance(self.transport_list, AdbTransportListSnapshotState):
             raise TypeError("transport_list must be AdbTransportListSnapshotState")
 
-    def observe_server(self) -> AdbServerStateSnapshot:
+    def observe_server(self) -> AdbServerState:
         """Capture the runtime-owned atomic server state for a lifecycle transaction."""
 
         return self.server.snapshot()
@@ -30,11 +29,11 @@ class AdbRuntimeState:
     def commit_server(
         self,
         endpoint: AdbServerEndpoint,
-        expected_epoch: ServerEpoch | None,
+        expected: AdbServerState,
     ) -> AdbServerLifetime | None:
-        """Activate an endpoint when the observed inactive epoch is still authoritative."""
+        """Activate an endpoint when the observed inactive state is still authoritative."""
 
-        return self.server.commit(endpoint, expected_epoch)
+        return self.server.commit(endpoint, expected)
 
     def deactivate_server(self, expected: AdbServerLifetime) -> bool:
         """Deactivate the expected authoritative server lifetime without advancing its epoch."""

@@ -11,11 +11,15 @@ from adb.server.lifetime import AdbServerLifetime
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerStateSnapshot:
-    """Immutable atomic observation of one runtime's authoritative server state."""
+class AdbServerState:
+    """Immutable authoritative ADB server state for one runtime observation.
 
-    endpoint: AdbServerEndpoint | None
-    epoch: ServerEpoch | None
+    ``epoch`` is the committed-lifetime watermark.  Inactive states preserve the last committed
+    epoch so a stale inactive observation cannot commit after an intervening server lifetime.
+    """
+
+    endpoint: AdbServerEndpoint | None = None
+    epoch: ServerEpoch | None = None
 
     def __post_init__(self) -> None:
         if self.endpoint is not None and not isinstance(self.endpoint, TcpAddress):
@@ -32,15 +36,15 @@ class AdbServerStateSnapshot:
         return self.endpoint is not None
 
     @property
-    def current(self) -> AdbServerLifetime | None:
-        """Project the current authoritative server lifetime, if active."""
+    def server(self) -> AdbServerLifetime | None:
+        """Project the active authoritative server lifetime, if present."""
 
         endpoint = self.endpoint
         if endpoint is None:
             return None
         epoch = self.epoch
         if epoch is None:
-            raise RuntimeError("active ADB server snapshot has no epoch")
+            raise RuntimeError("active ADB server state has no epoch")
         return AdbServerLifetime(endpoint, epoch)
 
 
@@ -68,79 +72,84 @@ class AdbServerStateWriter(Protocol):
     def commit(
         self,
         endpoint: AdbServerEndpoint,
-        expected_epoch: ServerEpoch | None,
+        expected: AdbServerState,
     ) -> AdbServerLifetime | None: ...
 
     def deactivate(self, expected: AdbServerLifetime) -> bool: ...
 
 
-class AdbServerState(AdbServerStateView, AdbServerStateWriter):
-    """Thread-safe authoritative server endpoint with a committed-lifetime epoch watermark.
+class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
+    """Thread-safe authority for one runtime's immutable :class:`AdbServerState` value."""
 
-    The epoch advances only when an inactive state successfully commits a new endpoint.  Clearing
-    the endpoint makes the state inactive while preserving the last committed epoch, preventing
-    stale inactive observations from committing after an intervening server lifetime.
-    """
-
-    def __init__(self, initial: AdbServerLifetime | None = None) -> None:
-        if initial is not None and not isinstance(initial, AdbServerLifetime):
-            raise TypeError("initial must be AdbServerLifetime or None")
+    def __init__(
+        self,
+        initial: AdbServerState | AdbServerLifetime | None = None,
+    ) -> None:
+        if initial is None:
+            state = AdbServerState()
+        elif isinstance(initial, AdbServerState):
+            state = initial
+        elif isinstance(initial, AdbServerLifetime):
+            state = AdbServerState(initial.endpoint, initial.epoch)
+        else:
+            raise TypeError("initial must be AdbServerState, AdbServerLifetime, or None")
         self._lock = Lock()
-        self._endpoint = None if initial is None else initial.endpoint
-        self._epoch = None if initial is None else initial.epoch
+        self._state = state
+
+    @property
+    def state(self) -> AdbServerState:
+        """Atomically return the current immutable authoritative state value."""
+
+        with self._lock:
+            return self._state
 
     @property
     def endpoint(self) -> AdbServerEndpoint | None:
-        with self._lock:
-            return self._endpoint
+        return self.state.endpoint
 
     @property
     def epoch(self) -> ServerEpoch | None:
-        with self._lock:
-            return self._epoch
+        return self.state.epoch
 
     @property
     def active(self) -> bool:
-        with self._lock:
-            return self._endpoint is not None
+        return self.state.active
 
     @property
     def current(self) -> AdbServerLifetime | None:
-        with self._lock:
-            return self._current_locked()
+        return self.state.server
 
-    def snapshot(self) -> AdbServerStateSnapshot:
-        """Atomically capture endpoint presence and the committed-lifetime epoch watermark."""
+    def snapshot(self) -> AdbServerState:
+        """Atomically capture the current immutable authoritative state value."""
 
-        with self._lock:
-            return AdbServerStateSnapshot(endpoint=self._endpoint, epoch=self._epoch)
+        return self.state
 
     def commit(
         self,
         endpoint: AdbServerEndpoint,
-        expected_epoch: ServerEpoch | None,
+        expected: AdbServerState,
     ) -> AdbServerLifetime | None:
-        """Activate ``endpoint`` iff state is inactive and ``expected_epoch`` is still current.
+        """Activate ``endpoint`` iff ``expected`` is the current inactive state.
 
-        A successful commit allocates the next runtime-scoped server epoch at the same
+        A successful compare-and-set allocates the next runtime-scoped server epoch at the same
         linearization point that makes the endpoint authoritative.
         """
 
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
-        if expected_epoch is not None and not isinstance(expected_epoch, ServerEpoch):
-            raise TypeError("expected_epoch must be ServerEpoch or None")
+        if not isinstance(expected, AdbServerState):
+            raise TypeError("expected must be AdbServerState")
 
         with self._lock:
-            if self._endpoint is not None:
-                return None
-            if expected_epoch != self._epoch:
+            if self._state != expected or expected.active:
                 return None
 
-            next_epoch = ServerEpoch(1 if self._epoch is None else self._epoch.value + 1)
-            server = AdbServerLifetime(endpoint, next_epoch)
-            self._endpoint = endpoint
-            self._epoch = next_epoch
+            next_epoch = ServerEpoch(1 if expected.epoch is None else expected.epoch.value + 1)
+            next_state = AdbServerState(endpoint, next_epoch)
+            self._state = next_state
+            server = next_state.server
+            if server is None:
+                raise RuntimeError("committed ADB server state has no active server")
             return server
 
     def deactivate(self, expected: AdbServerLifetime) -> bool:
@@ -150,25 +159,16 @@ class AdbServerState(AdbServerStateView, AdbServerStateWriter):
             raise TypeError("expected must be AdbServerLifetime")
 
         with self._lock:
-            current = self._current_locked()
-            if current != expected:
+            state = self._state
+            if state.server != expected:
                 return False
-            self._endpoint = None
+            self._state = AdbServerState(endpoint=None, epoch=state.epoch)
             return True
-
-    def _current_locked(self) -> AdbServerLifetime | None:
-        endpoint = self._endpoint
-        if endpoint is None:
-            return None
-        epoch = self._epoch
-        if epoch is None:
-            raise RuntimeError("active ADB server state has no epoch")
-        return AdbServerLifetime(endpoint, epoch)
 
 
 __all__ = [
     "AdbServerState",
-    "AdbServerStateSnapshot",
+    "AdbServerStateStore",
     "AdbServerStateView",
     "AdbServerStateWriter",
 ]

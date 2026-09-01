@@ -21,7 +21,7 @@ from adb.server.lifecycle.transaction import (
     AdbServerProvisionCommitted,
     AdbServerProvisionTransactionResult,
 )
-from adb.server.state import AdbServerStateSnapshot
+from adb.server.state import AdbServerState
 
 
 class AdbServerLifecycleRuntimeFacade:
@@ -54,12 +54,12 @@ class AdbServerLifecycleRuntimeFacade:
 
     def provision_if_current(
         self,
-        expected: AdbServerStateSnapshot,
+        expected: AdbServerState,
     ) -> AdbServerProvisionTransactionResult | None:
         """Conditionally provision from ``expected``, returning ``None`` for stale state."""
 
-        if not isinstance(expected, AdbServerStateSnapshot):
-            raise TypeError("expected must be AdbServerStateSnapshot")
+        if not isinstance(expected, AdbServerState):
+            raise TypeError("expected must be AdbServerState")
         return self._provision(expected=expected)
 
     def retire(self) -> bool:
@@ -67,11 +67,11 @@ class AdbServerLifecycleRuntimeFacade:
 
         return self._retire(expected=None, expected_server=None)
 
-    def retire_if_current(self, expected: AdbServerStateSnapshot) -> bool:
+    def retire_if_current(self, expected: AdbServerState) -> bool:
         """Conditionally retire ``expected`` when it still matches authoritative state."""
 
-        if not isinstance(expected, AdbServerStateSnapshot):
-            raise TypeError("expected must be AdbServerStateSnapshot")
+        if not isinstance(expected, AdbServerState):
+            raise TypeError("expected must be AdbServerState")
         return self._retire(expected=expected, expected_server=None)
 
     def dispatch(
@@ -97,7 +97,7 @@ class AdbServerLifecycleRuntimeFacade:
     def _provision(
         self,
         *,
-        expected: AdbServerStateSnapshot | None,
+        expected: AdbServerState | None,
     ) -> AdbServerProvisionTransactionResult | None:
         cleanup_endpoint = None
         with self._lock:
@@ -114,7 +114,7 @@ class AdbServerLifecycleRuntimeFacade:
                 return result
 
             try:
-                committed = self._state.commit_server(result.endpoint, t0.epoch)
+                committed = self._state.commit_server(result.endpoint, t0)
             except BaseException:
                 try:
                     self._retirer.retire(result.endpoint)
@@ -129,7 +129,7 @@ class AdbServerLifecycleRuntimeFacade:
                 return AdbServerProvisionCommitted(committed)
             cleanup_endpoint = result.endpoint
 
-        # A provisioned endpoint that lost its inactive-epoch comparison never became
+        # A provisioned endpoint that lost its observed inactive-state comparison never became
         # authoritative. Cleanup is outside the facade lock so newer lifecycle work is not blocked.
         assert cleanup_endpoint is not None
         self._retirer.retire(cleanup_endpoint)
@@ -140,14 +140,14 @@ class AdbServerLifecycleRuntimeFacade:
     def _retire(
         self,
         *,
-        expected: AdbServerStateSnapshot | None,
+        expected: AdbServerState | None,
         expected_server: AdbServerLifetime | None,
     ) -> bool:
         with self._lock:
             t0 = self._state.observe_server()
             if expected is not None and t0 != expected:
                 return False
-            server = t0.current
+            server = t0.server
             if server is None:
                 return False
             if expected_server is not None and server != expected_server:

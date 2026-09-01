@@ -12,7 +12,7 @@ from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
-from adb.server.state import AdbServerState
+from adb.server.state import AdbServerStateStore
 from adb.runtime.state import AdbRuntimeState
 from adb.tracking.snapshot.identity import (
     AdbTransportListSnapshotEpoch,
@@ -227,7 +227,7 @@ class AdbRuntimeBootstrap:
             ),
             server_retirer=AdbServerRetirer(backend),
             runtime_state=AdbRuntimeState(
-                server=AdbServerState(),
+                server=AdbServerStateStore(),
                 transport_list=AdbTransportListSnapshotState(),
             ),
             transport_list_snapshot_epoch_issuer=transport_list_snapshot_epoch_issuer,

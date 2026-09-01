@@ -23,7 +23,7 @@ from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
 from adb.runtime.server_lifecycle import AdbServerLifecycleRuntimeFacade
 from adb.runtime.state import AdbRuntimeState
-from adb.server.state import AdbServerStateSnapshot
+from adb.server.state import AdbServerState
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.state import AdbTransportListSnapshotView
 from adb.tracking.supervision.supervisor import AdbTransportListWatchSupervisor
@@ -189,13 +189,13 @@ class AdbRuntime(AdbManagedRuntime):
 
     def _provision_server_if_current(
         self,
-        expected: AdbServerStateSnapshot,
+        expected: AdbServerState,
     ) -> AdbServerProvisionTransactionResult | None:
         """Conditional Runtime entry used by T0-bound intent interpretation."""
 
         return self._server_lifecycle.provision_if_current(expected)
 
-    def _retire_server_if_current(self, expected: AdbServerStateSnapshot) -> bool:
+    def _retire_server_if_current(self, expected: AdbServerState) -> bool:
         """Conditional Runtime entry used by T0-bound intent interpretation."""
 
         return self._server_lifecycle.retire_if_current(expected)
