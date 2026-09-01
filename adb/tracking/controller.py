@@ -13,15 +13,16 @@ from adb.errors import (
 from networking import TcpAddress
 from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.observation import AdbTrackedTransportObservation
+from adb.tracking.watch import (
+    AdbTransportList,
+    AdbTransportListWatch,
+    AdbTransportListWatcher,
+)
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
 )
-from adb.adapters.aosp.tracking import (
-    AdbDevicesTrackingBackend,
-    AdbDevicesTrackingBackendStream,
-    SmartSocketAdbDevicesTrackingBackend,
-)
+from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
 from adb.tracking.signal import (
     AdbDevicesSnapshotObserved,
     AdbDevicesTrackingFailed,
@@ -32,7 +33,7 @@ from adb.tracking.signal import (
 from eventing import EventPublisher
 
 
-_TrackingBackendFactory = Callable[[TcpAddress], AdbDevicesTrackingBackend]
+_TransportListWatcherFactory = Callable[[TcpAddress], AdbTransportListWatcher]
 _ThreadFactory = Callable[..., Thread]
 
 
@@ -44,7 +45,7 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 @runtime_checkable
 class AdbDevicesTrackingController(Protocol):
-    """Control one devices-tracking lifetime for one ADB server lifetime."""
+    """Control one transport-list tracking lifetime for one ADB server lifetime."""
 
     @property
     def server(self) -> AdbServerLifetime:
@@ -64,7 +65,7 @@ class AdbDevicesTrackingController(Protocol):
 
 
 class SmartSocketAdbDevicesTrackingController:
-    """Single-use controller for one smart-socket track-devices stream, publishing initial and
+    """Single-use controller for one smart-socket track-devices watch, publishing initial and
     subsequent snapshots until terminal stop or failure.
     """
 
@@ -75,7 +76,7 @@ class SmartSocketAdbDevicesTrackingController:
         startup_timeout_seconds: float = 5.0,
         *,
         devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch],
-        _backend_factory: _TrackingBackendFactory | None = None,
+        _watcher_factory: _TransportListWatcherFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(server, AdbServerLifetime):
@@ -84,8 +85,8 @@ class SmartSocketAdbDevicesTrackingController:
             raise TypeError("publisher must satisfy EventPublisher")
         if not isinstance(devices_snapshot_epoch_issuer, EpochIssuer):
             raise TypeError("devices_snapshot_epoch_issuer must satisfy EpochIssuer")
-        if _backend_factory is not None and not callable(_backend_factory):
-            raise TypeError("_backend_factory must be callable or None")
+        if _watcher_factory is not None and not callable(_watcher_factory):
+            raise TypeError("_watcher_factory must be callable or None")
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
         self.server = server
@@ -93,11 +94,11 @@ class SmartSocketAdbDevicesTrackingController:
         self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
         self._devices_snapshot_epoch_issuer = devices_snapshot_epoch_issuer
-        self._backend_factory = _backend_factory
+        self._watcher_factory = _watcher_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
         self._started = False
-        self._active_backend: AdbDevicesTrackingBackend | None = None
+        self._active_watcher: AdbTransportListWatcher | None = None
         self._active_thread: Thread | None = None
         self._closed = False
 
@@ -116,18 +117,18 @@ class SmartSocketAdbDevicesTrackingController:
                 raise RuntimeError(
                     "ADB devices tracking controller is single-use and already started"
                 )
-            backend = self._create_backend()
+            watcher = self._create_watcher()
             self._started = True
-            self._active_backend = backend
+            self._active_watcher = watcher
 
         try:
-            stream = backend.open()
+            watch = watcher.open()
         except BaseException:
-            self._abort_start(backend)
+            self._abort_start(watcher)
             raise
 
-        if stream is None:
-            self._abort_start(backend)
+        if watch is None:
+            self._abort_start(watcher)
             raise RuntimeError(
                 "ADB devices tracking controller was stopped before its initial snapshot "
                 "was established"
@@ -140,8 +141,8 @@ class SmartSocketAdbDevicesTrackingController:
             thread = self._thread_factory(
                 target=self._run,
                 args=(
-                    backend,
-                    stream,
+                    watcher,
+                    watch,
                     startup_complete,
                     startup_snapshots,
                     startup_errors,
@@ -152,15 +153,15 @@ class SmartSocketAdbDevicesTrackingController:
                 ),
             )
         except BaseException:
-            stream.close()
-            self._abort_start(backend)
+            watch.close()
+            self._abort_start(watcher)
             raise
 
         try:
             with self._lock:
-                if self._closed or self._active_backend is not backend:
-                    if self._active_backend is backend:
-                        self._active_backend = None
+                if self._closed or self._active_watcher is not watcher:
+                    if self._active_watcher is watcher:
+                        self._active_watcher = None
                     raise RuntimeError(
                         "ADB devices tracking controller was stopped before its worker could start"
                     )
@@ -169,12 +170,12 @@ class SmartSocketAdbDevicesTrackingController:
                     thread.start()
                 except BaseException:
                     self._active_thread = None
-                    self._active_backend = None
+                    self._active_watcher = None
                     self._closed = True
                     raise
         except BaseException:
-            stream.close()
-            backend.close()
+            watch.close()
+            watcher.close()
             raise
 
         startup_complete.wait()
@@ -192,44 +193,44 @@ class SmartSocketAdbDevicesTrackingController:
         """Stop tracking and return after its worker has terminated."""
 
         with self._lock:
-            backend = self._active_backend
+            watcher = self._active_watcher
             thread = self._active_thread
             self._closed = True
-        if backend is not None:
-            backend.close()
+        if watcher is not None:
+            watcher.close()
         if thread is not None and thread is not current_thread():
             thread.join()
 
-    def _create_backend(self) -> AdbDevicesTrackingBackend:
-        factory = self._backend_factory
-        backend = (
-            SmartSocketAdbDevicesTrackingBackend(
+    def _create_watcher(self) -> AdbTransportListWatcher:
+        factory = self._watcher_factory
+        watcher = (
+            SmartSocketAdbTransportListWatcher(
                 self.endpoint,
                 startup_timeout_seconds=self.startup_timeout_seconds,
             )
             if factory is None
             else factory(self.endpoint)
         )
-        if not isinstance(backend, AdbDevicesTrackingBackend):
+        if not isinstance(watcher, AdbTransportListWatcher):
             raise TypeError(
-                "tracking backend factory must return AdbDevicesTrackingBackend"
+                "tracking watcher factory must return AdbTransportListWatcher"
             )
-        if backend.address != self.endpoint:
-            raise ValueError("tracking backend factory returned a mismatched server endpoint")
-        return backend
+        if watcher.address != self.endpoint:
+            raise ValueError("tracking watcher factory returned a mismatched server endpoint")
+        return watcher
 
-    def _abort_start(self, backend: AdbDevicesTrackingBackend) -> None:
+    def _abort_start(self, watcher: AdbTransportListWatcher) -> None:
         with self._lock:
-            if self._active_backend is backend:
-                self._active_backend = None
+            if self._active_watcher is watcher:
+                self._active_watcher = None
             self._active_thread = None
             self._closed = True
-        backend.close()
+        watcher.close()
 
     def _run(
         self,
-        backend: AdbDevicesTrackingBackend,
-        stream: AdbDevicesTrackingBackendStream,
+        watcher: AdbTransportListWatcher,
+        watch: AdbTransportListWatch,
         startup_complete: Event,
         startup_snapshots: list[AdbDevicesSnapshot],
         startup_errors: list[BaseException],
@@ -238,14 +239,14 @@ class SmartSocketAdbDevicesTrackingController:
         terminal: object | None = None
         startup_succeeded = False
         try:
-            if not self._can_publish_from(backend):
+            if not self._can_publish_from(watcher):
                 raise RuntimeError(
                     "ADB devices tracking controller was stopped before its initial snapshot "
                     "was published"
                 )
 
             self._publisher.publish(AdbDevicesTrackingStarted(server))
-            initial_snapshot = self._snapshot(stream.initial_record)
+            initial_snapshot = self._snapshot(watch.initial)
             self._publisher.publish(
                 AdbDevicesSnapshotObserved(
                     server,
@@ -256,11 +257,11 @@ class SmartSocketAdbDevicesTrackingController:
             startup_succeeded = True
             startup_complete.set()
 
-            for record in stream.records():
-                if not self._can_publish_from(backend):
+            for transport_list in watch.updates():
+                if not self._can_publish_from(watcher):
                     break
                 self._publisher.publish(
-                    AdbDevicesSnapshotObserved(server, self._snapshot(record))
+                    AdbDevicesSnapshotObserved(server, self._snapshot(transport_list))
                 )
             terminal = AdbDevicesTrackingStopped(server)
         except AdbServerConnectionError as exc:
@@ -296,15 +297,15 @@ class SmartSocketAdbDevicesTrackingController:
             startup_errors.append(exc)
         finally:
             startup_complete.set()
-            stream.close()
-            publish_terminal = self._mark_terminal(backend)
+            watch.close()
+            publish_terminal = self._mark_terminal(watcher)
 
         if startup_succeeded and terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
     def _snapshot(
         self,
-        observations: tuple[AdbTrackedTransportObservation, ...],
+        observations: AdbTransportList,
     ) -> AdbDevicesSnapshot:
         if not isinstance(observations, tuple) or not all(
             isinstance(row, AdbTrackedTransportObservation) for row in observations
@@ -317,17 +318,17 @@ class SmartSocketAdbDevicesTrackingController:
             epoch=self._devices_snapshot_epoch_issuer.issue(),
         )
 
-    def _can_publish_from(self, backend: AdbDevicesTrackingBackend) -> bool:
+    def _can_publish_from(self, watcher: AdbTransportListWatcher) -> bool:
         with self._lock:
-            return not self._closed and self._active_backend is backend
+            return not self._closed and self._active_watcher is watcher
 
-    def _mark_terminal(self, backend: AdbDevicesTrackingBackend) -> bool:
+    def _mark_terminal(self, watcher: AdbTransportListWatcher) -> bool:
         with self._lock:
             publish_terminal = (
-                not self._closed and self._active_backend is backend
+                not self._closed and self._active_watcher is watcher
             )
-            if self._active_backend is backend:
-                self._active_backend = None
+            if self._active_watcher is watcher:
+                self._active_watcher = None
                 self._active_thread = None
             self._closed = True
             return publish_terminal

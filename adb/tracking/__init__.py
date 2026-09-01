@@ -1,4 +1,4 @@
-"""ADB track-devices observations, state, and streaming lifetimes."""
+"""ADB transport-list observations, state, and watch lifetimes."""
 
 from adb.tracking.snapshot import (
     AdbDevicesObservation,
@@ -25,11 +25,11 @@ from adb.tracking.signal import (
     AdbDevicesTrackingStarted,
     AdbDevicesTrackingStopped,
 )
-from adb.adapters.aosp.tracking import (
-    AdbDevicesTrackingBackend,
-    AdbDevicesTrackingBackendStream,
-    SmartSocketAdbDevicesTrackingBackend,
-    SmartSocketAdbDevicesTrackingStream,
+from adb.tracking.watch import (
+    AdbTransportList,
+    AdbTransportListReader,
+    AdbTransportListWatch,
+    AdbTransportListWatcher,
 )
 from adb.tracking.controller import (
     AdbDevicesTrackingController,
@@ -48,14 +48,14 @@ __all__ = [
     "AdbDevicesSnapshotState",
     "AdbDevicesSnapshotView",
     "AdbDevicesSnapshotWriter",
-    "AdbDevicesTrackingBackend",
-    "AdbDevicesTrackingBackendStream",
+    "AdbTransportList",
+    "AdbTransportListReader",
+    "AdbTransportListWatch",
+    "AdbTransportListWatcher",
     "AdbDevicesTrackingController",
     "AdbDevicesTrackingFailed",
     "AdbDevicesTrackingFailure",
-    "SmartSocketAdbDevicesTrackingBackend",
     "SmartSocketAdbDevicesTrackingController",
-    "SmartSocketAdbDevicesTrackingStream",
     "AdbDevicesTrackingSignal",
     "AdbDevicesTrackingStarted",
     "AdbDevicesTrackingStopped",
