@@ -11,7 +11,6 @@ from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
-from adb.server.lifecycle.supervision.intent import AdbServerRetireIntent
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.state import AdbServerState
 from adb.runtime.state import AdbRuntimeState
@@ -123,6 +122,7 @@ class AdbRuntimeBootstrap:
         try:
             runtime = self._build_runtime(
                 core.runtime_state,
+                server_epoch_issuer=core.server_epoch_issuer,
                 server_provisioner=core.server_provisioner,
                 server_retirer=core.server_retirer,
                 transport_supervision_policy=self._transport_supervision_policy,
@@ -168,6 +168,7 @@ class AdbRuntimeBootstrap:
         try:
             runtime = self._build_runtime(
                 core.runtime_state,
+                server_epoch_issuer=core.server_epoch_issuer,
                 server_provisioner=core.server_provisioner,
                 server_retirer=core.server_retirer,
                 event_bus=event_bus,
@@ -230,7 +231,6 @@ class AdbRuntimeBootstrap:
             server_epoch_issuer=server_epoch_issuer,
             server_provisioner=AdbServerProvisioner(
                 backend,
-                server_epoch_issuer,
                 endpoint=self._endpoint,
             ),
             server_retirer=AdbServerRetirer(backend),
@@ -253,7 +253,6 @@ class AdbRuntimeBootstrap:
         runtime._replace_server_provisioner(
             AdbServerProvisioner(
                 core.server_backend,
-                core.server_epoch_issuer,
                 endpoint=recovery_endpoint,
             )
         )
@@ -261,10 +260,7 @@ class AdbRuntimeBootstrap:
     @staticmethod
     def _dispose_failed_runtime(runtime: AdbRuntime) -> None:
         runtime.close()
-        server = runtime.server
-        if server is None:
-            return
-        runtime.dispatch_server_lifecycle_intent(AdbServerRetireIntent(server))
+        runtime.retire_server()
 
 
 def _is_event_bus(value: object) -> bool:

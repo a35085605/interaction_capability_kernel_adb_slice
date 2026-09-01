@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.address import AdbServerTcpAddress
 
 
 def _normalize_diagnostic(value: object, *, field_name: str) -> str:
@@ -17,13 +17,13 @@ def _normalize_diagnostic(value: object, *, field_name: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerProvisioned:
-    """A fresh usable ADB server domain lifetime was provisioned."""
+    """A usable ADB server backend endpoint was provisioned."""
 
-    server: AdbServerLifetime
+    endpoint: AdbServerTcpAddress
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+        if not isinstance(self.endpoint, AdbServerTcpAddress):
+            raise TypeError("endpoint must be AdbServerTcpAddress")
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +45,7 @@ class AdbServerProvisionDeferred:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerProvisionFailed:
-    """A provisioning attempt ran but did not produce a usable ADB server lifetime."""
+    """A provisioning attempt ran but did not produce a usable ADB server endpoint."""
 
     diagnostic: str
 

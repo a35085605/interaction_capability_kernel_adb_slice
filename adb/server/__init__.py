@@ -12,6 +12,10 @@ from adb.server.lifecycle.control.result import (
 )
 from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.backend import AdbServerBackend
+from adb.server.lifecycle.transaction import (
+    AdbServerProvisionCommitted,
+    AdbServerProvisionTransactionResult,
+)
 from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerFailure,
@@ -48,6 +52,8 @@ __all__ = [
     "AdbServerProvisionFailed",
     "AdbServerProvisionResult",
     "AdbServerProvisioned",
+    "AdbServerProvisionCommitted",
+    "AdbServerProvisionTransactionResult",
     "AdbServerTcpAddress",
     "ServerEpoch",
     "ServerEpochSequence",

@@ -1,3 +1,11 @@
-"""ADB server lifecycle control, provisioning, and supervision boundaries."""
+"""ADB server lifecycle control, runtime transactions, and supervision boundaries."""
 
-__all__: list[str] = []
+from adb.server.lifecycle.transaction import (
+    AdbServerProvisionCommitted,
+    AdbServerProvisionTransactionResult,
+)
+
+__all__ = [
+    "AdbServerProvisionCommitted",
+    "AdbServerProvisionTransactionResult",
+]

@@ -7,7 +7,6 @@ from threading import Lock, Thread, current_thread
 
 from adb.server.lifecycle.supervision.intent import (
     AdbServerLifecycleIntentDispatcher,
-    AdbServerProvisionIntent,
     AdbServerRetireIntent,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
@@ -59,8 +58,8 @@ def _require_bool(value: object, *, field_name: str) -> bool:
 class AdbServerSupervisor:
     """Reconcile ADB server failures across successive server lifetimes.
 
-    The supervisor owns recovery policy and scheduling only.  Runtime lifecycle intents are the
-    sole path for complete provisioning and retirement transactions.
+    The supervisor owns recovery policy and scheduling only. Complete provisioning and retirement
+    transactions remain owned by the runtime lifecycle API.
     """
 
     def __init__(
@@ -246,9 +245,7 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
 
-                provision_result = self._runtime.dispatch_server_lifecycle_intent(
-                    AdbServerProvisionIntent()
-                )
+                provision_result = self._runtime.provision_server()
                 transition = transition_recovery(
                     attempt,
                     provision_result,

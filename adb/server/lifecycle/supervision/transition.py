@@ -8,8 +8,10 @@ from adb.server.lifetime import AdbServerLifetime
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
-    AdbServerProvisionResult,
-    AdbServerProvisioned,
+)
+from adb.server.lifecycle.transaction import (
+    AdbServerProvisionCommitted,
+    AdbServerProvisionTransactionResult,
 )
 
 
@@ -83,7 +85,7 @@ AdbServerRecoveryTransition: TypeAlias = (
 
 def transition_recovery(
     attempt: AdbServerRecoveryAttempt,
-    result: AdbServerProvisionResult,
+    result: AdbServerProvisionTransactionResult,
     *,
     max_attempts: int | None,
 ) -> AdbServerRecoveryTransition:
@@ -97,7 +99,7 @@ def transition_recovery(
         if max_attempts <= 0:
             raise ValueError("max_attempts must be greater than zero")
 
-    if isinstance(result, AdbServerProvisioned):
+    if isinstance(result, AdbServerProvisionCommitted):
         return AdbServerRecoverySucceeded(result.server)
 
     if isinstance(result, AdbServerProvisionDeferred):
@@ -111,7 +113,7 @@ def transition_recovery(
             return AdbServerRecoveryExhaust(launch_attempts, failure)
         return AdbServerRecoveryRetry(next_attempt, failure)
 
-    raise TypeError("result must be AdbServerProvisionResult")
+    raise TypeError("result must be AdbServerProvisionTransactionResult")
 
 
 __all__ = [

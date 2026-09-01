@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol, TypeAlias, overload, runtime_checkable
 
 from adb.server.lifetime import AdbServerLifetime
-from adb.server.lifecycle.control.result import AdbServerProvisionResult
+from adb.server.lifecycle.transaction import AdbServerProvisionTransactionResult
 from adb.server.state import AdbServerStateView
 
 
@@ -25,7 +25,7 @@ class AdbServerRetireIntent:
 
 
 AdbServerLifecycleIntent: TypeAlias = AdbServerProvisionIntent | AdbServerRetireIntent
-AdbServerLifecycleIntentResult: TypeAlias = AdbServerProvisionResult | bool
+AdbServerLifecycleIntentResult: TypeAlias = AdbServerProvisionTransactionResult | bool
 
 
 @runtime_checkable
@@ -42,11 +42,19 @@ class AdbServerLifecycleIntentDispatcher(Protocol):
         """Return the runtime's read-only authoritative server-state projection."""
         ...
 
+    def provision_server(self) -> AdbServerProvisionTransactionResult:
+        """Provision against the server state authoritative at execution time."""
+        ...
+
+    def retire_server(self) -> bool:
+        """Retire the server state authoritative at execution time."""
+        ...
+
     @overload
     def dispatch_server_lifecycle_intent(
         self,
         intent: AdbServerProvisionIntent,
-    ) -> AdbServerProvisionResult: ...
+    ) -> AdbServerProvisionTransactionResult: ...
 
     @overload
     def dispatch_server_lifecycle_intent(

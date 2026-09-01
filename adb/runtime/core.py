@@ -2,25 +2,30 @@ from __future__ import annotations
 
 from threading import RLock
 
+from adb.epoch import EpochIssuer
 from adb.runtime.managed import AdbManagedRuntime
+from adb.server.epoch import ServerEpoch
 from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
-    AdbServerProvisioned,
 )
 from adb.server.lifecycle.supervision.intent import (
     AdbServerLifecycleIntent,
     AdbServerLifecycleIntentResult,
-    AdbServerProvisionIntent,
+)
+from adb.server.lifecycle.transaction import (
+    AdbServerProvisionCommitted,
+    AdbServerProvisionTransactionResult,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.signal import AdbServerRecovered, AdbServerRetired
 from adb.runtime.server_lifecycle import AdbServerLifecycleRuntimeFacade
 from adb.runtime.state import AdbRuntimeState
+from adb.server.state import AdbServerStateSnapshot
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.state import AdbDevicesSnapshotView
 from adb.tracking.supervision.supervisor import AdbDevicesTrackingSupervisor
@@ -40,6 +45,7 @@ class AdbRuntime(AdbManagedRuntime):
         self,
         state: AdbRuntimeState,
         *,
+        server_epoch_issuer: EpochIssuer[ServerEpoch],
         server_provisioner: AdbServerProvisioner,
         server_retirer: AdbServerRetirer,
         event_bus: EventBus | None = None,
@@ -53,6 +59,8 @@ class AdbRuntime(AdbManagedRuntime):
     ) -> None:
         if not isinstance(state, AdbRuntimeState):
             raise TypeError("state must be AdbRuntimeState")
+        if not isinstance(server_epoch_issuer, EpochIssuer):
+            raise TypeError("server_epoch_issuer must satisfy EpochIssuer")
         if not isinstance(server_provisioner, AdbServerProvisioner):
             raise TypeError("server_provisioner must be AdbServerProvisioner")
         if not isinstance(server_retirer, AdbServerRetirer):
@@ -123,6 +131,7 @@ class AdbRuntime(AdbManagedRuntime):
         self._event_bus = event_bus
         self._server_lifecycle = AdbServerLifecycleRuntimeFacade(
             state,
+            server_epoch_issuer=server_epoch_issuer,
             provisioner=server_provisioner,
             retirer=server_retirer,
         )
@@ -164,13 +173,36 @@ class AdbRuntime(AdbManagedRuntime):
 
         return self._server_lifecycle.dispatch(intent)
 
+    def provision_server(self) -> AdbServerProvisionTransactionResult:
+        """Provision against the server state authoritative at execution time."""
+
+        return self._server_lifecycle.provision()
+
+    def retire_server(self) -> bool:
+        """Retire the server lifetime authoritative at execution time."""
+
+        return self._server_lifecycle.retire()
+
+    def _provision_server_if_current(
+        self,
+        expected: AdbServerStateSnapshot,
+    ) -> AdbServerProvisionTransactionResult | None:
+        """Conditional Runtime entry used by T0-bound intent interpretation."""
+
+        return self._server_lifecycle.provision_if_current(expected)
+
+    def _retire_server_if_current(self, expected: AdbServerStateSnapshot) -> bool:
+        """Conditional Runtime entry used by T0-bound intent interpretation."""
+
+        return self._server_lifecycle.retire_if_current(expected)
+
     def _bootstrap_initial_server(self) -> None:
         """Provision and commit the initial server through the runtime lifecycle authority."""
 
         if self._state.server.current is not None:
             raise ValueError("bootstrap server provisioning requires empty runtime server state")
 
-        result = self.dispatch_server_lifecycle_intent(AdbServerProvisionIntent())
+        result = self.provision_server()
         if isinstance(result, AdbServerProvisionDeferred):
             raise AdbServerControlError(
                 f"initial ADB server provisioning deferred: {result.diagnostic}"
@@ -179,7 +211,7 @@ class AdbRuntime(AdbManagedRuntime):
             raise AdbServerControlError(
                 f"initial ADB server provisioning failed: {result.diagnostic}"
             )
-        if not isinstance(result, AdbServerProvisioned):
+        if not isinstance(result, AdbServerProvisionCommitted):
             raise TypeError("server lifecycle facade returned an unsupported provision result")
         if self._state.server.current != result.server:
             raise AdbServerControlError(
