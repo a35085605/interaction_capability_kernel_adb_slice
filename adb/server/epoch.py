@@ -3,10 +3,10 @@ from __future__ import annotations
 from adb.epoch import Epoch
 
 
-class ServerEpoch(Epoch):
-    """Runtime-scoped identity for one committed ADB server lifetime."""
+class AdbServerEpoch(Epoch):
+    """Runtime-scoped monotonic ordinal for committed ADB server lifetimes."""
 
     __slots__ = ()
 
 
-__all__ = ["ServerEpoch"]
+__all__ = ["AdbServerEpoch"]

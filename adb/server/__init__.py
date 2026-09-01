@@ -28,7 +28,8 @@ from adb.server.failure import (
     AdbServerServiceFailure,
     AdbServerTimeoutFailure,
 )
-from adb.server.epoch import ServerEpoch
+from adb.server.epoch import AdbServerEpoch
+from adb.server.identity import AdbServerIdentity
 from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import (
     AdbServerState,
@@ -56,7 +57,8 @@ __all__ = [
     "AdbServerProvisionCommitted",
     "AdbServerProvisionTransactionResult",
     "AdbServerEndpoint",
-    "ServerEpoch",
+    "AdbServerEpoch",
+    "AdbServerIdentity",
     "AdbServerFailure",
     "AdbServerLifetime",
     "AdbServerLaunchFailure",

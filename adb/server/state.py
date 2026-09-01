@@ -7,7 +7,8 @@ from typing import Protocol, runtime_checkable
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.epoch import ServerEpoch
+from adb.server.epoch import AdbServerEpoch
+from adb.server.identity import AdbServerIdentity
 from adb.server.lifetime import AdbServerLifetime
 
 
@@ -22,24 +23,24 @@ class AdbServerStateStatus(str, Enum):
 class AdbServerState:
     """Immutable authoritative ADB server state for one runtime observation.
 
-    ``endpoint`` and ``epoch`` identify the last committed server lifetime.  Inactive states may
+    ``endpoint`` and ``identity`` identify the last committed server lifetime.  Inactive states may
     preserve both values so lifecycle status does not depend on clearing endpoint metadata.
-    ``epoch`` remains the committed-lifetime watermark, preventing a stale inactive observation
-    from committing after an intervening server lifetime.
+    ``identity.epoch`` remains the committed-lifetime watermark, preventing a stale inactive
+    observation from committing after an intervening server lifetime.
     """
 
     endpoint: AdbServerEndpoint | None = None
-    epoch: ServerEpoch | None = None
+    identity: AdbServerIdentity | None = None
     status: AdbServerStateStatus = AdbServerStateStatus.INACTIVE
 
     def __init__(
         self,
         endpoint: AdbServerEndpoint | None = None,
-        epoch: ServerEpoch | None = None,
+        identity: AdbServerIdentity | None = None,
         status: AdbServerStateStatus | None = None,
     ) -> None:
         # Preserve the historical two-argument construction semantics: a state with an endpoint
-        # was active before status became explicit, while an endpoint-less state was inactive.
+        # is active by default, while an endpoint-less state is inactive.
         if status is None:
             status = (
                 AdbServerStateStatus.ACTIVE
@@ -47,23 +48,30 @@ class AdbServerState:
                 else AdbServerStateStatus.INACTIVE
             )
         object.__setattr__(self, "endpoint", endpoint)
-        object.__setattr__(self, "epoch", epoch)
+        object.__setattr__(self, "identity", identity)
         object.__setattr__(self, "status", status)
         self.__post_init__()
 
     def __post_init__(self) -> None:
         if self.endpoint is not None and not isinstance(self.endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress or None")
-        if self.epoch is not None and not isinstance(self.epoch, ServerEpoch):
-            raise TypeError("epoch must be ServerEpoch or None")
+        if self.identity is not None and not isinstance(self.identity, AdbServerIdentity):
+            raise TypeError("identity must be AdbServerIdentity or None")
         if not isinstance(self.status, AdbServerStateStatus):
             raise TypeError("status must be AdbServerStateStatus")
-        if self.endpoint is not None and self.epoch is None:
-            raise ValueError("server state with an endpoint must have an epoch")
+        if self.endpoint is not None and self.identity is None:
+            raise ValueError("server state with an endpoint must have an identity")
         if self.status is AdbServerStateStatus.ACTIVE and (
-            self.endpoint is None or self.epoch is None
+            self.endpoint is None or self.identity is None
         ):
-            raise ValueError("active server state must have an endpoint and epoch")
+            raise ValueError("active server state must have an endpoint and identity")
+
+    @property
+    def epoch(self) -> AdbServerEpoch | None:
+        """Project the committed-lifetime watermark from the server identity."""
+
+        identity = self.identity
+        return None if identity is None else identity.epoch
 
     @property
     def active(self) -> bool:
@@ -80,21 +88,24 @@ class AdbServerState:
         endpoint = self.endpoint
         if endpoint is None:
             raise RuntimeError("active ADB server state has no endpoint")
-        epoch = self.epoch
-        if epoch is None:
-            raise RuntimeError("active ADB server state has no epoch")
-        return AdbServerLifetime(endpoint, epoch)
+        identity = self.identity
+        if identity is None:
+            raise RuntimeError("active ADB server state has no identity")
+        return AdbServerLifetime(endpoint, identity)
 
 
 @runtime_checkable
 class AdbServerStateView(Protocol):
-    """Authoritative endpoint and lifetime-epoch view for one runtime."""
+    """Authoritative endpoint and server-identity view for one runtime."""
 
     @property
     def endpoint(self) -> AdbServerEndpoint | None: ...
 
     @property
-    def epoch(self) -> ServerEpoch | None: ...
+    def identity(self) -> AdbServerIdentity | None: ...
+
+    @property
+    def epoch(self) -> AdbServerEpoch | None: ...
 
     @property
     def status(self) -> AdbServerStateStatus: ...
@@ -133,7 +144,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         elif isinstance(initial, AdbServerLifetime):
             state = AdbServerState(
                 initial.endpoint,
-                initial.epoch,
+                initial.identity,
                 AdbServerStateStatus.ACTIVE,
             )
         else:
@@ -153,7 +164,11 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         return self.state.endpoint
 
     @property
-    def epoch(self) -> ServerEpoch | None:
+    def identity(self) -> AdbServerIdentity | None:
+        return self.state.identity
+
+    @property
+    def epoch(self) -> AdbServerEpoch | None:
         return self.state.epoch
 
     @property
@@ -180,8 +195,8 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
     ) -> AdbServerLifetime | None:
         """Activate ``endpoint`` iff ``expected`` is the current inactive state.
 
-        A successful compare-and-set allocates the next runtime-scoped server epoch at the same
-        linearization point that makes the endpoint authoritative.
+        A successful compare-and-set allocates the next runtime-scoped server epoch and identity at
+        the same linearization point that makes the endpoint authoritative.
         """
 
         if not isinstance(endpoint, TcpAddress):
@@ -193,10 +208,14 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
             if self._state != expected or expected.active:
                 return None
 
-            next_epoch = ServerEpoch(1 if expected.epoch is None else expected.epoch.value + 1)
+            previous_epoch = expected.epoch
+            next_epoch = AdbServerEpoch(
+                1 if previous_epoch is None else previous_epoch.value + 1
+            )
+            next_identity = AdbServerIdentity(next_epoch)
             next_state = AdbServerState(
                 endpoint,
-                next_epoch,
+                next_identity,
                 AdbServerStateStatus.ACTIVE,
             )
             self._state = next_state
@@ -206,7 +225,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
             return server
 
     def deactivate(self, expected: AdbServerLifetime) -> bool:
-        """Make ``expected`` inactive while preserving its endpoint and epoch metadata."""
+        """Make ``expected`` inactive while preserving its endpoint and identity metadata."""
 
         if not isinstance(expected, AdbServerLifetime):
             raise TypeError("expected must be AdbServerLifetime")
@@ -217,7 +236,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
                 return False
             self._state = AdbServerState(
                 endpoint=state.endpoint,
-                epoch=state.epoch,
+                identity=state.identity,
                 status=AdbServerStateStatus.INACTIVE,
             )
             return True
