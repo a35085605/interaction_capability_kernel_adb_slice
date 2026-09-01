@@ -103,8 +103,8 @@ class AdbManagedRuntime:
         configuration: AdbConfiguredTransport,
         policy: AdbConfiguredTransportSupervisionPolicy | None = None,
     ) -> RegisteredTransport:
-        """Register one transport and return its runtime-scoped handle, projecting current tracking
-        evidence and optional TCP recovery.
+        """Register one transport and return its runtime-scoped handle, projecting current
+        transport-list evidence and optional TCP recovery.
         """
 
         if not isinstance(configuration, AdbConfiguredTransport):

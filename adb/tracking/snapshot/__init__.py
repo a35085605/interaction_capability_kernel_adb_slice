@@ -1,37 +1,37 @@
-"""Domain-identified ADB device snapshots, state, readers, and queries."""
+"""Domain-identified ADB transport-list snapshots, state, readers, and queries."""
 
 from adb.tracking.snapshot.identity import (
-    AdbDevicesSnapshot,
-    AdbDevicesSnapshotEpoch,
-    AdbDevicesSnapshotEpochSequence,
+    AdbTransportListSnapshot,
+    AdbTransportListSnapshotEpoch,
+    AdbTransportListSnapshotEpochSequence,
 )
 from adb.tracking.snapshot.lookup import (
-    AdbTrackedDeviceLookup,
-    SnapshotAdbTrackedDeviceLookup,
-    find_tracked_device,
+    AdbTrackedTransportLookup,
+    SnapshotAdbTrackedTransportLookup,
+    find_tracked_transport,
 )
 from adb.tracking.snapshot.reader import (
-    AdbDevicesSnapshotReader,
-    SmartSocketAdbDevicesSnapshotReader,
+    AdbTransportListSnapshotReader,
+    SmartSocketAdbTransportListSnapshotReader,
 )
 from adb.tracking.snapshot.state import (
-    AdbDevicesObservation,
-    AdbDevicesSnapshotState,
-    AdbDevicesSnapshotView,
-    AdbDevicesSnapshotWriter,
+    AdbTransportListObservation,
+    AdbTransportListSnapshotState,
+    AdbTransportListSnapshotView,
+    AdbTransportListSnapshotWriter,
 )
 
 __all__ = [
-    "AdbDevicesObservation",
-    "AdbDevicesSnapshot",
-    "AdbDevicesSnapshotEpoch",
-    "AdbDevicesSnapshotEpochSequence",
-    "AdbDevicesSnapshotReader",
-    "AdbDevicesSnapshotState",
-    "AdbDevicesSnapshotView",
-    "AdbDevicesSnapshotWriter",
-    "AdbTrackedDeviceLookup",
-    "SmartSocketAdbDevicesSnapshotReader",
-    "SnapshotAdbTrackedDeviceLookup",
-    "find_tracked_device",
+    "AdbTransportListObservation",
+    "AdbTransportListSnapshot",
+    "AdbTransportListSnapshotEpoch",
+    "AdbTransportListSnapshotEpochSequence",
+    "AdbTransportListSnapshotReader",
+    "AdbTransportListSnapshotState",
+    "AdbTransportListSnapshotView",
+    "AdbTransportListSnapshotWriter",
+    "AdbTrackedTransportLookup",
+    "SmartSocketAdbTransportListSnapshotReader",
+    "SnapshotAdbTrackedTransportLookup",
+    "find_tracked_transport",
 ]

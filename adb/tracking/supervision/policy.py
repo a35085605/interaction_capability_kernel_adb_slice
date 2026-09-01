@@ -15,8 +15,10 @@ def _normalize_positive_seconds(value: object, *, field_name: str) -> float:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesTrackingSupervisionPolicy:
-    """Configure track-devices startup timeout and server-connection reconciliation behavior."""
+class AdbTransportListWatchSupervisionPolicy:
+    """Configure transport-list watch startup timeout and server-connection reconciliation
+    behavior.
+    """
 
     episode_timeout_seconds: float = 10.0
 
@@ -26,9 +28,9 @@ class AdbDevicesTrackingSupervisionPolicy:
             "episode_timeout_seconds",
             _normalize_positive_seconds(
                 self.episode_timeout_seconds,
-                field_name="ADB tracking startup timeout",
+                field_name="ADB transport-list watch startup timeout",
             ),
         )
 
 
-__all__ = ["AdbDevicesTrackingSupervisionPolicy"]
+__all__ = ["AdbTransportListWatchSupervisionPolicy"]

@@ -6,48 +6,49 @@ from typing import Protocol, runtime_checkable
 from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import AdbServerStateView
 from adb.tracking.snapshot.state import (
-    AdbDevicesObservation,
-    AdbDevicesSnapshotView,
-    AdbDevicesSnapshotWriter,
+    AdbTransportListObservation,
+    AdbTransportListSnapshotView,
+    AdbTransportListSnapshotWriter,
 )
 from adb.tracking.signal import (
-    AdbDevicesSnapshotObserved,
-    AdbDevicesTrackingFailed,
-    AdbDevicesTrackingStarted,
-    AdbDevicesTrackingStopped,
+    AdbTransportListSnapshotObserved,
+    AdbTransportListWatchFailed,
+    AdbTransportListWatchStarted,
+    AdbTransportListWatchStopped,
 )
 from eventing import EventPublisher
 
 
 @runtime_checkable
-class _AdbDevicesSnapshotStateAccess(
-    AdbDevicesSnapshotView,
-    AdbDevicesSnapshotWriter,
+class _AdbTransportListSnapshotStateAccess(
+    AdbTransportListSnapshotView,
+    AdbTransportListSnapshotWriter,
     Protocol,
 ):
-    """Read and commit authoritative tracked-devices snapshot state."""
+    """Read and commit authoritative transport-list snapshot state."""
 
 
-class AdbDevicesSnapshotStateBackedTrackingPublisher:
-    """Commit current-server tracking observations into snapshot state before publication while
-    retaining server provenance.
+class AdbTransportListStateBackedWatchPublisher:
+    """Commit current-server transport-list observations into snapshot state before publication
+    while retaining server provenance.
     """
 
     def __init__(
         self,
-        devices: _AdbDevicesSnapshotStateAccess,
+        transport_list_state: _AdbTransportListSnapshotStateAccess,
         server_state: AdbServerStateView,
         publisher: EventPublisher,
     ) -> None:
-        if not isinstance(devices, _AdbDevicesSnapshotStateAccess):
+        if not isinstance(transport_list_state, _AdbTransportListSnapshotStateAccess):
             raise TypeError(
-                "devices must satisfy AdbDevicesSnapshotView and AdbDevicesSnapshotWriter"
+                "transport_list_state must satisfy AdbTransportListSnapshotView and "
+                "AdbTransportListSnapshotWriter"
             )
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
-        self._devices = devices
+        self._transport_list_state = transport_list_state
         self._server_state = server_state
         self._publisher = publisher
         self._lock = Lock()
@@ -55,18 +56,18 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
 
     def publish(self, event: object) -> None:
         accepted = True
-        if isinstance(event, AdbDevicesTrackingStarted):
-            accepted = self._begin_tracking(event.server)
-        elif isinstance(event, AdbDevicesSnapshotObserved):
+        if isinstance(event, AdbTransportListWatchStarted):
+            accepted = self._begin_watch(event.server)
+        elif isinstance(event, AdbTransportListSnapshotObserved):
             accepted = self._observe(event)
-        elif isinstance(event, (AdbDevicesTrackingFailed, AdbDevicesTrackingStopped)):
-            accepted = self.end_tracking(event.server)
+        elif isinstance(event, (AdbTransportListWatchFailed, AdbTransportListWatchStopped)):
+            accepted = self.end_watch(event.server)
 
         if accepted:
             self._publisher.publish(event)
 
-    def end_tracking(self, server: AdbServerLifetime) -> bool:
-        """End tracking for one server while preserving the last committed observation."""
+    def end_watch(self, server: AdbServerLifetime) -> bool:
+        """End the watch for one server while preserving the last committed observation."""
 
         self._require_server(server)
         with self._lock:
@@ -75,27 +76,27 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
             self._active_server = None
             return True
 
-    def _begin_tracking(self, server: AdbServerLifetime) -> bool:
+    def _begin_watch(self, server: AdbServerLifetime) -> bool:
         self._require_server(server)
         with self._lock:
             if self._server_state.current != server:
                 return False
             if self._active_server == server:
                 return True
-            current = self._devices.current
+            current = self._transport_list_state.current
             if current is not None and current.server != server:
-                self._devices.invalidate_current()
+                self._transport_list_state.invalidate_current()
             self._active_server = server
             return True
 
-    def _observe(self, event: AdbDevicesSnapshotObserved) -> bool:
+    def _observe(self, event: AdbTransportListSnapshotObserved) -> bool:
         with self._lock:
             if event.server != self._active_server:
                 return False
             if self._server_state.current != event.server:
                 return False
-            return self._devices.observe(
-                AdbDevicesObservation(event.server, event.snapshot)
+            return self._transport_list_state.observe(
+                AdbTransportListObservation(event.server, event.snapshot)
             )
 
     @staticmethod
@@ -104,4 +105,4 @@ class AdbDevicesSnapshotStateBackedTrackingPublisher:
             raise TypeError("server must be AdbServerLifetime")
 
 
-__all__ = ["AdbDevicesSnapshotStateBackedTrackingPublisher"]
+__all__ = ["AdbTransportListStateBackedWatchPublisher"]

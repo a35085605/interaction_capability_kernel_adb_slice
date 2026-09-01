@@ -5,7 +5,7 @@ from enum import Enum
 
 from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.observation import AdbTrackedTransportObservation
-from adb.tracking.snapshot.identity import AdbDevicesSnapshotEpoch
+from adb.tracking.snapshot.identity import AdbTransportListSnapshotEpoch
 from adb.tracking.snapshot.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
@@ -15,7 +15,7 @@ from adb.transport.identity import AdbTransportId
 
 
 class AdbConfiguredTransportResolutionStatus(str, Enum):
-    """How one configured transport identity appears in one complete track-devices snapshot."""
+    """How one configured transport identity appears in one complete transport-list snapshot."""
 
     ABSENT = "absent"
     RESOLVED = "resolved"
@@ -25,7 +25,7 @@ class AdbConfiguredTransportResolutionStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportResolution:
-    """Resolution of one configured transport against domain tracking evidence."""
+    """Resolution of one configured transport against domain transport-list evidence."""
 
     configuration: AdbConfiguredTransport
     matches: tuple[AdbTrackedTransportObservation, ...]
@@ -100,14 +100,14 @@ class AdbConfiguredTransportProjection:
     """One configured-transport resolution bound to its source server and snapshot identity."""
 
     server: AdbServerLifetime
-    snapshot_epoch: AdbDevicesSnapshotEpoch
+    snapshot_epoch: AdbTransportListSnapshotEpoch
     resolution: AdbConfiguredTransportResolution
 
     def __post_init__(self) -> None:
         if not isinstance(self.server, AdbServerLifetime):
             raise TypeError("server must be AdbServerLifetime")
-        if not isinstance(self.snapshot_epoch, AdbDevicesSnapshotEpoch):
-            raise TypeError("snapshot_epoch must be AdbDevicesSnapshotEpoch")
+        if not isinstance(self.snapshot_epoch, AdbTransportListSnapshotEpoch):
+            raise TypeError("snapshot_epoch must be AdbTransportListSnapshotEpoch")
         if not isinstance(self.resolution, AdbConfiguredTransportResolution):
             raise TypeError("resolution must be AdbConfiguredTransportResolution")
 

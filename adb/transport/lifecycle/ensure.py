@@ -19,8 +19,8 @@ from adb.tracking.observation import (
     AdbTrackedTransportObservation,
     AdbTransportState,
 )
-from adb.tracking.snapshot.identity import AdbDevicesSnapshot
-from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
+from adb.tracking.snapshot.identity import AdbTransportListSnapshot
+from adb.tracking.snapshot.reader import AdbTransportListSnapshotReader
 from adb.tracking.snapshot.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
@@ -174,7 +174,7 @@ class AdbTcpTransportEnsureResult:
     satisfaction: AdbTcpTransportReadinessSatisfaction | None
     presence_satisfaction: AdbTcpTransportPresenceSatisfaction | None
     attempts: tuple[NativeAttemptResult, ...]
-    final_snapshot: AdbDevicesSnapshot | None = None
+    final_snapshot: AdbTransportListSnapshot | None = None
     final_row: AdbTrackedTransportObservation | None = None
     diagnostic: str | None = None
 
@@ -198,9 +198,9 @@ class AdbTcpTransportEnsureResult:
         ):
             raise TypeError("attempts must be a tuple of NativeAttemptResult values")
         if self.final_snapshot is not None and not isinstance(
-            self.final_snapshot, AdbDevicesSnapshot
+            self.final_snapshot, AdbTransportListSnapshot
         ):
-            raise TypeError("final_snapshot must be AdbDevicesSnapshot or None")
+            raise TypeError("final_snapshot must be AdbTransportListSnapshot or None")
         if self.final_row is not None and not isinstance(
             self.final_row, AdbTrackedTransportObservation
         ):
@@ -265,7 +265,7 @@ class _ReadinessEpisodeState:
     attempts: list[NativeAttemptResult] = field(default_factory=list)
     presence: AdbTcpTransportPresenceSatisfaction | None = None
     satisfaction: AdbTcpTransportReadinessSatisfaction | None = None
-    final_snapshot: AdbDevicesSnapshot | None = None
+    final_snapshot: AdbTransportListSnapshot | None = None
     final_row: AdbTrackedTransportObservation | None = None
     diagnostic: str | None = None
     probes_attempted: int = 0
@@ -283,7 +283,7 @@ class _ReadinessEpisodeState:
 
     def evaluate_snapshot(
         self,
-        snapshot: AdbDevicesSnapshot,
+        snapshot: AdbTransportListSnapshot,
     ) -> AdbTcpTransportEnsureStatus | None:
         initial = self.probes_attempted == 0
         self.probes_attempted += 1
@@ -369,7 +369,7 @@ class AdbTcpTransportEnsureOrchestrator:
     def __init__(
         self,
         server: AdbServerLifetime,
-        snapshot_reader: AdbDevicesSnapshotReader,
+        snapshot_reader: AdbTransportListSnapshotReader,
         connector: AdbTcpConnector,
         publisher: EventPublisher,
         *,

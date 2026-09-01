@@ -15,25 +15,25 @@ if TYPE_CHECKING:
     from adb.transport.resolution import AdbConfiguredTransportResolution
 
 
-class AdbDevicesSnapshotEpoch(Epoch):
-    """Runtime-scoped ordinal identity for observed device snapshots."""
+class AdbTransportListSnapshotEpoch(Epoch):
+    """Runtime-scoped ordinal identity for observed transport-list snapshots."""
 
     __slots__ = ()
 
 
-class AdbDevicesSnapshotEpochSequence(EpochSequence[AdbDevicesSnapshotEpoch]):
-    """Runtime-scoped monotonically increasing device-snapshot epoch issuer."""
+class AdbTransportListSnapshotEpochSequence(EpochSequence[AdbTransportListSnapshotEpoch]):
+    """Runtime-scoped monotonically increasing transport-list snapshot epoch issuer."""
 
     def __init__(self) -> None:
-        super().__init__(AdbDevicesSnapshotEpoch)
+        super().__init__(AdbTransportListSnapshotEpoch)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesSnapshot:
+class AdbTransportListSnapshot:
     """Domain-identified complete set of tracked transport observations for one runtime."""
 
     observations: tuple[AdbTrackedTransportObservation, ...]
-    epoch: AdbDevicesSnapshotEpoch
+    epoch: AdbTransportListSnapshotEpoch
 
     def __post_init__(self) -> None:
         if not isinstance(self.observations, tuple) or not all(
@@ -42,8 +42,8 @@ class AdbDevicesSnapshot:
             raise TypeError(
                 "observations must be a tuple of AdbTrackedTransportObservation values"
             )
-        if not isinstance(self.epoch, AdbDevicesSnapshotEpoch):
-            raise TypeError("epoch must be AdbDevicesSnapshotEpoch")
+        if not isinstance(self.epoch, AdbTransportListSnapshotEpoch):
+            raise TypeError("epoch must be AdbTransportListSnapshotEpoch")
 
     def resolve_configured_transport(
         self,
@@ -90,7 +90,7 @@ class AdbDevicesSnapshot:
 
 
 __all__ = [
-    "AdbDevicesSnapshot",
-    "AdbDevicesSnapshotEpoch",
-    "AdbDevicesSnapshotEpochSequence",
+    "AdbTransportListSnapshot",
+    "AdbTransportListSnapshotEpoch",
+    "AdbTransportListSnapshotEpochSequence",
 ]

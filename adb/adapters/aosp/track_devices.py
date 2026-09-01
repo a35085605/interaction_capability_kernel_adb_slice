@@ -29,7 +29,7 @@ from adb.tracking.observation import (
     AdbTrackedTransportObservation,
     AdbTransportState,
 )
-from adb.tracking.watch import AdbTransportList
+from adb.tracking.transport_list import AdbTransportList
 from adb.transport.configuration import AdbTransportType
 from adb.transport.identity import AdbTransportId
 

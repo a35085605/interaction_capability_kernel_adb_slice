@@ -4,8 +4,8 @@ from typing import Protocol
 
 from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.observation import AdbTrackedTransportObservation
-from adb.tracking.snapshot.identity import AdbDevicesSnapshot
-from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
+from adb.tracking.snapshot.identity import AdbTransportListSnapshot
+from adb.tracking.snapshot.reader import AdbTransportListSnapshotReader
 from adb.transport.selection import (
     AdbTransportById,
     AdbTransportBySerial,
@@ -13,8 +13,8 @@ from adb.transport.selection import (
 )
 
 
-class AdbTrackedDeviceLookup(Protocol):
-    """Find one tracked transport observation in a fresh domain snapshot."""
+class AdbTrackedTransportLookup(Protocol):
+    """Find one tracked transport observation in a fresh transport-list snapshot."""
 
     def find(
         self,
@@ -24,14 +24,14 @@ class AdbTrackedDeviceLookup(Protocol):
         ...
 
 
-def find_tracked_device(
-    snapshot: AdbDevicesSnapshot,
+def find_tracked_transport(
+    snapshot: AdbTransportListSnapshot,
     selector: AdbTransportSelector,
 ) -> AdbTrackedTransportObservation | None:
-    """Select one domain transport observation from a tracked-devices snapshot."""
+    """Select one domain transport observation from a transport-list snapshot."""
 
-    if not isinstance(snapshot, AdbDevicesSnapshot):
-        raise TypeError("snapshot must be AdbDevicesSnapshot")
+    if not isinstance(snapshot, AdbTransportListSnapshot):
+        raise TypeError("snapshot must be AdbTransportListSnapshot")
     if isinstance(selector, AdbTransportBySerial):
         matches = [
             observation
@@ -52,10 +52,10 @@ def find_tracked_device(
     return matches[0] if matches else None
 
 
-class SnapshotAdbTrackedDeviceLookup:
-    """Single-observation lookup over freshly identified track-devices snapshots."""
+class SnapshotAdbTrackedTransportLookup:
+    """Single-observation lookup over freshly identified transport-list snapshots."""
 
-    def __init__(self, snapshot_reader: AdbDevicesSnapshotReader) -> None:
+    def __init__(self, snapshot_reader: AdbTransportListSnapshotReader) -> None:
         if not callable(getattr(snapshot_reader, "read", None)):
             raise TypeError("snapshot_reader must provide read()")
         self.snapshot_reader = snapshot_reader
@@ -68,13 +68,13 @@ class SnapshotAdbTrackedDeviceLookup:
         if not isinstance(server, AdbServerLifetime):
             raise TypeError("server must be AdbServerLifetime")
         snapshot = self.snapshot_reader.read(server.endpoint)
-        if not isinstance(snapshot, AdbDevicesSnapshot):
-            raise TypeError("snapshot reader must return AdbDevicesSnapshot")
-        return find_tracked_device(snapshot, selector)
+        if not isinstance(snapshot, AdbTransportListSnapshot):
+            raise TypeError("snapshot reader must return AdbTransportListSnapshot")
+        return find_tracked_transport(snapshot, selector)
 
 
 __all__ = [
-    "AdbTrackedDeviceLookup",
-    "SnapshotAdbTrackedDeviceLookup",
-    "find_tracked_device",
+    "AdbTrackedTransportLookup",
+    "SnapshotAdbTrackedTransportLookup",
+    "find_tracked_transport",
 ]

@@ -15,15 +15,15 @@ from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.state import AdbServerState
 from adb.runtime.state import AdbRuntimeState
 from adb.tracking.snapshot.identity import (
-    AdbDevicesSnapshotEpoch,
-    AdbDevicesSnapshotEpochSequence,
+    AdbTransportListSnapshotEpoch,
+    AdbTransportListSnapshotEpochSequence,
 )
-from adb.tracking.snapshot.state import AdbDevicesSnapshotState
+from adb.tracking.snapshot.state import AdbTransportListSnapshotState
 from adb.tracking.supervision.policy import (
-    AdbDevicesTrackingSupervisionPolicy,
+    AdbTransportListWatchSupervisionPolicy,
 )
 from adb.tracking.supervision.supervisor import (
-    AdbDevicesTrackingSupervisor,
+    AdbTransportListWatchSupervisor,
 )
 from adb.transport.lifecycle.ensure import AdbTcpTransportEnsurer
 from adb.transport.lifecycle.supervision.policy import (
@@ -50,7 +50,7 @@ class _BootstrapCore:
     server_provisioner: AdbServerProvisioner
     server_retirer: AdbServerRetirer
     runtime_state: AdbRuntimeState
-    devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch]
+    transport_list_snapshot_epoch_issuer: EpochIssuer[AdbTransportListSnapshotEpoch]
 
 
 class AdbRuntimeBootstrap:
@@ -64,7 +64,8 @@ class AdbRuntimeBootstrap:
         pin_endpoint: bool = True,
         server_recovery_enabled: bool = True,
         server_supervision_policy: AdbServerSupervisionPolicy | None = None,
-        tracking_supervision_policy: AdbDevicesTrackingSupervisionPolicy | None = None,
+        transport_list_watch_supervision_policy: AdbTransportListWatchSupervisionPolicy
+        | None = None,
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
     ) -> None:
         if server_backend_factory is not None and not callable(server_backend_factory):
@@ -83,14 +84,14 @@ class AdbRuntimeBootstrap:
             raise TypeError(
                 "server_supervision_policy must be AdbServerSupervisionPolicy or None"
             )
-        if tracking_supervision_policy is None:
-            tracking_supervision_policy = AdbDevicesTrackingSupervisionPolicy()
+        if transport_list_watch_supervision_policy is None:
+            transport_list_watch_supervision_policy = AdbTransportListWatchSupervisionPolicy()
         if not isinstance(
-            tracking_supervision_policy, AdbDevicesTrackingSupervisionPolicy
+            transport_list_watch_supervision_policy, AdbTransportListWatchSupervisionPolicy
         ):
             raise TypeError(
-                "tracking_supervision_policy must be "
-                "AdbDevicesTrackingSupervisionPolicy or None"
+                "transport_list_watch_supervision_policy must be "
+                "AdbTransportListWatchSupervisionPolicy or None"
             )
         if transport_supervision_policy is None:
             transport_supervision_policy = AdbConfiguredTransportSupervisionPolicy()
@@ -107,7 +108,7 @@ class AdbRuntimeBootstrap:
         self._pin_endpoint = pin_endpoint
         self._server_recovery_enabled = server_recovery_enabled
         self._server_supervision_policy = server_supervision_policy
-        self._tracking_supervision_policy = tracking_supervision_policy
+        self._transport_list_watch_supervision_policy = transport_list_watch_supervision_policy
         self._transport_supervision_policy = transport_supervision_policy
 
     def build_minimal(self) -> AdbRuntime:
@@ -137,7 +138,7 @@ class AdbRuntimeBootstrap:
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
         tcp_transport_ensurer: AdbTcpTransportEnsurer | None = None,
-        track_devices: bool = True,
+        watch_transports: bool = True,
         configured_transports: bool = True,
     ) -> AdbRuntime:
         """Build a runtime with server supervision and optional transport automation."""
@@ -146,12 +147,12 @@ class AdbRuntimeBootstrap:
             raise TypeError("event_bus must satisfy EventBus")
         if not isinstance(scheduler, TemporalScheduler):
             raise TypeError("scheduler must satisfy TemporalScheduler")
-        if not isinstance(track_devices, bool):
-            raise TypeError("track_devices must be bool")
+        if not isinstance(watch_transports, bool):
+            raise TypeError("watch_transports must be bool")
         if not isinstance(configured_transports, bool):
             raise TypeError("configured_transports must be bool")
-        if configured_transports and not track_devices:
-            raise ValueError("configured transport supervision requires device tracking")
+        if configured_transports and not watch_transports:
+            raise ValueError("configured transport supervision requires a transport-list watch")
         if tcp_transport_ensurer is not None and not isinstance(
             tcp_transport_ensurer, AdbTcpTransportEnsurer
         ):
@@ -179,16 +180,16 @@ class AdbRuntimeBootstrap:
             if initial_server is None:
                 raise RuntimeError("bootstrapped ADB runtime has no initial server")
 
-            tracking_supervisor = (
-                AdbDevicesTrackingSupervisor(
+            transport_list_watch_supervisor = (
+                AdbTransportListWatchSupervisor(
                     initial_server,
                     event_bus,
-                    self._tracking_supervision_policy,
+                    self._transport_list_watch_supervision_policy,
                     server_state=core.runtime_state.server,
-                    devices_snapshot_epoch_issuer=core.devices_snapshot_epoch_issuer,
-                    snapshot_state=core.runtime_state.devices,
+                    transport_list_snapshot_epoch_issuer=core.transport_list_snapshot_epoch_issuer,
+                    transport_list_state=core.runtime_state.transport_list,
                 )
-                if track_devices
+                if watch_transports
                 else None
             )
             transport_supervisor = (
@@ -197,13 +198,13 @@ class AdbRuntimeBootstrap:
                     event_bus,
                     tcp_transport_ensurer,
                     server_state=core.runtime_state.server,
-                    devices=core.runtime_state.devices,
+                    transport_list_state=core.runtime_state.transport_list,
                 )
                 if configured_transports
                 else None
             )
             runtime._install_auxiliary_supervisors(
-                tracking_supervisor,
+                transport_list_watch_supervisor,
                 transport_supervisor,
             )
             return runtime
@@ -217,7 +218,7 @@ class AdbRuntimeBootstrap:
 
     def _build_core(self) -> _BootstrapCore:
         server_epoch_issuer = ServerEpochSequence()
-        devices_snapshot_epoch_issuer = AdbDevicesSnapshotEpochSequence()
+        transport_list_snapshot_epoch_issuer = AdbTransportListSnapshotEpochSequence()
         backend = self._server_backend_factory()
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("server backend factory must return AdbServerBackend")
@@ -232,9 +233,9 @@ class AdbRuntimeBootstrap:
             server_retirer=AdbServerRetirer(backend),
             runtime_state=AdbRuntimeState(
                 server=AdbServerState(),
-                devices=AdbDevicesSnapshotState(),
+                transport_list=AdbTransportListSnapshotState(),
             ),
-            devices_snapshot_epoch_issuer=devices_snapshot_epoch_issuer,
+            transport_list_snapshot_epoch_issuer=transport_list_snapshot_epoch_issuer,
         )
 
     def _configure_recovery_provisioner(

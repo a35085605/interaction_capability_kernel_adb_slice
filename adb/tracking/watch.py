@@ -1,21 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from networking import TcpAddress
-from adb.tracking.observation import AdbTrackedTransportObservation
-
-
-AdbTransportList: TypeAlias = tuple[AdbTrackedTransportObservation, ...]
-
-
-@runtime_checkable
-class AdbTransportListReader(Protocol):
-    """Read one complete current transport list from an ADB server endpoint."""
-
-    def read(self, address: TcpAddress) -> AdbTransportList:
-        ...
+from adb.tracking.transport_list import AdbTransportList
 
 
 @runtime_checkable
@@ -50,9 +39,4 @@ class AdbTransportListWatcher(Protocol):
         ...
 
 
-__all__ = [
-    "AdbTransportList",
-    "AdbTransportListReader",
-    "AdbTransportListWatch",
-    "AdbTransportListWatcher",
-]
+__all__ = ["AdbTransportListWatch", "AdbTransportListWatcher"]

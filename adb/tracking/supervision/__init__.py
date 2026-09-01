@@ -1,9 +1,9 @@
-"""ADB track-devices supervision policy and orchestration."""
+"""ADB transport-list watch supervision policy and orchestration."""
 
-from adb.tracking.supervision.policy import AdbDevicesTrackingSupervisionPolicy
-from adb.tracking.supervision.supervisor import AdbDevicesTrackingSupervisor
+from adb.tracking.supervision.policy import AdbTransportListWatchSupervisionPolicy
+from adb.tracking.supervision.supervisor import AdbTransportListWatchSupervisor
 
 __all__ = [
-    "AdbDevicesTrackingSupervisionPolicy",
-    "AdbDevicesTrackingSupervisor",
+    "AdbTransportListWatchSupervisionPolicy",
+    "AdbTransportListWatchSupervisor",
 ]

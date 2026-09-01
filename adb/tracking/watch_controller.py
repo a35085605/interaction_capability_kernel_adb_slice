@@ -13,22 +13,19 @@ from adb.errors import (
 from networking import TcpAddress
 from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.observation import AdbTrackedTransportObservation
-from adb.tracking.watch import (
-    AdbTransportList,
-    AdbTransportListWatch,
-    AdbTransportListWatcher,
-)
+from adb.tracking.transport_list import AdbTransportList
+from adb.tracking.watch import AdbTransportListWatch, AdbTransportListWatcher
 from adb.tracking.snapshot.identity import (
-    AdbDevicesSnapshot,
-    AdbDevicesSnapshotEpoch,
+    AdbTransportListSnapshot,
+    AdbTransportListSnapshotEpoch,
 )
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
 from adb.tracking.signal import (
-    AdbDevicesSnapshotObserved,
-    AdbDevicesTrackingFailed,
-    AdbDevicesTrackingFailure,
-    AdbDevicesTrackingStarted,
-    AdbDevicesTrackingStopped,
+    AdbTransportListSnapshotObserved,
+    AdbTransportListWatchFailed,
+    AdbTransportListWatchFailure,
+    AdbTransportListWatchStarted,
+    AdbTransportListWatchStopped,
 )
 from eventing import EventPublisher
 
@@ -44,8 +41,8 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 
 @runtime_checkable
-class AdbDevicesTrackingController(Protocol):
-    """Control one transport-list tracking lifetime for one ADB server lifetime."""
+class AdbTransportListWatchController(Protocol):
+    """Control one transport-list watch lifetime for one ADB server lifetime."""
 
     @property
     def server(self) -> AdbServerLifetime:
@@ -55,18 +52,19 @@ class AdbDevicesTrackingController(Protocol):
     def active(self) -> bool:
         ...
 
-    def start(self) -> AdbDevicesSnapshot:
-        """Establish tracking and return its initial complete snapshot."""
+    def start(self) -> AdbTransportListSnapshot:
+        """Establish the watch and return its initial complete snapshot."""
         ...
 
     def stop(self) -> None:
-        """Stop tracking and return after its worker has terminated."""
+        """Stop the watch and return after its worker has terminated."""
         ...
 
 
-class SmartSocketAdbDevicesTrackingController:
-    """Single-use controller for one smart-socket track-devices watch, publishing initial and
-    subsequent snapshots until terminal stop or failure.
+class ThreadedAdbTransportListWatchController:
+    """Single-use threaded controller for one transport-list watch, publishing initial and
+    subsequent snapshots until terminal stop or failure. The default watcher uses AOSP
+    ``track-devices`` over smart socket.
     """
 
     def __init__(
@@ -75,7 +73,7 @@ class SmartSocketAdbDevicesTrackingController:
         publisher: EventPublisher,
         startup_timeout_seconds: float = 5.0,
         *,
-        devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch],
+        transport_list_snapshot_epoch_issuer: EpochIssuer[AdbTransportListSnapshotEpoch],
         _watcher_factory: _TransportListWatcherFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
@@ -83,8 +81,8 @@ class SmartSocketAdbDevicesTrackingController:
             raise TypeError("server must be AdbServerLifetime")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
-        if not isinstance(devices_snapshot_epoch_issuer, EpochIssuer):
-            raise TypeError("devices_snapshot_epoch_issuer must satisfy EpochIssuer")
+        if not isinstance(transport_list_snapshot_epoch_issuer, EpochIssuer):
+            raise TypeError("transport_list_snapshot_epoch_issuer must satisfy EpochIssuer")
         if _watcher_factory is not None and not callable(_watcher_factory):
             raise TypeError("_watcher_factory must be callable or None")
         if not callable(_thread_factory):
@@ -93,7 +91,7 @@ class SmartSocketAdbDevicesTrackingController:
         self.endpoint = server.endpoint
         self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
-        self._devices_snapshot_epoch_issuer = devices_snapshot_epoch_issuer
+        self._transport_list_snapshot_epoch_issuer = transport_list_snapshot_epoch_issuer
         self._watcher_factory = _watcher_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
@@ -107,15 +105,15 @@ class SmartSocketAdbDevicesTrackingController:
         with self._lock:
             return not self._closed and self._active_thread is not None
 
-    def start(self) -> AdbDevicesSnapshot:
-        """Establish tracking and return its initial complete snapshot."""
+    def start(self) -> AdbTransportListSnapshot:
+        """Establish the watch and return its initial complete snapshot."""
 
         with self._lock:
             if self._closed:
-                raise RuntimeError("ADB devices tracking controller is stopped")
+                raise RuntimeError("ADB transport-list watch controller is stopped")
             if self._started:
                 raise RuntimeError(
-                    "ADB devices tracking controller is single-use and already started"
+                    "ADB transport-list watch controller is single-use and already started"
                 )
             watcher = self._create_watcher()
             self._started = True
@@ -130,12 +128,12 @@ class SmartSocketAdbDevicesTrackingController:
         if watch is None:
             self._abort_start(watcher)
             raise RuntimeError(
-                "ADB devices tracking controller was stopped before its initial snapshot "
+                "ADB transport-list watch controller was stopped before its initial snapshot "
                 "was established"
             )
 
         startup_complete = Event()
-        startup_snapshots: list[AdbDevicesSnapshot] = []
+        startup_snapshots: list[AdbTransportListSnapshot] = []
         startup_errors: list[BaseException] = []
         try:
             thread = self._thread_factory(
@@ -148,7 +146,7 @@ class SmartSocketAdbDevicesTrackingController:
                     startup_errors,
                 ),
                 name=(
-                    "adb-track-devices-"
+                    "adb-transport-list-watch-"
                     f"{self.endpoint.host}-{self.endpoint.port}-{self.server.epoch}"
                 ),
             )
@@ -163,7 +161,8 @@ class SmartSocketAdbDevicesTrackingController:
                     if self._active_watcher is watcher:
                         self._active_watcher = None
                     raise RuntimeError(
-                        "ADB devices tracking controller was stopped before its worker could start"
+                        "ADB transport-list watch controller was stopped before its worker "
+                        "could start"
                     )
                 self._active_thread = thread
                 try:
@@ -185,12 +184,12 @@ class SmartSocketAdbDevicesTrackingController:
             raise startup_errors[0]
         if len(startup_snapshots) != 1:
             raise RuntimeError(
-                "ADB devices tracking controller did not produce exactly one initial snapshot"
+                "ADB transport-list watch controller did not produce exactly one initial snapshot"
             )
         return startup_snapshots[0]
 
     def stop(self) -> None:
-        """Stop tracking and return after its worker has terminated."""
+        """Stop the watch and return after its worker has terminated."""
 
         with self._lock:
             watcher = self._active_watcher
@@ -213,10 +212,12 @@ class SmartSocketAdbDevicesTrackingController:
         )
         if not isinstance(watcher, AdbTransportListWatcher):
             raise TypeError(
-                "tracking watcher factory must return AdbTransportListWatcher"
+                "transport-list watcher factory must return AdbTransportListWatcher"
             )
         if watcher.address != self.endpoint:
-            raise ValueError("tracking watcher factory returned a mismatched server endpoint")
+            raise ValueError(
+                "transport-list watcher factory returned a mismatched server endpoint"
+            )
         return watcher
 
     def _abort_start(self, watcher: AdbTransportListWatcher) -> None:
@@ -232,7 +233,7 @@ class SmartSocketAdbDevicesTrackingController:
         watcher: AdbTransportListWatcher,
         watch: AdbTransportListWatch,
         startup_complete: Event,
-        startup_snapshots: list[AdbDevicesSnapshot],
+        startup_snapshots: list[AdbTransportListSnapshot],
         startup_errors: list[BaseException],
     ) -> None:
         server = self.server
@@ -241,14 +242,14 @@ class SmartSocketAdbDevicesTrackingController:
         try:
             if not self._can_publish_from(watcher):
                 raise RuntimeError(
-                    "ADB devices tracking controller was stopped before its initial snapshot "
+                    "ADB transport-list watch controller was stopped before its initial snapshot "
                     "was published"
                 )
 
-            self._publisher.publish(AdbDevicesTrackingStarted(server))
+            self._publisher.publish(AdbTransportListWatchStarted(server))
             initial_snapshot = self._snapshot(watch.initial)
             self._publisher.publish(
-                AdbDevicesSnapshotObserved(
+                AdbTransportListSnapshotObserved(
                     server,
                     initial_snapshot,
                 )
@@ -261,32 +262,32 @@ class SmartSocketAdbDevicesTrackingController:
                 if not self._can_publish_from(watcher):
                     break
                 self._publisher.publish(
-                    AdbDevicesSnapshotObserved(server, self._snapshot(transport_list))
+                    AdbTransportListSnapshotObserved(server, self._snapshot(transport_list))
                 )
-            terminal = AdbDevicesTrackingStopped(server)
+            terminal = AdbTransportListWatchStopped(server)
         except AdbServerConnectionError as exc:
             if startup_succeeded:
-                terminal = AdbDevicesTrackingFailed(
+                terminal = AdbTransportListWatchFailed(
                     server,
-                    AdbDevicesTrackingFailure.SERVER_CONNECTION,
+                    AdbTransportListWatchFailure.SERVER_CONNECTION,
                     str(exc),
                 )
             else:
                 startup_errors.append(exc)
         except AdbServiceError as exc:
             if startup_succeeded:
-                terminal = AdbDevicesTrackingFailed(
+                terminal = AdbTransportListWatchFailed(
                     server,
-                    AdbDevicesTrackingFailure.SERVICE,
+                    AdbTransportListWatchFailure.SERVICE,
                     str(exc),
                 )
             else:
                 startup_errors.append(exc)
         except AdbProtocolError as exc:
             if startup_succeeded:
-                terminal = AdbDevicesTrackingFailed(
+                terminal = AdbTransportListWatchFailed(
                     server,
-                    AdbDevicesTrackingFailure.PROTOCOL,
+                    AdbTransportListWatchFailure.PROTOCOL,
                     str(exc),
                 )
             else:
@@ -306,16 +307,16 @@ class SmartSocketAdbDevicesTrackingController:
     def _snapshot(
         self,
         observations: AdbTransportList,
-    ) -> AdbDevicesSnapshot:
+    ) -> AdbTransportListSnapshot:
         if not isinstance(observations, tuple) or not all(
             isinstance(row, AdbTrackedTransportObservation) for row in observations
         ):
             raise TypeError(
                 "observations must be a tuple of AdbTrackedTransportObservation values"
             )
-        return AdbDevicesSnapshot(
+        return AdbTransportListSnapshot(
             observations=observations,
-            epoch=self._devices_snapshot_epoch_issuer.issue(),
+            epoch=self._transport_list_snapshot_epoch_issuer.issue(),
         )
 
     def _can_publish_from(self, watcher: AdbTransportListWatcher) -> bool:
@@ -335,6 +336,6 @@ class SmartSocketAdbDevicesTrackingController:
 
 
 __all__ = [
-    "AdbDevicesTrackingController",
-    "SmartSocketAdbDevicesTrackingController",
+    "AdbTransportListWatchController",
+    "ThreadedAdbTransportListWatchController",
 ]

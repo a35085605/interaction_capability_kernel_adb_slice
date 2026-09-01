@@ -62,7 +62,7 @@ class AdbConfiguredTransport:
 
     @property
     def serial(self) -> AdbDeviceSerial:
-        """Persistent selection and tracking-resolution identity for this transport."""
+        """Persistent selection and transport-list resolution identity for this transport."""
 
         return self.transport.serial
 

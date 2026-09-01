@@ -17,10 +17,10 @@ from adb.transport.configuration import (
     AdbUsbTransportConfiguration,
 )
 from adb.tracking.snapshot.state import (
-    AdbDevicesObservation,
-    AdbDevicesSnapshotState,
-    AdbDevicesSnapshotView,
-    AdbDevicesSnapshotWriter,
+    AdbTransportListObservation,
+    AdbTransportListSnapshotState,
+    AdbTransportListSnapshotView,
+    AdbTransportListSnapshotWriter,
 )
 from adb.transport.resolution import (
     AdbConfiguredTransportProjection,
@@ -33,10 +33,10 @@ from adb.transport.lifecycle.ensure import (
     AdbTcpTransportEnsurer,
 )
 from adb.tracking.signal import (
-    AdbDevicesSnapshotObserved,
-    AdbDevicesTrackingFailed,
-    AdbDevicesTrackingStarted,
-    AdbDevicesTrackingStopped,
+    AdbTransportListSnapshotObserved,
+    AdbTransportListWatchFailed,
+    AdbTransportListWatchStarted,
+    AdbTransportListWatchStopped,
 )
 from adb.transport.identity import AdbDeviceSerial
 from eventing import EventBus, EventSubscriptionToken
@@ -61,8 +61,8 @@ class _ConfiguredTransportRegistration:
 
 
 class AdbConfiguredTransportSupervisor:
-    """Project runtime-scoped transport registrations onto server-scoped device observations with
-    optional TCP absence recovery.
+    """Project runtime-scoped transport registrations onto server-scoped transport-list
+    observations with optional TCP absence recovery.
     """
 
     def __init__(
@@ -72,7 +72,7 @@ class AdbConfiguredTransportSupervisor:
         tcp_ensurer: AdbTcpTransportEnsurer | None,
         *,
         server_state: AdbServerStateView,
-        devices: AdbDevicesSnapshotView | None = None,
+        transport_list_state: AdbTransportListSnapshotView | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(server, AdbServerLifetime):
@@ -87,19 +87,22 @@ class AdbConfiguredTransportSupervisor:
             raise TypeError("server_state must satisfy AdbServerStateView")
         if server_state.current != server:
             raise ValueError("server_state current server must match server")
-        owns_devices = devices is None
-        if devices is None:
-            devices = AdbDevicesSnapshotState()
-        if not isinstance(devices, AdbDevicesSnapshotView):
-            raise TypeError("devices must satisfy AdbDevicesSnapshotView or be None")
+        owns_transport_list_state = transport_list_state is None
+        if transport_list_state is None:
+            transport_list_state = AdbTransportListSnapshotState()
+        if not isinstance(transport_list_state, AdbTransportListSnapshotView):
+            raise TypeError(
+                "transport_list_state must satisfy AdbTransportListSnapshotView or be None"
+            )
         self._server_state = server_state
         self._projection_server: AdbServerLifetime | None = server
         self._bus = event_bus
         self._tcp_ensurer = tcp_ensurer
-        self._devices = devices
-        self._devices_writer: AdbDevicesSnapshotWriter | None = (
-            devices
-            if owns_devices and isinstance(devices, AdbDevicesSnapshotWriter)
+        self._transport_list_state = transport_list_state
+        self._transport_list_writer: AdbTransportListSnapshotWriter | None = (
+            transport_list_state
+            if owns_transport_list_state
+            and isinstance(transport_list_state, AdbTransportListSnapshotWriter)
             else None
         )
         self._thread_factory = _thread_factory
@@ -109,8 +112,8 @@ class AdbConfiguredTransportSupervisor:
             _ConfiguredTransportRegistration,
         ] = {}
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
-        self._tracking_active = False
-        self._devices_need_invalidation = False
+        self._watch_active = False
+        self._transport_list_needs_invalidation = False
         self._recovery_threads: set[Thread] = set()
         self._closed = False
 
@@ -129,13 +132,15 @@ class AdbConfiguredTransportSupervisor:
         return self._server_state
 
     @property
-    def devices(self) -> AdbDevicesSnapshotView:
-        """Current tracked-devices state used to seed newly registered transport projections."""
+    def transport_list_state(self) -> AdbTransportListSnapshotView:
+        """Current transport-list snapshot state used to seed newly registered transport
+        projections.
+        """
 
-        return self._devices
+        return self._transport_list_state
 
     def start(self) -> None:
-        """Subscribe to tracking events used for configured-transport projection."""
+        """Subscribe to transport-list watch events used for configured-transport projection."""
 
         with self._lock:
             if self._closed:
@@ -143,10 +148,10 @@ class AdbConfiguredTransportSupervisor:
             if self._subscriptions:
                 raise RuntimeError("configured transport supervisor is already started")
             self._subscriptions = (
-                self._bus.subscribe(AdbDevicesTrackingStarted, self._on_tracking_started),
-                self._bus.subscribe(AdbDevicesSnapshotObserved, self._on_snapshot_observed),
-                self._bus.subscribe(AdbDevicesTrackingFailed, self._on_tracking_terminal),
-                self._bus.subscribe(AdbDevicesTrackingStopped, self._on_tracking_terminal),
+                self._bus.subscribe(AdbTransportListWatchStarted, self._on_watch_started),
+                self._bus.subscribe(AdbTransportListSnapshotObserved, self._on_snapshot_observed),
+                self._bus.subscribe(AdbTransportListWatchFailed, self._on_watch_terminal),
+                self._bus.subscribe(AdbTransportListWatchStopped, self._on_watch_terminal),
             )
             server = self._server_state.current
             if server != self._projection_server:
@@ -172,7 +177,7 @@ class AdbConfiguredTransportSupervisor:
         configuration: AdbConfiguredTransport,
         policy: AdbConfiguredTransportSupervisionPolicy | None = None,
     ) -> None:
-        """Register one transport and project current tracking evidence when available."""
+        """Register one transport and project current transport-list evidence when available."""
 
         if not isinstance(configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
@@ -212,7 +217,7 @@ class AdbConfiguredTransportSupervisor:
                 )
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
-            observation = self._devices.current if self._tracking_active else None
+            observation = self._transport_list_state.current if self._watch_active else None
             server = self._server_state.current
             if (
                 observation is not None
@@ -268,7 +273,7 @@ class AdbConfiguredTransportSupervisor:
             self._closed = True
             subscriptions = self._subscriptions
             self._subscriptions = ()
-            self._tracking_active = False
+            self._watch_active = False
             threads = tuple(self._recovery_threads)
             self._recovery_threads.clear()
             self._registrations.clear()
@@ -278,7 +283,7 @@ class AdbConfiguredTransportSupervisor:
             if thread is not current_thread():
                 thread.join()
 
-    def _on_tracking_started(self, event: AdbDevicesTrackingStarted) -> None:
+    def _on_watch_started(self, event: AdbTransportListWatchStarted) -> None:
         with self._lock:
             server = self._server_state.current
             if (
@@ -287,13 +292,13 @@ class AdbConfiguredTransportSupervisor:
                 or self._projection_server != server
             ):
                 return
-            writer = self._devices_writer
-            if writer is not None and self._devices_need_invalidation:
+            writer = self._transport_list_writer
+            if writer is not None and self._transport_list_needs_invalidation:
                 writer.invalidate_current()
-                self._devices_need_invalidation = False
-            self._tracking_active = True
+                self._transport_list_needs_invalidation = False
+            self._watch_active = True
 
-    def _on_snapshot_observed(self, event: AdbDevicesSnapshotObserved) -> None:
+    def _on_snapshot_observed(self, event: AdbTransportListSnapshotObserved) -> None:
         publications: list[object] = []
         recovery_launch_requests: list[AdbConfiguredTransport] = []
         with self._lock:
@@ -302,17 +307,17 @@ class AdbConfiguredTransportSupervisor:
                 self._closed
                 or event.server != server
                 or self._projection_server != server
-                or not self._tracking_active
+                or not self._watch_active
             ):
                 return
-            writer = self._devices_writer
-            event_observation = AdbDevicesObservation(event.server, event.snapshot)
+            writer = self._transport_list_writer
+            event_observation = AdbTransportListObservation(event.server, event.snapshot)
             if writer is not None:
                 if not writer.observe(event_observation):
                     return
                 observation = writer.current
             else:
-                observation = self._devices.current
+                observation = self._transport_list_state.current
             if observation != event_observation:
                 return
             for registration in self._registrations.values():
@@ -330,9 +335,9 @@ class AdbConfiguredTransportSupervisor:
         for recovery_configuration in recovery_launch_requests:
             self._launch_recovery(recovery_configuration)
 
-    def _on_tracking_terminal(
+    def _on_watch_terminal(
         self,
-        event: AdbDevicesTrackingFailed | AdbDevicesTrackingStopped,
+        event: AdbTransportListWatchFailed | AdbTransportListWatchStopped,
     ) -> None:
         with self._lock:
             server = self._server_state.current
@@ -340,18 +345,20 @@ class AdbConfiguredTransportSupervisor:
                 self._closed
                 or event.server != server
                 or self._projection_server != server
-                or not self._tracking_active
+                or not self._watch_active
             ):
                 return
-            self._tracking_active = False
+            self._watch_active = False
 
     def _project_registration_locked(
         self,
         registration: _ConfiguredTransportRegistration,
-        observation: AdbDevicesObservation,
+        observation: AdbTransportListObservation,
     ) -> tuple[AdbConfiguredTransportResolutionChanged | None, bool]:
         if observation.server != self._projection_server:
-            raise ValueError("device observation does not match projection server lifetime")
+            raise ValueError(
+                "transport-list observation does not match projection server lifetime"
+            )
         previous = registration.projection
         resolution = observation.snapshot.resolve_configured_transport(
             registration.configuration
@@ -487,9 +494,9 @@ class AdbConfiguredTransportSupervisor:
                         registration.active_recovery_token = None
 
     def _reset_server_lifetime_locked(self) -> None:
-        self._tracking_active = False
-        if self._devices_writer is not None:
-            self._devices_need_invalidation = True
+        self._watch_active = False
+        if self._transport_list_writer is not None:
+            self._transport_list_needs_invalidation = True
         for registration in self._registrations.values():
             registration.projection = None
             registration.active_recovery_token = None

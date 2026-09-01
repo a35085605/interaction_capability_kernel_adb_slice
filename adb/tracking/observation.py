@@ -9,7 +9,7 @@ from adb.transport.identity import AdbDeviceSerial, AdbTransportId
 
 
 class AdbTransportState(str, Enum):
-    """Domain transport states that are meaningful to tracking consumers."""
+    """Domain transport states that are meaningful to transport-list consumers."""
 
     CONNECTING = "connecting"
     AUTHORIZING = "authorizing"

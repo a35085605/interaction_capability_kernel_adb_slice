@@ -7,21 +7,21 @@ from adb.server.state import (
     AdbServerStateSnapshot,
     AdbServerStateTransition,
 )
-from adb.tracking.snapshot.state import AdbDevicesSnapshotState
+from adb.tracking.snapshot.state import AdbTransportListSnapshotState
 
 
 @dataclass(frozen=True, slots=True)
 class AdbRuntimeState:
-    """Authoritative server and device state owned by one ADB runtime."""
+    """Authoritative server and transport-list snapshot state owned by one ADB runtime."""
 
     server: AdbServerState
-    devices: AdbDevicesSnapshotState
+    transport_list: AdbTransportListSnapshotState
 
     def __post_init__(self) -> None:
         if not isinstance(self.server, AdbServerState):
             raise TypeError("server must be AdbServerState")
-        if not isinstance(self.devices, AdbDevicesSnapshotState):
-            raise TypeError("devices must be AdbDevicesSnapshotState")
+        if not isinstance(self.transport_list, AdbTransportListSnapshotState):
+            raise TypeError("transport_list must be AdbTransportListSnapshotState")
 
     def observe_server(self) -> AdbServerStateSnapshot:
         """Capture the runtime-owned T0 server state for a lifecycle transaction."""

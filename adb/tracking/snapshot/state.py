@@ -5,66 +5,66 @@ from threading import Lock
 from typing import Protocol, runtime_checkable
 
 from adb.server.lifetime import AdbServerLifetime
-from adb.tracking.snapshot.identity import AdbDevicesSnapshot, AdbDevicesSnapshotEpoch
+from adb.tracking.snapshot.identity import AdbTransportListSnapshot, AdbTransportListSnapshotEpoch
 
 
 @dataclass(frozen=True, slots=True)
-class AdbDevicesObservation:
-    """One complete tracked-devices snapshot bound to its source server lifetime."""
+class AdbTransportListObservation:
+    """One complete transport-list snapshot bound to its source server lifetime."""
 
     server: AdbServerLifetime
-    snapshot: AdbDevicesSnapshot
+    snapshot: AdbTransportListSnapshot
 
     def __post_init__(self) -> None:
         if not isinstance(self.server, AdbServerLifetime):
             raise TypeError("server must be AdbServerLifetime")
-        if not isinstance(self.snapshot, AdbDevicesSnapshot):
-            raise TypeError("snapshot must be AdbDevicesSnapshot")
+        if not isinstance(self.snapshot, AdbTransportListSnapshot):
+            raise TypeError("snapshot must be AdbTransportListSnapshot")
 
     @property
-    def epoch(self) -> AdbDevicesSnapshotEpoch:
+    def epoch(self) -> AdbTransportListSnapshotEpoch:
         """Runtime-scoped identity of the underlying snapshot."""
 
         return self.snapshot.epoch
 
 
 @runtime_checkable
-class AdbDevicesSnapshotView(Protocol):
-    """Authoritative server-bound device-observation view for one runtime."""
+class AdbTransportListSnapshotView(Protocol):
+    """Authoritative server-bound transport-list observation view for one runtime."""
 
     @property
-    def current(self) -> AdbDevicesObservation | None: ...
+    def current(self) -> AdbTransportListObservation | None: ...
 
     @property
-    def latest_epoch(self) -> AdbDevicesSnapshotEpoch | None: ...
+    def latest_epoch(self) -> AdbTransportListSnapshotEpoch | None: ...
 
 
 @runtime_checkable
-class AdbDevicesSnapshotWriter(Protocol):
+class AdbTransportListSnapshotWriter(Protocol):
     """Commit already-identified server-bound observations into one runtime state."""
 
     def invalidate_current(self) -> None: ...
 
-    def observe(self, observation: AdbDevicesObservation) -> bool: ...
+    def observe(self, observation: AdbTransportListObservation) -> bool: ...
 
 
-class AdbDevicesSnapshotState(AdbDevicesSnapshotView, AdbDevicesSnapshotWriter):
-    """Thread-safe authoritative device-observation state advancing monotonically by snapshot epoch
-    and preserving its epoch watermark.
+class AdbTransportListSnapshotState(AdbTransportListSnapshotView, AdbTransportListSnapshotWriter):
+    """Thread-safe authoritative transport-list observation state advancing monotonically by
+    snapshot epoch and preserving its epoch watermark.
     """
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._current: AdbDevicesObservation | None = None
-        self._latest_epoch: AdbDevicesSnapshotEpoch | None = None
+        self._current: AdbTransportListObservation | None = None
+        self._latest_epoch: AdbTransportListSnapshotEpoch | None = None
 
     @property
-    def current(self) -> AdbDevicesObservation | None:
+    def current(self) -> AdbTransportListObservation | None:
         with self._lock:
             return self._current
 
     @property
-    def latest_epoch(self) -> AdbDevicesSnapshotEpoch | None:
+    def latest_epoch(self) -> AdbTransportListSnapshotEpoch | None:
         with self._lock:
             return self._latest_epoch
 
@@ -74,11 +74,11 @@ class AdbDevicesSnapshotState(AdbDevicesSnapshotView, AdbDevicesSnapshotWriter):
         with self._lock:
             self._current = None
 
-    def observe(self, observation: AdbDevicesObservation) -> bool:
+    def observe(self, observation: AdbTransportListObservation) -> bool:
         """Commit one server-bound observation when its snapshot epoch advances runtime state."""
 
-        if not isinstance(observation, AdbDevicesObservation):
-            raise TypeError("observation must be AdbDevicesObservation")
+        if not isinstance(observation, AdbTransportListObservation):
+            raise TypeError("observation must be AdbTransportListObservation")
         with self._lock:
             latest_epoch = self._latest_epoch
             if latest_epoch is not None and observation.epoch <= latest_epoch:
@@ -90,8 +90,8 @@ class AdbDevicesSnapshotState(AdbDevicesSnapshotView, AdbDevicesSnapshotWriter):
 
 
 __all__ = [
-    "AdbDevicesObservation",
-    "AdbDevicesSnapshotState",
-    "AdbDevicesSnapshotView",
-    "AdbDevicesSnapshotWriter",
+    "AdbTransportListObservation",
+    "AdbTransportListSnapshotState",
+    "AdbTransportListSnapshotView",
+    "AdbTransportListSnapshotWriter",
 ]

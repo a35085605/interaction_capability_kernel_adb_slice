@@ -27,8 +27,8 @@ from adb.runtime.server_lifecycle import AdbServerLifecycleRuntimeFacade
 from adb.runtime.state import AdbRuntimeState
 from adb.server.state import AdbServerStateSnapshot
 from adb.transport.configuration import AdbConfiguredTransport
-from adb.tracking.snapshot.state import AdbDevicesSnapshotView
-from adb.tracking.supervision.supervisor import AdbDevicesTrackingSupervisor
+from adb.tracking.snapshot.state import AdbTransportListSnapshotView
+from adb.tracking.supervision.supervisor import AdbTransportListWatchSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
 from eventing import EventBus, EventSubscriptionToken
@@ -36,7 +36,9 @@ from scheduling import TemporalScheduler
 
 
 class AdbRuntime(AdbManagedRuntime):
-    """Own the composed ADB capability graph and its authoritative server and device state."""
+    """Own the composed ADB capability graph and its authoritative server and transport-list
+    state.
+    """
 
     def __init__(
         self,
@@ -49,7 +51,7 @@ class AdbRuntime(AdbManagedRuntime):
         server_supervision_scheduler: TemporalScheduler[object] | None = None,
         server_supervision_policy: AdbServerSupervisionPolicy | None = None,
         server_recovery_enabled: bool = True,
-        tracking_supervisor: AdbDevicesTrackingSupervisor | None = None,
+        transport_list_watch_supervisor: AdbTransportListWatchSupervisor | None = None,
         transport_supervisor: AdbConfiguredTransportSupervisor | None = None,
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
         _bootstrap_server: bool = False,
@@ -80,10 +82,13 @@ class AdbRuntime(AdbManagedRuntime):
             raise TypeError("server_recovery_enabled must be bool")
         if not isinstance(_bootstrap_server, bool):
             raise TypeError("_bootstrap_server must be bool")
-        if tracking_supervisor is not None and not isinstance(
-            tracking_supervisor, AdbDevicesTrackingSupervisor
+        if transport_list_watch_supervisor is not None and not isinstance(
+            transport_list_watch_supervisor, AdbTransportListWatchSupervisor
         ):
-            raise TypeError("tracking_supervisor must be AdbDevicesTrackingSupervisor or None")
+            raise TypeError(
+                "transport_list_watch_supervisor must be "
+                "AdbTransportListWatchSupervisor or None"
+            )
         if transport_supervisor is not None and not isinstance(
             transport_supervisor, AdbConfiguredTransportSupervisor
         ):
@@ -103,25 +108,33 @@ class AdbRuntime(AdbManagedRuntime):
             component is not None
             for component in (
                 server_supervision_scheduler,
-                tracking_supervisor,
+                transport_list_watch_supervisor,
                 transport_supervisor,
             )
         ) and event_bus is None:
             raise ValueError("supervised runtime components require an event bus")
         if (
-            tracking_supervisor is not None
-            and tracking_supervisor.server_state is not state.server
+            transport_list_watch_supervisor is not None
+            and transport_list_watch_supervisor.server_state is not state.server
         ):
-            raise ValueError("tracking supervisor must share the runtime server state")
-        if tracking_supervisor is not None and tracking_supervisor.devices is not state.devices:
-            raise ValueError("tracking supervisor must share the runtime tracked-devices state")
+            raise ValueError("transport-list watch supervisor must share the runtime server state")
+        if (
+            transport_list_watch_supervisor is not None
+            and transport_list_watch_supervisor.transport_list_state is not state.transport_list
+        ):
+            raise ValueError(
+                "transport-list watch supervisor must share the runtime transport-list state"
+            )
         if (
             transport_supervisor is not None
             and transport_supervisor.server_state is not state.server
         ):
             raise ValueError("transport supervisor must share the runtime server state")
-        if transport_supervisor is not None and transport_supervisor.devices is not state.devices:
-            raise ValueError("transport supervisor must share the runtime tracked-devices state")
+        if (
+            transport_supervisor is not None
+            and transport_supervisor.transport_list_state is not state.transport_list
+        ):
+            raise ValueError("transport supervisor must share the runtime transport-list state")
 
         super().__init__(state.server)
         self._state = state
@@ -146,7 +159,7 @@ class AdbRuntime(AdbManagedRuntime):
                 policy=server_supervision_policy,
                 recovery_enabled=server_recovery_enabled,
             )
-        self._tracking_supervisor = tracking_supervisor
+        self._transport_list_watch_supervisor = transport_list_watch_supervisor
         self._transport_supervisor = transport_supervisor
         self._transport_supervision_policy = transport_supervision_policy
 
@@ -157,10 +170,10 @@ class AdbRuntime(AdbManagedRuntime):
         self._closed = False
 
     @property
-    def devices(self) -> AdbDevicesSnapshotView:
-        """Current server-bound tracked-devices observation exposed by this runtime."""
+    def transport_list(self) -> AdbTransportListSnapshotView:
+        """Current server-bound transport-list observation exposed by this runtime."""
 
-        return self._state.devices
+        return self._state.transport_list
 
     def dispatch_server_lifecycle_intent(
         self,
@@ -232,15 +245,20 @@ class AdbRuntime(AdbManagedRuntime):
 
     def _install_auxiliary_supervisors(
         self,
-        tracking_supervisor: AdbDevicesTrackingSupervisor | None,
+        transport_list_watch_supervisor: AdbTransportListWatchSupervisor | None,
         transport_supervisor: AdbConfiguredTransportSupervisor | None,
     ) -> None:
-        """Install bootstrap-composed tracking and transport supervisors before start."""
+        """Install bootstrap-composed transport-list watch and configured-transport supervisors
+        before start.
+        """
 
-        if tracking_supervisor is not None and not isinstance(
-            tracking_supervisor, AdbDevicesTrackingSupervisor
+        if transport_list_watch_supervisor is not None and not isinstance(
+            transport_list_watch_supervisor, AdbTransportListWatchSupervisor
         ):
-            raise TypeError("tracking_supervisor must be AdbDevicesTrackingSupervisor or None")
+            raise TypeError(
+                "transport_list_watch_supervisor must be "
+                "AdbTransportListWatchSupervisor or None"
+            )
         if transport_supervisor is not None and not isinstance(
             transport_supervisor, AdbConfiguredTransportSupervisor
         ):
@@ -248,15 +266,17 @@ class AdbRuntime(AdbManagedRuntime):
                 "transport_supervisor must be AdbConfiguredTransportSupervisor or None"
             )
         if (
-            tracking_supervisor is not None
-            and tracking_supervisor.server_state is not self._state.server
+            transport_list_watch_supervisor is not None
+            and transport_list_watch_supervisor.server_state is not self._state.server
         ):
-            raise ValueError("tracking supervisor must share the runtime server state")
+            raise ValueError("transport-list watch supervisor must share the runtime server state")
         if (
-            tracking_supervisor is not None
-            and tracking_supervisor.devices is not self._state.devices
+            transport_list_watch_supervisor is not None
+            and transport_list_watch_supervisor.transport_list_state is not self._state.transport_list
         ):
-            raise ValueError("tracking supervisor must share the runtime tracked-devices state")
+            raise ValueError(
+                "transport-list watch supervisor must share the runtime transport-list state"
+            )
         if (
             transport_supervisor is not None
             and transport_supervisor.server_state is not self._state.server
@@ -264,18 +284,21 @@ class AdbRuntime(AdbManagedRuntime):
             raise ValueError("transport supervisor must share the runtime server state")
         if (
             transport_supervisor is not None
-            and transport_supervisor.devices is not self._state.devices
+            and transport_supervisor.transport_list_state is not self._state.transport_list
         ):
-            raise ValueError("transport supervisor must share the runtime tracked-devices state")
+            raise ValueError("transport supervisor must share the runtime transport-list state")
 
         with self._runtime_lock:
             if self._closed or self._started or self._starting:
                 raise RuntimeError(
                     "runtime supervisors can only be installed before runtime start"
                 )
-            if self._tracking_supervisor is not None or self._transport_supervisor is not None:
+            if (
+                self._transport_list_watch_supervisor is not None
+                or self._transport_supervisor is not None
+            ):
                 raise RuntimeError("runtime auxiliary supervisors are already configured")
-            self._tracking_supervisor = tracking_supervisor
+            self._transport_list_watch_supervisor = transport_list_watch_supervisor
             self._transport_supervisor = transport_supervisor
 
     @property
@@ -299,7 +322,7 @@ class AdbRuntime(AdbManagedRuntime):
             self._starting = True
 
         server_started = False
-        tracking_started = False
+        watch_started = False
         transport_started = False
         subscriptions: tuple[EventSubscriptionToken, ...] = ()
         try:
@@ -310,7 +333,7 @@ class AdbRuntime(AdbManagedRuntime):
 
             event_bus = self._event_bus
             if event_bus is not None and transport_supervisor is not None:
-                # Rebind configured transports before a successor tracker can publish observations.
+                # Rebind configured transports before a successor watch can publish observations.
                 subscriptions = (
                     event_bus.subscribe(AdbServerRetired, self._on_server_retired),
                     event_bus.subscribe(AdbServerRecovered, self._on_server_recovered),
@@ -321,16 +344,16 @@ class AdbRuntime(AdbManagedRuntime):
                 server_started = True
                 server_supervisor.start()
 
-            tracking_supervisor = self._tracking_supervisor
-            if tracking_supervisor is not None:
-                tracking_started = True
-                tracking_supervisor.start()
+            transport_list_watch_supervisor = self._transport_list_watch_supervisor
+            if transport_list_watch_supervisor is not None:
+                watch_started = True
+                transport_list_watch_supervisor.start()
         except BaseException:
             if self._event_bus is not None:
                 for token in subscriptions:
                     self._event_bus.unsubscribe(token)
-            if tracking_started and self._tracking_supervisor is not None:
-                self._tracking_supervisor.close()
+            if watch_started and self._transport_list_watch_supervisor is not None:
+                self._transport_list_watch_supervisor.close()
             if transport_started and self._transport_supervisor is not None:
                 self._transport_supervisor.close()
             if server_started and self._server_supervisor is not None:
@@ -362,8 +385,8 @@ class AdbRuntime(AdbManagedRuntime):
 
         # Stop producers before consumers, then stop server-recovery automation.  None of these
         # close operations terminate the current healthy server lifetime.
-        if self._tracking_supervisor is not None:
-            self._tracking_supervisor.close()
+        if self._transport_list_watch_supervisor is not None:
+            self._transport_list_watch_supervisor.close()
         if self._transport_supervisor is not None:
             self._transport_supervisor.close()
         if self._server_supervisor is not None:

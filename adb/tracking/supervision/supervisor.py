@@ -8,34 +8,34 @@ from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceErr
 from adb.server.failure import AdbServerConnectionFailure
 from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import AdbServerStateView
-from adb.tracking.supervision.policy import AdbDevicesTrackingSupervisionPolicy
+from adb.tracking.supervision.policy import AdbTransportListWatchSupervisionPolicy
 from adb.server.signal import (
     AdbServerRetired,
     AdbServerRecovered,
     AdbServerReconciliationRequested,
 )
-from adb.tracking.snapshot.identity import AdbDevicesSnapshotEpoch
-from adb.tracking.snapshot.state import AdbDevicesSnapshotState
+from adb.tracking.snapshot.identity import AdbTransportListSnapshotEpoch
+from adb.tracking.snapshot.state import AdbTransportListSnapshotState
 from adb.tracking.publication import (
-    AdbDevicesSnapshotStateBackedTrackingPublisher,
+    AdbTransportListStateBackedWatchPublisher,
 )
-from adb.tracking.controller import (
-    AdbDevicesTrackingController,
-    SmartSocketAdbDevicesTrackingController,
+from adb.tracking.watch_controller import (
+    AdbTransportListWatchController,
+    ThreadedAdbTransportListWatchController,
 )
 from adb.tracking.signal import (
-    AdbDevicesTrackingFailed,
-    AdbDevicesTrackingFailure,
-    AdbDevicesTrackingStarted,
-    AdbDevicesTrackingStopped,
+    AdbTransportListWatchFailed,
+    AdbTransportListWatchFailure,
+    AdbTransportListWatchStarted,
+    AdbTransportListWatchStopped,
 )
 from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 
 _ThreadFactory = Callable[..., Thread]
 _ControllerFactory = Callable[
-    [AdbServerLifetime, EventPublisher, EpochIssuer[AdbDevicesSnapshotEpoch]],
-    AdbDevicesTrackingController,
+    [AdbServerLifetime, EventPublisher, EpochIssuer[AdbTransportListSnapshotEpoch]],
+    AdbTransportListWatchController,
 ]
 
 
@@ -45,20 +45,20 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
     return thread
 
 
-class AdbDevicesTrackingSupervisor:
-    """Maintain desired track-devices state across server lifetimes by reconciling fresh single-use
-    controllers.
+class AdbTransportListWatchSupervisor:
+    """Maintain the requested transport-list watch across server lifetimes by reconciling fresh
+    single-use controllers.
     """
 
     def __init__(
         self,
         server: AdbServerLifetime,
         event_bus: EventBus,
-        policy: AdbDevicesTrackingSupervisionPolicy,
+        policy: AdbTransportListWatchSupervisionPolicy,
         *,
         server_state: AdbServerStateView,
-        devices_snapshot_epoch_issuer: EpochIssuer[AdbDevicesSnapshotEpoch],
-        snapshot_state: AdbDevicesSnapshotState | None = None,
+        transport_list_snapshot_epoch_issuer: EpochIssuer[AdbTransportListSnapshotEpoch],
+        transport_list_state: AdbTransportListSnapshotState | None = None,
         _controller_factory: _ControllerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
@@ -68,18 +68,18 @@ class AdbDevicesTrackingSupervisor:
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
             raise TypeError("event_bus must satisfy EventBus")
-        if not isinstance(policy, AdbDevicesTrackingSupervisionPolicy):
-            raise TypeError("policy must be AdbDevicesTrackingSupervisionPolicy")
+        if not isinstance(policy, AdbTransportListWatchSupervisionPolicy):
+            raise TypeError("policy must be AdbTransportListWatchSupervisionPolicy")
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
         if server_state.current != server:
             raise ValueError("server_state current server must match server")
-        if not isinstance(devices_snapshot_epoch_issuer, EpochIssuer):
-            raise TypeError("devices_snapshot_epoch_issuer must satisfy EpochIssuer")
-        if snapshot_state is None:
-            snapshot_state = AdbDevicesSnapshotState()
-        if not isinstance(snapshot_state, AdbDevicesSnapshotState):
-            raise TypeError("snapshot_state must be AdbDevicesSnapshotState or None")
+        if not isinstance(transport_list_snapshot_epoch_issuer, EpochIssuer):
+            raise TypeError("transport_list_snapshot_epoch_issuer must satisfy EpochIssuer")
+        if transport_list_state is None:
+            transport_list_state = AdbTransportListSnapshotState()
+        if not isinstance(transport_list_state, AdbTransportListSnapshotState):
+            raise TypeError("transport_list_state must be AdbTransportListSnapshotState or None")
         if _controller_factory is not None and not callable(_controller_factory):
             raise TypeError("_controller_factory must be callable or None")
         if not callable(_thread_factory):
@@ -87,21 +87,21 @@ class AdbDevicesTrackingSupervisor:
 
         self._server_state = server_state
         self._bus = event_bus
-        self._devices = snapshot_state
-        self._tracking_publisher = AdbDevicesSnapshotStateBackedTrackingPublisher(
-            self._devices,
+        self._transport_list_state = transport_list_state
+        self._watch_publisher = AdbTransportListStateBackedWatchPublisher(
+            self._transport_list_state,
             self._server_state,
             self._bus,
         )
         self._policy = policy
-        self._devices_snapshot_epoch_issuer = devices_snapshot_epoch_issuer
+        self._transport_list_snapshot_epoch_issuer = transport_list_snapshot_epoch_issuer
         self._controller_factory = _controller_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
-        self._desired_tracking = False
-        self._controller: AdbDevicesTrackingController | None = None
-        self._tracking_active = False
+        self._watch_requested = False
+        self._controller: AdbTransportListWatchController | None = None
+        self._watch_active = False
         self._start_in_progress = False
         self._attempt_threads: set[Thread] = set()
         self._closed = False
@@ -119,30 +119,30 @@ class AdbDevicesTrackingSupervisor:
         return self._server_state
 
     @property
-    def devices(self) -> AdbDevicesSnapshotState:
-        """Shared current tracked-devices state committed before tracking events are published."""
+    def transport_list_state(self) -> AdbTransportListSnapshotState:
+        """Shared transport-list snapshot state committed before watch events are published."""
 
-        return self._devices
-
-    @property
-    def desired_tracking(self) -> bool:
-        with self._lock:
-            return self._desired_tracking
+        return self._transport_list_state
 
     @property
-    def tracking_active(self) -> bool:
+    def watch_requested(self) -> bool:
         with self._lock:
-            return self._tracking_active
+            return self._watch_requested
+
+    @property
+    def watch_active(self) -> bool:
+        with self._lock:
+            return self._watch_active
 
     def start(self) -> bool:
-        """Declare tracking intent and establish a controller for the current server."""
+        """Request a transport-list watch and establish a controller for the current server."""
 
         with self._lock:
             self._require_open()
-            if self._desired_tracking:
-                raise RuntimeError("track-devices supervisor is already started")
+            if self._watch_requested:
+                raise RuntimeError("transport-list watch supervisor is already started")
             self._ensure_subscriptions_locked()
-            self._desired_tracking = True
+            self._watch_requested = True
             server = self._server_state.current
             if server is None:
                 return False
@@ -152,14 +152,14 @@ class AdbDevicesTrackingSupervisor:
         return self._attempt_start(controller)
 
     def reconcile(self) -> None:
-        """Reconcile tracking intent against the authoritative current server."""
+        """Reconcile the watch request against the authoritative current server."""
 
-        controller_to_stop: AdbDevicesTrackingController | None = None
-        launch: tuple[Thread, AdbDevicesTrackingController] | None = None
+        controller_to_stop: AdbTransportListWatchController | None = None
+        launch: tuple[Thread, AdbTransportListWatchController] | None = None
 
         with self._lock:
             self._require_open()
-            if not self._desired_tracking:
+            if not self._watch_requested:
                 return
             server = self._server_state.current
             controller = self._controller
@@ -177,7 +177,7 @@ class AdbDevicesTrackingSupervisor:
                     target=self._run_start_attempt,
                     args=(controller,),
                     name=(
-                        "adb-tracking-reconciliation-"
+                        "adb-transport-list-watch-reconciliation-"
                         f"{server.endpoint.host}-{server.endpoint.port}-{server.epoch}"
                     ),
                 )
@@ -200,13 +200,13 @@ class AdbDevicesTrackingSupervisor:
                 raise
 
     def close(self) -> None:
-        """Stop tracking supervision and join in-flight startup attempts."""
+        """Stop watch supervision and join in-flight startup attempts."""
 
         with self._lock:
             if self._closed:
                 return
             self._closed = True
-            self._desired_tracking = False
+            self._watch_requested = False
             subscriptions = self._subscriptions
             self._subscriptions = ()
             controller = self._detach_controller_locked()
@@ -219,20 +219,20 @@ class AdbDevicesTrackingSupervisor:
             if thread is not current_thread():
                 thread.join()
 
-    def _on_tracking_started(self, event: AdbDevicesTrackingStarted) -> None:
+    def _on_watch_started(self, event: AdbTransportListWatchStarted) -> None:
         with self._lock:
             controller = self._controller
             if (
                 self._closed
-                or not self._desired_tracking
+                or not self._watch_requested
                 or controller is None
                 or event.server != controller.server
                 or self._server_state.current != controller.server
             ):
                 return
-            self._tracking_active = True
+            self._watch_active = True
 
-    def _on_tracking_failed(self, event: AdbDevicesTrackingFailed) -> None:
+    def _on_watch_failed(self, event: AdbTransportListWatchFailed) -> None:
         request_server_reconciliation = False
         failed_server: AdbServerLifetime | None = None
         with self._lock:
@@ -241,9 +241,9 @@ class AdbDevicesTrackingSupervisor:
                 return
             failed_server = current.server
             controller = self._detach_controller_locked()
-            if event.failure is AdbDevicesTrackingFailure.SERVER_CONNECTION:
+            if event.failure is AdbTransportListWatchFailure.SERVER_CONNECTION:
                 request_server_reconciliation = (
-                    self._desired_tracking
+                    self._watch_requested
                     and self._server_state.current == failed_server
                 )
         assert controller is not None
@@ -257,7 +257,7 @@ class AdbDevicesTrackingSupervisor:
                 )
             )
 
-    def _on_tracking_stopped(self, event: AdbDevicesTrackingStopped) -> None:
+    def _on_watch_stopped(self, event: AdbTransportListWatchStopped) -> None:
         with self._lock:
             current = self._controller
             if self._closed or current is None or event.server != current.server:
@@ -272,13 +272,13 @@ class AdbDevicesTrackingSupervisor:
     def _on_server_recovered(self, _event: AdbServerRecovered) -> None:
         self.reconcile()
 
-    def _run_start_attempt(self, controller: AdbDevicesTrackingController) -> None:
+    def _run_start_attempt(self, controller: AdbTransportListWatchController) -> None:
         active_thread = current_thread()
         try:
             with self._lock:
                 if (
                     self._closed
-                    or not self._desired_tracking
+                    or not self._watch_requested
                     or self._controller is not controller
                 ):
                     return
@@ -287,34 +287,34 @@ class AdbDevicesTrackingSupervisor:
             with self._lock:
                 self._attempt_threads.discard(active_thread)
 
-    def _attempt_start(self, controller: AdbDevicesTrackingController) -> bool:
+    def _attempt_start(self, controller: AdbTransportListWatchController) -> bool:
         try:
             controller.start()
         except AdbServerConnectionError as exc:
             return self._complete_start_attempt(
                 controller,
                 started=False,
-                failure=AdbDevicesTrackingFailure.SERVER_CONNECTION,
+                failure=AdbTransportListWatchFailure.SERVER_CONNECTION,
                 diagnostic=str(exc),
             )
         except AdbServiceError as exc:
             return self._complete_start_attempt(
                 controller,
                 started=False,
-                failure=AdbDevicesTrackingFailure.SERVICE,
+                failure=AdbTransportListWatchFailure.SERVICE,
                 diagnostic=str(exc),
             )
         except AdbProtocolError as exc:
             return self._complete_start_attempt(
                 controller,
                 started=False,
-                failure=AdbDevicesTrackingFailure.PROTOCOL,
+                failure=AdbTransportListWatchFailure.PROTOCOL,
                 diagnostic=str(exc),
             )
         except RuntimeError:
             return self._complete_start_attempt(controller, started=False)
         except BaseException:
-            controller_to_stop: AdbDevicesTrackingController | None = None
+            controller_to_stop: AdbTransportListWatchController | None = None
             with self._lock:
                 if self._controller is controller:
                     controller_to_stop = self._detach_controller_locked()
@@ -325,15 +325,15 @@ class AdbDevicesTrackingSupervisor:
 
     def _complete_start_attempt(
         self,
-        controller: AdbDevicesTrackingController,
+        controller: AdbTransportListWatchController,
         *,
         started: bool,
-        failure: AdbDevicesTrackingFailure | None = None,
+        failure: AdbTransportListWatchFailure | None = None,
         diagnostic: str | None = None,
     ) -> bool:
         request_server_reconciliation = False
         reconciliation_server: AdbServerLifetime | None = None
-        controller_to_stop: AdbDevicesTrackingController | None = None
+        controller_to_stop: AdbTransportListWatchController | None = None
         publish_failure = False
 
         with self._lock:
@@ -343,19 +343,19 @@ class AdbDevicesTrackingSupervisor:
             keep_controller = (
                 started
                 and not self._closed
-                and self._desired_tracking
+                and self._watch_requested
                 and self._server_state.current == controller.server
                 and controller.active
             )
             if keep_controller:
-                self._tracking_active = True
+                self._watch_active = True
             else:
                 controller_to_stop = self._detach_controller_locked()
                 publish_failure = failure is not None
-                if failure is AdbDevicesTrackingFailure.SERVER_CONNECTION:
+                if failure is AdbTransportListWatchFailure.SERVER_CONNECTION:
                     reconciliation_server = controller.server
                     request_server_reconciliation = (
-                        self._desired_tracking
+                        self._watch_requested
                         and self._server_state.current == reconciliation_server
                     )
 
@@ -364,7 +364,7 @@ class AdbDevicesTrackingSupervisor:
         if publish_failure:
             assert failure is not None
             self._bus.publish(
-                AdbDevicesTrackingFailed(
+                AdbTransportListWatchFailed(
                     controller.server,
                     failure,
                     diagnostic,
@@ -383,40 +383,40 @@ class AdbDevicesTrackingSupervisor:
     def _create_controller_locked(
         self,
         server: AdbServerLifetime,
-    ) -> AdbDevicesTrackingController:
+    ) -> AdbTransportListWatchController:
         if self._controller is not None:
             raise RuntimeError("a controller already exists")
         if not isinstance(server, AdbServerLifetime):
             raise TypeError("server must be AdbServerLifetime")
         factory = self._controller_factory
         controller = (
-            SmartSocketAdbDevicesTrackingController(
+            ThreadedAdbTransportListWatchController(
                 server,
-                self._tracking_publisher,
+                self._watch_publisher,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
-                devices_snapshot_epoch_issuer=self._devices_snapshot_epoch_issuer,
+                transport_list_snapshot_epoch_issuer=self._transport_list_snapshot_epoch_issuer,
             )
             if factory is None
             else factory(
                 server,
-                self._tracking_publisher,
-                self._devices_snapshot_epoch_issuer,
+                self._watch_publisher,
+                self._transport_list_snapshot_epoch_issuer,
             )
         )
-        if not isinstance(controller, AdbDevicesTrackingController):
-            raise TypeError("controller factory must return AdbDevicesTrackingController")
+        if not isinstance(controller, AdbTransportListWatchController):
+            raise TypeError("controller factory must return AdbTransportListWatchController")
         if controller.server != server:
             raise ValueError("controller factory returned a mismatched server lifetime")
         self._controller = controller
-        self._tracking_active = False
+        self._watch_active = False
         return controller
 
-    def _detach_controller_locked(self) -> AdbDevicesTrackingController | None:
+    def _detach_controller_locked(self) -> AdbTransportListWatchController | None:
         controller = self._controller
         if controller is not None:
-            self._tracking_publisher.end_tracking(controller.server)
+            self._watch_publisher.end_watch(controller.server)
         self._controller = None
-        self._tracking_active = False
+        self._watch_active = False
         self._start_in_progress = False
         return controller
 
@@ -424,9 +424,9 @@ class AdbDevicesTrackingSupervisor:
         if self._subscriptions:
             return
         self._subscriptions = (
-            self._bus.subscribe(AdbDevicesTrackingStarted, self._on_tracking_started),
-            self._bus.subscribe(AdbDevicesTrackingFailed, self._on_tracking_failed),
-            self._bus.subscribe(AdbDevicesTrackingStopped, self._on_tracking_stopped),
+            self._bus.subscribe(AdbTransportListWatchStarted, self._on_watch_started),
+            self._bus.subscribe(AdbTransportListWatchFailed, self._on_watch_failed),
+            self._bus.subscribe(AdbTransportListWatchStopped, self._on_watch_stopped),
             self._bus.subscribe(
                 AdbServerRetired,
                 self._on_server_retired,
@@ -439,7 +439,7 @@ class AdbDevicesTrackingSupervisor:
 
     def _require_open(self) -> None:
         if self._closed:
-            raise RuntimeError("track-devices supervisor is closed")
+            raise RuntimeError("transport-list watch supervisor is closed")
 
 
-__all__ = ["AdbDevicesTrackingSupervisor"]
+__all__ = ["AdbTransportListWatchSupervisor"]
