@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-from adb.epoch import Epoch, EpochSequence
+from adb.epoch import Epoch
 
 
 class ServerEpoch(Epoch):
-    """Runtime-scoped identity for one ADB server lifetime."""
+    """Runtime-scoped identity for one committed ADB server lifetime."""
 
     __slots__ = ()
 
 
-class ServerEpochSequence(EpochSequence[ServerEpoch]):
-    """Runtime-scoped monotonically increasing ADB server epoch issuer."""
-
-    def __init__(self) -> None:
-        super().__init__(ServerEpoch)
-
-
-__all__ = ["ServerEpoch", "ServerEpochSequence"]
+__all__ = ["ServerEpoch"]

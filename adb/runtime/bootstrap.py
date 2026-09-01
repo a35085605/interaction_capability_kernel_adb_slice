@@ -7,7 +7,6 @@ from adb.epoch import EpochIssuer
 from adb.runtime.core import AdbRuntime
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.epoch import ServerEpochSequence
 from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
@@ -47,7 +46,6 @@ def _default_server_backend_factory() -> AdbServerBackend:
 @dataclass(frozen=True, slots=True)
 class _BootstrapCore:
     server_backend: AdbServerBackend
-    server_epoch_issuer: ServerEpochSequence
     server_provisioner: AdbServerProvisioner
     server_retirer: AdbServerRetirer
     runtime_state: AdbRuntimeState
@@ -120,7 +118,6 @@ class AdbRuntimeBootstrap:
         try:
             runtime = self._build_runtime(
                 core.runtime_state,
-                server_epoch_issuer=core.server_epoch_issuer,
                 server_provisioner=core.server_provisioner,
                 server_retirer=core.server_retirer,
                 transport_supervision_policy=self._transport_supervision_policy,
@@ -166,7 +163,6 @@ class AdbRuntimeBootstrap:
         try:
             runtime = self._build_runtime(
                 core.runtime_state,
-                server_epoch_issuer=core.server_epoch_issuer,
                 server_provisioner=core.server_provisioner,
                 server_retirer=core.server_retirer,
                 event_bus=event_bus,
@@ -218,7 +214,6 @@ class AdbRuntimeBootstrap:
         return AdbRuntime(*args, **kwargs)
 
     def _build_core(self) -> _BootstrapCore:
-        server_epoch_issuer = ServerEpochSequence()
         transport_list_snapshot_epoch_issuer = AdbTransportListSnapshotEpochSequence()
         backend = self._server_backend_factory()
         if not isinstance(backend, AdbServerBackend):
@@ -226,7 +221,6 @@ class AdbRuntimeBootstrap:
 
         return _BootstrapCore(
             server_backend=backend,
-            server_epoch_issuer=server_epoch_issuer,
             server_provisioner=AdbServerProvisioner(
                 backend,
                 endpoint=self._endpoint,

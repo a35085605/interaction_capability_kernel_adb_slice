@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from threading import RLock
 
-from adb.epoch import EpochIssuer
 from adb.runtime.managed import AdbManagedRuntime
-from adb.server.epoch import ServerEpoch
 from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
@@ -44,7 +42,6 @@ class AdbRuntime(AdbManagedRuntime):
         self,
         state: AdbRuntimeState,
         *,
-        server_epoch_issuer: EpochIssuer[ServerEpoch],
         server_provisioner: AdbServerProvisioner,
         server_retirer: AdbServerRetirer,
         event_bus: EventBus | None = None,
@@ -58,8 +55,6 @@ class AdbRuntime(AdbManagedRuntime):
     ) -> None:
         if not isinstance(state, AdbRuntimeState):
             raise TypeError("state must be AdbRuntimeState")
-        if not isinstance(server_epoch_issuer, EpochIssuer):
-            raise TypeError("server_epoch_issuer must satisfy EpochIssuer")
         if not isinstance(server_provisioner, AdbServerProvisioner):
             raise TypeError("server_provisioner must be AdbServerProvisioner")
         if not isinstance(server_retirer, AdbServerRetirer):
@@ -141,7 +136,6 @@ class AdbRuntime(AdbManagedRuntime):
         self._event_bus = event_bus
         self._server_lifecycle = AdbServerLifecycleRuntimeFacade(
             state,
-            server_epoch_issuer=server_epoch_issuer,
             provisioner=server_provisioner,
             retirer=server_retirer,
         )

@@ -28,12 +28,11 @@ from adb.server.failure import (
     AdbServerServiceFailure,
     AdbServerTimeoutFailure,
 )
-from adb.server.epoch import ServerEpoch, ServerEpochSequence
+from adb.server.epoch import ServerEpoch
 from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import (
     AdbServerState,
     AdbServerStateSnapshot,
-    AdbServerStateTransition,
     AdbServerStateView,
     AdbServerStateWriter,
 )
@@ -57,7 +56,6 @@ __all__ = [
     "AdbServerProvisionTransactionResult",
     "AdbServerEndpoint",
     "ServerEpoch",
-    "ServerEpochSequence",
     "AdbServerFailure",
     "AdbServerLifetime",
     "AdbServerLaunchFailure",
@@ -69,7 +67,6 @@ __all__ = [
     "AdbServerServiceFailure",
     "AdbServerState",
     "AdbServerStateSnapshot",
-    "AdbServerStateTransition",
     "AdbServerStateView",
     "AdbServerStateWriter",
     "AdbServerStatus",

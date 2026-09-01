@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from adb.server.state import (
-    AdbServerState,
-    AdbServerStateSnapshot,
-    AdbServerStateTransition,
-)
+from adb.server.endpoint import AdbServerEndpoint
+from adb.server.epoch import ServerEpoch
+from adb.server.lifetime import AdbServerLifetime
+from adb.server.state import AdbServerState, AdbServerStateSnapshot
 from adb.tracking.snapshot.state import AdbTransportListSnapshotState
 
 
@@ -24,14 +23,23 @@ class AdbRuntimeState:
             raise TypeError("transport_list must be AdbTransportListSnapshotState")
 
     def observe_server(self) -> AdbServerStateSnapshot:
-        """Capture the runtime-owned T0 server state for a lifecycle transaction."""
+        """Capture the runtime-owned atomic server state for a lifecycle transaction."""
 
         return self.server.snapshot()
 
-    def commit_server(self, transition: AdbServerStateTransition) -> bool:
-        """Commit a T0 -> T1 server transition when T0 is still authoritative."""
+    def commit_server(
+        self,
+        endpoint: AdbServerEndpoint,
+        expected_epoch: ServerEpoch | None,
+    ) -> AdbServerLifetime | None:
+        """Activate an endpoint when the observed inactive epoch is still authoritative."""
 
-        return self.server.commit(transition)
+        return self.server.commit(endpoint, expected_epoch)
+
+    def deactivate_server(self, expected: AdbServerLifetime) -> bool:
+        """Deactivate the expected authoritative server lifetime without advancing its epoch."""
+
+        return self.server.deactivate(expected)
 
 
 __all__ = ["AdbRuntimeState"]
