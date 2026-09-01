@@ -1,6 +1,6 @@
 """ADB transport configuration, lifecycle, selection, resolution, and capabilities."""
 
-from adb.aosp.transport.address import AdbConnectAddress
+from adb.transport.address import AdbConnectAddress
 from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,

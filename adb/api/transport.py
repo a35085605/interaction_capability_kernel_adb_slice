@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from adb.aosp.transport.address import AdbConnectAddress
+from adb.transport.address import AdbConnectAddress
 from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,

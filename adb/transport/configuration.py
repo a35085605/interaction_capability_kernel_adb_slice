@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TypeAlias
 
-from adb.aosp.transport.address import AdbConnectAddress
+from adb.transport.address import AdbConnectAddress
 from adb.transport.identity import AdbDeviceSerial
 
 
@@ -74,7 +74,7 @@ class AdbConfiguredTransport:
 
     @property
     def connect_address(self) -> AdbConnectAddress | None:
-        """Explicit native connect address when this configured transport uses TCP."""
+        """Explicit connect address when this configured transport uses TCP."""
 
         if isinstance(self.transport, AdbTcpTransportConfiguration):
             return self.transport.connect_address

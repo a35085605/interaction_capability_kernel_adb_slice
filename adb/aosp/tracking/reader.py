@@ -5,7 +5,7 @@ from typing import Protocol, runtime_checkable
 
 from adb.aosp.protocol.smart_socket.client import AdbServiceClient
 from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
-from adb.aosp.server.address import AdbServerTcpAddress
+from adb.server.address import AdbServerTcpAddress
 from adb.aosp.tracking.decoder import parse_devices
 from adb.aosp.tracking.model import Devices
 

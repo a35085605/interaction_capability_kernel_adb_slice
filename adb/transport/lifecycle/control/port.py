@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias
 
-from adb.aosp.transport.address import AdbConnectAddress
+from adb.transport.address import AdbConnectAddress
 from adb.transport.selection import (
     AdbTransportById,
     AdbTransportBySerial,

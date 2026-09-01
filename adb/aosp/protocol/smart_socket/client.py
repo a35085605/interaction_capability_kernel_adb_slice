@@ -14,7 +14,7 @@ from adb.aosp.errors import (
     AdbTimeoutError,
 )
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
-from adb.aosp.server.address import AdbServerTcpAddress
+from adb.server.address import AdbServerTcpAddress
 
 
 _SHELL_STDOUT = 1
