@@ -15,12 +15,20 @@ from adb.aosp.errors import (
 )
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
 from adb.aosp.io.smart_socket import AdbServiceClient
-from adb.aosp.model.tracking import ConnectionType, Device, Devices, parse_devices
+from adb.aosp.model.tracking import (
+    ConnectionState,
+    ConnectionType,
+    Device,
+    Devices,
+    parse_devices,
+)
 from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
 from adb.server.address import AdbServerTcpAddress
 from adb.tracking.observation import (
     AdbObservedTransportKind,
+    AdbObservedTransportState,
     AdbTrackedTransportObservation,
+    AdbTransportState,
 )
 from adb.transport.configuration import AdbTransportType
 from adb.transport.identity import AdbTransportId
@@ -39,15 +47,18 @@ def _normalize_startup_timeout(value: object) -> float:
     return timeout
 
 
-def _parse_record(payload: bytes) -> Devices:
-    return parse_devices(payload)
+def _parse_record(payload: bytes) -> tuple[AdbTrackedTransportObservation, ...]:
+    return to_tracked_transport_observations(parse_devices(payload))
 
 
 @runtime_checkable
 class AdbDevicesReader(Protocol):
-    """Read one complete native AOSP ``track-devices`` observation."""
+    """Read one complete translated ``track-devices`` observation set."""
 
-    def read(self, address: AdbServerTcpAddress) -> Devices:
+    def read(
+        self,
+        address: AdbServerTcpAddress,
+    ) -> tuple[AdbTrackedTransportObservation, ...]:
         ...
 
 
@@ -59,29 +70,32 @@ def _default_client_factory(address: AdbServerTcpAddress) -> AdbServiceClient:
 
 
 class SmartSocketAdbDevicesReader:
-    """Adapt a domain server endpoint to the first AOSP track-devices record."""
+    """Read and translate the first AOSP track-devices record for one endpoint."""
 
     def __init__(self, *, _client_factory: _ClientFactory = _default_client_factory) -> None:
         self._client_factory = _client_factory
 
-    def read(self, address: AdbServerTcpAddress) -> Devices:
+    def read(
+        self,
+        address: AdbServerTcpAddress,
+    ) -> tuple[AdbTrackedTransportObservation, ...]:
         if not isinstance(address, AdbServerTcpAddress):
             raise TypeError("address must be AdbServerTcpAddress")
         payload = self._client_factory(address).first_stream_frame(
             TRACK_DEVICES_PROTO_BINARY_SERVICE
         )
-        return parse_devices(payload)
+        return _parse_record(payload)
 
 
 @runtime_checkable
 class AdbDevicesTrackingBackendStream(Protocol):
-    """Established backend stream yielding complete tracked-device records."""
+    """Established backend stream yielding complete domain observation sets."""
 
     @property
-    def initial_record(self) -> Devices:
+    def initial_record(self) -> tuple[AdbTrackedTransportObservation, ...]:
         ...
 
-    def records(self) -> Iterator[Devices]:
+    def records(self) -> Iterator[tuple[AdbTrackedTransportObservation, ...]]:
         ...
 
     def close(self) -> None:
@@ -112,24 +126,29 @@ class AdbDevicesTrackingBackend(Protocol):
 class SmartSocketAdbDevicesTrackingStream:
     """One established blocking ADB device-tracker stream.
 
-    ``initial_record`` is the first complete record read while the tracker is still under its
-    startup deadline. ``records`` yields only subsequent stream observations.
+    Native payloads are translated at the adapter boundary. ``initial_record`` is the first
+    complete domain observation set read while the tracker is still under its startup deadline;
+    ``records`` yields only subsequent translated observation sets.
     """
 
     def __init__(
         self,
         backend: "SmartSocketAdbDevicesTrackingBackend",
         stream_socket: socket.socket,
-        initial_record: Devices,
+        initial_record: tuple[AdbTrackedTransportObservation, ...],
     ) -> None:
-        if not isinstance(initial_record, Devices):
-            raise TypeError("initial_record must be Devices")
+        if not isinstance(initial_record, tuple) or not all(
+            isinstance(row, AdbTrackedTransportObservation) for row in initial_record
+        ):
+            raise TypeError(
+                "initial_record must be a tuple of AdbTrackedTransportObservation values"
+            )
         self._backend = backend
         self._socket = stream_socket
         self.initial_record = initial_record
         self._closed = False
 
-    def records(self) -> Iterator[Devices]:
+    def records(self) -> Iterator[tuple[AdbTrackedTransportObservation, ...]]:
         """Yield complete records until the stream closes or tracking fails."""
 
         if self._closed:
@@ -152,8 +171,9 @@ class SmartSocketAdbDevicesTrackingStream:
 class SmartSocketAdbDevicesTrackingBackend:
     """Smart-socket implementation of the devices-tracking backend port.
 
-    Payloads are AOSP ``adb_host.proto.Devices`` messages. The backend does not retry or
-    reconnect; lifecycle policy belongs to higher layers.
+    Native AOSP ``adb_host.proto.Devices`` payloads are decoded and translated to domain
+    observations before leaving this adapter. The backend does not retry or reconnect; lifecycle
+    policy belongs to higher layers.
     """
 
     def __init__(
@@ -450,6 +470,31 @@ def _translate_transport_kind(value: ConnectionType | int) -> AdbObservedTranspo
     return AdbObservedTransportKind.unrecognized(int(value))
 
 
+def _translate_transport_state(
+    value: ConnectionState | int,
+) -> AdbObservedTransportState:
+    if value is ConnectionState.ANY:
+        return AdbObservedTransportState.unspecified()
+
+    translated = {
+        ConnectionState.CONNECTING: AdbTransportState.CONNECTING,
+        ConnectionState.AUTHORIZING: AdbTransportState.AUTHORIZING,
+        ConnectionState.UNAUTHORIZED: AdbTransportState.UNAUTHORIZED,
+        ConnectionState.NOPERMISSION: AdbTransportState.NO_PERMISSION,
+        ConnectionState.DETACHED: AdbTransportState.DETACHED,
+        ConnectionState.OFFLINE: AdbTransportState.OFFLINE,
+        ConnectionState.BOOTLOADER: AdbTransportState.BOOTLOADER,
+        ConnectionState.DEVICE: AdbTransportState.READY,
+        ConnectionState.HOST: AdbTransportState.HOST,
+        ConnectionState.RECOVERY: AdbTransportState.RECOVERY,
+        ConnectionState.SIDELOAD: AdbTransportState.SIDELOAD,
+        ConnectionState.RESCUE: AdbTransportState.RESCUE,
+    }.get(value)
+    if translated is None:
+        return AdbObservedTransportState.unrecognized(int(value))
+    return AdbObservedTransportState.recognized(translated)
+
+
 def to_tracked_transport_observation(device: Device) -> AdbTrackedTransportObservation:
     """Translate one raw AOSP device row at the protocol/domain boundary."""
 
@@ -460,6 +505,7 @@ def to_tracked_transport_observation(device: Device) -> AdbTrackedTransportObser
         serial_text=device.serial,
         transport_kind=_translate_transport_kind(device.connection_type),
         transport_id=transport_id,
+        state=_translate_transport_state(device.state),
     )
 
 

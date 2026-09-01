@@ -19,7 +19,7 @@ class AdbDevicesSnapshotReader(Protocol):
 
 
 class SmartSocketAdbDevicesSnapshotReader:
-    """Identify one native AOSP devices observation as a domain snapshot."""
+    """Identify translated smart-socket tracking observations as a domain snapshot."""
 
     def __init__(
         self,
@@ -40,7 +40,7 @@ class SmartSocketAdbDevicesSnapshotReader:
         if not isinstance(endpoint, AdbServerTcpAddress):
             raise TypeError("endpoint must be AdbServerTcpAddress")
         return AdbDevicesSnapshot(
-            payload=self._devices_reader.read(endpoint),
+            observations=self._devices_reader.read(endpoint),
             epoch=self._devices_snapshot_epoch_issuer.issue(),
         )
 

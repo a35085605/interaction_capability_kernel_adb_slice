@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from adb.aosp.model.tracking import Devices
 from adb.epoch import Epoch, EpochSequence
+from adb.tracking.observation import AdbTrackedTransportObservation
 from adb.tracking.snapshot.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
@@ -30,18 +30,18 @@ class AdbDevicesSnapshotEpochSequence(EpochSequence[AdbDevicesSnapshotEpoch]):
 
 @dataclass(frozen=True, slots=True)
 class AdbDevicesSnapshot:
-    """Domain identity for one complete AOSP devices payload observed within one runtime.
+    """Domain-identified complete set of tracked transport observations for one runtime."""
 
-    ``payload`` remains raw AOSP protocol evidence. Domain interpretation is explicit and occurs
-    through snapshot operations such as ``resolve_configured_transport``.
-    """
-
-    payload: Devices
+    observations: tuple[AdbTrackedTransportObservation, ...]
     epoch: AdbDevicesSnapshotEpoch
 
     def __post_init__(self) -> None:
-        if not isinstance(self.payload, Devices):
-            raise TypeError("payload must be AOSP Devices")
+        if not isinstance(self.observations, tuple) or not all(
+            isinstance(row, AdbTrackedTransportObservation) for row in self.observations
+        ):
+            raise TypeError(
+                "observations must be a tuple of AdbTrackedTransportObservation values"
+            )
         if not isinstance(self.epoch, AdbDevicesSnapshotEpoch):
             raise TypeError("epoch must be AdbDevicesSnapshotEpoch")
 
@@ -49,9 +49,9 @@ class AdbDevicesSnapshot:
         self,
         configuration: AdbConfiguredTransport,
     ) -> AdbConfiguredTransportResolution:
-        """Interpret this AOSP observation against one configured transport.
+        """Resolve one configured transport against this domain observation set.
 
-        Exact domain USB/TCP evidence wins. AOSP ``UNKNOWN`` connection types are compatibility
+        Exact USB/TCP evidence wins. An unspecified observed transport kind is compatibility
         fallback evidence when no exact typed row is present.
         """
 
@@ -62,7 +62,7 @@ class AdbDevicesSnapshot:
             raise TypeError("configuration must be AdbConfiguredTransport")
 
         serial_matches = tuple(
-            row for row in self.payload.devices if row.serial == configuration.serial.value
+            row for row in self.observations if row.matches_serial(configuration.serial)
         )
         classified = tuple(
             (row, classify_observed_transport(configuration, row))

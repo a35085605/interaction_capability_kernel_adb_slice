@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from enum import Enum
 
-from adb.aosp.model.tracking import ConnectionType, Device
-from adb.transport.configuration import AdbConfiguredTransport, AdbTransportType
+from adb.tracking.observation import AdbTrackedTransportObservation
+from adb.transport.configuration import AdbConfiguredTransport
 
 
 class AdbObservedTransportCompatibility(str, Enum):
-    """Domain interpretation of one AOSP connection-type observation."""
+    """Domain interpretation of one observed transport kind."""
 
     MATCH = "match"
     MISMATCH = "mismatch"
@@ -16,34 +16,29 @@ class AdbObservedTransportCompatibility(str, Enum):
 
 def classify_observed_transport(
     configuration: AdbConfiguredTransport,
-    row: Device,
+    row: AdbTrackedTransportObservation,
 ) -> AdbObservedTransportCompatibility:
-    """Compare raw AOSP connection-type evidence with one domain transport configuration.
+    """Compare one domain transport observation with one configured transport.
 
-    AOSP ``UNKNOWN`` means the observation does not specify a transport kind and therefore remains
-    compatible fallback evidence. Known AOSP USB/SOCKET values map to domain USB/TCP. Future AOSP
-    values remain distinct from ``UNKNOWN`` and are treated as a type mismatch until explicitly
-    supported.
+    An unspecified observed kind remains compatible fallback evidence. Recognized kinds compare
+    directly with the configured domain transport type. Future native kinds are preserved by the
+    adapter as unrecognized observations and remain mismatches until explicitly supported.
     """
 
     if not isinstance(configuration, AdbConfiguredTransport):
         raise TypeError("configuration must be AdbConfiguredTransport")
-    if not isinstance(row, Device):
-        raise TypeError("row must be AOSP Device")
+    if not isinstance(row, AdbTrackedTransportObservation):
+        raise TypeError("row must be AdbTrackedTransportObservation")
 
-    connection_type = row.connection_type
-    if connection_type is ConnectionType.UNKNOWN:
+    observed_kind = row.transport_kind
+    if observed_kind.is_unspecified:
         return AdbObservedTransportCompatibility.UNSPECIFIED
-    if connection_type is ConnectionType.USB:
-        observed_type = AdbTransportType.USB
-    elif connection_type is ConnectionType.SOCKET:
-        observed_type = AdbTransportType.TCP
-    else:
+    if not observed_kind.is_recognized:
         return AdbObservedTransportCompatibility.MISMATCH
 
     return (
         AdbObservedTransportCompatibility.MATCH
-        if observed_type is configuration.type
+        if observed_kind.transport_type is configuration.type
         else AdbObservedTransportCompatibility.MISMATCH
     )
 

@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 import math
-from numbers import Integral, Real
+from numbers import Real
 from time import monotonic, sleep
 from typing import Protocol, runtime_checkable
 
@@ -15,8 +15,11 @@ from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
 )
+from adb.tracking.observation import (
+    AdbTrackedTransportObservation,
+    AdbTransportState,
+)
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot
-from adb.aosp.model.tracking import ConnectionState, Device
 from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
 from adb.tracking.snapshot.interpretation import (
     AdbObservedTransportCompatibility,
@@ -40,31 +43,19 @@ def _normalize_positive_seconds(value: object, *, field_name: str) -> float:
     return normalized
 
 
-def _normalize_state(value: object, *, field_name: str) -> ConnectionState | int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{field_name} values must be integers")
-    raw = int(value)
-    try:
-        return ConnectionState(raw)
-    except ValueError:
-        return raw
-
-
 def _normalize_states(
     value: object,
     *,
     field_name: str,
     allow_empty: bool,
-) -> frozenset[ConnectionState | int]:
+) -> frozenset[AdbTransportState]:
     if not isinstance(value, frozenset):
         raise TypeError(f"{field_name} must be a frozenset")
-    normalized = frozenset(
-        _normalize_state(item, field_name=field_name)
-        for item in value
-    )
-    if not allow_empty and not normalized:
+    if not all(isinstance(item, AdbTransportState) for item in value):
+        raise TypeError(f"{field_name} values must be AdbTransportState")
+    if not allow_empty and not value:
         raise ValueError(f"{field_name} cannot be empty")
-    return normalized
+    return value
 
 
 def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
@@ -86,8 +77,8 @@ class AdbTcpTransportEnsurePolicy:
     """
 
     timeout_seconds: float
-    acceptable_states: frozenset[ConnectionState | int]
-    blocked_states: frozenset[ConnectionState | int] = frozenset()
+    acceptable_states: frozenset[AdbTransportState]
+    blocked_states: frozenset[AdbTransportState] = frozenset()
     probe_interval_seconds: float = 0.5
 
     def __post_init__(self) -> None:
@@ -185,7 +176,7 @@ class AdbTcpTransportEnsureResult:
     presence_satisfaction: AdbTcpTransportPresenceSatisfaction | None
     attempts: tuple[NativeAttemptResult, ...]
     final_snapshot: AdbDevicesSnapshot | None = None
-    final_row: Device | None = None
+    final_row: AdbTrackedTransportObservation | None = None
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
@@ -211,15 +202,17 @@ class AdbTcpTransportEnsureResult:
             self.final_snapshot, AdbDevicesSnapshot
         ):
             raise TypeError("final_snapshot must be AdbDevicesSnapshot or None")
-        if self.final_row is not None and not isinstance(self.final_row, Device):
-            raise TypeError("final_row must be Device or None")
+        if self.final_row is not None and not isinstance(
+            self.final_row, AdbTrackedTransportObservation
+        ):
+            raise TypeError("final_row must be AdbTrackedTransportObservation or None")
         if self.final_row is not None:
             if (
                 self.final_snapshot is None
-                or self.final_row not in self.final_snapshot.payload.devices
+                or self.final_row not in self.final_snapshot.observations
             ):
                 raise ValueError("final_row must belong to final_snapshot")
-            if self.final_row.serial != self.operation.serial.value:
+            if not self.final_row.matches_serial(self.operation.serial):
                 raise ValueError("final_row serial must match ensure operation")
             if (
                 classify_observed_transport(self.operation.configuration, self.final_row)
@@ -238,7 +231,10 @@ class AdbTcpTransportEnsureResult:
         if self.status is AdbTcpTransportEnsureStatus.SATISFIED:
             if self.satisfaction is None or self.final_row is None:
                 raise ValueError("satisfied ensure requires satisfaction and final_row")
-            if self.final_row.state not in self.operation.policy.acceptable_states:
+            if (
+                self.final_row.state.transport_state
+                not in self.operation.policy.acceptable_states
+            ):
                 raise ValueError("satisfied ensure requires an acceptable final state")
         elif self.satisfaction is not None:
             raise ValueError("unsatisfied ensure cannot carry satisfaction")
@@ -272,7 +268,7 @@ class _ReadinessEpisodeState:
     presence: AdbTcpTransportPresenceSatisfaction | None = None
     satisfaction: AdbTcpTransportReadinessSatisfaction | None = None
     final_snapshot: AdbDevicesSnapshot | None = None
-    final_row: Device | None = None
+    final_row: AdbTrackedTransportObservation | None = None
     diagnostic: str | None = None
     probes_attempted: int = 0
     connect_attempted: bool = False
@@ -318,14 +314,14 @@ class _ReadinessEpisodeState:
                 else AdbTcpTransportPresenceSatisfaction.OBSERVED
             )
 
-        if row.state in self.policy.acceptable_states:
+        if row.state.transport_state in self.policy.acceptable_states:
             self.satisfaction = (
                 AdbTcpTransportReadinessSatisfaction.ALREADY_SATISFIED
                 if initial
                 else AdbTcpTransportReadinessSatisfaction.ACHIEVED
             )
             return AdbTcpTransportEnsureStatus.SATISFIED
-        if row.state in self.policy.blocked_states:
+        if row.state.transport_state in self.policy.blocked_states:
             return AdbTcpTransportEnsureStatus.BLOCKED
         return None
 

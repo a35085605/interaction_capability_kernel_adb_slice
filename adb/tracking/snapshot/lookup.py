@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from adb.aosp.model.tracking import Device
 from adb.server.lifetime import AdbServerLifetime
+from adb.tracking.observation import AdbTrackedTransportObservation
 from adb.tracking.snapshot.identity import AdbDevicesSnapshot
 from adb.tracking.snapshot.reader import AdbDevicesSnapshotReader
 from adb.transport.selection import (
@@ -14,46 +14,46 @@ from adb.transport.selection import (
 
 
 class AdbTrackedDeviceLookup(Protocol):
-    """Find one AOSP device row in a fresh domain-identified snapshot."""
+    """Find one tracked transport observation in a fresh domain snapshot."""
 
     def find(
         self,
         server: AdbServerLifetime,
         selector: AdbTransportSelector,
-    ) -> Device | None:
+    ) -> AdbTrackedTransportObservation | None:
         ...
 
 
 def find_tracked_device(
     snapshot: AdbDevicesSnapshot,
     selector: AdbTransportSelector,
-) -> Device | None:
-    """Select one AOSP ``Device`` evidence row from a domain snapshot."""
+) -> AdbTrackedTransportObservation | None:
+    """Select one domain transport observation from a tracked-devices snapshot."""
 
     if not isinstance(snapshot, AdbDevicesSnapshot):
         raise TypeError("snapshot must be AdbDevicesSnapshot")
     if isinstance(selector, AdbTransportBySerial):
         matches = [
-            device
-            for device in snapshot.payload.devices
-            if device.serial == selector.serial.value
+            observation
+            for observation in snapshot.observations
+            if observation.matches_serial(selector.serial)
         ]
     elif isinstance(selector, AdbTransportById):
         matches = [
-            device
-            for device in snapshot.payload.devices
-            if device.transport_id == selector.transport_id.value
+            observation
+            for observation in snapshot.observations
+            if observation.transport_id == selector.transport_id
         ]
     else:
         raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")
 
     if len(matches) > 1:
-        raise ValueError("ADB transport selector matched multiple AOSP device rows")
+        raise ValueError("ADB transport selector matched multiple tracked observations")
     return matches[0] if matches else None
 
 
 class SnapshotAdbTrackedDeviceLookup:
-    """Single-row lookup over freshly identified track-devices snapshots."""
+    """Single-observation lookup over freshly identified track-devices snapshots."""
 
     def __init__(self, snapshot_reader: AdbDevicesSnapshotReader) -> None:
         if not callable(getattr(snapshot_reader, "read", None)):
@@ -64,7 +64,7 @@ class SnapshotAdbTrackedDeviceLookup:
         self,
         server: AdbServerLifetime,
         selector: AdbTransportSelector,
-    ) -> Device | None:
+    ) -> AdbTrackedTransportObservation | None:
         if not isinstance(server, AdbServerLifetime):
             raise TypeError("server must be AdbServerLifetime")
         snapshot = self.snapshot_reader.read(server.endpoint)

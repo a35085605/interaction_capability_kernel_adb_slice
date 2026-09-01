@@ -13,7 +13,9 @@ from adb.tracking.snapshot import (
 )
 from adb.tracking.observation import (
     AdbObservedTransportKind,
+    AdbObservedTransportState,
     AdbTrackedTransportObservation,
+    AdbTransportState,
 )
 from adb.tracking.signal import (
     AdbDevicesSnapshotObserved,
@@ -38,6 +40,7 @@ from adb.tracking.controller import (
 __all__ = [
     "AdbDevicesObservation",
     "AdbObservedTransportKind",
+    "AdbObservedTransportState",
     "AdbDevicesSnapshot",
     "AdbDevicesSnapshotEpoch",
     "AdbDevicesSnapshotEpochSequence",
@@ -59,6 +62,7 @@ __all__ = [
     "AdbDevicesTrackingStopped",
     "AdbTrackedDeviceLookup",
     "AdbTrackedTransportObservation",
+    "AdbTransportState",
     "AdbDeviceTrackerStream",
     "AdbDeviceTracker",
 ]

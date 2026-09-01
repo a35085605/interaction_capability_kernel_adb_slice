@@ -4,14 +4,14 @@ from dataclasses import dataclass
 from enum import Enum
 
 from adb.server.lifetime import AdbServerLifetime
-from adb.transport.configuration import AdbConfiguredTransport
-from adb.transport.identity import AdbTransportId
+from adb.tracking.observation import AdbTrackedTransportObservation
 from adb.tracking.snapshot.identity import AdbDevicesSnapshotEpoch
-from adb.aosp.model.tracking import Device
 from adb.tracking.snapshot.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
 )
+from adb.transport.configuration import AdbConfiguredTransport
+from adb.transport.identity import AdbTransportId
 
 
 class AdbConfiguredTransportResolutionStatus(str, Enum):
@@ -25,25 +25,30 @@ class AdbConfiguredTransportResolutionStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportResolution:
-    """Resolution of one configured transport against track-devices evidence."""
+    """Resolution of one configured transport against domain tracking evidence."""
 
     configuration: AdbConfiguredTransport
-    matches: tuple[Device, ...]
-    type_mismatches: tuple[Device, ...] = ()
+    matches: tuple[AdbTrackedTransportObservation, ...]
+    type_mismatches: tuple[AdbTrackedTransportObservation, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
         if not isinstance(self.matches, tuple) or not all(
-            isinstance(row, Device) for row in self.matches
+            isinstance(row, AdbTrackedTransportObservation) for row in self.matches
         ):
-            raise TypeError("matches must be a tuple of Device values")
+            raise TypeError(
+                "matches must be a tuple of AdbTrackedTransportObservation values"
+            )
         if not isinstance(self.type_mismatches, tuple) or not all(
-            isinstance(row, Device) for row in self.type_mismatches
+            isinstance(row, AdbTrackedTransportObservation)
+            for row in self.type_mismatches
         ):
-            raise TypeError("type_mismatches must be a tuple of Device values")
+            raise TypeError(
+                "type_mismatches must be a tuple of AdbTrackedTransportObservation values"
+            )
         if any(
-            row.serial != self.configuration.serial.value
+            not row.matches_serial(self.configuration.serial)
             for row in (*self.matches, *self.type_mismatches)
         ):
             raise ValueError("resolution rows must match configured serial")
@@ -75,7 +80,7 @@ class AdbConfiguredTransportResolution:
         return AdbConfiguredTransportResolutionStatus.AMBIGUOUS
 
     @property
-    def row(self) -> Device | None:
+    def row(self) -> AdbTrackedTransportObservation | None:
         return (
             self.matches[0]
             if self.status is AdbConfiguredTransportResolutionStatus.RESOLVED
@@ -84,16 +89,10 @@ class AdbConfiguredTransportResolution:
 
     @property
     def transport_id(self) -> AdbTransportId | None:
-        """Convert a resolved raw AOSP transport ID into the domain identity.
-
-        Zero means the observation did not provide a usable transport identity. Any other value
-        crosses the domain boundary here and is validated by ``AdbTransportId``.
-        """
+        """Return the already-validated server-local identity of a resolved observation."""
 
         row = self.row
-        if row is None or row.transport_id == 0:
-            return None
-        return AdbTransportId(row.transport_id)
+        return row.transport_id if row is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,9 +120,8 @@ class AdbConfiguredTransportProjection:
         return self.resolution.status
 
     @property
-    def row(self) -> Device | None:
+    def row(self) -> AdbTrackedTransportObservation | None:
         return self.resolution.row
-
 
 
 __all__ = [

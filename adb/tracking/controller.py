@@ -12,11 +12,11 @@ from adb.errors import (
 )
 from adb.server.address import AdbServerTcpAddress
 from adb.server.lifetime import AdbServerLifetime
+from adb.tracking.observation import AdbTrackedTransportObservation
 from adb.tracking.snapshot.identity import (
     AdbDevicesSnapshot,
     AdbDevicesSnapshotEpoch,
 )
-from adb.aosp.model.tracking import Devices
 from adb.adapters.aosp.tracking import (
     AdbDevicesTrackingBackend,
     AdbDevicesTrackingBackendStream,
@@ -317,11 +317,18 @@ class SmartSocketAdbDevicesTrackingController:
         if startup_succeeded and terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
-    def _snapshot(self, payload: Devices) -> AdbDevicesSnapshot:
-        if not isinstance(payload, Devices):
-            raise TypeError("payload must be AOSP Devices")
+    def _snapshot(
+        self,
+        observations: tuple[AdbTrackedTransportObservation, ...],
+    ) -> AdbDevicesSnapshot:
+        if not isinstance(observations, tuple) or not all(
+            isinstance(row, AdbTrackedTransportObservation) for row in observations
+        ):
+            raise TypeError(
+                "observations must be a tuple of AdbTrackedTransportObservation values"
+            )
         return AdbDevicesSnapshot(
-            payload=payload,
+            observations=observations,
             epoch=self._devices_snapshot_epoch_issuer.issue(),
         )
 
