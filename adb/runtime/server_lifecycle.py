@@ -3,7 +3,7 @@ from __future__ import annotations
 from threading import RLock
 
 from adb.runtime.state import AdbRuntimeState
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
@@ -141,14 +141,15 @@ class AdbServerLifecycleRuntimeFacade:
         self,
         *,
         expected: AdbServerState | None,
-        expected_server: AdbServerLifetime | None,
+        expected_server: AdbServerIdentity | None,
     ) -> bool:
         with self._lock:
             t0 = self._state.observe_server()
             if expected is not None and t0 != expected:
                 return False
             server = t0.server
-            if server is None:
+            endpoint = t0.endpoint
+            if server is None or endpoint is None:
                 return False
             if expected_server is not None and server != expected_server:
                 return False
@@ -157,7 +158,7 @@ class AdbServerLifecycleRuntimeFacade:
 
         # Domain deactivation is authoritative before backend cleanup begins. Releasing outside the
         # facade lock permits successor provisioning to race cleanup, matching runtime semantics.
-        self._retirer.retire(server.endpoint)
+        self._retirer.retire(endpoint)
         return True
 
 

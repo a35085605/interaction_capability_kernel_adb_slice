@@ -11,8 +11,6 @@ from adb.server.failure import (
     AdbServerProcessExitedFailure,
 )
 from adb.server.identity import AdbServerIdentity
-from adb.server.lifetime import AdbServerLifetime
-from adb.server.endpoint import AdbServerEndpoint
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -43,29 +41,25 @@ _LIVENESS_FAILURE_TYPES = (
 )
 
 
-def _require_server(value: object) -> AdbServerLifetime:
-    if not isinstance(value, AdbServerLifetime):
-        raise TypeError("server must be AdbServerLifetime")
+def _require_server(value: object) -> AdbServerIdentity:
+    if not isinstance(value, AdbServerIdentity):
+        raise TypeError("server must be AdbServerIdentity")
     return value
 
 
 class _ServerSignalProjection:
-    server: AdbServerLifetime
-
-    @property
-    def endpoint(self) -> AdbServerEndpoint:
-        return self.server.endpoint
+    server: AdbServerIdentity
 
     @property
     def identity(self) -> AdbServerIdentity:
-        return self.server.identity
+        return self.server
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerReconciliationRequested(_ServerSignalProjection):
     """Request reconciliation after terminal server liveness failure."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
     failure: AdbServerLivenessFailure
 
     def __post_init__(self) -> None:
@@ -81,7 +75,7 @@ class AdbServerReconciliationRequested(_ServerSignalProjection):
 class AdbServerRetired(_ServerSignalProjection):
     """Signal one retired ADB server domain lifetime."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
 
     def __post_init__(self) -> None:
         _require_server(self.server)
@@ -91,7 +85,7 @@ class AdbServerRetired(_ServerSignalProjection):
 class AdbServerLost(_ServerSignalProjection):
     """Failure evidence explaining why one already-retired server lifetime was lost."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
     failure: AdbServerLivenessFailure
 
     def __post_init__(self) -> None:
@@ -107,7 +101,7 @@ class AdbServerLost(_ServerSignalProjection):
 class AdbServerRecovered(_ServerSignalProjection):
     """Signal carrying the recovered ADB server."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
 
     def __post_init__(self) -> None:
         _require_server(self.server)

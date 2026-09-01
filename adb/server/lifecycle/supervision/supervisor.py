@@ -24,7 +24,7 @@ from adb.server.failure import (
     AdbServerLivenessFailure,
     AdbServerProcessExitedFailure,
 )
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.server.signal import (
     AdbServerRecoveryCycleId,
@@ -107,7 +107,7 @@ class AdbServerSupervisor:
         self._closed = False
 
     @property
-    def server(self) -> AdbServerLifetime | None:
+    def server(self) -> AdbServerIdentity | None:
         """Current server lifetime from the runtime authoritative state."""
 
         return self._runtime.server
@@ -177,7 +177,7 @@ class AdbServerSupervisor:
         self,
         failure: AdbServerLivenessFailure,
     ) -> None:
-        retired_server: AdbServerLifetime | None = None
+        retired_server: AdbServerIdentity | None = None
         launch_cycle: AdbServerRecoveryCycleId | None = None
         with self._mutation_lock:
             with self._lock:

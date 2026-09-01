@@ -4,15 +4,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TypeAlias
 
-from networking import TcpAddress
 from adb.server.identity import AdbServerIdentity
-from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.snapshot.identity import AdbTransportListSnapshot
 
 
-def _require_server(value: object) -> AdbServerLifetime:
-    if not isinstance(value, AdbServerLifetime):
-        raise TypeError("server must be AdbServerLifetime")
+def _require_server(value: object) -> AdbServerIdentity:
+    if not isinstance(value, AdbServerIdentity):
+        raise TypeError("server must be AdbServerIdentity")
     return value
 
 
@@ -36,22 +34,18 @@ class AdbTransportListWatchFailure(str, Enum):
 
 
 class _TransportListWatchServerSignalProjection:
-    server: AdbServerLifetime
-
-    @property
-    def server_endpoint(self) -> TcpAddress:
-        return self.server.endpoint
+    server: AdbServerIdentity
 
     @property
     def server_identity(self) -> AdbServerIdentity:
-        return self.server.identity
+        return self.server
 
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchStarted(_TransportListWatchServerSignalProjection):
     """Signal that a transport-list watch entered stream mode for one server lifetime."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
 
     def __post_init__(self) -> None:
         _require_server(self.server)
@@ -63,7 +57,7 @@ class AdbTransportListWatchStopped(_TransportListWatchServerSignalProjection):
     evidence.
     """
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
 
     def __post_init__(self) -> None:
         _require_server(self.server)
@@ -73,7 +67,7 @@ class AdbTransportListWatchStopped(_TransportListWatchServerSignalProjection):
 class AdbTransportListWatchFailed(_TransportListWatchServerSignalProjection):
     """Signal a transport-list watch failure while preserving authoritative server state."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
     failure: AdbTransportListWatchFailure
     diagnostic: str | None = None
 
@@ -95,7 +89,7 @@ class AdbTransportListWatchFailed(_TransportListWatchServerSignalProjection):
 class AdbTransportListSnapshotObserved(_TransportListWatchServerSignalProjection):
     """Signal carrying one complete snapshot observed from one server lifetime."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
     snapshot: AdbTransportListSnapshot
 
     def __post_init__(self) -> None:

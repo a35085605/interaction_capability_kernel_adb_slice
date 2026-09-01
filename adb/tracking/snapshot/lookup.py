@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from adb.server.lifetime import AdbServerLifetime
+from networking import TcpAddress
+from adb.server.endpoint import AdbServerEndpoint
 from adb.tracking.observation import AdbTrackedTransportObservation
 from adb.tracking.snapshot.identity import AdbTransportListSnapshot
 from adb.tracking.snapshot.reader import AdbTransportListSnapshotReader
@@ -18,7 +19,7 @@ class AdbTrackedTransportLookup(Protocol):
 
     def find(
         self,
-        server: AdbServerLifetime,
+        endpoint: AdbServerEndpoint,
         selector: AdbTransportSelector,
     ) -> AdbTrackedTransportObservation | None:
         ...
@@ -62,12 +63,12 @@ class SnapshotAdbTrackedTransportLookup:
 
     def find(
         self,
-        server: AdbServerLifetime,
+        endpoint: AdbServerEndpoint,
         selector: AdbTransportSelector,
     ) -> AdbTrackedTransportObservation | None:
-        if not isinstance(server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
-        snapshot = self.snapshot_reader.read(server.endpoint)
+        if not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
+        snapshot = self.snapshot_reader.read(endpoint)
         if not isinstance(snapshot, AdbTransportListSnapshot):
             raise TypeError("snapshot reader must return AdbTransportListSnapshot")
         return find_tracked_transport(snapshot, selector)

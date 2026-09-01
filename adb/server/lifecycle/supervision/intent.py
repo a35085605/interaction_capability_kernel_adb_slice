@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias, overload, runtime_checkable
 
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.transaction import AdbServerProvisionTransactionResult
 from adb.server.state import AdbServerStateView
 
@@ -15,13 +15,13 @@ class AdbServerProvisionIntent:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRetireIntent:
-    """Request retirement and backend release of one exact current server lifetime."""
+    """Request retirement of one exact current server identity."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+        if not isinstance(self.server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
 
 
 AdbServerLifecycleIntent: TypeAlias = AdbServerProvisionIntent | AdbServerRetireIntent
@@ -33,8 +33,8 @@ class AdbServerLifecycleIntentDispatcher(Protocol):
     """Runtime-owned port used by supervision to observe and request server lifecycle work."""
 
     @property
-    def server(self) -> AdbServerLifetime | None:
-        """Return the runtime's authoritative current server lifetime."""
+    def server(self) -> AdbServerIdentity | None:
+        """Return the runtime's authoritative current server identity."""
         ...
 
     @property

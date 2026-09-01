@@ -6,7 +6,9 @@ from threading import Lock, Thread, current_thread
 from adb.epoch import EpochIssuer
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from adb.server.failure import AdbServerConnectionFailure
-from adb.server.lifetime import AdbServerLifetime
+from networking import TcpAddress
+from adb.server.endpoint import AdbServerEndpoint
+from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.tracking.supervision.policy import AdbTransportListWatchSupervisionPolicy
 from adb.server.signal import (
@@ -34,7 +36,12 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 _ThreadFactory = Callable[..., Thread]
 _ControllerFactory = Callable[
-    [AdbServerLifetime, EventPublisher, EpochIssuer[AdbTransportListSnapshotEpoch]],
+    [
+        AdbServerIdentity,
+        AdbServerEndpoint,
+        EventPublisher,
+        EpochIssuer[AdbTransportListSnapshotEpoch],
+    ],
     AdbTransportListWatchController,
 ]
 
@@ -52,7 +59,8 @@ class AdbTransportListWatchSupervisor:
 
     def __init__(
         self,
-        server: AdbServerLifetime,
+        server: AdbServerIdentity,
+        endpoint: AdbServerEndpoint,
         event_bus: EventBus,
         policy: AdbTransportListWatchSupervisionPolicy,
         *,
@@ -62,8 +70,10 @@ class AdbTransportListWatchSupervisor:
         _controller_factory: _ControllerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+        if not isinstance(server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+        if not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -72,8 +82,9 @@ class AdbTransportListWatchSupervisor:
             raise TypeError("policy must be AdbTransportListWatchSupervisionPolicy")
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
-        if server_state.current != server:
-            raise ValueError("server_state current server must match server")
+        initial_state = server_state.snapshot()
+        if initial_state.server != server or initial_state.endpoint != endpoint:
+            raise ValueError("server_state current server and endpoint must match")
         if not isinstance(transport_list_snapshot_epoch_issuer, EpochIssuer):
             raise TypeError("transport_list_snapshot_epoch_issuer must satisfy EpochIssuer")
         if transport_list_state is None:
@@ -107,7 +118,7 @@ class AdbTransportListWatchSupervisor:
         self._closed = False
 
     @property
-    def server(self) -> AdbServerLifetime | None:
+    def server(self) -> AdbServerIdentity | None:
         """Current server lifetime from the runtime authoritative state."""
 
         return self._server_state.current
@@ -143,10 +154,12 @@ class AdbTransportListWatchSupervisor:
                 raise RuntimeError("transport-list watch supervisor is already started")
             self._ensure_subscriptions_locked()
             self._watch_requested = True
-            server = self._server_state.current
-            if server is None:
+            state = self._server_state.snapshot()
+            server = state.server
+            endpoint = state.endpoint
+            if server is None or endpoint is None:
                 return False
-            controller = self._create_controller_locked(server)
+            controller = self._create_controller_locked(server, endpoint)
             self._start_in_progress = True
 
         return self._attempt_start(controller)
@@ -161,7 +174,9 @@ class AdbTransportListWatchSupervisor:
             self._require_open()
             if not self._watch_requested:
                 return
-            server = self._server_state.current
+            state = self._server_state.snapshot()
+            server = state.server
+            endpoint = state.endpoint
             controller = self._controller
             if server is None:
                 controller_to_stop = self._detach_controller_locked()
@@ -172,13 +187,15 @@ class AdbTransportListWatchSupervisor:
                 and self._controller is None
                 and not self._start_in_progress
             ):
-                controller = self._create_controller_locked(server)
+                if endpoint is None:
+                    raise RuntimeError("active ADB server state has no endpoint")
+                controller = self._create_controller_locked(server, endpoint)
                 thread = self._thread_factory(
                     target=self._run_start_attempt,
                     args=(controller,),
                     name=(
                         "adb-transport-list-watch-reconciliation-"
-                        f"{server.endpoint.host}-{server.endpoint.port}-{server.identity.epoch}"
+                        f"{endpoint.host}-{endpoint.port}-{server.epoch}"
                     ),
                 )
                 self._start_in_progress = True
@@ -234,7 +251,7 @@ class AdbTransportListWatchSupervisor:
 
     def _on_watch_failed(self, event: AdbTransportListWatchFailed) -> None:
         request_server_reconciliation = False
-        failed_server: AdbServerLifetime | None = None
+        failed_server: AdbServerIdentity | None = None
         with self._lock:
             current = self._controller
             if self._closed or current is None or event.server != current.server:
@@ -332,7 +349,7 @@ class AdbTransportListWatchSupervisor:
         diagnostic: str | None = None,
     ) -> bool:
         request_server_reconciliation = False
-        reconciliation_server: AdbServerLifetime | None = None
+        reconciliation_server: AdbServerIdentity | None = None
         controller_to_stop: AdbTransportListWatchController | None = None
         publish_failure = False
 
@@ -382,16 +399,20 @@ class AdbTransportListWatchSupervisor:
 
     def _create_controller_locked(
         self,
-        server: AdbServerLifetime,
+        server: AdbServerIdentity,
+        endpoint: AdbServerEndpoint,
     ) -> AdbTransportListWatchController:
         if self._controller is not None:
             raise RuntimeError("a controller already exists")
-        if not isinstance(server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+        if not isinstance(server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+        if not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
         factory = self._controller_factory
         controller = (
             ThreadedAdbTransportListWatchController(
                 server,
+                endpoint,
                 self._watch_publisher,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
                 transport_list_snapshot_epoch_issuer=self._transport_list_snapshot_epoch_issuer,
@@ -399,14 +420,15 @@ class AdbTransportListWatchSupervisor:
             if factory is None
             else factory(
                 server,
+                endpoint,
                 self._watch_publisher,
                 self._transport_list_snapshot_epoch_issuer,
             )
         )
         if not isinstance(controller, AdbTransportListWatchController):
             raise TypeError("controller factory must return AdbTransportListWatchController")
-        if controller.server != server:
-            raise ValueError("controller factory returned a mismatched server lifetime")
+        if controller.server != server or controller.endpoint != endpoint:
+            raise ValueError("controller factory returned a mismatched server binding")
         self._controller = controller
         self._watch_active = False
         return controller

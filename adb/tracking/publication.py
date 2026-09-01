@@ -3,7 +3,7 @@ from __future__ import annotations
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.tracking.snapshot.state import (
     AdbTransportListObservation,
@@ -52,7 +52,7 @@ class AdbTransportListStateBackedWatchPublisher:
         self._server_state = server_state
         self._publisher = publisher
         self._lock = Lock()
-        self._active_server: AdbServerLifetime | None = None
+        self._active_server: AdbServerIdentity | None = None
 
     def publish(self, event: object) -> None:
         accepted = True
@@ -66,7 +66,7 @@ class AdbTransportListStateBackedWatchPublisher:
         if accepted:
             self._publisher.publish(event)
 
-    def end_watch(self, server: AdbServerLifetime) -> bool:
+    def end_watch(self, server: AdbServerIdentity) -> bool:
         """End the watch for one server while preserving the last committed observation."""
 
         self._require_server(server)
@@ -76,7 +76,7 @@ class AdbTransportListStateBackedWatchPublisher:
             self._active_server = None
             return True
 
-    def _begin_watch(self, server: AdbServerLifetime) -> bool:
+    def _begin_watch(self, server: AdbServerIdentity) -> bool:
         self._require_server(server)
         with self._lock:
             if self._server_state.current != server:
@@ -100,9 +100,9 @@ class AdbTransportListStateBackedWatchPublisher:
             )
 
     @staticmethod
-    def _require_server(server: AdbServerLifetime) -> None:
-        if not isinstance(server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+    def _require_server(server: AdbServerIdentity) -> None:
+        if not isinstance(server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
 
 
 __all__ = ["AdbTransportListStateBackedWatchPublisher"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from threading import RLock
 
 from networking import TcpAddress
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateStore, AdbServerStateView
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.lifecycle.supervision.policy import (
@@ -51,20 +51,16 @@ class AdbManagedRuntime:
 
     def __init__(
         self,
-        server: AdbServerLifetime | AdbServerStateStore,
+        server: AdbServerStateStore,
     ) -> None:
-        if isinstance(server, AdbServerStateStore):
-            server_state = server
-        elif isinstance(server, AdbServerLifetime):
-            server_state = AdbServerStateStore(server)
-        else:
-            raise TypeError("server must be AdbServerLifetime or AdbServerStateStore")
-        self._server_state = server_state
+        if not isinstance(server, AdbServerStateStore):
+            raise TypeError("server must be AdbServerStateStore")
+        self._server_state = server
         self._registration_lock = RLock()
         self._registrations: dict[AdbConfiguredTransport, RegisteredTransport] = {}
 
     @property
-    def server(self) -> AdbServerLifetime | None:
+    def server(self) -> AdbServerIdentity | None:
         """Authoritative current ADB server lifetime for this runtime."""
 
         return self._server_state.current
@@ -79,8 +75,8 @@ class AdbManagedRuntime:
     def current_endpoint(self) -> TcpAddress | None:
         """Endpoint of the current server lifetime, if one is active."""
 
-        server = self.server
-        return None if server is None else server.endpoint
+        state = self._server_state.snapshot()
+        return state.endpoint if state.active else None
 
     # ------------------------------------------------------------------
     # Runtime lifecycle

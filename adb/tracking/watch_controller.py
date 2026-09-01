@@ -11,7 +11,8 @@ from adb.errors import (
     AdbServiceError,
 )
 from networking import TcpAddress
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.endpoint import AdbServerEndpoint
+from adb.server.identity import AdbServerIdentity
 from adb.tracking.observation import AdbTrackedTransportObservation
 from adb.tracking.transport_list import AdbTransportList
 from adb.tracking.watch import AdbTransportListWatch, AdbTransportListWatcher
@@ -45,7 +46,11 @@ class AdbTransportListWatchController(Protocol):
     """Control one transport-list watch lifetime for one ADB server lifetime."""
 
     @property
-    def server(self) -> AdbServerLifetime:
+    def server(self) -> AdbServerIdentity:
+        ...
+
+    @property
+    def endpoint(self) -> AdbServerEndpoint:
         ...
 
     @property
@@ -69,7 +74,8 @@ class ThreadedAdbTransportListWatchController:
 
     def __init__(
         self,
-        server: AdbServerLifetime,
+        server: AdbServerIdentity,
+        endpoint: AdbServerEndpoint,
         publisher: EventPublisher,
         startup_timeout_seconds: float = 5.0,
         *,
@@ -77,8 +83,10 @@ class ThreadedAdbTransportListWatchController:
         _watcher_factory: _TransportListWatcherFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+        if not isinstance(server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+        if not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
         if not isinstance(transport_list_snapshot_epoch_issuer, EpochIssuer):
@@ -88,7 +96,7 @@ class ThreadedAdbTransportListWatchController:
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
         self.server = server
-        self.endpoint = server.endpoint
+        self.endpoint = endpoint
         self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
         self._transport_list_snapshot_epoch_issuer = transport_list_snapshot_epoch_issuer
@@ -147,7 +155,7 @@ class ThreadedAdbTransportListWatchController:
                 ),
                 name=(
                     "adb-transport-list-watch-"
-                    f"{self.endpoint.host}-{self.endpoint.port}-{self.server.identity.epoch}"
+                    f"{self.endpoint.host}-{self.endpoint.port}-{self.server.epoch}"
                 ),
             )
         except BaseException:

@@ -4,7 +4,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Lock, Thread, current_thread
 
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.endpoint import AdbServerEndpoint
+from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.signal import (
@@ -67,7 +68,7 @@ class AdbConfiguredTransportSupervisor:
 
     def __init__(
         self,
-        server: AdbServerLifetime,
+        server: AdbServerIdentity,
         event_bus: EventBus,
         tcp_ensurer: AdbTcpTransportEnsurer | None,
         *,
@@ -75,8 +76,8 @@ class AdbConfiguredTransportSupervisor:
         transport_list_state: AdbTransportListSnapshotView | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+        if not isinstance(server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -95,7 +96,7 @@ class AdbConfiguredTransportSupervisor:
                 "transport_list_state must satisfy AdbTransportListSnapshotView or be None"
             )
         self._server_state = server_state
-        self._projection_server: AdbServerLifetime | None = server
+        self._projection_server: AdbServerIdentity | None = server
         self._bus = event_bus
         self._tcp_ensurer = tcp_ensurer
         self._transport_list_state = transport_list_state
@@ -120,7 +121,7 @@ class AdbConfiguredTransportSupervisor:
         # Per-registration tokens fence late recovery results without coupling independent ensures.
 
     @property
-    def server(self) -> AdbServerLifetime | None:
+    def server(self) -> AdbServerIdentity | None:
         """Current server lifetime from the runtime authoritative state."""
 
         return self._server_state.current
@@ -398,11 +399,14 @@ class AdbConfiguredTransportSupervisor:
     def _launch_recovery(self, configuration: AdbConfiguredTransport) -> None:
         with self._lock:
             registration = self._registrations.get(configuration)
-            server = self._server_state.current
+            state = self._server_state.snapshot()
+            server = state.server
+            endpoint = state.endpoint
             if (
                 registration is None
                 or self._closed
                 or server is None
+                or endpoint is None
                 or self._projection_server != server
             ):
                 return
@@ -419,7 +423,7 @@ class AdbConfiguredTransportSupervisor:
             recovery_token = object()
             thread = self._thread_factory(
                 target=self._run_recovery,
-                args=(configuration, server, recovery_token),
+                args=(configuration, server, endpoint, recovery_token),
                 name=f"adb-tcp-transport-recovery-{configuration.serial.value}",
             )
             registration.active_recovery_token = recovery_token
@@ -438,7 +442,8 @@ class AdbConfiguredTransportSupervisor:
     def _run_recovery(
         self,
         configuration: AdbConfiguredTransport,
-        server: AdbServerLifetime,
+        server: AdbServerIdentity,
+        endpoint: AdbServerEndpoint,
         recovery_token: object,
     ) -> None:
         try:
@@ -456,7 +461,12 @@ class AdbConfiguredTransportSupervisor:
             if ensurer is None:
                 raise RuntimeError("TCP configured transport recovery has no ensurer")
             result = ensurer.ensure(
-                AdbTcpTransportEnsureReadiness(server, configuration, ensure_policy),
+                AdbTcpTransportEnsureReadiness(
+                    server,
+                    endpoint,
+                    configuration,
+                    ensure_policy,
+                ),
             )
             if not isinstance(result, AdbTcpTransportEnsureResult):
                 raise TypeError("TCP ensurer must return AdbTcpTransportEnsureResult")
@@ -464,8 +474,8 @@ class AdbConfiguredTransportSupervisor:
                 raise ValueError(
                     "ensure result configuration does not match supervised transport"
                 )
-            if result.operation.server != server:
-                raise ValueError("ensure result server does not match recovery server lifetime")
+            if result.operation.server != server or result.operation.endpoint != endpoint:
+                raise ValueError("ensure result server binding does not match recovery binding")
             with self._lock:
                 registration = self._registrations.get(configuration)
                 result_is_current = (

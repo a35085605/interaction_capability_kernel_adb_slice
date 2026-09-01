@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.identity import AdbServerIdentity
 from adb.tracking.observation import AdbTrackedTransportObservation
 from adb.tracking.snapshot.identity import AdbTransportListSnapshotEpoch
 from adb.tracking.snapshot.interpretation import (
@@ -99,13 +99,13 @@ class AdbConfiguredTransportResolution:
 class AdbConfiguredTransportProjection:
     """One configured-transport resolution bound to its source server and snapshot identity."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
     snapshot_epoch: AdbTransportListSnapshotEpoch
     resolution: AdbConfiguredTransportResolution
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+        if not isinstance(self.server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
         if not isinstance(self.snapshot_epoch, AdbTransportListSnapshotEpoch):
             raise TypeError("snapshot_epoch must be AdbTransportListSnapshotEpoch")
         if not isinstance(self.resolution, AdbConfiguredTransportResolution):

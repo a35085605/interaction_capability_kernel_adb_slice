@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerState, AdbServerStateStore
 from adb.tracking.snapshot.state import AdbTransportListSnapshotState
 
@@ -30,13 +30,13 @@ class AdbRuntimeState:
         self,
         endpoint: AdbServerEndpoint,
         expected: AdbServerState,
-    ) -> AdbServerLifetime | None:
+    ) -> AdbServerIdentity | None:
         """Activate an endpoint when the observed inactive state is still authoritative."""
 
         return self.server.commit(endpoint, expected)
 
-    def deactivate_server(self, expected: AdbServerLifetime) -> bool:
-        """Deactivate the expected authoritative server lifetime without replacing its identity."""
+    def deactivate_server(self, expected: AdbServerIdentity) -> bool:
+        """Deactivate the expected authoritative server identity."""
 
         return self.server.deactivate(expected)
 

@@ -1,4 +1,4 @@
-"""ADB server endpoint, lifetime, lifecycle, failure, and status contracts."""
+"""ADB server endpoint, identity, lifecycle, failure, and status contracts."""
 
 from adb.server.availability import AdbServerUnavailableError
 
@@ -29,7 +29,6 @@ from adb.server.failure import (
     AdbServerTimeoutFailure,
 )
 from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
-from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import (
     AdbServerState,
     AdbServerStateStatus,
@@ -59,7 +58,6 @@ __all__ = [
     "AdbServerIdentity",
     "AdbServerIdentityIssuer",
     "AdbServerFailure",
-    "AdbServerLifetime",
     "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",

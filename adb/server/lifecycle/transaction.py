@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
@@ -12,13 +12,13 @@ from adb.server.lifecycle.control.result import (
 
 @dataclass(frozen=True, slots=True)
 class AdbServerProvisionCommitted:
-    """A provisioned endpoint committed as a fresh authoritative runtime lifetime."""
+    """A provisioned endpoint committed as a fresh authoritative server identity."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+        if not isinstance(self.server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
 
 
 AdbServerProvisionTransactionResult: TypeAlias = (

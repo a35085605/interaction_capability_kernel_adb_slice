@@ -174,12 +174,14 @@ class AdbRuntimeBootstrap:
             )
             self._configure_recovery_provisioner(runtime, core)
             initial_server = runtime.server
-            if initial_server is None:
-                raise RuntimeError("bootstrapped ADB runtime has no initial server")
+            initial_endpoint = runtime.current_endpoint
+            if initial_server is None or initial_endpoint is None:
+                raise RuntimeError("bootstrapped ADB runtime has no initial server binding")
 
             transport_list_watch_supervisor = (
                 AdbTransportListWatchSupervisor(
                     initial_server,
+                    initial_endpoint,
                     event_bus,
                     self._transport_list_watch_supervision_policy,
                     server_state=core.runtime_state.server,
@@ -239,9 +241,10 @@ class AdbRuntimeBootstrap:
         core: _BootstrapCore,
     ) -> None:
         initial_server = runtime.server
-        if initial_server is None:
-            raise RuntimeError("bootstrapped ADB runtime has no initial server")
-        recovery_endpoint = initial_server.endpoint if self._pin_endpoint else None
+        initial_endpoint = runtime.current_endpoint
+        if initial_server is None or initial_endpoint is None:
+            raise RuntimeError("bootstrapped ADB runtime has no initial server binding")
+        recovery_endpoint = initial_endpoint if self._pin_endpoint else None
         runtime._replace_server_provisioner(
             AdbServerProvisioner(
                 core.server_backend,

@@ -8,7 +8,6 @@ from typing import Protocol, runtime_checkable
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
-from adb.server.lifetime import AdbServerLifetime
 
 
 class AdbServerStateStatus(str, Enum):
@@ -22,10 +21,9 @@ class AdbServerStateStatus(str, Enum):
 class AdbServerState:
     """Immutable authoritative ADB server state for one runtime observation.
 
-    ``endpoint`` and ``identity`` identify the last committed server lifetime.  Inactive states may
-    preserve both values so lifecycle status does not depend on clearing endpoint metadata.
-    The preserved identity remains the committed-lifetime watermark, preventing a stale inactive
-    observation from committing after an intervening server lifetime.
+    ``endpoint`` and ``identity`` describe the last committed server. Inactive states may preserve
+    both values so lifecycle status does not depend on clearing endpoint metadata. The preserved
+    identity is the committed-lifetime watermark used to fence stale work.
     """
 
     endpoint: AdbServerEndpoint | None = None
@@ -38,8 +36,6 @@ class AdbServerState:
         identity: AdbServerIdentity | None = None,
         status: AdbServerStateStatus | None = None,
     ) -> None:
-        # Preserve the historical two-argument construction semantics: a state with an endpoint
-        # is active by default, while an endpoint-less state is inactive.
         if status is None:
             status = (
                 AdbServerStateStatus.ACTIVE
@@ -72,18 +68,10 @@ class AdbServerState:
         return self.status is AdbServerStateStatus.ACTIVE
 
     @property
-    def server(self) -> AdbServerLifetime | None:
-        """Project the active authoritative server lifetime, if present."""
+    def server(self) -> AdbServerIdentity | None:
+        """Return the active authoritative server identity, if present."""
 
-        if self.status is AdbServerStateStatus.INACTIVE:
-            return None
-        endpoint = self.endpoint
-        if endpoint is None:
-            raise RuntimeError("active ADB server state has no endpoint")
-        identity = self.identity
-        if identity is None:
-            raise RuntimeError("active ADB server state has no identity")
-        return AdbServerLifetime(endpoint, identity)
+        return self.identity if self.active else None
 
 
 @runtime_checkable
@@ -103,7 +91,9 @@ class AdbServerStateView(Protocol):
     def active(self) -> bool: ...
 
     @property
-    def current(self) -> AdbServerLifetime | None: ...
+    def current(self) -> AdbServerIdentity | None: ...
+
+    def snapshot(self) -> AdbServerState: ...
 
 
 @runtime_checkable
@@ -114,30 +104,21 @@ class AdbServerStateWriter(Protocol):
         self,
         endpoint: AdbServerEndpoint,
         expected: AdbServerState,
-    ) -> AdbServerLifetime | None: ...
+    ) -> AdbServerIdentity | None: ...
 
-    def deactivate(self, expected: AdbServerLifetime) -> bool: ...
+    def deactivate(self, expected: AdbServerIdentity) -> bool: ...
 
 
 class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
     """Thread-safe authority for one runtime's immutable :class:`AdbServerState` value."""
 
-    def __init__(
-        self,
-        initial: AdbServerState | AdbServerLifetime | None = None,
-    ) -> None:
+    def __init__(self, initial: AdbServerState | None = None) -> None:
         if initial is None:
             state = AdbServerState()
         elif isinstance(initial, AdbServerState):
             state = initial
-        elif isinstance(initial, AdbServerLifetime):
-            state = AdbServerState(
-                initial.endpoint,
-                initial.identity,
-                AdbServerStateStatus.ACTIVE,
-            )
         else:
-            raise TypeError("initial must be AdbServerState, AdbServerLifetime, or None")
+            raise TypeError("initial must be AdbServerState or None")
         self._lock = Lock()
         self._identity_issuer = AdbServerIdentityIssuer()
         self._state = state
@@ -166,7 +147,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         return self.state.active
 
     @property
-    def current(self) -> AdbServerLifetime | None:
+    def current(self) -> AdbServerIdentity | None:
         return self.state.server
 
     def snapshot(self) -> AdbServerState:
@@ -178,7 +159,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         self,
         endpoint: AdbServerEndpoint,
         expected: AdbServerState,
-    ) -> AdbServerLifetime | None:
+    ) -> AdbServerIdentity | None:
         """Activate ``endpoint`` iff ``expected`` is the current inactive state.
 
         A successful compare-and-set allocates the next runtime-scoped server identity at the same
@@ -200,22 +181,18 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
                 if previous_identity is None
                 else self._identity_issuer.successor(previous_identity)
             )
-            next_state = AdbServerState(
+            self._state = AdbServerState(
                 endpoint,
                 next_identity,
                 AdbServerStateStatus.ACTIVE,
             )
-            self._state = next_state
-            server = next_state.server
-            if server is None:
-                raise RuntimeError("committed ADB server state has no active server")
-            return server
+            return next_identity
 
-    def deactivate(self, expected: AdbServerLifetime) -> bool:
-        """Make ``expected`` inactive while preserving its endpoint and identity metadata."""
+    def deactivate(self, expected: AdbServerIdentity) -> bool:
+        """Make ``expected`` inactive while preserving endpoint and identity metadata."""
 
-        if not isinstance(expected, AdbServerLifetime):
-            raise TypeError("expected must be AdbServerLifetime")
+        if not isinstance(expected, AdbServerIdentity):
+            raise TypeError("expected must be AdbServerIdentity")
 
         with self._lock:
             state = self._state

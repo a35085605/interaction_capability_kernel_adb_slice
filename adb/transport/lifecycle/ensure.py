@@ -10,7 +10,8 @@ from typing import Protocol, runtime_checkable
 
 from adb.errors import AdbError
 from networking import TcpAddress
-from adb.server.lifetime import AdbServerLifetime
+from adb.server.endpoint import AdbServerEndpoint
+from adb.server.identity import AdbServerIdentity
 from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
@@ -117,23 +118,22 @@ class AdbTcpTransportEnsurePolicy:
 class AdbTcpTransportEnsureReadiness:
     """Request bounded readiness verification against one server lifetime."""
 
-    server: AdbServerLifetime
+    server: AdbServerIdentity
+    endpoint: AdbServerEndpoint
     configuration: AdbConfiguredTransport
     policy: AdbTcpTransportEnsurePolicy
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+        if not isinstance(self.server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+        if not isinstance(self.endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
         if not isinstance(self.configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
         if not isinstance(self.configuration.transport, AdbTcpTransportConfiguration):
             raise ValueError("TCP ensure requires an AdbTcpTransportConfiguration")
         if not isinstance(self.policy, AdbTcpTransportEnsurePolicy):
             raise TypeError("policy must be AdbTcpTransportEnsurePolicy")
-
-    @property
-    def endpoint(self) -> TcpAddress:
-        return self.server.endpoint
 
     @property
     def serial(self) -> AdbDeviceSerial:
@@ -368,7 +368,8 @@ class AdbTcpTransportEnsureOrchestrator:
 
     def __init__(
         self,
-        server: AdbServerLifetime,
+        server: AdbServerIdentity,
+        endpoint: AdbServerEndpoint,
         snapshot_reader: AdbTransportListSnapshotReader,
         connector: AdbTcpConnector,
         publisher: EventPublisher,
@@ -376,8 +377,10 @@ class AdbTcpTransportEnsureOrchestrator:
         _monotonic: _MonotonicClock = monotonic,
         _sleep: _Sleeper = sleep,
     ) -> None:
-        if not isinstance(server, AdbServerLifetime):
-            raise TypeError("server must be AdbServerLifetime")
+        if not isinstance(server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+        if not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
         if not callable(getattr(snapshot_reader, "read", None)):
             raise TypeError("snapshot_reader must provide read()")
         if not callable(getattr(connector, "connect", None)):
@@ -385,7 +388,7 @@ class AdbTcpTransportEnsureOrchestrator:
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
         self.server = server
-        self.endpoint = server.endpoint
+        self.endpoint = endpoint
         self._snapshot_reader = snapshot_reader
         self._connector = connector
         self._publisher = publisher
@@ -400,8 +403,8 @@ class AdbTcpTransportEnsureOrchestrator:
 
         if not isinstance(operation, AdbTcpTransportEnsureReadiness):
             raise TypeError("operation must be AdbTcpTransportEnsureReadiness")
-        if operation.server != self.server:
-            raise ValueError("operation server does not match ensure orchestrator server")
+        if operation.server != self.server or operation.endpoint != self.endpoint:
+            raise ValueError("operation server binding does not match ensure orchestrator")
 
         policy = operation.policy
         deadline = self._monotonic() + policy.timeout_seconds
