@@ -37,7 +37,7 @@ from adb.server.state import (
     AdbServerStateView,
     AdbServerStateWriter,
 )
-from adb.server.address import AdbServerTcpAddress
+from adb.server.endpoint import AdbServerEndpoint
 from adb.aosp.model.server_status import AdbMdnsBackend, AdbServerStatus, AdbUsbBackend
 from adb.adapters.aosp.server_status import AdbServerStatusReader
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
@@ -55,7 +55,7 @@ __all__ = [
     "AdbServerProvisioned",
     "AdbServerProvisionCommitted",
     "AdbServerProvisionTransactionResult",
-    "AdbServerTcpAddress",
+    "AdbServerEndpoint",
     "ServerEpoch",
     "ServerEpochSequence",
     "AdbServerFailure",

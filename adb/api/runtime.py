@@ -14,7 +14,7 @@ from adb.api.transport import (
     AdbConfiguredTransportRegistration,
     _configured_transport_from_registration,
 )
-from adb.server.address import AdbServerTcpAddress
+from adb.server.endpoint import AdbServerEndpoint
 
 
 class AdbConfiguredTransportHandle:
@@ -77,5 +77,5 @@ __all__ = [
     "AdbConfiguredTransportHandle",
     "AdbRuntime",
     "AdbRuntimeBootstrap",
-    "AdbServerTcpAddress",
+    "AdbServerEndpoint",
 ]

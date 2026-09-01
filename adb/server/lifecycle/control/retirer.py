@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from networking import TcpAddress
+from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.control.backend import (
     AdbServerBackend,
     AdbServerBackendFailed,
@@ -13,7 +14,7 @@ from adb.server.lifecycle.control.backend import (
 
 def _release_backend_attachment(
     backend: AdbServerBackend,
-    endpoint: TcpAddress,
+    endpoint: AdbServerEndpoint,
 ) -> None:
     result = backend.release(endpoint)
     if isinstance(
@@ -38,7 +39,7 @@ class AdbServerRetirer:
             raise TypeError("backend must satisfy AdbServerBackend")
         self._backend = backend
 
-    def retire(self, endpoint: TcpAddress) -> None:
+    def retire(self, endpoint: AdbServerEndpoint) -> None:
         """Request release of the backend attachment identified by ``endpoint``."""
 
         if not isinstance(endpoint, TcpAddress):

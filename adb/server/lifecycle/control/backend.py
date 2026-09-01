@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
+from adb.server.endpoint import AdbServerEndpoint
 
 
 def _normalize_diagnostic(value: object) -> str:
@@ -27,7 +28,7 @@ class AdbServerBackendOperation(str, Enum):
 class AdbServerBackendSucceeded:
     """The requested backend operation ran and completed successfully."""
 
-    endpoint: TcpAddress
+    endpoint: AdbServerEndpoint
 
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, TcpAddress):
@@ -38,7 +39,7 @@ class AdbServerBackendSucceeded:
 class AdbServerBackendSatisfied:
     """The requested backend operation was unnecessary because its target state already holds."""
 
-    endpoint: TcpAddress
+    endpoint: AdbServerEndpoint
 
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, TcpAddress):
@@ -99,8 +100,8 @@ class _AdbServerBackendEndpointMismatchError(RuntimeError):
 
 
 def _require_owned_release_endpoint(
-    owned: TcpAddress,
-    requested: TcpAddress,
+    owned: AdbServerEndpoint,
+    requested: AdbServerEndpoint,
 ) -> None:
     """Reject release of an endpoint other than the exact backend-owned endpoint."""
 
@@ -122,12 +123,12 @@ class AdbServerBackend(Protocol):
 
     def acquire(
         self,
-        endpoint: TcpAddress | None = None,
+        endpoint: AdbServerEndpoint | None = None,
     ) -> AdbServerBackendResult:
         """Acquire a usable attachment, optionally constrained to ``endpoint``."""
         ...
 
-    def release(self, endpoint: TcpAddress) -> AdbServerBackendResult:
+    def release(self, endpoint: AdbServerEndpoint) -> AdbServerBackendResult:
         """Release the backend attachment identified by ``endpoint``."""
         ...
 

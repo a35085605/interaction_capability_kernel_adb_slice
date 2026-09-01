@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from adb.epoch import EpochIssuer
 from adb.runtime.core import AdbRuntime
 from networking import TcpAddress
+from adb.server.endpoint import AdbServerEndpoint
 from adb.server.epoch import ServerEpochSequence
 from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
@@ -60,7 +61,7 @@ class AdbRuntimeBootstrap:
         self,
         *,
         server_backend_factory: _AdbServerBackendFactory | None = None,
-        endpoint: TcpAddress | None = None,
+        endpoint: AdbServerEndpoint | None = None,
         pin_endpoint: bool = True,
         server_recovery_enabled: bool = True,
         server_supervision_policy: AdbServerSupervisionPolicy | None = None,
