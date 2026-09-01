@@ -29,7 +29,7 @@ from adb.server.failure import (
     AdbServerTimeoutFailure,
 )
 from adb.server.epoch import AdbServerEpoch
-from adb.server.identity import AdbServerIdentity
+from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
 from adb.server.lifetime import AdbServerLifetime
 from adb.server.state import (
     AdbServerState,
@@ -59,6 +59,7 @@ __all__ = [
     "AdbServerEndpoint",
     "AdbServerEpoch",
     "AdbServerIdentity",
+    "AdbServerIdentityIssuer",
     "AdbServerFailure",
     "AdbServerLifetime",
     "AdbServerLaunchFailure",

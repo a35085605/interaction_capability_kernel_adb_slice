@@ -8,7 +8,7 @@ from typing import Protocol, runtime_checkable
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.epoch import AdbServerEpoch
-from adb.server.identity import AdbServerIdentity
+from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
 from adb.server.lifetime import AdbServerLifetime
 
 
@@ -150,6 +150,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         else:
             raise TypeError("initial must be AdbServerState, AdbServerLifetime, or None")
         self._lock = Lock()
+        self._identity_issuer = AdbServerIdentityIssuer()
         self._state = state
 
     @property
@@ -208,11 +209,12 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
             if self._state != expected or expected.active:
                 return None
 
-            previous_epoch = expected.epoch
-            next_epoch = AdbServerEpoch(
-                1 if previous_epoch is None else previous_epoch.value + 1
+            previous_identity = expected.identity
+            next_identity = (
+                self._identity_issuer.initial()
+                if previous_identity is None
+                else self._identity_issuer.successor(previous_identity)
             )
-            next_identity = AdbServerIdentity(next_epoch)
             next_state = AdbServerState(
                 endpoint,
                 next_identity,
