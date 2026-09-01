@@ -36,7 +36,7 @@ class AdbRuntimeState:
         return self.server.commit(endpoint, expected)
 
     def deactivate_server(self, expected: AdbServerLifetime) -> bool:
-        """Deactivate the expected authoritative server lifetime without advancing its epoch."""
+        """Deactivate the expected authoritative server lifetime without replacing its identity."""
 
         return self.server.deactivate(expected)
 

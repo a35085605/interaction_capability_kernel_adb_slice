@@ -5,7 +5,6 @@ from enum import Enum
 from typing import TypeAlias
 
 from networking import TcpAddress
-from adb.server.epoch import AdbServerEpoch
 from adb.server.identity import AdbServerIdentity
 from adb.server.lifetime import AdbServerLifetime
 from adb.tracking.snapshot.identity import AdbTransportListSnapshot
@@ -46,10 +45,6 @@ class _TransportListWatchServerSignalProjection:
     @property
     def server_identity(self) -> AdbServerIdentity:
         return self.server.identity
-
-    @property
-    def server_epoch(self) -> AdbServerEpoch:
-        return self.server.epoch
 
 
 @dataclass(frozen=True, slots=True)

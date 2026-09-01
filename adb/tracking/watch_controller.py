@@ -147,7 +147,7 @@ class ThreadedAdbTransportListWatchController:
                 ),
                 name=(
                     "adb-transport-list-watch-"
-                    f"{self.endpoint.host}-{self.endpoint.port}-{self.server.epoch}"
+                    f"{self.endpoint.host}-{self.endpoint.port}-{self.server.identity.epoch}"
                 ),
             )
         except BaseException:

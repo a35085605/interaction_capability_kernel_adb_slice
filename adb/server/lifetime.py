@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.epoch import AdbServerEpoch
 from adb.server.identity import AdbServerIdentity
 
 
@@ -20,12 +19,6 @@ class AdbServerLifetime:
             raise TypeError("endpoint must be TcpAddress")
         if not isinstance(self.identity, AdbServerIdentity):
             raise TypeError("identity must be AdbServerIdentity")
-
-    @property
-    def epoch(self) -> AdbServerEpoch:
-        """Project the monotonic ordinal carried by this server identity."""
-
-        return self.identity.epoch
 
 
 __all__ = ["AdbServerLifetime"]

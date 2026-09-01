@@ -178,7 +178,7 @@ class AdbTransportListWatchSupervisor:
                     args=(controller,),
                     name=(
                         "adb-transport-list-watch-reconciliation-"
-                        f"{server.endpoint.host}-{server.endpoint.port}-{server.epoch}"
+                        f"{server.endpoint.host}-{server.endpoint.port}-{server.identity.epoch}"
                     ),
                 )
                 self._start_in_progress = True

@@ -7,7 +7,6 @@ from typing import Protocol, runtime_checkable
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.epoch import AdbServerEpoch
 from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
 from adb.server.lifetime import AdbServerLifetime
 
@@ -25,7 +24,7 @@ class AdbServerState:
 
     ``endpoint`` and ``identity`` identify the last committed server lifetime.  Inactive states may
     preserve both values so lifecycle status does not depend on clearing endpoint metadata.
-    ``identity.epoch`` remains the committed-lifetime watermark, preventing a stale inactive
+    The preserved identity remains the committed-lifetime watermark, preventing a stale inactive
     observation from committing after an intervening server lifetime.
     """
 
@@ -67,13 +66,6 @@ class AdbServerState:
             raise ValueError("active server state must have an endpoint and identity")
 
     @property
-    def epoch(self) -> AdbServerEpoch | None:
-        """Project the committed-lifetime watermark from the server identity."""
-
-        identity = self.identity
-        return None if identity is None else identity.epoch
-
-    @property
     def active(self) -> bool:
         """Whether an authoritative server endpoint is currently active."""
 
@@ -103,9 +95,6 @@ class AdbServerStateView(Protocol):
 
     @property
     def identity(self) -> AdbServerIdentity | None: ...
-
-    @property
-    def epoch(self) -> AdbServerEpoch | None: ...
 
     @property
     def status(self) -> AdbServerStateStatus: ...
@@ -169,10 +158,6 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         return self.state.identity
 
     @property
-    def epoch(self) -> AdbServerEpoch | None:
-        return self.state.epoch
-
-    @property
     def status(self) -> AdbServerStateStatus:
         return self.state.status
 
@@ -196,8 +181,8 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
     ) -> AdbServerLifetime | None:
         """Activate ``endpoint`` iff ``expected`` is the current inactive state.
 
-        A successful compare-and-set allocates the next runtime-scoped server epoch and identity at
-        the same linearization point that makes the endpoint authoritative.
+        A successful compare-and-set allocates the next runtime-scoped server identity at the same
+        linearization point that makes the endpoint authoritative.
         """
 
         if not isinstance(endpoint, TcpAddress):
