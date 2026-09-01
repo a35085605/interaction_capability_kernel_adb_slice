@@ -20,7 +20,7 @@ _ClientFactory = Callable[[AdbServerTcpAddress], AdbServiceClient]
 
 
 def _default_client_factory(address: AdbServerTcpAddress) -> AdbServiceClient:
-    return AdbServiceClient(address)
+    return AdbServiceClient(address.host, address.port)
 
 
 class SmartSocketAdbServerStatusReader:

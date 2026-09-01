@@ -166,7 +166,8 @@ class _AdbServerSubprocessFactory:
             read_timeout = min(0.25, self.startup_timeout_seconds)
             status_reader = SmartSocketAdbServerStatusReader(
                 _client_factory=lambda candidate: AdbServiceClient(
-                    candidate,
+                    candidate.host,
+                    candidate.port,
                     timeout_seconds=read_timeout,
                 )
             )

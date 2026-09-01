@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from numbers import Real
+from numbers import Integral, Real
 import socket
 import struct
 from typing import Callable
@@ -14,12 +14,29 @@ from adb.aosp.errors import (
     AdbTimeoutError,
 )
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
-from adb.server.address import AdbServerTcpAddress
 
 
 _SHELL_STDOUT = 1
 _SHELL_STDERR = 2
 _SHELL_EXIT = 3
+
+
+def _normalize_host(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("ADB server host must be a string")
+    host = value.strip()
+    if not host:
+        raise ValueError("ADB server host cannot be empty")
+    return host
+
+
+def _normalize_port(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError("ADB server port must be an integer")
+    port = int(value)
+    if not 1 <= port <= 65535:
+        raise ValueError("ADB server port must be between 1 and 65535")
+    return port
 
 
 def _normalize_timeout(value: object) -> float:
@@ -43,14 +60,14 @@ class AdbServiceClient:
 
     def __init__(
         self,
-        address: AdbServerTcpAddress,
+        host: str,
+        port: int,
         timeout_seconds: float = 5.0,
         *,
         _socket_factory: Callable[..., socket.socket] = socket.create_connection,
     ) -> None:
-        if not isinstance(address, AdbServerTcpAddress):
-            raise TypeError("address must be AdbServerTcpAddress")
-        self.address = address
+        self.host = _normalize_host(host)
+        self.port = _normalize_port(port)
         self.timeout_seconds = _normalize_timeout(timeout_seconds)
         self._socket_factory = _socket_factory
 
@@ -124,7 +141,7 @@ class AdbServiceClient:
     def _connect(self) -> socket.socket:
         try:
             sock = self._socket_factory(
-                (self.address.host, self.address.port),
+                (self.host, self.port),
                 timeout=self.timeout_seconds,
             )
             sock.settimeout(self.timeout_seconds)
@@ -133,7 +150,7 @@ class AdbServiceClient:
             raise AdbTimeoutError("timed out connecting to the ADB server") from exc
         except OSError as exc:
             raise AdbServerConnectionError(
-                f"failed to connect to ADB server {self.address.host}:{self.address.port}: {exc}"
+                f"failed to connect to ADB server {self.host}:{self.port}: {exc}"
             ) from exc
 
     def _select_transport(self, sock: socket.socket, transport_service: str) -> None:

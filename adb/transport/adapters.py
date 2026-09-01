@@ -21,7 +21,7 @@ _ClientFactory = Callable[[AdbServerTcpAddress], AdbServiceClient]
 
 
 def _default_client_factory(endpoint: AdbServerTcpAddress) -> AdbServiceClient:
-    return AdbServiceClient(endpoint)
+    return AdbServiceClient(endpoint.host, endpoint.port)
 
 
 def _feature_service(selector: AdbTransportSelector) -> str:
