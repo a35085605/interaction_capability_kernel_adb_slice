@@ -9,28 +9,27 @@ from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
-    AdbServerProvisionFailed,
     AdbServerProvisioned,
 )
 from adb.server.lifecycle.supervision.intent import (
-    AdbServerEnsureIntent,
-    AdbServerEnsureIntentResult,
-    AdbServerEnsureSatisfied,
     AdbServerLifecycleIntent,
     AdbServerLifecycleIntentResult,
-    AdbServerReconcileIntent,
-    AdbServerReconcileIntentResult,
+)
+from adb.server.lifecycle.supervision.transition import (
+    AdbServerProvisionAction,
+    AdbServerRetireAction,
+    transition_lifecycle_intent,
+    transition_lifecycle_result,
 )
 from adb.server.lifecycle.transaction import (
     AdbServerProvisionCommitted,
     AdbServerProvisionTransactionResult,
 )
-from adb.server.signal import AdbServerReconciliationRequested
 from adb.server.state import AdbServerActivated, AdbServerDeactivated, AdbServerState
 
 
 class AdbServerLifecycleRuntimeFacade:
-    """Coordinate authoritative ADB server activation and deactivation for one runtime."""
+    """Orchestrate authoritative ADB server lifecycle transactions for one runtime."""
 
     def __init__(
         self,
@@ -83,59 +82,24 @@ class AdbServerLifecycleRuntimeFacade:
         self,
         intent: AdbServerLifecycleIntent,
     ) -> AdbServerLifecycleIntentResult:
-        """Dispatch one complete runtime-owned server lifecycle intent transaction."""
+        """Execute one interpreted lifecycle action through authoritative runtime transactions."""
 
-        return self.interpret(intent)
-
-    def interpret(
-        self,
-        intent: AdbServerLifecycleIntent,
-    ) -> AdbServerLifecycleIntentResult:
-        """Interpret supervision intent against authoritative runtime state and identity."""
-
-        if isinstance(intent, AdbServerEnsureIntent):
-            return self._ensure()
-        if isinstance(intent, AdbServerReconcileIntent):
-            return self._reconcile(intent)
-        raise TypeError("unsupported ADB server lifecycle intent")
-
-    def _ensure(self) -> AdbServerEnsureIntentResult:
-        """Ensure an active authoritative server without exposing runtime state to supervision."""
-
-        t0 = self._state.observe_server()
-        if t0.active:
-            return AdbServerEnsureSatisfied()
-
-        result = self.provision()
-        if isinstance(result, AdbServerProvisionCommitted):
-            return AdbServerEnsureSatisfied(result.activation)
-
-        if isinstance(result, AdbServerProvisionDeferred):
-            # Provisioning may have raced a different lifecycle transaction. If that transaction
-            # already established an active authoritative lifetime, the ensure intent is satisfied
-            # even though this individual provisioning attempt did not commit it.
-            if self._state.observe_server().active:
-                return AdbServerEnsureSatisfied()
-            return result
-
-        if isinstance(result, AdbServerProvisionFailed):
-            return result
-        raise TypeError("server lifecycle facade returned an unsupported provision result")
-
-    def _reconcile(
-        self,
-        intent: AdbServerReconcileIntent,
-    ) -> AdbServerReconcileIntentResult:
-        """Interpret one liveness reconciliation request and perform identity fencing here."""
-
-        cause = intent.cause
-        expected_server = (
-            cause.server if isinstance(cause, AdbServerReconciliationRequested) else None
-        )
-        return self._retire(
-            expected=None,
-            expected_server=expected_server,
-        )
+        transition = transition_lifecycle_intent(intent, self._state.observe_server())
+        if isinstance(transition, AdbServerProvisionAction):
+            result = self.provision()
+            return transition_lifecycle_result(
+                transition,
+                result,
+                self._state.observe_server(),
+            )
+        elif isinstance(transition, AdbServerRetireAction):
+            result = self._retire(
+                expected=None,
+                expected_server=transition.expected_server,
+            )
+            return transition_lifecycle_result(transition, result)
+        else:
+            return transition
 
     def replace_provisioner(self, provisioner: AdbServerProvisioner) -> None:
         """Replace provisioning policy while preserving this runtime lifecycle authority."""

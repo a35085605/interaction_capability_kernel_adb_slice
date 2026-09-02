@@ -186,12 +186,12 @@ class AdbRuntime(AdbManagedRuntime):
         self,
         expected: AdbServerState,
     ) -> AdbServerProvisionTransactionResult | None:
-        """Conditional Runtime entry used by T0-bound intent interpretation."""
+        """Conditionally provision from an authoritative server-state snapshot."""
 
         return self._server_lifecycle.provision_if_current(expected)
 
     def _retire_server_if_current(self, expected: AdbServerState) -> bool:
-        """Conditional Runtime entry used by T0-bound intent interpretation."""
+        """Conditionally retire an authoritative server-state snapshot."""
 
         return self._server_lifecycle.retire_if_current(expected)
 

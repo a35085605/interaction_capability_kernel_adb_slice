@@ -4,15 +4,106 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from adb.server.failure import AdbServerLaunchFailure
+from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
 )
 from adb.server.lifecycle.supervision.intent import (
+    AdbServerEnsureIntent,
     AdbServerEnsureIntentResult,
     AdbServerEnsureSatisfied,
+    AdbServerLifecycleIntent,
+    AdbServerLifecycleIntentResult,
+    AdbServerReconcileIntent,
 )
-from adb.server.state import AdbServerActivated
+from adb.server.lifecycle.transaction import (
+    AdbServerProvisionCommitted,
+    AdbServerProvisionTransactionResult,
+)
+from adb.server.signal import AdbServerReconciliationRequested
+from adb.server.state import AdbServerActivated, AdbServerDeactivated, AdbServerState
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerProvisionAction:
+    """Semantic request to run one authoritative runtime provisioning transaction."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerRetireAction:
+    """Retire the authoritative lifetime matching an optional identity fence."""
+
+    expected_server: AdbServerIdentity | None = None
+
+    def __post_init__(self) -> None:
+        if self.expected_server is not None and not isinstance(
+            self.expected_server, AdbServerIdentity
+        ):
+            raise TypeError("expected_server must be AdbServerIdentity or None")
+
+
+AdbServerLifecycleAction: TypeAlias = AdbServerProvisionAction | AdbServerRetireAction
+AdbServerLifecycleIntentTransition: TypeAlias = (
+    AdbServerLifecycleAction | AdbServerEnsureSatisfied
+)
+AdbServerLifecycleActionResult: TypeAlias = (
+    AdbServerProvisionTransactionResult | AdbServerDeactivated | None
+)
+
+
+def transition_lifecycle_intent(
+    intent: AdbServerLifecycleIntent,
+    state: AdbServerState,
+) -> AdbServerLifecycleIntentTransition:
+    """Purely interpret one lifecycle intent against immutable authoritative state evidence."""
+
+    if not isinstance(state, AdbServerState):
+        raise TypeError("state must be AdbServerState")
+
+    if isinstance(intent, AdbServerEnsureIntent):
+        if state.active:
+            return AdbServerEnsureSatisfied()
+        return AdbServerProvisionAction()
+
+    if isinstance(intent, AdbServerReconcileIntent):
+        cause = intent.cause
+        expected_server = (
+            cause.server if isinstance(cause, AdbServerReconciliationRequested) else None
+        )
+        return AdbServerRetireAction(expected_server)
+
+    raise TypeError("unsupported ADB server lifecycle intent")
+
+
+def transition_lifecycle_result(
+    action: AdbServerLifecycleAction,
+    result: AdbServerLifecycleActionResult,
+    state_after: AdbServerState | None = None,
+) -> AdbServerLifecycleIntentResult:
+    """Purely interpret one runtime transaction result into its supervision-level result."""
+
+    if isinstance(action, AdbServerProvisionAction):
+        if not isinstance(state_after, AdbServerState):
+            raise TypeError("provision result interpretation requires AdbServerState post-state")
+        if isinstance(result, AdbServerProvisionCommitted):
+            return AdbServerEnsureSatisfied(result.activation)
+        if isinstance(result, AdbServerProvisionDeferred):
+            # Provisioning may race another lifecycle transaction. An active post-state means the
+            # ensure semantic is satisfied even though this provisioning attempt did not commit it.
+            if state_after.active:
+                return AdbServerEnsureSatisfied()
+            return result
+        if isinstance(result, AdbServerProvisionFailed):
+            return result
+        raise TypeError("provision action requires an ADB server provision transaction result")
+
+    if isinstance(action, AdbServerRetireAction):
+        if result is None or isinstance(result, AdbServerDeactivated):
+            return result
+        raise TypeError("retire action requires AdbServerDeactivated or None")
+
+    raise TypeError("action must be an ADB server lifecycle action")
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,11 +214,18 @@ def transition_recovery(
 
 
 __all__ = [
+    "AdbServerLifecycleAction",
+    "AdbServerLifecycleActionResult",
+    "AdbServerLifecycleIntentTransition",
+    "AdbServerProvisionAction",
+    "AdbServerRetireAction",
     "AdbServerRecoverySucceeded",
     "AdbServerRecoveryAttempt",
     "AdbServerRecoveryDefer",
     "AdbServerRecoveryExhaust",
     "AdbServerRecoveryRetry",
     "AdbServerRecoveryTransition",
+    "transition_lifecycle_intent",
+    "transition_lifecycle_result",
     "transition_recovery",
 ]
