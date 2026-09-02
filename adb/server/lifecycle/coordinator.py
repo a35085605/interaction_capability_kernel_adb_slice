@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from threading import RLock
+from typing import TypeAlias
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
@@ -20,6 +21,11 @@ from adb.server.state import (
     AdbServerActivationStateConflict,
     AdbServerDeactivated,
     AdbServerStateStore,
+)
+
+
+AdbServerAcquireOnceResult: TypeAlias = (
+    AdbServerBackendAcquireResult | AdbServerActivationStateConflict
 )
 
 
@@ -44,13 +50,13 @@ class AdbServerLifecycleCoordinator:
         self._provision_endpoint = provision_endpoint
         self._lock = RLock()
 
-    def acquire_once(self) -> AdbServerBackendAcquireResult | None:
+    def acquire_once(self) -> AdbServerAcquireOnceResult | None:
         """Execute at most one backend acquisition and commit a usable endpoint when still valid.
 
         ``None`` means the authoritative server state was already active when this operation
-        linearized, so no backend acquisition was attempted. Otherwise the raw backend acquisition
-        evidence is returned unchanged. State activation and backend release are deliberately
-        execution concerns and are not wrapped in a second result algebra.
+        linearized, so no backend acquisition was attempted. Backend deferral/failure evidence is
+        returned unchanged. A usable backend acquisition that loses the authoritative activation
+        fence is released and returned as :class:`AdbServerActivationStateConflict`.
         """
 
         with self._lock:
@@ -89,7 +95,8 @@ class AdbServerLifecycleCoordinator:
 
             if isinstance(activation, AdbServerActivationStateConflict):
                 self._backend.release(endpoint)
-            elif not isinstance(activation, AdbServerActivated):
+                return activation
+            if not isinstance(activation, AdbServerActivated):
                 self._backend.release(endpoint)
                 raise TypeError("server state activate() returned an unsupported result")
 
@@ -132,4 +139,4 @@ class AdbServerLifecycleCoordinator:
             self._provision_endpoint = endpoint
 
 
-__all__ = ["AdbServerLifecycleCoordinator"]
+__all__ = ["AdbServerAcquireOnceResult", "AdbServerLifecycleCoordinator"]

@@ -7,7 +7,7 @@ from typing import Protocol, runtime_checkable
 
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.identity import AdbServerIdentity
-from adb.server.lifecycle.backend import AdbServerBackendAcquireResult
+from adb.server.lifecycle.coordinator import AdbServerAcquireOnceResult
 from adb.server.lifecycle.supervision.intent import AdbServerAcquireOnceIntent
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
@@ -21,7 +21,11 @@ from adb.server.signal import (
     AdbServerRecoveryId,
     AdbServerRecoveryRetryDue,
 )
-from adb.server.state import AdbServerDeactivated, AdbServerStateView
+from adb.server.state import (
+    AdbServerActivationStateConflict,
+    AdbServerDeactivated,
+    AdbServerStateView,
+)
 from eventing import EventBus, EventSubscriptionToken
 from scheduling import ScheduleToken, TemporalScheduler
 
@@ -30,7 +34,7 @@ from scheduling import ScheduleToken, TemporalScheduler
 class AdbServerLifecyclePort(Protocol):
     """Minimal authoritative lifecycle operations required by server supervision."""
 
-    def acquire_once(self) -> AdbServerBackendAcquireResult | None: ...
+    def acquire_once(self) -> AdbServerAcquireOnceResult | None: ...
 
     def retire(
         self,
@@ -318,6 +322,21 @@ class AdbServerSupervisor:
             if acquire is None:
                 self._finish_recovery(recovery, recovery_id, completed=True)
                 return
+            if isinstance(acquire, AdbServerActivationStateConflict):
+                # The backend attachment acquired by this attempt has already been released by the
+                # lifecycle coordinator. If the conflict observed an active authoritative server,
+                # that state satisfied this recovery cycle at the conflict linearization point. A
+                # later inactive state must not let this stale cycle resurrect a server unless a
+                # newer recovery request is pending. An inactive conflict remains unsatisfied and
+                # may immediately start a successor recovery cycle without consuming a backend
+                # failure attempt.
+                self._finish_recovery(
+                    recovery,
+                    recovery_id,
+                    completed=True,
+                    restart_if_inactive=not acquire.state.active,
+                )
+                return
 
             decision = recovery.accept(acquire)
             if isinstance(decision, AdbServerAcquireOnceIntent):
@@ -349,6 +368,7 @@ class AdbServerSupervisor:
         recovery_id: AdbServerRecoveryId,
         *,
         completed: bool,
+        restart_if_inactive: bool = True,
     ) -> None:
         """Release one recovery cycle and let authoritative state decide successor work."""
 
@@ -369,7 +389,10 @@ class AdbServerSupervisor:
             if self._running_locked():
                 active = self._server_state.snapshot().active
                 reconcile = completed and active
-                restart = (completed and not active) or (pending and not active)
+                restart = (
+                    (completed and restart_if_inactive and not active)
+                    or (pending and not active)
+                )
 
         if retry_token is not None and scheduler is not None:
             scheduler.cancel(retry_token)

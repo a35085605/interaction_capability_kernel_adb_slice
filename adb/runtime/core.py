@@ -10,7 +10,6 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
-    AdbServerBackendAcquireResult,
     AdbServerBackendAcquireSatisfied,
     AdbServerBackendAcquireSucceeded,
 )
@@ -19,8 +18,12 @@ from adb.server.lifecycle.errors import (
     AdbServerLifecycleConsistencyError,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
-from adb.server.lifecycle.coordinator import AdbServerLifecycleCoordinator
+from adb.server.lifecycle.coordinator import (
+    AdbServerAcquireOnceResult,
+    AdbServerLifecycleCoordinator,
+)
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
+from adb.server.state import AdbServerActivationStateConflict
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.state import AdbTransportListSnapshotView
@@ -165,12 +168,12 @@ class AdbRuntime(AdbManagedRuntime):
 
         return self._state.transport_list
 
-    def acquire_server_once(self) -> AdbServerBackendAcquireResult | None:
+    def acquire_server_once(self) -> AdbServerAcquireOnceResult | None:
         """Execute at most one backend acquisition through runtime lifecycle ownership."""
 
         return self._server_lifecycle.acquire_once()
 
-    def provision_server(self) -> AdbServerBackendAcquireResult | None:
+    def provision_server(self) -> AdbServerAcquireOnceResult | None:
         """Compatibility name for one runtime-owned server acquisition attempt."""
 
         return self.acquire_server_once()
@@ -190,6 +193,10 @@ class AdbRuntime(AdbManagedRuntime):
         if acquire is None:
             raise AdbServerLifecycleConsistencyError(
                 "initial ADB server acquisition did not execute"
+            )
+        if isinstance(acquire, AdbServerActivationStateConflict):
+            raise AdbServerLifecycleConsistencyError(
+                "initial ADB server acquisition lost its authoritative-state activation fence"
             )
         if isinstance(acquire, AdbServerBackendAcquireInProgress):
             detail = acquire.diagnostic or "ADB server backend acquire is already in progress"

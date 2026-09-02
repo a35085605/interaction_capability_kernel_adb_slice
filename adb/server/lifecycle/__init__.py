@@ -6,9 +6,13 @@ from adb.server.lifecycle.errors import (
     AdbServerLifecycleError,
 )
 from adb.server.lifecycle.backend import AdbServerBackend
-from adb.server.lifecycle.coordinator import AdbServerLifecycleCoordinator
+from adb.server.lifecycle.coordinator import (
+    AdbServerAcquireOnceResult,
+    AdbServerLifecycleCoordinator,
+)
 
 __all__ = [
+    "AdbServerAcquireOnceResult",
     "AdbServerBackend",
     "AdbServerLifecycleCoordinator",
     "AdbServerBootstrapError",
