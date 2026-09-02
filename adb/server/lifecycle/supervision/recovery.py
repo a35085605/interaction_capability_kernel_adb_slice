@@ -19,9 +19,6 @@ from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 
 
 _RandomSource = Callable[[], float]
-_UsableAcquireResult: TypeAlias = (
-    AdbServerBackendAcquireSucceeded | AdbServerBackendAcquireSatisfied
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +42,11 @@ class AdbServerRecoveryAttempt:
 
 
 @dataclass(frozen=True, slots=True)
+class AdbServerRecoveryAcquired:
+    """Terminal decision that acquisition produced a usable backend attachment."""
+
+
+@dataclass(frozen=True, slots=True)
 class AdbServerRecoveryFailed:
     """Terminal recovery result after genuine failures exhaust the retry budget."""
 
@@ -60,7 +62,7 @@ class AdbServerRecoveryFailed:
             raise TypeError("cause must be AdbServerBackendAcquireFailed")
 
 
-AdbServerRecoveryResult: TypeAlias = _UsableAcquireResult | AdbServerRecoveryFailed
+AdbServerRecoveryResult: TypeAlias = AdbServerRecoveryAcquired | AdbServerRecoveryFailed
 AdbServerRecoveryDecision: TypeAlias = AdbServerRecoveryAttempt | AdbServerRecoveryResult
 
 
@@ -126,7 +128,7 @@ class AdbServerRecovery:
             result,
             (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
         ):
-            return result
+            return AdbServerRecoveryAcquired()
 
         if isinstance(result, (AdbServerBackendAcquireInProgress, AdbServerBackendAcquireBlocked)):
             return self._next_attempt(self._policy.deferred_retry_seconds)
@@ -160,6 +162,7 @@ class AdbServerRecovery:
 
 __all__ = [
     "AdbServerRecovery",
+    "AdbServerRecoveryAcquired",
     "AdbServerRecoveryAttempt",
     "AdbServerRecoveryDecision",
     "AdbServerRecoveryFailed",

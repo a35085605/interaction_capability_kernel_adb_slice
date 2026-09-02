@@ -6,13 +6,7 @@ from threading import RLock, Thread, current_thread
 from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServerIdentity
-from adb.server.lifecycle.backend import (
-    AdbServerBackendAcquireBlocked,
-    AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireInProgress,
-    AdbServerBackendAcquireSatisfied,
-    AdbServerBackendAcquireSucceeded,
-)
+from adb.server.lifecycle.backend import AdbServerBackendAcquireResult
 from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
     AdbServerProvisionResult,
@@ -21,6 +15,7 @@ from adb.server.lifecycle.coordinator import (
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
+    AdbServerRecoveryAcquired,
     AdbServerRecoveryAttempt,
     AdbServerRecoveryFailed,
 )
@@ -31,6 +26,7 @@ from adb.server.signal import (
 )
 from adb.server.state import (
     AdbServerActivated,
+    AdbServerActivationResult,
     AdbServerActivationStateConflict,
     AdbServerDeactivated,
     AdbServerStateView,
@@ -329,61 +325,32 @@ class AdbServerSupervisor:
         recovery_id: AdbServerRecoveryId,
         evidence: AdbServerProvisionResult,
     ) -> None:
-        """Interpret ordered raw lifecycle evidence for one recovery provision call."""
+        """Interpret lifecycle evidence by semantic outcome rather than tuple shape."""
 
         if not isinstance(evidence, tuple) or not evidence:
             raise TypeError("server lifecycle provision() must return non-empty ordered evidence")
 
-        first = evidence[0]
-        if isinstance(first, AdbServerAlreadyActive):
-            if len(evidence) != 1:
-                raise TypeError("already-active provision evidence must be terminal")
+        already_active = next(
+            (item for item in evidence if isinstance(item, AdbServerAlreadyActive)),
+            None,
+        )
+        if already_active is not None:
             self._finish_recovery(recovery, recovery_id, completed=True)
             return
 
-        if isinstance(
-            first,
-            (
-                AdbServerBackendAcquireInProgress,
-                AdbServerBackendAcquireBlocked,
-                AdbServerBackendAcquireFailed,
-            ),
-        ):
-            if len(evidence) != 1:
-                raise TypeError("non-usable backend acquire evidence must be terminal")
-            decision = recovery.decide_after(first)
-            if isinstance(decision, AdbServerRecoveryAttempt):
-                self._apply_recovery_attempt(recovery, recovery_id, decision)
-                return
-            if isinstance(decision, AdbServerRecoveryFailed):
-                self._finish_recovery(recovery, recovery_id, completed=False)
-                return
-            raise TypeError("recovery returned an unsupported decision")
-
-        if not isinstance(
-            first,
-            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
-        ):
-            raise TypeError(
-                "provision evidence must begin with already-active or backend acquire evidence"
-            )
-        if len(evidence) != 2:
-            raise TypeError(
-                "usable backend acquire evidence must be followed by activation evidence"
-            )
-
-        activation = evidence[1]
+        activation = next(
+            (item for item in evidence if isinstance(item, AdbServerActivationResult)),
+            None,
+        )
         if isinstance(activation, AdbServerActivated):
             self._finish_recovery(recovery, recovery_id, completed=True)
             return
         if isinstance(activation, AdbServerActivationStateConflict):
-            # The backend attachment acquired by this attempt has already been released by the
-            # lifecycle coordinator. If the conflict observed an active authoritative server,
-            # that state satisfied this recovery cycle at the conflict linearization point. A
-            # later inactive state must not let this stale cycle resurrect a server unless a
-            # newer recovery request is pending. An inactive conflict remains unsatisfied and
-            # may immediately start a successor recovery cycle without consuming a backend
-            # failure attempt.
+            # If the conflict observed an active authoritative server, that state satisfied this
+            # recovery cycle at the conflict linearization point. A later inactive state must not
+            # let this stale cycle resurrect a server unless a newer recovery request is pending.
+            # An inactive conflict remains unsatisfied and may immediately start a successor
+            # recovery cycle without consuming a backend failure attempt.
             self._finish_recovery(
                 recovery,
                 recovery_id,
@@ -391,7 +358,27 @@ class AdbServerSupervisor:
                 restart_if_inactive=not activation.state.active,
             )
             return
-        raise TypeError("usable backend acquire evidence must be followed by activation evidence")
+
+        acquisition = next(
+            (item for item in evidence if isinstance(item, AdbServerBackendAcquireResult)),
+            None,
+        )
+        if acquisition is None:
+            raise TypeError(
+                "server lifecycle provision() returned no recognized recovery evidence"
+            )
+
+        decision = recovery.decide_after(acquisition)
+        if isinstance(decision, AdbServerRecoveryAttempt):
+            self._apply_recovery_attempt(recovery, recovery_id, decision)
+            return
+        if isinstance(decision, AdbServerRecoveryAcquired):
+            self._finish_recovery(recovery, recovery_id, completed=True)
+            return
+        if isinstance(decision, AdbServerRecoveryFailed):
+            self._finish_recovery(recovery, recovery_id, completed=False)
+            return
+        raise TypeError("recovery returned an unsupported decision")
 
     def _finish_recovery(
         self,
