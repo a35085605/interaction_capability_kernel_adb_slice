@@ -20,7 +20,7 @@ from adb.tracking.observation import (
     AdbTrackedTransportObservation,
     AdbTransportState,
 )
-from adb.tracking.snapshot.identity import AdbTransportListSnapshot
+from adb.tracking.snapshot.model import AdbTransportListSnapshot
 from adb.tracking.snapshot.reader import AdbTransportListSnapshotReader
 from adb.tracking.snapshot.interpretation import (
     AdbObservedTransportCompatibility,

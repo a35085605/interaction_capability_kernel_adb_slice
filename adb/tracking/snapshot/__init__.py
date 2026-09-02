@@ -1,10 +1,6 @@
-"""Domain-identified ADB transport-list snapshots, state, readers, and queries."""
+"""ADB transport-list snapshot values, state, readers, and queries."""
 
-from adb.tracking.snapshot.identity import (
-    AdbTransportListSnapshot,
-    AdbTransportListSnapshotEpoch,
-    AdbTransportListSnapshotEpochSequence,
-)
+from adb.tracking.snapshot.model import AdbTransportListSnapshot
 from adb.tracking.snapshot.lookup import (
     AdbTrackedTransportLookup,
     SnapshotAdbTrackedTransportLookup,
@@ -41,8 +37,6 @@ __all__ = [
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",
     "AdbTransportListSnapshot",
-    "AdbTransportListSnapshotEpoch",
-    "AdbTransportListSnapshotEpochSequence",
     "AdbTransportListSnapshotReader",
     "AdbTransportListSnapshotState",
     "AdbTransportListSnapshotView",

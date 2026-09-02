@@ -4,7 +4,6 @@ from collections.abc import Callable
 from threading import Event, Lock, Thread, current_thread
 from typing import Protocol, runtime_checkable
 
-from adb.epoch import EpochIssuer
 from adb.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
@@ -16,10 +15,7 @@ from adb.server.identity import AdbServerIdentity
 from adb.tracking.observation import AdbTrackedTransportObservation
 from adb.tracking.transport_list import AdbTransportList
 from adb.tracking.watch import AdbTransportListWatch, AdbTransportListWatcher
-from adb.tracking.snapshot.identity import (
-    AdbTransportListSnapshot,
-    AdbTransportListSnapshotEpoch,
-)
+from adb.tracking.snapshot.model import AdbTransportListSnapshot
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
 from adb.tracking.signal import (
     AdbTransportListSnapshotObserved,
@@ -79,7 +75,6 @@ class ThreadedAdbTransportListWatchController:
         publisher: EventPublisher,
         startup_timeout_seconds: float = 5.0,
         *,
-        transport_list_snapshot_epoch_issuer: EpochIssuer[AdbTransportListSnapshotEpoch],
         _watcher_factory: _TransportListWatcherFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
@@ -89,8 +84,6 @@ class ThreadedAdbTransportListWatchController:
             raise TypeError("endpoint must be TcpAddress")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
-        if not isinstance(transport_list_snapshot_epoch_issuer, EpochIssuer):
-            raise TypeError("transport_list_snapshot_epoch_issuer must satisfy EpochIssuer")
         if _watcher_factory is not None and not callable(_watcher_factory):
             raise TypeError("_watcher_factory must be callable or None")
         if not callable(_thread_factory):
@@ -99,7 +92,6 @@ class ThreadedAdbTransportListWatchController:
         self.endpoint = endpoint
         self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
-        self._transport_list_snapshot_epoch_issuer = transport_list_snapshot_epoch_issuer
         self._watcher_factory = _watcher_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
@@ -322,10 +314,7 @@ class ThreadedAdbTransportListWatchController:
             raise TypeError(
                 "observations must be a tuple of AdbTrackedTransportObservation values"
             )
-        return AdbTransportListSnapshot(
-            observations=observations,
-            epoch=self._transport_list_snapshot_epoch_issuer.issue(),
-        )
+        return AdbTransportListSnapshot(observations=observations)
 
     def _can_publish_from(self, watcher: AdbTransportListWatcher) -> bool:
         with self._lock:

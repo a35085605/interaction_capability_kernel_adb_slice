@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 
-from adb.epoch import EpochIssuer
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from adb.server.failure import AdbServerConnectionFailure
 from networking import TcpAddress
@@ -12,7 +11,6 @@ from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.tracking.supervision.policy import AdbTransportListWatchSupervisionPolicy
 from adb.server.signal import AdbServerReconciliationRequested
-from adb.tracking.snapshot.identity import AdbTransportListSnapshotEpoch
 from adb.tracking.snapshot.state import AdbTransportListStateStore
 from adb.tracking.publication import (
     AdbTransportListStateBackedWatchPublisher,
@@ -32,12 +30,7 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 _ThreadFactory = Callable[..., Thread]
 _ControllerFactory = Callable[
-    [
-        AdbServerIdentity,
-        AdbServerEndpoint,
-        EventPublisher,
-        EpochIssuer[AdbTransportListSnapshotEpoch],
-    ],
+    [AdbServerIdentity, AdbServerEndpoint, EventPublisher],
     AdbTransportListWatchController,
 ]
 
@@ -61,7 +54,6 @@ class AdbTransportListWatchSupervisor:
         policy: AdbTransportListWatchSupervisionPolicy,
         *,
         server_state: AdbServerStateView,
-        transport_list_snapshot_epoch_issuer: EpochIssuer[AdbTransportListSnapshotEpoch],
         transport_list_state: AdbTransportListStateStore | None = None,
         _controller_factory: _ControllerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
@@ -81,8 +73,6 @@ class AdbTransportListWatchSupervisor:
         initial_state = server_state.snapshot()
         if initial_state.server != server or initial_state.endpoint != endpoint:
             raise ValueError("server_state current server and endpoint must match")
-        if not isinstance(transport_list_snapshot_epoch_issuer, EpochIssuer):
-            raise TypeError("transport_list_snapshot_epoch_issuer must satisfy EpochIssuer")
         if transport_list_state is None:
             transport_list_state = AdbTransportListStateStore()
         if not isinstance(transport_list_state, AdbTransportListStateStore):
@@ -101,7 +91,6 @@ class AdbTransportListWatchSupervisor:
             self._bus,
         )
         self._policy = policy
-        self._transport_list_snapshot_epoch_issuer = transport_list_snapshot_epoch_issuer
         self._controller_factory = _controller_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
@@ -405,14 +394,12 @@ class AdbTransportListWatchSupervisor:
                 endpoint,
                 self._watch_publisher,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
-                transport_list_snapshot_epoch_issuer=self._transport_list_snapshot_epoch_issuer,
             )
             if factory is None
             else factory(
                 server,
                 endpoint,
                 self._watch_publisher,
-                self._transport_list_snapshot_epoch_issuer,
             )
         )
         if not isinstance(controller, AdbTransportListWatchController):

@@ -1,5 +1,9 @@
-"""ADB transport-list observations, state, and watch lifetimes."""
+"""ADB transport-list observations, state, identities, and watch lifetimes."""
 
+from adb.tracking.identity import (
+    AdbTransportListIdentity,
+    AdbTransportListIdentityIssuer,
+)
 from adb.tracking.snapshot import (
     AdbTransportListInvalidated,
     AdbTransportListInvalidationResult,
@@ -9,8 +13,6 @@ from adb.tracking.snapshot import (
     AdbTransportListObservationStateConflict,
     AdbTransportListObserved,
     AdbTransportListSnapshot,
-    AdbTransportListSnapshotEpoch,
-    AdbTransportListSnapshotEpochSequence,
     AdbTransportListSnapshotReader,
     AdbTransportListSnapshotState,
     AdbTransportListSnapshotView,
@@ -44,6 +46,8 @@ from adb.tracking.watch_controller import (
 )
 
 __all__ = [
+    "AdbTransportListIdentity",
+    "AdbTransportListIdentityIssuer",
     "AdbTransportListInvalidated",
     "AdbTransportListInvalidationResult",
     "AdbTransportListInvalidationStateConflict",
@@ -54,8 +58,6 @@ __all__ = [
     "AdbObservedTransportKind",
     "AdbObservedTransportState",
     "AdbTransportListSnapshot",
-    "AdbTransportListSnapshotEpoch",
-    "AdbTransportListSnapshotEpochSequence",
     "AdbTransportListSnapshotObserved",
     "AdbTransportListSnapshotReader",
     "AdbTransportListSnapshotState",

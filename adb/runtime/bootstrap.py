@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from adb.epoch import EpochIssuer
 from adb.runtime.core import AdbRuntime
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
@@ -12,10 +11,6 @@ from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.state import AdbServerStateStore
 from adb.runtime.state import AdbRuntimeState
-from adb.tracking.snapshot.identity import (
-    AdbTransportListSnapshotEpoch,
-    AdbTransportListSnapshotEpochSequence,
-)
 from adb.tracking.snapshot.state import AdbTransportListStateStore
 from adb.tracking.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
@@ -45,7 +40,6 @@ def _default_server_backend_factory() -> AdbServerBackend:
 class _BootstrapCore:
     server_backend: AdbServerBackend
     runtime_state: AdbRuntimeState
-    transport_list_snapshot_epoch_issuer: EpochIssuer[AdbTransportListSnapshotEpoch]
 
 
 class AdbRuntimeBootstrap:
@@ -181,7 +175,6 @@ class AdbRuntimeBootstrap:
                     event_bus,
                     self._transport_list_watch_supervision_policy,
                     server_state=core.runtime_state.server,
-                    transport_list_snapshot_epoch_issuer=core.transport_list_snapshot_epoch_issuer,
                     transport_list_state=core.runtime_state.transport_list,
                 )
                 if watch_transports
@@ -212,7 +205,6 @@ class AdbRuntimeBootstrap:
         return AdbRuntime(*args, **kwargs)
 
     def _build_core(self) -> _BootstrapCore:
-        transport_list_snapshot_epoch_issuer = AdbTransportListSnapshotEpochSequence()
         backend = self._server_backend_factory()
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("server backend factory must return AdbServerBackend")
@@ -223,7 +215,6 @@ class AdbRuntimeBootstrap:
                 server=AdbServerStateStore(),
                 transport_list=AdbTransportListStateStore(),
             ),
-            transport_list_snapshot_epoch_issuer=transport_list_snapshot_epoch_issuer,
         )
 
     def _configure_recovery_endpoint(

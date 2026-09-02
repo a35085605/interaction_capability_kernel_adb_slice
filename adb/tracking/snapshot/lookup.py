@@ -5,7 +5,7 @@ from typing import Protocol
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.tracking.observation import AdbTrackedTransportObservation
-from adb.tracking.snapshot.identity import AdbTransportListSnapshot
+from adb.tracking.snapshot.model import AdbTransportListSnapshot
 from adb.tracking.snapshot.reader import AdbTransportListSnapshotReader
 from adb.transport.selection import (
     AdbTransportById,

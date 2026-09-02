@@ -88,7 +88,9 @@ class AdbTransportListStateBackedWatchPublisher:
             state = self._transport_list_state.snapshot()
             current = state.current
             if current is not None and current.server != server:
-                invalidation = self._transport_list_state.invalidate(state)
+                identity = state.current_identity
+                assert identity is not None
+                invalidation = self._transport_list_state.invalidate(identity)
                 if not isinstance(invalidation, AdbTransportListInvalidated):
                     return False
             self._active_server = server
@@ -101,7 +103,8 @@ class AdbTransportListStateBackedWatchPublisher:
             if self._server_state.current != event.server:
                 return False
             observation = AdbTransportListObservation(event.server, event.snapshot)
-            result = self._transport_list_state.observe(observation)
+            expected = self._transport_list_state.snapshot()
+            result = self._transport_list_state.observe(observation, expected)
             return isinstance(result, AdbTransportListObserved)
 
     @staticmethod

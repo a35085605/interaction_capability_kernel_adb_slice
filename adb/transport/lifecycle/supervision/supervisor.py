@@ -7,6 +7,7 @@ from threading import Lock, Thread, current_thread
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
+from adb.tracking.identity import AdbTransportListIdentity
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.signal import (
     AdbConfiguredTransportRecoveryExhausted,
@@ -220,10 +221,15 @@ class AdbConfiguredTransportSupervisor:
                 )
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
-            observation = self._transport_list_state.current if self._watch_active else None
+            transport_list_state = self._transport_list_state.snapshot()
+            observation = transport_list_state.current if self._watch_active else None
+            transport_list_identity = (
+                transport_list_state.current_identity if self._watch_active else None
+            )
             server = self._server_state.current
             if (
                 observation is not None
+                and transport_list_identity is not None
                 and server is not None
                 and observation.server == server
                 and self._projection_server == server
@@ -231,6 +237,7 @@ class AdbConfiguredTransportSupervisor:
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
                     observation,
+                    transport_list_identity,
                 )
 
         if publication is not None:
@@ -258,7 +265,7 @@ class AdbConfiguredTransportSupervisor:
         self,
         configuration: AdbConfiguredTransport | AdbDeviceSerial,
     ) -> AdbConfiguredTransportProjection | None:
-        """Return the latest server- and snapshot-bound projection for one registration."""
+        """Return the latest server- and list-identity-bound projection for one registration."""
 
         if not isinstance(configuration, (AdbConfiguredTransport, AdbDeviceSerial)):
             raise TypeError("configuration must be AdbConfiguredTransport or AdbDeviceSerial")
@@ -297,8 +304,8 @@ class AdbConfiguredTransportSupervisor:
                 return
             writer = self._transport_list_writer
             if writer is not None and self._transport_list_needs_invalidation:
-                expected = self._transport_list_state.snapshot()
-                if expected.current is not None:
+                expected = self._transport_list_state.current_identity
+                if expected is not None:
                     invalidation = writer.invalidate(expected)
                     if not isinstance(invalidation, AdbTransportListInvalidated):
                         return
@@ -320,18 +327,26 @@ class AdbConfiguredTransportSupervisor:
             writer = self._transport_list_writer
             event_observation = AdbTransportListObservation(event.server, event.snapshot)
             if writer is not None:
-                result = writer.observe(event_observation)
+                expected = self._transport_list_state.snapshot()
+                result = writer.observe(event_observation, expected)
                 if not isinstance(result, AdbTransportListObserved):
                     return
                 observation = result.observation
+                transport_list_identity = result.identity
             else:
-                observation = self._transport_list_state.current
-                if observation != event_observation:
+                state = self._transport_list_state.snapshot()
+                observation = state.current
+                transport_list_identity = state.current_identity
+                if (
+                    observation != event_observation
+                    or transport_list_identity is None
+                ):
                     return
             for registration in self._registrations.values():
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
                     observation,
+                    transport_list_identity,
                 )
                 if publication is not None:
                     publications.append(publication)
@@ -362,18 +377,21 @@ class AdbConfiguredTransportSupervisor:
         self,
         registration: _ConfiguredTransportRegistration,
         observation: AdbTransportListObservation,
+        transport_list_identity: AdbTransportListIdentity,
     ) -> tuple[AdbConfiguredTransportResolutionChanged | None, bool]:
         if observation.server != self._projection_server:
             raise ValueError(
                 "transport-list observation does not match projection server lifetime"
             )
+        if not isinstance(transport_list_identity, AdbTransportListIdentity):
+            raise TypeError("transport_list_identity must be AdbTransportListIdentity")
         previous = registration.projection
         resolution = observation.snapshot.resolve_configured_transport(
             registration.configuration
         )
         current = AdbConfiguredTransportProjection(
             server=observation.server,
-            snapshot_epoch=observation.epoch,
+            transport_list=transport_list_identity,
             resolution=resolution,
         )
         changed = previous is None or previous.resolution != current.resolution
