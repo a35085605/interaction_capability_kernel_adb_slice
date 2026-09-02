@@ -9,7 +9,7 @@ from threading import Condition, Lock
 from time import monotonic, sleep
 from typing import Protocol
 
-from adb.cli.subprocess import normalize_executable, normalize_timeout
+from adb.adapters.subprocess.command import normalize_executable, normalize_timeout
 from adb.errors import AdbError
 from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress

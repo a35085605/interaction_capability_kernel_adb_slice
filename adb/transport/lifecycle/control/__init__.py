@@ -1,4 +1,4 @@
-"""ADB transport lifecycle control contracts and subprocess adapters."""
+"""ADB transport lifecycle control contracts."""
 
 from adb.transport.lifecycle.control.port import (
     AdbDeviceSideReconnect,
@@ -13,7 +13,6 @@ from adb.transport.lifecycle.control.port import (
     AdbTransportReconnect,
     AdbTransportReconnector,
 )
-from adb.transport.lifecycle.control.subprocess import SubprocessAdbTransportController
 
 __all__ = [
     "AdbDeviceSideReconnect",
@@ -27,5 +26,4 @@ __all__ = [
     "AdbTransportCommandOperation",
     "AdbTransportReconnect",
     "AdbTransportReconnector",
-    "SubprocessAdbTransportController",
 ]
