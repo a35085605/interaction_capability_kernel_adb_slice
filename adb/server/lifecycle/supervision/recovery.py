@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from random import random
 from typing import TypeAlias
 
-from adb.server.lifecycle.control.backend import (
+from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,

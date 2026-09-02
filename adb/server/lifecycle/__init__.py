@@ -1,3 +1,15 @@
-"""ADB server lifecycle control and bounded acquisition recovery."""
+"""ADB server lifecycle contracts and bounded acquisition recovery."""
 
-__all__: list[str] = []
+from adb.server.lifecycle.errors import (
+    AdbServerBootstrapError,
+    AdbServerLifecycleConsistencyError,
+    AdbServerLifecycleError,
+)
+from adb.server.lifecycle.backend import AdbServerBackend
+
+__all__ = [
+    "AdbServerBackend",
+    "AdbServerBootstrapError",
+    "AdbServerLifecycleConsistencyError",
+    "AdbServerLifecycleError",
+]

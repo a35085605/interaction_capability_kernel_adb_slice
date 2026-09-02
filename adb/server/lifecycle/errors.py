@@ -1,4 +1,4 @@
-"""Typed exceptional failures exposed by the ADB server lifecycle control boundary."""
+"""Typed exceptional failures exposed by the ADB server lifecycle boundary."""
 
 
 class AdbServerLifecycleError(RuntimeError):

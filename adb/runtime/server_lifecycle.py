@@ -6,7 +6,7 @@ from networking import TcpAddress
 from adb.runtime.state import AdbRuntimeState
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
-from adb.server.lifecycle.control.backend import (
+from adb.server.lifecycle.backend import (
     AdbServerBackend,
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
@@ -15,7 +15,7 @@ from adb.server.lifecycle.control.backend import (
     AdbServerBackendAcquireSatisfied,
     AdbServerBackendAcquireSucceeded,
 )
-from adb.server.lifecycle.control.errors import AdbServerLifecycleConsistencyError
+from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
 from adb.server.state import (
     AdbServerActivated,
     AdbServerActivationStateConflict,

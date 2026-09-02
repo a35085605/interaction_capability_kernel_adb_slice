@@ -2,12 +2,12 @@
 
 from adb.server.availability import AdbServerUnavailableError
 
-from adb.server.lifecycle.control.errors import (
+from adb.server.lifecycle.errors import (
     AdbServerBootstrapError,
     AdbServerLifecycleConsistencyError,
     AdbServerLifecycleError,
 )
-from adb.server.lifecycle.control.backend import AdbServerBackend
+from adb.server.lifecycle.backend import AdbServerBackend
 from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerFailure,

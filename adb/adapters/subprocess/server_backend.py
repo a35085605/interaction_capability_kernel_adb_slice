@@ -14,7 +14,7 @@ from adb.errors import AdbError
 from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.control.backend import (
+from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
