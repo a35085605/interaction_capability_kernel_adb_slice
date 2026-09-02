@@ -78,26 +78,6 @@ AdbServerBackendAcquireResult: TypeAlias = (
 )
 
 
-class _AdbServerBackendEndpointMismatchError(RuntimeError):
-    """Ownership error for a release endpoint different from the backend-owned endpoint."""
-
-
-def _require_owned_release_endpoint(
-    owned: AdbServerEndpoint,
-    requested: AdbServerEndpoint,
-) -> None:
-    """Reject release of an endpoint other than the exact backend-owned endpoint."""
-
-    if not isinstance(owned, TcpAddress):
-        raise TypeError("owned must be TcpAddress")
-    if not isinstance(requested, TcpAddress):
-        raise TypeError("requested must be TcpAddress")
-    if owned != requested:
-        raise _AdbServerBackendEndpointMismatchError(
-            "requested endpoint does not identify the backend-owned ADB server endpoint"
-        )
-
-
 @runtime_checkable
 class AdbServerBackend(Protocol):
     """Own acquisition and physical convergence of one usable ADB server attachment."""

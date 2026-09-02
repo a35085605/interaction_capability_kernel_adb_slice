@@ -21,7 +21,6 @@ from adb.server.lifecycle.control.backend import (
     AdbServerBackendAcquireResult,
     AdbServerBackendAcquireSatisfied,
     AdbServerBackendAcquireSucceeded,
-    _require_owned_release_endpoint,
 )
 from adb.adapters.aosp.server_status import SmartSocketAdbServerStatusReader
 
@@ -31,6 +30,26 @@ _Sleeper = Callable[[float], None]
 _PopenFactory = Callable[..., subprocess.Popen[bytes]]
 _Resolver = Callable[..., list[tuple[object, ...]]]
 _SocketFactory = Callable[[int, int, int], socket.socket]
+
+
+class _AdbServerBackendEndpointMismatchError(RuntimeError):
+    """Ownership error for a release endpoint different from the backend-owned endpoint."""
+
+
+def _require_owned_release_endpoint(
+    owned: AdbServerEndpoint,
+    requested: AdbServerEndpoint,
+) -> None:
+    """Reject release of an endpoint other than the exact backend-owned endpoint."""
+
+    if not isinstance(owned, TcpAddress):
+        raise TypeError("owned must be TcpAddress")
+    if not isinstance(requested, TcpAddress):
+        raise TypeError("requested must be TcpAddress")
+    if owned != requested:
+        raise _AdbServerBackendEndpointMismatchError(
+            "requested endpoint does not identify the backend-owned ADB server endpoint"
+        )
 
 
 class _AdbServerBackendOperation(str, Enum):

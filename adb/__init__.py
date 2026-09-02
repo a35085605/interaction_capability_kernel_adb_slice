@@ -22,6 +22,7 @@ from adb.api import (
     AdbServerEndpoint,
 )
 from adb.runtime import AdbManagedRuntime, AdbServerLifecycleRuntimeFacade
+from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server import (
     AdbServerActivated,
     AdbServerActivationRejected,
@@ -44,7 +45,6 @@ from adb.server import (
     AdbServerStateWriter,
     AdbServerStatusReader,
     AdbServerUnavailableError,
-    SubprocessAdbServerBackend,
 )
 from adb.tracking import (
     AdbTransportListObservation,

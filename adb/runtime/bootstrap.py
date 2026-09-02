@@ -8,7 +8,7 @@ from adb.runtime.core import AdbRuntime
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.control.backend import AdbServerBackend
-from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
+from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.state import AdbServerStateStore
 from adb.runtime.state import AdbRuntimeState
