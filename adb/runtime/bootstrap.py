@@ -109,7 +109,7 @@ class AdbRuntimeBootstrap:
             runtime = self._build_runtime(
                 core.runtime_state,
                 server_backend=core.server_backend,
-                server_provision_endpoint=self._endpoint,
+                server_endpoint_constraint=self._endpoint,
                 transport_supervision_policy=self._transport_supervision_policy,
                 _bootstrap_server=True,
             )
@@ -154,7 +154,7 @@ class AdbRuntimeBootstrap:
             runtime = self._build_runtime(
                 core.runtime_state,
                 server_backend=core.server_backend,
-                server_provision_endpoint=self._endpoint,
+                server_endpoint_constraint=self._endpoint,
                 event_bus=event_bus,
                 server_supervision_scheduler=scheduler,
                 server_supervision_policy=self._server_recovery_policy,
@@ -225,8 +225,8 @@ class AdbRuntimeBootstrap:
         initial_endpoint = runtime.current_endpoint
         if initial_server is None or initial_endpoint is None:
             raise RuntimeError("bootstrapped ADB runtime has no initial server binding")
-        recovery_endpoint = initial_endpoint if self._pin_endpoint else None
-        runtime._configure_server_provision_endpoint(recovery_endpoint)
+        recovery_endpoint_constraint = initial_endpoint if self._pin_endpoint else None
+        runtime._configure_server_endpoint_constraint(recovery_endpoint_constraint)
 
     @staticmethod
     def _dispose_failed_runtime(runtime: AdbRuntime) -> None:

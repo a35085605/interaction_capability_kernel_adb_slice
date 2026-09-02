@@ -43,7 +43,7 @@ class AdbRuntime(AdbManagedRuntime):
         state: AdbRuntimeState,
         *,
         server_backend: AdbServerBackend,
-        server_provision_endpoint: AdbServerEndpoint | None = None,
+        server_endpoint_constraint: AdbServerEndpoint | None = None,
         event_bus: EventBus | None = None,
         server_supervision_scheduler: TemporalScheduler[object] | None = None,
         server_supervision_policy: AdbServerRecoveryPolicy | None = None,
@@ -57,10 +57,10 @@ class AdbRuntime(AdbManagedRuntime):
             raise TypeError("state must be AdbRuntimeState")
         if not isinstance(server_backend, AdbServerBackend):
             raise TypeError("server_backend must satisfy AdbServerBackend")
-        if server_provision_endpoint is not None and not isinstance(
-            server_provision_endpoint, TcpAddress
+        if server_endpoint_constraint is not None and not isinstance(
+            server_endpoint_constraint, TcpAddress
         ):
-            raise TypeError("server_provision_endpoint must be TcpAddress or None")
+            raise TypeError("server_endpoint_constraint must be TcpAddress or None")
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if server_supervision_scheduler is not None and not isinstance(
@@ -138,7 +138,7 @@ class AdbRuntime(AdbManagedRuntime):
         self._server_lifecycle = AdbServerLifecycleCoordinator(
             state.server,
             backend=server_backend,
-            provision_endpoint=server_provision_endpoint,
+            endpoint_constraint=server_endpoint_constraint,
         )
         if _bootstrap_server:
             self._bootstrap_initial_server()
@@ -206,7 +206,7 @@ class AdbRuntime(AdbManagedRuntime):
         if not isinstance(provision, AdbServerActivated):
             raise TypeError("server lifecycle provision() returned an unsupported result")
 
-    def _configure_server_provision_endpoint(
+    def _configure_server_endpoint_constraint(
         self,
         endpoint: AdbServerEndpoint | None,
     ) -> None:
@@ -217,9 +217,9 @@ class AdbRuntime(AdbManagedRuntime):
         with self._runtime_lock:
             if self._closed or self._started or self._starting:
                 raise RuntimeError(
-                    "ADB server provision endpoint can only be configured before runtime start"
+                    "ADB server endpoint constraint can only be configured before runtime start"
                 )
-            self._server_lifecycle.configure_provision_endpoint(endpoint)
+            self._server_lifecycle.configure_endpoint_constraint(endpoint)
 
     def _install_auxiliary_supervisors(
         self,

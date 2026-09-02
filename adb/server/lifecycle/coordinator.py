@@ -56,17 +56,17 @@ class AdbServerLifecycleCoordinator:
         state: AdbServerStateStore,
         *,
         backend: AdbServerBackend,
-        provision_endpoint: AdbServerEndpoint | None,
+        endpoint_constraint: AdbServerEndpoint | None,
     ) -> None:
         if not isinstance(state, AdbServerStateStore):
             raise TypeError("state must be AdbServerStateStore")
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("backend must satisfy AdbServerBackend")
-        if provision_endpoint is not None and not isinstance(provision_endpoint, TcpAddress):
-            raise TypeError("provision_endpoint must be TcpAddress or None")
+        if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
+            raise TypeError("endpoint_constraint must be TcpAddress or None")
         self._state = state
         self._backend = backend
-        self._provision_endpoint = provision_endpoint
+        self._endpoint_constraint = endpoint_constraint
         self._lock = RLock()
 
     def provision(self) -> AdbServerProvisionResult:
@@ -87,7 +87,7 @@ class AdbServerLifecycleCoordinator:
                 assert endpoint is not None
                 return AdbServerAlreadyActive(server, endpoint)
 
-            acquire = self._backend.acquire(self._provision_endpoint)
+            acquire = self._backend.acquire(self._endpoint_constraint)
             if isinstance(
                 acquire,
                 (
@@ -104,7 +104,7 @@ class AdbServerLifecycleCoordinator:
                 raise TypeError("server backend acquire() returned an unsupported result")
 
             endpoint = acquire.endpoint
-            if self._provision_endpoint is not None and endpoint != self._provision_endpoint:
+            if self._endpoint_constraint is not None and endpoint != self._endpoint_constraint:
                 self._backend.release(endpoint)
                 raise AdbServerLifecycleConsistencyError(
                     "endpoint-constrained ADB server backend acquisition returned a different endpoint"
@@ -153,13 +153,13 @@ class AdbServerLifecycleCoordinator:
             self._backend.release(committed_endpoint)
             return deactivation
 
-    def configure_provision_endpoint(self, endpoint: AdbServerEndpoint | None) -> None:
+    def configure_endpoint_constraint(self, endpoint_constraint: AdbServerEndpoint | None) -> None:
         """Replace the endpoint constraint used by subsequent acquisition attempts."""
 
-        if endpoint is not None and not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress or None")
+        if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
+            raise TypeError("endpoint_constraint must be TcpAddress or None")
         with self._lock:
-            self._provision_endpoint = endpoint
+            self._endpoint_constraint = endpoint_constraint
 
 
 __all__ = [
