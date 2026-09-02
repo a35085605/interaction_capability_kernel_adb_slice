@@ -5,19 +5,20 @@ from datetime import timedelta
 from threading import RLock, Thread, current_thread
 from typing import Protocol, runtime_checkable
 
-from adb.server.failure import AdbServerLaunchFailure
 from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.coordinator import AdbServerProvisionResult
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
+from adb.server.lifecycle.backend import (
+    AdbServerBackendAcquireSatisfied,
+    AdbServerBackendAcquireSucceeded,
+)
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
     AdbServerRecoveryAttempt,
-    AdbServerRecoveryCompleted,
-    AdbServerRecoveryExhaust,
+    AdbServerRecoveryFailed,
 )
 from adb.server.signal import (
     AdbServerReconciliationRequested,
-    AdbServerRecoveryExhausted,
     AdbServerRecoveryId,
     AdbServerRecoveryRetryDue,
 )
@@ -342,19 +343,13 @@ class AdbServerSupervisor:
             if isinstance(decision, AdbServerRecoveryAttempt):
                 self._apply_recovery_attempt(recovery, recovery_id, decision)
                 return
-            if isinstance(decision, AdbServerRecoveryCompleted):
+            if isinstance(
+                decision,
+                (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+            ):
                 self._finish_recovery(recovery, recovery_id, completed=True)
                 return
-            if isinstance(decision, AdbServerRecoveryExhaust):
-                event_bus = self._event_bus
-                if event_bus is not None:
-                    event_bus.publish(
-                        AdbServerRecoveryExhausted(
-                            recovery_id,
-                            decision.attempts,
-                            AdbServerLaunchFailure(decision.acquire.diagnostic),
-                        )
-                    )
+            if isinstance(decision, AdbServerRecoveryFailed):
                 self._finish_recovery(recovery, recovery_id, completed=False)
                 return
             raise TypeError("recovery returned an unsupported decision")

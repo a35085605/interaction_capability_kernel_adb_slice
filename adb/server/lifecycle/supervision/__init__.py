@@ -4,9 +4,9 @@ from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
     AdbServerRecoveryAttempt,
-    AdbServerRecoveryCompleted,
     AdbServerRecoveryDecision,
-    AdbServerRecoveryExhaust,
+    AdbServerRecoveryFailed,
+    AdbServerRecoveryResult,
 )
 
 from adb.server.lifecycle.supervision.supervisor import (
@@ -17,9 +17,9 @@ from adb.server.lifecycle.supervision.supervisor import (
 __all__ = [
     "AdbServerRecovery",
     "AdbServerRecoveryAttempt",
-    "AdbServerRecoveryCompleted",
     "AdbServerRecoveryDecision",
-    "AdbServerRecoveryExhaust",
+    "AdbServerRecoveryFailed",
+    "AdbServerRecoveryResult",
     "AdbServerRecoveryPolicy",
     "AdbServerLifecyclePort",
     "AdbServerSupervisor",

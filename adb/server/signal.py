@@ -6,7 +6,6 @@ from uuid import uuid4
 
 from adb.server.failure import (
     AdbServerConnectionFailure,
-    AdbServerLaunchFailure,
     AdbServerLivenessFailure,
     AdbServerProcessExitedFailure,
 )
@@ -87,36 +86,12 @@ class AdbServerRecoveryRetryDue:
             raise ValueError("attempt_number must be greater than zero")
 
 
-@dataclass(frozen=True, slots=True)
-class AdbServerRecoveryExhausted:
-    """Signal that genuine ADB server launch failures exhausted the retry budget."""
-
-    recovery_id: AdbServerRecoveryId
-    attempts: int
-    failure: AdbServerLaunchFailure
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.recovery_id, AdbServerRecoveryId):
-            raise TypeError("recovery_id must be AdbServerRecoveryId")
-        if isinstance(self.attempts, bool) or not isinstance(self.attempts, int):
-            raise TypeError("attempts must be an integer")
-        if self.attempts <= 0:
-            raise ValueError("attempts must be greater than zero")
-        if not isinstance(self.failure, AdbServerLaunchFailure):
-            raise TypeError("failure must be AdbServerLaunchFailure")
-
-
-AdbServerSignal: TypeAlias = (
-    AdbServerReconciliationRequested
-    | AdbServerRecoveryRetryDue
-    | AdbServerRecoveryExhausted
-)
+AdbServerSignal: TypeAlias = AdbServerReconciliationRequested | AdbServerRecoveryRetryDue
 
 
 __all__ = [
     "AdbServerReconciliationRequested",
     "AdbServerRecoveryId",
-    "AdbServerRecoveryExhausted",
     "AdbServerRecoveryRetryDue",
     "AdbServerSignal",
 ]

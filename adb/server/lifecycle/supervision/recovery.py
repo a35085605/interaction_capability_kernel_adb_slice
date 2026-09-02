@@ -45,38 +45,23 @@ class AdbServerRecoveryAttempt:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerRecoveryCompleted:
-    """Recovery decision reporting a usable backend attachment."""
-
-    acquire: _UsableAcquireResult
-
-    def __post_init__(self) -> None:
-        if not isinstance(
-            self.acquire,
-            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
-        ):
-            raise TypeError("acquire must be a usable ADB server backend acquire result")
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerRecoveryExhaust:
-    """Recovery decision reporting that genuine failures exhausted the retry budget."""
+class AdbServerRecoveryFailed:
+    """Terminal recovery result after genuine failures exhaust the retry budget."""
 
     attempts: int
-    acquire: AdbServerBackendAcquireFailed
+    cause: AdbServerBackendAcquireFailed
 
     def __post_init__(self) -> None:
         if isinstance(self.attempts, bool) or not isinstance(self.attempts, int):
             raise TypeError("attempts must be an integer")
         if self.attempts <= 0:
             raise ValueError("attempts must be greater than zero")
-        if not isinstance(self.acquire, AdbServerBackendAcquireFailed):
-            raise TypeError("acquire must be AdbServerBackendAcquireFailed")
+        if not isinstance(self.cause, AdbServerBackendAcquireFailed):
+            raise TypeError("cause must be AdbServerBackendAcquireFailed")
 
 
-AdbServerRecoveryDecision: TypeAlias = (
-    AdbServerRecoveryAttempt | AdbServerRecoveryCompleted | AdbServerRecoveryExhaust
-)
+AdbServerRecoveryResult: TypeAlias = _UsableAcquireResult | AdbServerRecoveryFailed
+AdbServerRecoveryDecision: TypeAlias = AdbServerRecoveryAttempt | AdbServerRecoveryResult
 
 
 class AdbServerRecovery:
@@ -141,7 +126,7 @@ class AdbServerRecovery:
             result,
             (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
         ):
-            return AdbServerRecoveryCompleted(result)
+            return result
 
         if isinstance(result, (AdbServerBackendAcquireInProgress, AdbServerBackendAcquireBlocked)):
             return self._next_attempt(self._policy.deferred_retry_seconds)
@@ -151,7 +136,7 @@ class AdbServerRecovery:
             self._policy.max_attempts is not None
             and self._failed_attempts >= self._policy.max_attempts
         ):
-            return AdbServerRecoveryExhaust(self._failed_attempts, result)
+            return AdbServerRecoveryFailed(self._failed_attempts, result)
 
         return self._next_attempt(self._retry_delay(self._failed_attempts))
 
@@ -176,7 +161,7 @@ class AdbServerRecovery:
 __all__ = [
     "AdbServerRecovery",
     "AdbServerRecoveryAttempt",
-    "AdbServerRecoveryCompleted",
     "AdbServerRecoveryDecision",
-    "AdbServerRecoveryExhaust",
+    "AdbServerRecoveryFailed",
+    "AdbServerRecoveryResult",
 ]
