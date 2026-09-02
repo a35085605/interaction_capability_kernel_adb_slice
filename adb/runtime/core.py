@@ -6,7 +6,10 @@ from adb.runtime.managed import AdbManagedRuntime
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.control.backend import AdbServerBackend
-from adb.server.lifecycle.control.errors import AdbServerControlError
+from adb.server.lifecycle.control.errors import (
+    AdbServerBootstrapError,
+    AdbServerLifecycleConsistencyError,
+)
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
@@ -206,17 +209,17 @@ class AdbRuntime(AdbManagedRuntime):
 
         result = self.provision_server()
         if isinstance(result, AdbServerProvisionDeferred):
-            raise AdbServerControlError(
+            raise AdbServerBootstrapError(
                 f"initial ADB server provisioning deferred: {result.diagnostic}"
             )
         if isinstance(result, AdbServerProvisionFailed):
-            raise AdbServerControlError(
+            raise AdbServerBootstrapError(
                 f"initial ADB server provisioning failed: {result.diagnostic}"
             )
         if not isinstance(result, AdbServerProvisionCommitted):
             raise TypeError("server lifecycle facade returned an unsupported provision result")
         if self._state.server.current != result.server:
-            raise AdbServerControlError(
+            raise AdbServerLifecycleConsistencyError(
                 "initial ADB server provisioning did not commit its server lifetime"
             )
 

@@ -6,7 +6,11 @@ from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
 )
-from adb.server.lifecycle.control.errors import AdbServerControlError
+from adb.server.lifecycle.control.errors import (
+    AdbServerBootstrapError,
+    AdbServerLifecycleConsistencyError,
+    AdbServerLifecycleError,
+)
 from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.transaction import (
     AdbServerProvisionCommitted,
@@ -52,7 +56,9 @@ __all__ = [
     "AdbServerDeactivationResult",
     "AdbMdnsBackend",
     "AdbServerConnectionFailure",
-    "AdbServerControlError",
+    "AdbServerBootstrapError",
+    "AdbServerLifecycleConsistencyError",
+    "AdbServerLifecycleError",
     "AdbServerProvisionDeferred",
     "AdbServerProvisionFailed",
     "AdbServerProvisionCommitted",
