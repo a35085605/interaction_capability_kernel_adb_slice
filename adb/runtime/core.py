@@ -1,39 +1,47 @@
 from __future__ import annotations
 
-from threading import RLock
+from datetime import timedelta
+from threading import RLock, Thread, current_thread
 
 from adb.runtime.managed import AdbManagedRuntime
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.control.backend import AdbServerBackend
+from adb.server.failure import AdbServerLaunchFailure
+from adb.server.lifecycle.control.backend import (
+    AdbServerBackend,
+    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireFailed,
+    AdbServerBackendAcquireInProgress,
+    AdbServerBackendAcquireResult,
+    AdbServerBackendAcquireSatisfied,
+    AdbServerBackendAcquireSucceeded,
+)
 from adb.server.lifecycle.control.errors import (
     AdbServerBootstrapError,
     AdbServerLifecycleConsistencyError,
 )
-from adb.server.lifecycle.control.result import (
-    AdbServerProvisionDeferred,
-    AdbServerProvisionFailed,
-)
-from adb.server.lifecycle.supervision.intent import (
-    AdbServerLifecycleIntent,
-    AdbServerLifecycleIntentResult,
-    AdbServerReconcileIntent,
-)
-from adb.server.lifecycle.transaction import AdbServerProvisionTransactionResult
+from adb.server.lifecycle.supervision.intent import AdbServerAcquireOnceIntent
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
-from adb.server.lifecycle.supervision.transition import transition_provision_result
-from adb.server.lifecycle.supervision.recovery import AdbServerRecoveryCycle
-from adb.server.signal import AdbServerReconciliationRequested
+from adb.server.lifecycle.supervision.recovery import (
+    AdbServerRecovery,
+    AdbServerRecoveryCompleted,
+    AdbServerRecoveryExhaust,
+)
+from adb.server.signal import (
+    AdbServerReconciliationRequested,
+    AdbServerRecoveryId,
+    AdbServerRecoveryExhausted,
+    AdbServerRecoveryRetryDue,
+)
 from adb.runtime.server_lifecycle import AdbServerLifecycleRuntimeFacade
 from adb.runtime.state import AdbRuntimeState
-from adb.server.state import AdbServerState
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.state import AdbTransportListSnapshotView
 from adb.tracking.supervision.supervisor import AdbTransportListWatchSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
 from eventing import EventBus, EventSubscriptionToken
-from scheduling import TemporalScheduler
+from scheduling import ScheduleToken, TemporalScheduler
 
 
 class AdbRuntime(AdbManagedRuntime):
@@ -150,7 +158,11 @@ class AdbRuntime(AdbManagedRuntime):
         self._server_recovery_scheduler = server_supervision_scheduler
         self._server_recovery_policy = server_supervision_policy
         self._server_recovery_enabled = server_recovery_enabled
-        self._server_recovery_cycle: AdbServerRecoveryCycle | None = None
+        self._server_recovery: AdbServerRecovery | None = None
+        self._server_recovery_id: AdbServerRecoveryId | None = None
+        self._server_recovery_intent: AdbServerAcquireOnceIntent | None = None
+        self._server_recovery_retry_token: ScheduleToken | None = None
+        self._server_recovery_attempt_threads: set[Thread] = set()
         self._server_recovery_pending = False
         self._transport_list_watch_supervisor = transport_list_watch_supervisor
         self._transport_supervisor = transport_supervisor
@@ -168,60 +180,53 @@ class AdbRuntime(AdbManagedRuntime):
 
         return self._state.transport_list
 
-    def dispatch_server_lifecycle_intent(
-        self,
-        intent: AdbServerLifecycleIntent,
-    ) -> AdbServerLifecycleIntentResult:
-        """Dispatch one complete server lifecycle transaction through the runtime facade."""
+    def acquire_server_once(self) -> AdbServerBackendAcquireResult | None:
+        """Execute at most one backend acquisition through runtime lifecycle ownership."""
 
-        return self._server_lifecycle.dispatch(intent)
+        return self._server_lifecycle.acquire_once()
 
-    def provision_server(self) -> AdbServerProvisionTransactionResult:
-        """Provision against the server state authoritative at execution time."""
+    def provision_server(self) -> AdbServerBackendAcquireResult | None:
+        """Compatibility name for one runtime-owned server acquisition attempt."""
 
-        return self._server_lifecycle.provision()
+        return self.acquire_server_once()
 
     def retire_server(self) -> bool:
         """Retire the server lifetime authoritative at execution time."""
 
-        return self._server_lifecycle.retire()
-
-    def _provision_server_if_current(
-        self,
-        expected: AdbServerState,
-    ) -> AdbServerProvisionTransactionResult | None:
-        """Conditionally provision from an authoritative server-state snapshot."""
-
-        return self._server_lifecycle.provision_if_current(expected)
-
-    def _retire_server_if_current(self, expected: AdbServerState) -> bool:
-        """Conditionally retire an authoritative server-state snapshot."""
-
-        return self._server_lifecycle.retire_if_current(expected)
+        return self._server_lifecycle.retire() is not None
 
     def _bootstrap_initial_server(self) -> None:
-        """Provision and commit the initial server through the runtime lifecycle authority."""
+        """Acquire and commit the initial server through the runtime lifecycle authority."""
 
         if self._state.server.current is not None:
             raise ValueError("bootstrap server provisioning requires empty runtime server state")
 
-        transaction = self.provision_server()
-        result = transition_provision_result(transaction)
-        if isinstance(result, AdbServerProvisionDeferred):
-            raise AdbServerBootstrapError(
-                f"initial ADB server provisioning deferred: {result.diagnostic}"
-            )
-        if isinstance(result, AdbServerProvisionFailed):
-            raise AdbServerBootstrapError(
-                f"initial ADB server provisioning failed: {result.diagnostic}"
-            )
-        if result.activation is None:
+        acquire = self.acquire_server_once()
+        if acquire is None:
             raise AdbServerLifecycleConsistencyError(
-                "initial ADB server provisioning did not commit a new server lifetime"
+                "initial ADB server acquisition did not execute"
             )
-        if self._state.server.current != result.activation.server:
+        if isinstance(acquire, AdbServerBackendAcquireInProgress):
+            detail = acquire.diagnostic or "ADB server backend acquire is already in progress"
+            raise AdbServerBootstrapError(f"initial ADB server acquisition deferred: {detail}")
+        if isinstance(acquire, AdbServerBackendAcquireBlocked):
+            raise AdbServerBootstrapError(
+                f"initial ADB server acquisition deferred: {acquire.diagnostic}"
+            )
+        if isinstance(acquire, AdbServerBackendAcquireFailed):
+            raise AdbServerBootstrapError(
+                f"initial ADB server acquisition failed: {acquire.diagnostic}"
+            )
+        if not isinstance(
+            acquire,
+            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+        ):
+            raise TypeError("server backend acquire() returned an unsupported result")
+
+        state = self._state.observe_server()
+        if not state.active or state.endpoint != acquire.endpoint:
             raise AdbServerLifecycleConsistencyError(
-                "initial ADB server provisioning did not commit its server lifetime"
+                "initial ADB server acquisition did not commit its server lifetime"
             )
 
     def _configure_server_provision_endpoint(
@@ -336,6 +341,13 @@ class AdbRuntime(AdbManagedRuntime):
                         self._on_server_reconciliation_requested,
                     )
                 )
+                if self._server_recovery_scheduler is not None:
+                    subscription_tokens.append(
+                        event_bus.subscribe(
+                            AdbServerRecoveryRetryDue,
+                            self._on_server_recovery_retry_due,
+                        )
+                    )
 
             transport_list_watch_supervisor = self._transport_list_watch_supervisor
             if transport_list_watch_supervisor is not None:
@@ -350,12 +362,19 @@ class AdbRuntime(AdbManagedRuntime):
             if transport_started and self._transport_supervisor is not None:
                 self._transport_supervisor.close()
             with self._runtime_lock:
-                recovery_cycle = self._server_recovery_cycle
-                self._server_recovery_cycle = None
+                retry_token = self._server_recovery_retry_token
+                self._server_recovery = None
+                self._server_recovery_id = None
+                self._server_recovery_intent = None
+                self._server_recovery_retry_token = None
                 self._server_recovery_pending = False
+                attempt_threads = tuple(self._server_recovery_attempt_threads)
                 self._starting = False
-            if recovery_cycle is not None:
-                recovery_cycle.close()
+            if retry_token is not None and self._server_recovery_scheduler is not None:
+                self._server_recovery_scheduler.cancel(retry_token)
+            for thread in attempt_threads:
+                if thread is not current_thread():
+                    thread.join()
             raise
 
         subscriptions = tuple(subscription_tokens)
@@ -375,9 +394,13 @@ class AdbRuntime(AdbManagedRuntime):
             self._started = False
             subscriptions = self._subscriptions
             self._subscriptions = ()
-            recovery_cycle = self._server_recovery_cycle
-            self._server_recovery_cycle = None
+            retry_token = self._server_recovery_retry_token
+            self._server_recovery = None
+            self._server_recovery_id = None
+            self._server_recovery_intent = None
+            self._server_recovery_retry_token = None
             self._server_recovery_pending = False
+            attempt_threads = tuple(self._server_recovery_attempt_threads)
 
         event_bus = self._event_bus
         if event_bus is not None:
@@ -390,8 +413,11 @@ class AdbRuntime(AdbManagedRuntime):
             self._transport_list_watch_supervisor.close()
         if self._transport_supervisor is not None:
             self._transport_supervisor.close()
-        if recovery_cycle is not None:
-            recovery_cycle.close()
+        if retry_token is not None and self._server_recovery_scheduler is not None:
+            self._server_recovery_scheduler.cancel(retry_token)
+        for thread in attempt_threads:
+            if thread is not current_thread():
+                thread.join()
         self._close_transport_registrations()
 
     def _register_transport(
@@ -422,7 +448,7 @@ class AdbRuntime(AdbManagedRuntime):
             if self._closed or not (self._started or self._starting):
                 return
 
-        deactivation = self._server_lifecycle.dispatch(AdbServerReconcileIntent(event))
+        deactivation = self._server_lifecycle.retire(expected_server=event.server)
         if deactivation is None:
             return
 
@@ -432,7 +458,7 @@ class AdbRuntime(AdbManagedRuntime):
             self._request_server_recovery()
 
     def _request_server_recovery(self) -> None:
-        """Start one recovery cycle, or remember a newer deactivation while one is active."""
+        """Start bounded acquisition recovery when authoritative runtime state requires it."""
 
         with self._runtime_lock:
             if (
@@ -441,59 +467,203 @@ class AdbRuntime(AdbManagedRuntime):
                 or not self._server_recovery_enabled
                 or self._server_recovery_scheduler is None
                 or self._event_bus is None
+                or self._state.observe_server().active
             ):
                 return
 
-            current = self._server_recovery_cycle
-            if current is not None and not current.finished:
+            if self._server_recovery is not None:
                 self._server_recovery_pending = True
                 return
 
+            recovery = AdbServerRecovery(self._server_recovery_policy)
+            recovery_id = AdbServerRecoveryId.new()
+            intent = recovery.start()
+            self._server_recovery = recovery
+            self._server_recovery_id = recovery_id
             self._server_recovery_pending = False
-            cycle = AdbServerRecoveryCycle(
-                self._server_lifecycle,
-                self._event_bus,
-                self._server_recovery_scheduler,
-                self._server_recovery_policy,
-                _on_finished=self._on_server_recovery_finished,
+
+        self._apply_server_recovery_intent(recovery, recovery_id, intent)
+
+    def _apply_server_recovery_intent(
+        self,
+        recovery: AdbServerRecovery,
+        recovery_id: AdbServerRecoveryId,
+        intent: AdbServerAcquireOnceIntent,
+    ) -> None:
+        """Execute immediately or arrange the delay requested by low-level recovery."""
+
+        with self._runtime_lock:
+            if not self._is_current_server_recovery_locked(recovery, recovery_id):
+                return
+            runtime_already_active = self._state.observe_server().active
+        if runtime_already_active:
+            self._finish_server_recovery(recovery, recovery_id, completed=True)
+            return
+
+        if intent.delay_seconds > 0.0:
+            scheduler = self._server_recovery_scheduler
+            if scheduler is None:
+                return
+            token = scheduler.schedule_after(
+                timedelta(seconds=intent.delay_seconds),
+                AdbServerRecoveryRetryDue(recovery_id, intent.attempt_number),
             )
-            self._server_recovery_cycle = cycle
-
-        try:
-            cycle.start()
-        except BaseException:
             with self._runtime_lock:
-                if self._server_recovery_cycle is cycle:
-                    self._server_recovery_cycle = None
-                    self._server_recovery_pending = False
-            cycle.close()
-            raise
+                if not self._is_current_server_recovery_locked(recovery, recovery_id):
+                    scheduler.cancel(token)
+                    return
+                old_token = self._server_recovery_retry_token
+                self._server_recovery_retry_token = token
+                self._server_recovery_intent = intent
+            if old_token is not None:
+                scheduler.cancel(old_token)
+            return
 
-    def _on_server_recovery_finished(self, cycle: AdbServerRecoveryCycle) -> None:
-        """Release a finished cycle and cover a deactivation that raced its final ensure."""
+        self._launch_server_recovery_attempt(recovery, recovery_id, intent)
+
+    def _on_server_recovery_retry_due(self, event: AdbServerRecoveryRetryDue) -> None:
+        with self._runtime_lock:
+            recovery = self._server_recovery
+            recovery_id = self._server_recovery_id
+            intent = self._server_recovery_intent
+            if (
+                recovery is None
+                or recovery_id != event.recovery_id
+                or intent is None
+                or intent.attempt_number != event.attempt_number
+                or not self._is_current_server_recovery_locked(recovery, recovery_id)
+            ):
+                return
+            self._server_recovery_retry_token = None
+            self._server_recovery_intent = None
+
+        self._launch_server_recovery_attempt(recovery, recovery_id, intent)
+
+    def _launch_server_recovery_attempt(
+        self,
+        recovery: AdbServerRecovery,
+        recovery_id: AdbServerRecoveryId,
+        intent: AdbServerAcquireOnceIntent,
+    ) -> None:
+        thread = Thread(
+            target=self._run_server_recovery_attempt,
+            args=(recovery, recovery_id, intent),
+            name=(
+                "adb-server-recovery-"
+                f"{recovery_id.value[:12]}-{intent.attempt_number}"
+            ),
+            daemon=True,
+        )
+        with self._runtime_lock:
+            if not self._is_current_server_recovery_locked(recovery, recovery_id):
+                return
+            self._server_recovery_attempt_threads.add(thread)
+            try:
+                thread.start()
+            except BaseException:
+                self._server_recovery_attempt_threads.discard(thread)
+                raise
+
+    def _run_server_recovery_attempt(
+        self,
+        recovery: AdbServerRecovery,
+        recovery_id: AdbServerRecoveryId,
+        intent: AdbServerAcquireOnceIntent,
+    ) -> None:
+        active_thread = current_thread()
+        try:
+            with self._runtime_lock:
+                if not self._is_current_server_recovery_locked(recovery, recovery_id):
+                    return
+                if self._state.observe_server().active:
+                    finish_without_attempt = True
+                else:
+                    finish_without_attempt = False
+
+            if finish_without_attempt:
+                self._finish_server_recovery(recovery, recovery_id, completed=True)
+                return
+
+            acquire = self._server_lifecycle.acquire_once()
+            if acquire is None:
+                # A concurrent runtime transition made acquisition unnecessary before the
+                # lifecycle operation linearized. Domain state, not Recovery, decides completion.
+                self._finish_server_recovery(recovery, recovery_id, completed=True)
+                return
+
+            decision = recovery.accept(acquire)
+            if isinstance(decision, AdbServerAcquireOnceIntent):
+                self._apply_server_recovery_intent(recovery, recovery_id, decision)
+                return
+            if isinstance(decision, AdbServerRecoveryCompleted):
+                self._finish_server_recovery(recovery, recovery_id, completed=True)
+                return
+            if isinstance(decision, AdbServerRecoveryExhaust):
+                event_bus = self._event_bus
+                if event_bus is not None:
+                    event_bus.publish(
+                        AdbServerRecoveryExhausted(
+                            recovery_id,
+                            decision.attempts,
+                            AdbServerLaunchFailure(decision.acquire.diagnostic),
+                        )
+                    )
+                self._finish_server_recovery(recovery, recovery_id, completed=False)
+                return
+            raise TypeError("recovery returned an unsupported decision")
+        finally:
+            with self._runtime_lock:
+                self._server_recovery_attempt_threads.discard(active_thread)
+
+    def _finish_server_recovery(
+        self,
+        recovery: AdbServerRecovery,
+        recovery_id: AdbServerRecoveryId,
+        *,
+        completed: bool,
+    ) -> None:
+        """Release one low-level recovery and let runtime state decide any successor work."""
 
         restart = False
+        reconcile = False
+        scheduler = self._server_recovery_scheduler
         with self._runtime_lock:
-            if self._server_recovery_cycle is not cycle:
+            if not self._is_current_server_recovery_locked(recovery, recovery_id):
                 return
-            self._server_recovery_cycle = None
+            retry_token = self._server_recovery_retry_token
+            self._server_recovery = None
+            self._server_recovery_id = None
+            self._server_recovery_intent = None
+            self._server_recovery_retry_token = None
             pending = self._server_recovery_pending
             self._server_recovery_pending = False
-            if (
-                pending
-                and not self._closed
-                and (self._started or self._starting)
-                and self._server_recovery_enabled
-                and self._server_recovery_scheduler is not None
-            ):
-                # If the finishing cycle's final ensure already covered the newer deactivation,
-                # authoritative state is active and no successor cycle is needed.
-                restart = not self._state.observe_server().active
 
-        if cycle.succeeded is not None:
+            if not self._closed and (self._started or self._starting):
+                active = self._state.observe_server().active
+                reconcile = completed and active
+                # A completed acquisition task can still lose the runtime activation race. In that
+                # case the Supervisor, not low-level Recovery, decides that a fresh recovery is
+                # needed. Exhaustion only restarts for a newer deactivation recorded as pending.
+                restart = (completed and not active) or (pending and not active)
+
+        if retry_token is not None and scheduler is not None:
+            scheduler.cancel(retry_token)
+        if reconcile:
             self._reconcile_server_dependents()
         if restart:
             self._request_server_recovery()
+
+    def _is_current_server_recovery_locked(
+        self,
+        recovery: AdbServerRecovery,
+        recovery_id: AdbServerRecoveryId,
+    ) -> bool:
+        return (
+            not self._closed
+            and (self._started or self._starting)
+            and self._server_recovery is recovery
+            and self._server_recovery_id == recovery_id
+        )
 
     def _reconcile_server_dependents(self) -> None:
         """Rebind runtime-owned server dependents to the current authoritative lifetime."""

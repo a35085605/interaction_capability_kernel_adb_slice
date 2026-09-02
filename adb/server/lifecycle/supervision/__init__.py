@@ -1,29 +1,19 @@
-"""ADB server lifecycle intents plus bounded recovery retry orchestration."""
+"""Bounded retry policy and state for ADB server backend acquisition."""
 
-from adb.server.lifecycle.supervision.intent import (
-    AdbServerEnsureIntent,
-    AdbServerEnsureIntentResult,
-    AdbServerEnsureSatisfied,
-    AdbServerLifecycleIntent,
-    AdbServerLifecycleIntentDispatcher,
-    AdbServerLifecycleIntentResult,
-    AdbServerReconcileIntent,
-    AdbServerReconcileIntentResult,
-)
+from adb.server.lifecycle.supervision.intent import AdbServerAcquireOnceIntent
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
-from adb.server.lifecycle.supervision.recovery import AdbServerRecoveryCycle
-from adb.server.signal import AdbServerRecoveryCycleId
+from adb.server.lifecycle.supervision.recovery import (
+    AdbServerRecovery,
+    AdbServerRecoveryCompleted,
+    AdbServerRecoveryDecision,
+    AdbServerRecoveryExhaust,
+)
 
 __all__ = [
-    "AdbServerEnsureIntent",
-    "AdbServerEnsureIntentResult",
-    "AdbServerEnsureSatisfied",
-    "AdbServerLifecycleIntent",
-    "AdbServerLifecycleIntentDispatcher",
-    "AdbServerLifecycleIntentResult",
-    "AdbServerReconcileIntent",
-    "AdbServerReconcileIntentResult",
-    "AdbServerRecoveryCycle",
-    "AdbServerRecoveryCycleId",
+    "AdbServerAcquireOnceIntent",
+    "AdbServerRecovery",
+    "AdbServerRecoveryCompleted",
+    "AdbServerRecoveryDecision",
+    "AdbServerRecoveryExhaust",
     "AdbServerRecoveryPolicy",
 ]

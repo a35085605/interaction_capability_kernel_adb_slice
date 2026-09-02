@@ -1,9 +1,5 @@
 """ADB server backend control contracts and typed errors."""
 
-from adb.server.lifecycle.control.result import (
-    AdbServerProvisionDeferred,
-    AdbServerProvisionFailed,
-)
 from adb.server.lifecycle.control.errors import (
     AdbServerBootstrapError,
     AdbServerLifecycleConsistencyError,
@@ -16,6 +12,4 @@ __all__ = [
     "AdbServerBootstrapError",
     "AdbServerLifecycleConsistencyError",
     "AdbServerLifecycleError",
-    "AdbServerProvisionDeferred",
-    "AdbServerProvisionFailed",
 ]

@@ -11,36 +11,20 @@ from adb.server.lifecycle.control.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
+    AdbServerBackendAcquireResult,
     AdbServerBackendAcquireSatisfied,
     AdbServerBackendAcquireSucceeded,
 )
 from adb.server.lifecycle.control.errors import AdbServerLifecycleConsistencyError
-from adb.server.lifecycle.supervision.intent import (
-    AdbServerLifecycleIntent,
-    AdbServerLifecycleIntentResult,
-)
-from adb.server.lifecycle.supervision.transition import (
-    AdbServerProvisionAction,
-    AdbServerRetireAction,
-    transition_lifecycle_intent,
-    transition_lifecycle_result,
-)
-from adb.server.lifecycle.transaction import (
-    AdbServerProvisionAcquireStopped,
-    AdbServerProvisionActivationAttempted,
-    AdbServerProvisionStateConflict,
-    AdbServerProvisionTransactionResult,
-)
 from adb.server.state import (
     AdbServerActivated,
     AdbServerActivationRejected,
     AdbServerDeactivated,
-    AdbServerState,
 )
 
 
 class AdbServerLifecycleRuntimeFacade:
-    """Orchestrate authoritative ADB server lifecycle transactions for one runtime."""
+    """Own authoritative runtime server activation/retirement around backend resources."""
 
     def __init__(
         self,
@@ -60,72 +44,19 @@ class AdbServerLifecycleRuntimeFacade:
         self._provision_endpoint = provision_endpoint
         self._lock = RLock()
 
-    def provision(self) -> AdbServerProvisionTransactionResult:
-        """Provision against the authoritative server state observed at execution time."""
+    def acquire_once(self) -> AdbServerBackendAcquireResult | None:
+        """Execute at most one backend acquisition and commit a usable endpoint when still valid.
 
-        result = self._provision(expected=None)
-        assert result is not None
-        return result
+        ``None`` means the authoritative runtime already had an active server when this operation
+        linearized, so no backend acquisition was attempted. Otherwise the raw backend acquisition
+        evidence is returned unchanged. Runtime activation/release is deliberately an execution
+        concern and is not wrapped in a second result algebra.
+        """
 
-    def provision_if_current(
-        self,
-        expected: AdbServerState,
-    ) -> AdbServerProvisionTransactionResult | None:
-        """Conditionally provision from ``expected``, returning ``None`` for stale state."""
-
-        if not isinstance(expected, AdbServerState):
-            raise TypeError("expected must be AdbServerState")
-        return self._provision(expected=expected)
-
-    def retire(self) -> bool:
-        """Retire the authoritative server lifetime observed at execution time."""
-
-        return self._retire(expected=None, expected_server=None) is not None
-
-    def retire_if_current(self, expected: AdbServerState) -> bool:
-        """Conditionally retire ``expected`` when it still matches authoritative state."""
-
-        if not isinstance(expected, AdbServerState):
-            raise TypeError("expected must be AdbServerState")
-        return self._retire(expected=expected, expected_server=None) is not None
-
-    def dispatch(
-        self,
-        intent: AdbServerLifecycleIntent,
-    ) -> AdbServerLifecycleIntentResult:
-        """Execute one interpreted lifecycle action through authoritative runtime transactions."""
-
-        transition = transition_lifecycle_intent(intent, self._state.observe_server())
-        if isinstance(transition, AdbServerProvisionAction):
-            return transition_lifecycle_result(transition, self.provision())
-        elif isinstance(transition, AdbServerRetireAction):
-            result = self._retire(
-                expected=None,
-                expected_server=transition.expected_server,
-            )
-            return transition_lifecycle_result(transition, result)
-        else:
-            return transition
-
-    def configure_provision_endpoint(self, endpoint: AdbServerEndpoint | None) -> None:
-        """Replace the endpoint constraint used by subsequent provisioning attempts."""
-
-        if endpoint is not None and not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress or None")
-        with self._lock:
-            self._provision_endpoint = endpoint
-
-    def _provision(
-        self,
-        *,
-        expected: AdbServerState | None,
-    ) -> AdbServerProvisionTransactionResult | None:
         with self._lock:
             t0 = self._state.observe_server()
-            if expected is not None and t0 != expected:
-                return None
             if t0.active:
-                return AdbServerProvisionStateConflict(t0)
+                return None
 
             acquire = self._backend.acquire(self._provision_endpoint)
             if isinstance(
@@ -136,7 +67,7 @@ class AdbServerLifecycleRuntimeFacade:
                     AdbServerBackendAcquireFailed,
                 ),
             ):
-                return AdbServerProvisionAcquireStopped(acquire)
+                return acquire
             if not isinstance(
                 acquire,
                 (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
@@ -147,54 +78,58 @@ class AdbServerLifecycleRuntimeFacade:
             if self._provision_endpoint is not None and endpoint != self._provision_endpoint:
                 self._backend.release(endpoint)
                 raise AdbServerLifecycleConsistencyError(
-                    "endpoint-constrained ADB server backend acquisition returned a "
-                    "different endpoint"
+                    "endpoint-constrained ADB server backend acquisition returned a different endpoint"
                 )
 
             try:
                 activation = self._state.activate_server(endpoint, t0)
             except BaseException:
-                # The endpoint never became authoritative. Backend release only transfers cleanup
-                # responsibility; physical attachment convergence remains an implementation detail.
                 self._backend.release(endpoint)
                 raise
 
             if isinstance(activation, AdbServerActivationRejected):
-                # The acquired endpoint lost its inactive-state comparison and never became
-                # authoritative. Relinquish it before allowing a successor lifecycle transaction.
                 self._backend.release(endpoint)
             elif not isinstance(activation, AdbServerActivated):
                 self._backend.release(endpoint)
                 raise TypeError("runtime state activate_server() returned an unsupported result")
 
-            return AdbServerProvisionActivationAttempted(acquire, activation)
+            return acquire
 
-    def _retire(
+    def retire(
         self,
         *,
-        expected: AdbServerState | None,
-        expected_server: AdbServerIdentity | None,
+        expected_server: AdbServerIdentity | None = None,
     ) -> AdbServerDeactivated | None:
+        """Retire the authoritative server, optionally fenced by its identity."""
+
+        if expected_server is not None and not isinstance(expected_server, AdbServerIdentity):
+            raise TypeError("expected_server must be AdbServerIdentity or None")
+
         with self._lock:
             t0 = self._state.observe_server()
-            if expected is not None and t0 != expected:
-                return None
             server = t0.server
             endpoint = t0.endpoint
             if server is None or endpoint is None:
                 return None
             if expected_server is not None and server != expected_server:
                 return None
+
             deactivation = self._state.deactivate_server(server)
             if not isinstance(deactivation, AdbServerDeactivated):
                 return None
 
-            # Domain deactivation is the retirement linearization point. Runtime only relinquishes
-            # the old endpoint; whether or when its physical attachment ends belongs to Backend.
             committed_endpoint = deactivation.state.endpoint
             assert committed_endpoint is not None
             self._backend.release(committed_endpoint)
             return deactivation
+
+    def configure_provision_endpoint(self, endpoint: AdbServerEndpoint | None) -> None:
+        """Replace the endpoint constraint used by subsequent acquisition attempts."""
+
+        if endpoint is not None and not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress or None")
+        with self._lock:
+            self._provision_endpoint = endpoint
 
 
 __all__ = ["AdbServerLifecycleRuntimeFacade"]

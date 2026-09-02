@@ -1,98 +1,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, overload, runtime_checkable
-
-from adb.server.failure import (
-    AdbServerConnectionFailure,
-    AdbServerLivenessFailure,
-    AdbServerProcessExitedFailure,
-)
-from adb.server.lifecycle.control.result import (
-    AdbServerProvisionDeferred,
-    AdbServerProvisionFailed,
-)
-from adb.server.signal import AdbServerReconciliationRequested
-from adb.server.state import AdbServerActivated, AdbServerDeactivated
+from math import isfinite
+from numbers import Real
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerEnsureIntent:
-    """Request reconciliation to an authoritative active ADB server lifetime."""
+class AdbServerAcquireOnceIntent:
+    """Request exactly one ADB server backend acquisition attempt after ``delay_seconds``."""
 
-
-@dataclass(frozen=True, slots=True)
-class AdbServerReconcileIntent:
-    """Request retirement after terminal liveness failure without interpreting server identity."""
-
-    cause: AdbServerReconciliationRequested | AdbServerLivenessFailure
+    attempt_number: int
+    delay_seconds: float = 0.0
 
     def __post_init__(self) -> None:
-        if not isinstance(
-            self.cause,
-            (
-                AdbServerReconciliationRequested,
-                AdbServerConnectionFailure,
-                AdbServerProcessExitedFailure,
-            ),
-        ):
-            raise TypeError(
-                "cause must be AdbServerReconciliationRequested or AdbServerLivenessFailure"
-            )
+        if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
+            raise TypeError("attempt_number must be an integer")
+        if self.attempt_number <= 0:
+            raise ValueError("attempt_number must be greater than zero")
+        if isinstance(self.delay_seconds, bool) or not isinstance(self.delay_seconds, Real):
+            raise TypeError("delay_seconds must be a real number")
+        delay = float(self.delay_seconds)
+        if not isfinite(delay) or delay < 0.0:
+            raise ValueError("delay_seconds must be finite and greater than or equal to zero")
+        object.__setattr__(self, "delay_seconds", delay)
 
 
-@dataclass(frozen=True, slots=True)
-class AdbServerEnsureSatisfied:
-    """Ensure is satisfied; ``activation`` exists only when this ensure committed a new lifetime."""
-
-    activation: AdbServerActivated | None = None
-
-    def __post_init__(self) -> None:
-        if self.activation is not None and not isinstance(
-            self.activation, AdbServerActivated
-        ):
-            raise TypeError("activation must be AdbServerActivated or None")
-
-
-AdbServerEnsureIntentResult: TypeAlias = (
-    AdbServerEnsureSatisfied | AdbServerProvisionDeferred | AdbServerProvisionFailed
-)
-AdbServerReconcileIntentResult: TypeAlias = AdbServerDeactivated | None
-AdbServerLifecycleIntent: TypeAlias = AdbServerEnsureIntent | AdbServerReconcileIntent
-AdbServerLifecycleIntentResult: TypeAlias = (
-    AdbServerEnsureIntentResult | AdbServerReconcileIntentResult
-)
-
-
-@runtime_checkable
-class AdbServerLifecycleIntentDispatcher(Protocol):
-    """Lifecycle command port used by supervision without exposing runtime state or identity."""
-
-    @overload
-    def dispatch(
-        self,
-        intent: AdbServerEnsureIntent,
-    ) -> AdbServerEnsureIntentResult: ...
-
-    @overload
-    def dispatch(
-        self,
-        intent: AdbServerReconcileIntent,
-    ) -> AdbServerReconcileIntentResult: ...
-
-    def dispatch(
-        self,
-        intent: AdbServerLifecycleIntent,
-    ) -> AdbServerLifecycleIntentResult: ...
-
-
-__all__ = [
-    "AdbServerEnsureIntent",
-    "AdbServerEnsureIntentResult",
-    "AdbServerEnsureSatisfied",
-    "AdbServerLifecycleIntent",
-    "AdbServerLifecycleIntentDispatcher",
-    "AdbServerLifecycleIntentResult",
-    "AdbServerReconcileIntent",
-    "AdbServerReconcileIntentResult",
-]
+__all__ = ["AdbServerAcquireOnceIntent"]

@@ -2,22 +2,12 @@
 
 from adb.server.availability import AdbServerUnavailableError
 
-from adb.server.lifecycle.control.result import (
-    AdbServerProvisionDeferred,
-    AdbServerProvisionFailed,
-)
 from adb.server.lifecycle.control.errors import (
     AdbServerBootstrapError,
     AdbServerLifecycleConsistencyError,
     AdbServerLifecycleError,
 )
 from adb.server.lifecycle.control.backend import AdbServerBackend
-from adb.server.lifecycle.transaction import (
-    AdbServerProvisionAcquireStopped,
-    AdbServerProvisionActivationAttempted,
-    AdbServerProvisionStateConflict,
-    AdbServerProvisionTransactionResult,
-)
 from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerFailure,
@@ -61,12 +51,6 @@ __all__ = [
     "AdbServerBootstrapError",
     "AdbServerLifecycleConsistencyError",
     "AdbServerLifecycleError",
-    "AdbServerProvisionDeferred",
-    "AdbServerProvisionFailed",
-    "AdbServerProvisionAcquireStopped",
-    "AdbServerProvisionActivationAttempted",
-    "AdbServerProvisionStateConflict",
-    "AdbServerProvisionTransactionResult",
     "AdbServerEndpoint",
     "AdbServerIdentity",
     "AdbServerIdentityIssuer",
