@@ -6,12 +6,11 @@ from threading import RLock, Thread, current_thread
 from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServerIdentity
-from adb.server.lifecycle.coordinator import AdbServerProvisionResult
-from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
-from adb.server.lifecycle.backend import (
-    AdbServerBackendAcquireSatisfied,
-    AdbServerBackendAcquireSucceeded,
+from adb.server.lifecycle.coordinator import (
+    AdbServerAlreadyActive,
+    AdbServerProvisionResult,
 )
+from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
     AdbServerRecoveryAttempt,
@@ -23,6 +22,7 @@ from adb.server.signal import (
     AdbServerRecoveryRetryDue,
 )
 from adb.server.state import (
+    AdbServerActivated,
     AdbServerActivationStateConflict,
     AdbServerDeactivated,
     AdbServerStateView,
@@ -35,7 +35,7 @@ from scheduling import ScheduleToken, TemporalScheduler
 class AdbServerLifecyclePort(Protocol):
     """Minimal authoritative lifecycle operations required by server supervision."""
 
-    def provision(self) -> AdbServerProvisionResult | None: ...
+    def provision(self) -> AdbServerProvisionResult: ...
 
     def retire(
         self,
@@ -236,10 +236,6 @@ class AdbServerSupervisor:
         with self._lock:
             if not self._is_current_recovery_locked(recovery, recovery_id):
                 return
-            already_active = self._server_state.snapshot().active
-        if already_active:
-            self._finish_recovery(recovery, recovery_id, completed=True)
-            return
 
         if attempt.delay_seconds > 0.0:
             scheduler = self._scheduler
@@ -288,7 +284,7 @@ class AdbServerSupervisor:
     ) -> None:
         thread = Thread(
             target=self._run_recovery_attempt,
-            args=(recovery, recovery_id, attempt),
+            args=(recovery, recovery_id),
             name=f"adb-server-recovery-{recovery_id.value[:12]}-{attempt.attempt_number}",
             daemon=True,
         )
@@ -306,21 +302,15 @@ class AdbServerSupervisor:
         self,
         recovery: AdbServerRecovery,
         recovery_id: AdbServerRecoveryId,
-        attempt: AdbServerRecoveryAttempt,
     ) -> None:
         active_thread = current_thread()
         try:
             with self._lock:
                 if not self._is_current_recovery_locked(recovery, recovery_id):
                     return
-                finish_without_attempt = self._server_state.snapshot().active
-
-            if finish_without_attempt:
-                self._finish_recovery(recovery, recovery_id, completed=True)
-                return
 
             provision = self._lifecycle.provision()
-            if provision is None:
+            if isinstance(provision, (AdbServerActivated, AdbServerAlreadyActive)):
                 self._finish_recovery(recovery, recovery_id, completed=True)
                 return
             if isinstance(provision, AdbServerActivationStateConflict):
@@ -342,12 +332,6 @@ class AdbServerSupervisor:
             decision = recovery.decide_after(provision)
             if isinstance(decision, AdbServerRecoveryAttempt):
                 self._apply_recovery_attempt(recovery, recovery_id, decision)
-                return
-            if isinstance(
-                decision,
-                (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
-            ):
-                self._finish_recovery(recovery, recovery_id, completed=True)
                 return
             if isinstance(decision, AdbServerRecoveryFailed):
                 self._finish_recovery(recovery, recovery_id, completed=False)

@@ -10,8 +10,6 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
-    AdbServerBackendAcquireSatisfied,
-    AdbServerBackendAcquireSucceeded,
 )
 from adb.server.lifecycle.errors import (
     AdbServerBootstrapError,
@@ -19,11 +17,12 @@ from adb.server.lifecycle.errors import (
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.coordinator import (
-    AdbServerProvisionResult,
+    AdbServerAlreadyActive,
     AdbServerLifecycleCoordinator,
+    AdbServerProvisionResult,
 )
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
-from adb.server.state import AdbServerActivationStateConflict
+from adb.server.state import AdbServerActivated, AdbServerActivationStateConflict
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.state import AdbTransportListSnapshotView
@@ -168,7 +167,7 @@ class AdbRuntime(AdbManagedRuntime):
 
         return self._state.transport_list
 
-    def provision_server(self) -> AdbServerProvisionResult | None:
+    def provision_server(self) -> AdbServerProvisionResult:
         """Provision the authoritative server lifetime through runtime lifecycle ownership."""
 
         return self._server_lifecycle.provision()
@@ -185,9 +184,9 @@ class AdbRuntime(AdbManagedRuntime):
             raise ValueError("bootstrap server provisioning requires empty runtime server state")
 
         provision = self.provision_server()
-        if provision is None:
+        if isinstance(provision, AdbServerAlreadyActive):
             raise AdbServerLifecycleConsistencyError(
-                "initial ADB server provisioning did not execute"
+                "initial ADB server provisioning unexpectedly found an active server"
             )
         if isinstance(provision, AdbServerActivationStateConflict):
             raise AdbServerLifecycleConsistencyError(
@@ -204,17 +203,8 @@ class AdbRuntime(AdbManagedRuntime):
             raise AdbServerBootstrapError(
                 f"initial ADB server provisioning failed: {provision.diagnostic}"
             )
-        if not isinstance(
-            provision,
-            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
-        ):
-            raise TypeError("server backend acquire() returned an unsupported result")
-
-        state = self._state.server.snapshot()
-        if not state.active or state.endpoint != provision.endpoint:
-            raise AdbServerLifecycleConsistencyError(
-                "initial ADB server provisioning did not commit its server lifetime"
-            )
+        if not isinstance(provision, AdbServerActivated):
+            raise TypeError("server lifecycle provision() returned an unsupported result")
 
     def _configure_server_provision_endpoint(
         self,

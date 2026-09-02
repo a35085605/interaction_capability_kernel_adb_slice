@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from threading import RLock
 from typing import TypeAlias
 
@@ -11,7 +12,6 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
-    AdbServerBackendAcquireResult,
     AdbServerBackendAcquireSatisfied,
     AdbServerBackendAcquireSucceeded,
 )
@@ -24,8 +24,27 @@ from adb.server.state import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class AdbServerAlreadyActive:
+    """Evidence that provision linearized against an already-active authoritative server."""
+
+    server: AdbServerIdentity
+    endpoint: AdbServerEndpoint
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+        if not isinstance(self.endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
+
+
 AdbServerProvisionResult: TypeAlias = (
-    AdbServerBackendAcquireResult | AdbServerActivationStateConflict
+    AdbServerActivated
+    | AdbServerAlreadyActive
+    | AdbServerActivationStateConflict
+    | AdbServerBackendAcquireInProgress
+    | AdbServerBackendAcquireBlocked
+    | AdbServerBackendAcquireFailed
 )
 
 
@@ -50,19 +69,23 @@ class AdbServerLifecycleCoordinator:
         self._provision_endpoint = provision_endpoint
         self._lock = RLock()
 
-    def provision(self) -> AdbServerProvisionResult | None:
-        """Provision the authoritative server lifetime through at most one backend acquisition.
+    def provision(self) -> AdbServerProvisionResult:
+        """Return the authoritative outcome of one provision operation.
 
-        ``None`` means the authoritative server state was already active when this operation
-        linearized, so no backend acquisition was attempted. Backend deferral/failure evidence is
-        returned unchanged. A usable backend acquisition that loses the authoritative activation
-        fence is released and returned as :class:`AdbServerActivationStateConflict`.
+        Already-active state and committed activation are represented explicitly. Backend
+        deferral/failure evidence remains retry-policy input. A usable backend acquisition that
+        loses the authoritative activation fence is released and returned as
+        :class:`AdbServerActivationStateConflict`.
         """
 
         with self._lock:
             t0 = self._state.snapshot()
             if t0.active:
-                return None
+                server = t0.server
+                endpoint = t0.endpoint
+                assert server is not None
+                assert endpoint is not None
+                return AdbServerAlreadyActive(server, endpoint)
 
             acquire = self._backend.acquire(self._provision_endpoint)
             if isinstance(
@@ -100,7 +123,7 @@ class AdbServerLifecycleCoordinator:
                 self._backend.release(endpoint)
                 raise TypeError("server state activate() returned an unsupported result")
 
-            return acquire
+            return activation
 
     def retire(
         self,
@@ -139,4 +162,8 @@ class AdbServerLifecycleCoordinator:
             self._provision_endpoint = endpoint
 
 
-__all__ = ["AdbServerLifecycleCoordinator", "AdbServerProvisionResult"]
+__all__ = [
+    "AdbServerAlreadyActive",
+    "AdbServerLifecycleCoordinator",
+    "AdbServerProvisionResult",
+]

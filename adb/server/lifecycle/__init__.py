@@ -7,11 +7,13 @@ from adb.server.lifecycle.errors import (
 )
 from adb.server.lifecycle.backend import AdbServerBackend
 from adb.server.lifecycle.coordinator import (
-    AdbServerProvisionResult,
+    AdbServerAlreadyActive,
     AdbServerLifecycleCoordinator,
+    AdbServerProvisionResult,
 )
 
 __all__ = [
+    "AdbServerAlreadyActive",
     "AdbServerProvisionResult",
     "AdbServerBackend",
     "AdbServerLifecycleCoordinator",
