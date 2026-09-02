@@ -19,7 +19,7 @@ from adb.server.lifecycle.errors import (
     AdbServerLifecycleConsistencyError,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
-from adb.runtime.server_lifecycle import AdbServerLifecycleRuntimeFacade
+from adb.server.lifecycle.coordinator import AdbServerLifecycleCoordinator
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
@@ -133,8 +133,8 @@ class AdbRuntime(AdbManagedRuntime):
 
         super().__init__(state.server)
         self._state = state
-        self._server_lifecycle = AdbServerLifecycleRuntimeFacade(
-            state,
+        self._server_lifecycle = AdbServerLifecycleCoordinator(
+            state.server,
             backend=server_backend,
             provision_endpoint=server_provision_endpoint,
         )
@@ -208,7 +208,7 @@ class AdbRuntime(AdbManagedRuntime):
         ):
             raise TypeError("server backend acquire() returned an unsupported result")
 
-        state = self._state.observe_server()
+        state = self._state.server.snapshot()
         if not state.active or state.endpoint != acquire.endpoint:
             raise AdbServerLifecycleConsistencyError(
                 "initial ADB server acquisition did not commit its server lifetime"

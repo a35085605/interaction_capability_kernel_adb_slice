@@ -2,14 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServerIdentity
-from adb.server.state import (
-    AdbServerActivationResult,
-    AdbServerDeactivationResult,
-    AdbServerState,
-    AdbServerStateStore,
-)
+from adb.server.state import AdbServerStateStore
 from adb.tracking.snapshot.state import AdbTransportListSnapshotState
 
 
@@ -25,25 +18,6 @@ class AdbRuntimeState:
             raise TypeError("server must be AdbServerStateStore")
         if not isinstance(self.transport_list, AdbTransportListSnapshotState):
             raise TypeError("transport_list must be AdbTransportListSnapshotState")
-
-    def observe_server(self) -> AdbServerState:
-        """Capture the runtime-owned atomic server state for a lifecycle transaction."""
-
-        return self.server.snapshot()
-
-    def activate_server(
-        self,
-        endpoint: AdbServerEndpoint,
-        expected: AdbServerState,
-    ) -> AdbServerActivationResult:
-        """Activate an endpoint when the observed inactive state is still authoritative."""
-
-        return self.server.activate(endpoint, expected)
-
-    def deactivate_server(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult:
-        """Deactivate the expected authoritative server identity."""
-
-        return self.server.deactivate(expected)
 
 
 __all__ = ["AdbRuntimeState"]

@@ -21,7 +21,7 @@ from adb.api import (
     AdbRuntimeBootstrap,
     AdbServerEndpoint,
 )
-from adb.runtime import AdbManagedRuntime, AdbServerLifecycleRuntimeFacade
+from adb.runtime import AdbManagedRuntime
 from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server import (
     AdbServerActivated,
@@ -30,6 +30,7 @@ from adb.server import (
     AdbServerBackend,
     AdbServerBootstrapError,
     AdbServerLifecycleConsistencyError,
+    AdbServerLifecycleCoordinator,
     AdbServerLifecycleError,
     AdbServerDeactivated,
     AdbServerDeactivationStateConflict,
@@ -89,7 +90,7 @@ __all__ = [
     "EpochSequence",
     "AdbError",
     "AdbManagedRuntime",
-    "AdbServerLifecycleRuntimeFacade",
+    "AdbServerLifecycleCoordinator",
     "AdbRuntimeBootstrap",
     "AdbRuntime",
     "AdbProtocolError",
