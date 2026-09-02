@@ -10,10 +10,7 @@ from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecoveryResult,
 )
 
-from adb.server.lifecycle.supervision.supervisor import (
-    AdbServerLifecyclePort,
-    AdbServerSupervisor,
-)
+from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 
 __all__ = [
     "AdbServerRecovery",
@@ -23,6 +20,5 @@ __all__ = [
     "AdbServerRecoveryFailed",
     "AdbServerRecoveryResult",
     "AdbServerRecoveryPolicy",
-    "AdbServerLifecyclePort",
     "AdbServerSupervisor",
 ]

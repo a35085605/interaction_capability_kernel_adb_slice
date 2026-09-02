@@ -3,14 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import timedelta
 from threading import RLock, Thread, current_thread
-from typing import Protocol, runtime_checkable
 
-from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.backend import AdbServerBackendAcquireResult
 from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
+    AdbServerLifecycleCoordinator,
     AdbServerProvisionResult,
-    AdbServerRetireResult,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
@@ -35,26 +33,13 @@ from eventing import EventBus, EventSubscriptionToken
 from scheduling import ScheduleToken, TemporalScheduler
 
 
-@runtime_checkable
-class AdbServerLifecyclePort(Protocol):
-    """Minimal authoritative lifecycle operations required by server supervision."""
-
-    def provision(self) -> AdbServerProvisionResult: ...
-
-    def retire(
-        self,
-        *,
-        expected_server: AdbServerIdentity | None = None,
-    ) -> AdbServerRetireResult: ...
-
-
 _ReconcileDependents = Callable[[], None]
 
 
 class AdbServerSupervisor:
     """Maintain the requested authoritative ADB server lifetime across failures.
 
-    The runtime owns the lifecycle facade and injects it through :class:`AdbServerLifecyclePort`.
+    The runtime owns the lifecycle coordinator and injects it into server supervision.
     This supervisor owns only continuous orchestration: reconciliation subscriptions, bounded
     recovery cycles, retry scheduling, and recovery worker lifetime.
     """
@@ -63,7 +48,7 @@ class AdbServerSupervisor:
         self,
         server_state: AdbServerStateView,
         *,
-        lifecycle: AdbServerLifecyclePort,
+        lifecycle: AdbServerLifecycleCoordinator,
         event_bus: EventBus | None,
         scheduler: TemporalScheduler[object] | None,
         policy: AdbServerRecoveryPolicy,
@@ -72,8 +57,8 @@ class AdbServerSupervisor:
     ) -> None:
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
-        if not isinstance(lifecycle, AdbServerLifecyclePort):
-            raise TypeError("lifecycle must satisfy AdbServerLifecyclePort")
+        if not isinstance(lifecycle, AdbServerLifecycleCoordinator):
+            raise TypeError("lifecycle must be AdbServerLifecycleCoordinator")
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if scheduler is not None and not isinstance(scheduler, TemporalScheduler):
@@ -462,4 +447,4 @@ def _is_event_bus(value: object) -> bool:
     )
 
 
-__all__ = ["AdbServerLifecyclePort", "AdbServerSupervisor"]
+__all__ = ["AdbServerSupervisor"]
