@@ -23,10 +23,10 @@ from adb.server.failure import (
 from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
 from adb.server.state import (
     AdbServerActivated,
-    AdbServerActivationRejected,
+    AdbServerActivationStateConflict,
     AdbServerActivationResult,
     AdbServerDeactivated,
-    AdbServerDeactivationRejected,
+    AdbServerDeactivationStateConflict,
     AdbServerDeactivationResult,
     AdbServerState,
     AdbServerStateStatus,
@@ -40,11 +40,11 @@ from adb.adapters.aosp.server_status import AdbServerStatusReader
 
 __all__ = [
     "AdbServerActivated",
-    "AdbServerActivationRejected",
+    "AdbServerActivationStateConflict",
     "AdbServerActivationResult",
     "AdbServerBackend",
     "AdbServerDeactivated",
-    "AdbServerDeactivationRejected",
+    "AdbServerDeactivationStateConflict",
     "AdbServerDeactivationResult",
     "AdbMdnsBackend",
     "AdbServerConnectionFailure",

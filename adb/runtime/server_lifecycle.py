@@ -18,7 +18,7 @@ from adb.server.lifecycle.control.backend import (
 from adb.server.lifecycle.control.errors import AdbServerLifecycleConsistencyError
 from adb.server.state import (
     AdbServerActivated,
-    AdbServerActivationRejected,
+    AdbServerActivationStateConflict,
     AdbServerDeactivated,
 )
 
@@ -87,7 +87,7 @@ class AdbServerLifecycleRuntimeFacade:
                 self._backend.release(endpoint)
                 raise
 
-            if isinstance(activation, AdbServerActivationRejected):
+            if isinstance(activation, AdbServerActivationStateConflict):
                 self._backend.release(endpoint)
             elif not isinstance(activation, AdbServerActivated):
                 self._backend.release(endpoint)

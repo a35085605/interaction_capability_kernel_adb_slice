@@ -96,8 +96,8 @@ class AdbServerActivated:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerActivationRejected:
-    """Evidence that activation did not commit, with state observed at rejection."""
+class AdbServerActivationStateConflict:
+    """Evidence that activation lost its expected authoritative-state fence."""
 
     state: AdbServerState
 
@@ -107,7 +107,7 @@ class AdbServerActivationRejected:
 
 
 AdbServerActivationResult: TypeAlias = (
-    AdbServerActivated | AdbServerActivationRejected
+    AdbServerActivated | AdbServerActivationStateConflict
 )
 
 
@@ -137,8 +137,8 @@ class AdbServerDeactivated:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerDeactivationRejected:
-    """Evidence that deactivation did not commit, with state observed at rejection."""
+class AdbServerDeactivationStateConflict:
+    """Evidence that deactivation lost its expected active-server fence."""
 
     state: AdbServerState
 
@@ -148,7 +148,7 @@ class AdbServerDeactivationRejected:
 
 
 AdbServerDeactivationResult: TypeAlias = (
-    AdbServerDeactivated | AdbServerDeactivationRejected
+    AdbServerDeactivated | AdbServerDeactivationStateConflict
 )
 
 
@@ -249,11 +249,13 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
             raise TypeError("endpoint must be TcpAddress")
         if not isinstance(expected, AdbServerState):
             raise TypeError("expected must be AdbServerState")
+        if expected.active:
+            raise ValueError("expected server state must be inactive")
 
         with self._lock:
             current = self._state
-            if current != expected or expected.active:
-                return AdbServerActivationRejected(current)
+            if current != expected:
+                return AdbServerActivationStateConflict(current)
 
             previous_identity = expected.identity
             next_identity = (
@@ -278,7 +280,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         with self._lock:
             current = self._state
             if current.server != expected:
-                return AdbServerDeactivationRejected(current)
+                return AdbServerDeactivationStateConflict(current)
             next_state = AdbServerState(
                 endpoint=current.endpoint,
                 identity=current.identity,
@@ -290,10 +292,10 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
 
 __all__ = [
     "AdbServerActivated",
-    "AdbServerActivationRejected",
+    "AdbServerActivationStateConflict",
     "AdbServerActivationResult",
     "AdbServerDeactivated",
-    "AdbServerDeactivationRejected",
+    "AdbServerDeactivationStateConflict",
     "AdbServerDeactivationResult",
     "AdbServerState",
     "AdbServerStateStatus",
