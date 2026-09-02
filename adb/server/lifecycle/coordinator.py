@@ -22,6 +22,9 @@ from adb.server.state import (
     AdbServerActivationResult,
     AdbServerActivationStateConflict,
     AdbServerDeactivated,
+    AdbServerDeactivationResult,
+    AdbServerDeactivationStateConflict,
+    AdbServerState,
     AdbServerStateStore,
 )
 
@@ -40,12 +43,26 @@ class AdbServerAlreadyActive:
             raise TypeError("endpoint must be TcpAddress")
 
 
+@dataclass(frozen=True, slots=True)
+class AdbServerAlreadyInactive:
+    """Evidence that unfenced retirement found no active authoritative server."""
+
+    state: AdbServerState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, AdbServerState):
+            raise TypeError("state must be AdbServerState")
+        if self.state.active:
+            raise ValueError("already-inactive result requires inactive server state")
+
+
 AdbServerProvisionEvidence: TypeAlias = (
     AdbServerAlreadyActive
     | AdbServerBackendAcquireResult
     | AdbServerActivationResult
 )
 AdbServerProvisionResult: TypeAlias = tuple[AdbServerProvisionEvidence, ...]
+AdbServerRetireResult: TypeAlias = AdbServerAlreadyInactive | AdbServerDeactivationResult
 
 
 class AdbServerLifecycleCoordinator:
@@ -129,24 +146,32 @@ class AdbServerLifecycleCoordinator:
         self,
         *,
         expected_server: AdbServerIdentity | None = None,
-    ) -> AdbServerDeactivated | None:
-        """Retire the authoritative server, optionally fenced by its identity."""
+    ) -> AdbServerRetireResult:
+        """Return typed evidence produced by one authoritative retirement operation.
+
+        An unfenced call against an inactive state returns :class:`AdbServerAlreadyInactive`.
+        Fenced calls pass the requested server identity directly to authoritative state so stale
+        work is preserved as :class:`AdbServerDeactivationStateConflict` evidence. Backend release
+        runs only after a committed deactivation.
+        """
 
         if expected_server is not None and not isinstance(expected_server, AdbServerIdentity):
             raise TypeError("expected_server must be AdbServerIdentity or None")
 
         with self._lock:
             t0 = self._state.snapshot()
-            server = t0.server
-            endpoint = t0.endpoint
-            if server is None or endpoint is None:
-                return None
-            if expected_server is not None and server != expected_server:
-                return None
+            if expected_server is None:
+                server = t0.server
+                if server is None:
+                    return AdbServerAlreadyInactive(t0)
+            else:
+                server = expected_server
 
             deactivation = self._state.deactivate(server)
+            if isinstance(deactivation, AdbServerDeactivationStateConflict):
+                return deactivation
             if not isinstance(deactivation, AdbServerDeactivated):
-                return None
+                raise TypeError("server state deactivate() returned an unsupported result")
 
             committed_endpoint = deactivation.state.endpoint
             assert committed_endpoint is not None
@@ -164,7 +189,9 @@ class AdbServerLifecycleCoordinator:
 
 __all__ = [
     "AdbServerAlreadyActive",
+    "AdbServerAlreadyInactive",
     "AdbServerLifecycleCoordinator",
     "AdbServerProvisionEvidence",
     "AdbServerProvisionResult",
+    "AdbServerRetireResult",
 ]

@@ -24,7 +24,11 @@ from adb.server.lifecycle.coordinator import (
     AdbServerProvisionResult,
 )
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
-from adb.server.state import AdbServerActivated, AdbServerActivationStateConflict
+from adb.server.state import (
+    AdbServerActivated,
+    AdbServerActivationStateConflict,
+    AdbServerDeactivated,
+)
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.state import AdbTransportListStateView
@@ -177,7 +181,7 @@ class AdbRuntime(AdbManagedRuntime):
     def retire_server(self) -> bool:
         """Retire the server lifetime authoritative at execution time."""
 
-        return self._server_lifecycle.retire() is not None
+        return isinstance(self._server_lifecycle.retire(), AdbServerDeactivated)
 
     def _bootstrap_initial_server(self) -> None:
         """Provision the initial server through the runtime lifecycle authority."""

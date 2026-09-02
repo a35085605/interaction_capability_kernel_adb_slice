@@ -16,6 +16,7 @@ from adb.server.lifecycle.backend import (
 from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
     AdbServerProvisionResult,
+    AdbServerRetireResult,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
@@ -48,7 +49,7 @@ class AdbServerLifecyclePort(Protocol):
         self,
         *,
         expected_server: AdbServerIdentity | None = None,
-    ) -> AdbServerDeactivated | None: ...
+    ) -> AdbServerRetireResult: ...
 
 
 _ReconcileDependents = Callable[[], None]
@@ -197,8 +198,8 @@ class AdbServerSupervisor:
             if not self._running_locked():
                 return
 
-        deactivation = self._lifecycle.retire(expected_server=event.server)
-        if deactivation is None:
+        retirement = self._lifecycle.retire(expected_server=event.server)
+        if not isinstance(retirement, AdbServerDeactivated):
             return
 
         try:
