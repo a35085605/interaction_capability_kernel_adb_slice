@@ -4,7 +4,7 @@ from collections.abc import Callable
 import os
 import socket
 import subprocess
-from threading import Lock
+from threading import Condition, Lock
 from time import monotonic, sleep
 from typing import Protocol
 
@@ -18,7 +18,7 @@ from adb.server.lifecycle.control.backend import (
     AdbServerBackendOperation,
     AdbServerBackendOperationBlocked,
     AdbServerBackendOperationInProgress,
-    AdbServerBackendResult,
+    AdbServerBackendAcquireResult,
     AdbServerBackendSatisfied,
     AdbServerBackendSucceeded,
     _require_owned_release_endpoint,
@@ -319,9 +319,7 @@ class _AdbServerSubprocessFactory:
             self._sleep(min(self.probe_interval_seconds, remaining))
 
 class SubprocessAdbServerBackend:
-    """Own a foreground ADB server process attachment and translate subprocess outcomes into
-    lifecycle results.
-    """
+    """Own foreground ADB server attachment acquisition and process cleanup convergence."""
 
     def __init__(
         self,
@@ -344,6 +342,7 @@ class SubprocessAdbServerBackend:
 
         self._factory = _factory
         self._operation_state_lock = Lock()
+        self._operation_condition = Condition(self._operation_state_lock)
         self._active_operation: AdbServerBackendOperation | None = None
         self._attachment: _OwnedAdbServerProcess | None = None
         self._attachment_usable = False
@@ -352,7 +351,7 @@ class SubprocessAdbServerBackend:
         self,
         operation: AdbServerBackendOperation,
     ) -> AdbServerBackendOperationInProgress | AdbServerBackendOperationBlocked | None:
-        with self._operation_state_lock:
+        with self._operation_condition:
             active_operation = self._active_operation
             if active_operation is operation:
                 return AdbServerBackendOperationInProgress(
@@ -371,15 +370,16 @@ class SubprocessAdbServerBackend:
             return None
 
     def _end_operation(self, operation: AdbServerBackendOperation) -> None:
-        with self._operation_state_lock:
+        with self._operation_condition:
             if self._active_operation is not operation:
                 raise RuntimeError("ADB server backend operation state is inconsistent")
             self._active_operation = None
+            self._operation_condition.notify_all()
 
     def acquire(
         self,
         endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServerBackendResult:
+    ) -> AdbServerBackendAcquireResult:
         if endpoint is not None and not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress or None")
 
@@ -426,34 +426,36 @@ class SubprocessAdbServerBackend:
         finally:
             self._end_operation(operation)
 
-    def release(self, endpoint: AdbServerEndpoint) -> AdbServerBackendResult:
+    def release(self, endpoint: AdbServerEndpoint) -> None:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
 
         operation = AdbServerBackendOperation.RELEASE
-        unavailable = self._begin_operation(operation)
-        if unavailable is not None:
-            return unavailable
+        # Release is a relinquishment command, not an observable lifecycle result. Wait until any
+        # in-flight backend operation has handed ownership back to the implementation, then accept
+        # responsibility for converging the requested attachment to physical termination.
+        with self._operation_condition:
+            while self._active_operation is not None:
+                self._operation_condition.wait()
+            self._active_operation = operation
 
         try:
             attachment = self._attachment
             if attachment is None:
-                return AdbServerBackendSatisfied(endpoint)
+                return
             _require_owned_release_endpoint(attachment.endpoint, endpoint)
 
+            # From this point the attachment must never satisfy a future acquire, even if process
+            # termination cannot yet be confirmed.
+            self._attachment_usable = False
             try:
                 attachment.close()
             except _AdbServerSubprocessTerminationUnconfirmed:
-                # Keep ownership until termination is observable.  A failed release makes the
-                # attachment unavailable for a subsequent acquire even if its child is still alive.
-                self._attachment_usable = False
-                return AdbServerBackendFailed(
-                    "ADB subprocess backend could not release its owned attachment"
-                )
+                # Keep implementation ownership until a later acquire observes the child exited.
+                # Runtime retirement is already complete and does not observe this convergence.
+                return
 
             self._attachment = None
-            self._attachment_usable = False
-            return AdbServerBackendSucceeded(endpoint)
         finally:
             self._end_operation(operation)
 

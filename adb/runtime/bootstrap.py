@@ -8,8 +8,6 @@ from adb.runtime.core import AdbRuntime
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.control.backend import AdbServerBackend
-from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
-from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.state import AdbServerStateStore
@@ -46,8 +44,6 @@ def _default_server_backend_factory() -> AdbServerBackend:
 @dataclass(frozen=True, slots=True)
 class _BootstrapCore:
     server_backend: AdbServerBackend
-    server_provisioner: AdbServerProvisioner
-    server_retirer: AdbServerRetirer
     runtime_state: AdbRuntimeState
     transport_list_snapshot_epoch_issuer: EpochIssuer[AdbTransportListSnapshotEpoch]
 
@@ -118,12 +114,12 @@ class AdbRuntimeBootstrap:
         try:
             runtime = self._build_runtime(
                 core.runtime_state,
-                server_provisioner=core.server_provisioner,
-                server_retirer=core.server_retirer,
+                server_backend=core.server_backend,
+                server_provision_endpoint=self._endpoint,
                 transport_supervision_policy=self._transport_supervision_policy,
                 _bootstrap_server=True,
             )
-            self._configure_recovery_provisioner(runtime, core)
+            self._configure_recovery_endpoint(runtime)
             return runtime
         except BaseException:
             if runtime is not None:
@@ -163,8 +159,8 @@ class AdbRuntimeBootstrap:
         try:
             runtime = self._build_runtime(
                 core.runtime_state,
-                server_provisioner=core.server_provisioner,
-                server_retirer=core.server_retirer,
+                server_backend=core.server_backend,
+                server_provision_endpoint=self._endpoint,
                 event_bus=event_bus,
                 server_supervision_scheduler=scheduler,
                 server_supervision_policy=self._server_recovery_policy,
@@ -172,7 +168,7 @@ class AdbRuntimeBootstrap:
                 transport_supervision_policy=self._transport_supervision_policy,
                 _bootstrap_server=True,
             )
-            self._configure_recovery_provisioner(runtime, core)
+            self._configure_recovery_endpoint(runtime)
             initial_server = runtime.server
             initial_endpoint = runtime.current_endpoint
             if initial_server is None or initial_endpoint is None:
@@ -223,11 +219,6 @@ class AdbRuntimeBootstrap:
 
         return _BootstrapCore(
             server_backend=backend,
-            server_provisioner=AdbServerProvisioner(
-                backend,
-                endpoint=self._endpoint,
-            ),
-            server_retirer=AdbServerRetirer(backend),
             runtime_state=AdbRuntimeState(
                 server=AdbServerStateStore(),
                 transport_list=AdbTransportListSnapshotState(),
@@ -235,22 +226,16 @@ class AdbRuntimeBootstrap:
             transport_list_snapshot_epoch_issuer=transport_list_snapshot_epoch_issuer,
         )
 
-    def _configure_recovery_provisioner(
+    def _configure_recovery_endpoint(
         self,
         runtime: AdbRuntime,
-        core: _BootstrapCore,
     ) -> None:
         initial_server = runtime.server
         initial_endpoint = runtime.current_endpoint
         if initial_server is None or initial_endpoint is None:
             raise RuntimeError("bootstrapped ADB runtime has no initial server binding")
         recovery_endpoint = initial_endpoint if self._pin_endpoint else None
-        runtime._replace_server_provisioner(
-            AdbServerProvisioner(
-                core.server_backend,
-                endpoint=recovery_endpoint,
-            )
-        )
+        runtime._configure_server_provision_endpoint(recovery_endpoint)
 
     @staticmethod
     def _dispose_failed_runtime(runtime: AdbRuntime) -> None:

@@ -2,13 +2,9 @@
 
 from adb.server.availability import AdbServerUnavailableError
 
-from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
-from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
-    AdbServerProvisionResult,
-    AdbServerProvisioned,
 )
 from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.backend import AdbServerBackend
@@ -58,12 +54,8 @@ __all__ = [
     "AdbMdnsBackend",
     "AdbServerConnectionFailure",
     "AdbServerControlError",
-    "AdbServerProvisioner",
-    "AdbServerRetirer",
     "AdbServerProvisionDeferred",
     "AdbServerProvisionFailed",
-    "AdbServerProvisionResult",
-    "AdbServerProvisioned",
     "AdbServerProvisionCommitted",
     "AdbServerProvisionTransactionResult",
     "AdbServerEndpoint",

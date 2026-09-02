@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
-
-from networking import TcpAddress
-from adb.server.endpoint import AdbServerEndpoint
 
 
 def _normalize_diagnostic(value: object, *, field_name: str) -> str:
@@ -14,17 +10,6 @@ def _normalize_diagnostic(value: object, *, field_name: str) -> str:
     if not normalized:
         raise ValueError(f"{field_name} cannot be empty")
     return normalized
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerProvisioned:
-    """A usable ADB server backend endpoint was provisioned."""
-
-    endpoint: AdbServerEndpoint
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,16 +46,7 @@ class AdbServerProvisionFailed:
         )
 
 
-AdbServerProvisionResult: TypeAlias = (
-    AdbServerProvisioned
-    | AdbServerProvisionDeferred
-    | AdbServerProvisionFailed
-)
-
-
 __all__ = [
     "AdbServerProvisionDeferred",
     "AdbServerProvisionFailed",
-    "AdbServerProvisionResult",
-    "AdbServerProvisioned",
 ]

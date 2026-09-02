@@ -18,7 +18,7 @@ def _normalize_diagnostic(value: object) -> str:
 
 
 class AdbServerBackendOperation(str, Enum):
-    """One mutually exclusive backend lifecycle operation."""
+    """One mutually exclusive backend implementation operation."""
 
     ACQUIRE = "acquire"
     RELEASE = "release"
@@ -26,7 +26,7 @@ class AdbServerBackendOperation(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendSucceeded:
-    """The requested backend operation ran and completed successfully."""
+    """A backend acquisition created a usable attachment."""
 
     endpoint: AdbServerEndpoint
 
@@ -37,7 +37,7 @@ class AdbServerBackendSucceeded:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendSatisfied:
-    """The requested backend operation was unnecessary because its target state already holds."""
+    """A backend acquisition found an already-usable matching attachment."""
 
     endpoint: AdbServerEndpoint
 
@@ -48,7 +48,7 @@ class AdbServerBackendSatisfied:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendOperationInProgress:
-    """The same requested backend operation is already in progress."""
+    """The requested acquisition is already in progress."""
 
     operation: AdbServerBackendOperation
     diagnostic: str | None = None
@@ -62,7 +62,7 @@ class AdbServerBackendOperationInProgress:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendOperationBlocked:
-    """Backend result indicating an unsatisfied operation prerequisite."""
+    """Backend acquisition cannot currently produce a usable attachment."""
 
     diagnostic: str
     blocking_operation: AdbServerBackendOperation | None = None
@@ -78,7 +78,7 @@ class AdbServerBackendOperationBlocked:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendFailed:
-    """Backend result indicating an unsuccessful completed operation attempt."""
+    """Backend acquisition failed to produce a usable attachment."""
 
     diagnostic: str
 
@@ -86,7 +86,7 @@ class AdbServerBackendFailed:
         object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
 
 
-AdbServerBackendResult: TypeAlias = (
+AdbServerBackendAcquireResult: TypeAlias = (
     AdbServerBackendSucceeded
     | AdbServerBackendSatisfied
     | AdbServerBackendOperationInProgress
@@ -117,29 +117,27 @@ def _require_owned_release_endpoint(
 
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Own acquisition and release of one usable ADB server attachment and report lifecycle
-    operation outcomes.
-    """
+    """Own acquisition and physical convergence of one usable ADB server attachment."""
 
     def acquire(
         self,
         endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServerBackendResult:
+    ) -> AdbServerBackendAcquireResult:
         """Acquire a usable attachment, optionally constrained to ``endpoint``."""
         ...
 
-    def release(self, endpoint: AdbServerEndpoint) -> AdbServerBackendResult:
-        """Release the backend attachment identified by ``endpoint``."""
+    def release(self, endpoint: AdbServerEndpoint) -> None:
+        """Accept relinquishment of ``endpoint`` and own its physical cleanup convergence."""
         ...
 
 
 __all__ = [
     "AdbServerBackend",
+    "AdbServerBackendAcquireResult",
     "AdbServerBackendFailed",
     "AdbServerBackendOperation",
     "AdbServerBackendOperationBlocked",
     "AdbServerBackendOperationInProgress",
-    "AdbServerBackendResult",
     "AdbServerBackendSatisfied",
     "AdbServerBackendSucceeded",
 ]

@@ -3,9 +3,10 @@ from __future__ import annotations
 from threading import RLock
 
 from adb.runtime.managed import AdbManagedRuntime
+from networking import TcpAddress
+from adb.server.endpoint import AdbServerEndpoint
+from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.control.errors import AdbServerControlError
-from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
-from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
@@ -43,8 +44,8 @@ class AdbRuntime(AdbManagedRuntime):
         self,
         state: AdbRuntimeState,
         *,
-        server_provisioner: AdbServerProvisioner,
-        server_retirer: AdbServerRetirer,
+        server_backend: AdbServerBackend,
+        server_provision_endpoint: AdbServerEndpoint | None = None,
         event_bus: EventBus | None = None,
         server_supervision_scheduler: TemporalScheduler[object] | None = None,
         server_supervision_policy: AdbServerRecoveryPolicy | None = None,
@@ -56,10 +57,12 @@ class AdbRuntime(AdbManagedRuntime):
     ) -> None:
         if not isinstance(state, AdbRuntimeState):
             raise TypeError("state must be AdbRuntimeState")
-        if not isinstance(server_provisioner, AdbServerProvisioner):
-            raise TypeError("server_provisioner must be AdbServerProvisioner")
-        if not isinstance(server_retirer, AdbServerRetirer):
-            raise TypeError("server_retirer must be AdbServerRetirer")
+        if not isinstance(server_backend, AdbServerBackend):
+            raise TypeError("server_backend must satisfy AdbServerBackend")
+        if server_provision_endpoint is not None and not isinstance(
+            server_provision_endpoint, TcpAddress
+        ):
+            raise TypeError("server_provision_endpoint must be TcpAddress or None")
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if server_supervision_scheduler is not None and not isinstance(
@@ -137,8 +140,8 @@ class AdbRuntime(AdbManagedRuntime):
         self._event_bus = event_bus
         self._server_lifecycle = AdbServerLifecycleRuntimeFacade(
             state,
-            provisioner=server_provisioner,
-            retirer=server_retirer,
+            backend=server_backend,
+            provision_endpoint=server_provision_endpoint,
         )
         if _bootstrap_server:
             self._bootstrap_initial_server()
@@ -217,20 +220,20 @@ class AdbRuntime(AdbManagedRuntime):
                 "initial ADB server provisioning did not commit its server lifetime"
             )
 
-    def _replace_server_provisioner(
+    def _configure_server_provision_endpoint(
         self,
-        provisioner: AdbServerProvisioner,
+        endpoint: AdbServerEndpoint | None,
     ) -> None:
-        """Replace the pre-start provisioning policy while preserving runtime ownership."""
+        """Configure the endpoint constraint used for subsequent server recovery."""
 
-        if not isinstance(provisioner, AdbServerProvisioner):
-            raise TypeError("provisioner must be AdbServerProvisioner")
+        if endpoint is not None and not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress or None")
         with self._runtime_lock:
             if self._closed or self._started or self._starting:
                 raise RuntimeError(
-                    "ADB server provisioner can only be replaced before runtime start"
+                    "ADB server provision endpoint can only be configured before runtime start"
                 )
-            self._server_lifecycle.replace_provisioner(provisioner)
+            self._server_lifecycle.configure_provision_endpoint(endpoint)
 
     def _install_auxiliary_supervisors(
         self,
