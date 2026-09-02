@@ -4,6 +4,14 @@ from threading import RLock
 
 from adb.runtime.state import AdbRuntimeState
 from adb.server.identity import AdbServerIdentity
+from adb.server.lifecycle.control.backend import (
+    AdbServerBackendFailed,
+    AdbServerBackendOperationBlocked,
+    AdbServerBackendOperationInProgress,
+    AdbServerBackendResult,
+    AdbServerBackendSatisfied,
+    AdbServerBackendSucceeded,
+)
 from adb.server.lifecycle.control.errors import AdbServerControlError
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
@@ -25,7 +33,23 @@ from adb.server.lifecycle.transaction import (
     AdbServerProvisionCommitted,
     AdbServerProvisionTransactionResult,
 )
-from adb.server.state import AdbServerActivated, AdbServerDeactivated, AdbServerState
+from adb.server.state import (
+    AdbServerActivated,
+    AdbServerActivationRejected,
+    AdbServerDeactivated,
+    AdbServerDeactivationRejected,
+    AdbServerState,
+)
+
+
+def _backend_release_incomplete_diagnostic(result: AdbServerBackendResult) -> str | None:
+    if isinstance(result, (AdbServerBackendSucceeded, AdbServerBackendSatisfied)):
+        return None
+    if isinstance(result, AdbServerBackendOperationInProgress):
+        return result.diagnostic or "ADB server backend release is already in progress"
+    if isinstance(result, (AdbServerBackendOperationBlocked, AdbServerBackendFailed)):
+        return result.diagnostic
+    raise TypeError("unsupported ADB server backend release result")
 
 
 class AdbServerLifecycleRuntimeFacade:
@@ -130,27 +154,39 @@ class AdbServerLifecycleRuntimeFacade:
 
             try:
                 activation = self._state.activate_server(result.endpoint, t0)
-            except BaseException:
+            except Exception as activation_error:
                 try:
-                    self._retirer.retire(result.endpoint)
-                except BaseException as release_error:
+                    release_result = self._retirer.retire(result.endpoint)
+                except Exception as release_error:
                     raise AdbServerControlError(
                         "ADB runtime server state commit failed and its provisioned backend "
-                        "attachment could not be released"
+                        "attachment cleanup raised an exception"
                     ) from release_error
+
+                cleanup_diagnostic = _backend_release_incomplete_diagnostic(release_result)
+                if cleanup_diagnostic is not None:
+                    raise AdbServerControlError(
+                        "ADB runtime server state commit failed and its provisioned backend "
+                        f"attachment cleanup did not complete: {cleanup_diagnostic}"
+                    ) from activation_error
                 raise
 
             if isinstance(activation, AdbServerActivated):
                 return AdbServerProvisionCommitted(activation.server, activation)
-            cleanup_endpoint = result.endpoint
+            if isinstance(activation, AdbServerActivationRejected):
+                cleanup_endpoint = result.endpoint
+            else:
+                raise TypeError("activate_server() returned an unsupported result")
 
         # A provisioned endpoint that lost its observed inactive-state comparison never became
         # authoritative. Cleanup is outside the facade lock so newer lifecycle work is not blocked.
         assert cleanup_endpoint is not None
-        self._retirer.retire(cleanup_endpoint)
-        return AdbServerProvisionDeferred(
-            "ADB runtime server state changed before provisioned endpoint could commit"
-        )
+        release_result = self._retirer.retire(cleanup_endpoint)
+        cleanup_diagnostic = _backend_release_incomplete_diagnostic(release_result)
+        diagnostic = "ADB runtime server state changed before provisioned endpoint could commit"
+        if cleanup_diagnostic is not None:
+            diagnostic = f"{diagnostic}; backend cleanup did not complete: {cleanup_diagnostic}"
+        return AdbServerProvisionDeferred(diagnostic)
 
     def _retire(
         self,
@@ -167,12 +203,16 @@ class AdbServerLifecycleRuntimeFacade:
             return None
         if expected_server is not None and server != expected_server:
             return None
+
         deactivation = self._state.deactivate_server(server)
-        if not isinstance(deactivation, AdbServerDeactivated):
+        if isinstance(deactivation, AdbServerDeactivationRejected):
             return None
+        if not isinstance(deactivation, AdbServerDeactivated):
+            raise TypeError("deactivate_server() returned an unsupported result")
 
         # Domain deactivation is authoritative before backend cleanup begins. The state CAS is the
-        # retirement linearization point, so successor provisioning may race backend cleanup.
+        # retirement linearization point, so successor provisioning may race backend cleanup. A
+        # typed backend cleanup failure does not undo that committed deactivation.
         committed_endpoint = deactivation.state.endpoint
         assert committed_endpoint is not None
         self._retirer.retire(committed_endpoint)

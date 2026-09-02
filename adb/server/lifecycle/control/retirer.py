@@ -7,6 +7,7 @@ from adb.server.lifecycle.control.backend import (
     AdbServerBackendFailed,
     AdbServerBackendOperationBlocked,
     AdbServerBackendOperationInProgress,
+    AdbServerBackendResult,
     AdbServerBackendSatisfied,
     AdbServerBackendSucceeded,
 )
@@ -15,7 +16,7 @@ from adb.server.lifecycle.control.backend import (
 def _release_backend_attachment(
     backend: AdbServerBackend,
     endpoint: AdbServerEndpoint,
-) -> None:
+) -> AdbServerBackendResult:
     result = backend.release(endpoint)
     if isinstance(
         result,
@@ -27,7 +28,7 @@ def _release_backend_attachment(
             AdbServerBackendFailed,
         ),
     ):
-        return
+        return result
     raise TypeError("server backend release() returned an unsupported result")
 
 
@@ -39,12 +40,12 @@ class AdbServerRetirer:
             raise TypeError("backend must satisfy AdbServerBackend")
         self._backend = backend
 
-    def retire(self, endpoint: AdbServerEndpoint) -> None:
-        """Request release of the backend attachment identified by ``endpoint``."""
+    def retire(self, endpoint: AdbServerEndpoint) -> AdbServerBackendResult:
+        """Request release and return the backend's typed operational result."""
 
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
-        _release_backend_attachment(self._backend, endpoint)
+        return _release_backend_attachment(self._backend, endpoint)
 
 
 __all__ = ["AdbServerRetirer"]
