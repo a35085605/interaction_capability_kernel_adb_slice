@@ -84,8 +84,4 @@ class AdbServerRecoveryPolicy:
         object.__setattr__(self, "max_attempts", max_attempts)
 
 
-AdbServerSupervisionPolicy = AdbServerRecoveryPolicy
-"""Compatibility alias for the former recovery-policy name."""
-
-
-__all__ = ["AdbServerRecoveryPolicy", "AdbServerSupervisionPolicy"]
+__all__ = ["AdbServerRecoveryPolicy"]

@@ -11,10 +11,7 @@ from adb.server.lifecycle.supervision.intent import (
     AdbServerReconcileIntent,
     AdbServerReconcileIntentResult,
 )
-from adb.server.lifecycle.supervision.policy import (
-    AdbServerRecoveryPolicy,
-    AdbServerSupervisionPolicy,
-)
+from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import AdbServerRecoveryCycle
 from adb.server.signal import AdbServerRecoveryCycleId
 
@@ -31,5 +28,4 @@ __all__ = [
     "AdbServerRecoveryCycle",
     "AdbServerRecoveryCycleId",
     "AdbServerRecoveryPolicy",
-    "AdbServerSupervisionPolicy",
 ]
