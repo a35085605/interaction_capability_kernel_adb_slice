@@ -9,17 +9,28 @@ from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
+    AdbServerProvisionFailed,
     AdbServerProvisioned,
 )
 from adb.server.lifecycle.supervision.intent import (
+    AdbServerEnsureIntent,
+    AdbServerEnsureIntentResult,
+    AdbServerEnsureSatisfied,
     AdbServerLifecycleIntent,
     AdbServerLifecycleIntentResult,
-    AdbServerProvisionIntent,
-    AdbServerRetireIntent,
+    AdbServerReconcileCompleted,
+    AdbServerReconcileIntent,
+    AdbServerReconcileIntentResult,
 )
 from adb.server.lifecycle.transaction import (
     AdbServerProvisionCommitted,
     AdbServerProvisionTransactionResult,
+)
+from adb.server.signal import (
+    AdbServerLost,
+    AdbServerReconciliationRequested,
+    AdbServerRecovered,
+    AdbServerRetired,
 )
 from adb.server.state import AdbServerState
 
@@ -65,14 +76,14 @@ class AdbServerLifecycleRuntimeFacade:
     def retire(self) -> bool:
         """Retire the authoritative server lifetime observed at execution time."""
 
-        return self._retire(expected=None, expected_server=None)
+        return self._retire(expected=None, expected_server=None) is not None
 
     def retire_if_current(self, expected: AdbServerState) -> bool:
         """Conditionally retire ``expected`` when it still matches authoritative state."""
 
         if not isinstance(expected, AdbServerState):
             raise TypeError("expected must be AdbServerState")
-        return self._retire(expected=expected, expected_server=None)
+        return self._retire(expected=expected, expected_server=None) is not None
 
     def dispatch(
         self,
@@ -80,11 +91,67 @@ class AdbServerLifecycleRuntimeFacade:
     ) -> AdbServerLifecycleIntentResult:
         """Dispatch one complete runtime-owned server lifecycle intent transaction."""
 
-        if isinstance(intent, AdbServerProvisionIntent):
-            return self.provision()
-        if isinstance(intent, AdbServerRetireIntent):
-            return self._retire(expected=None, expected_server=intent.server)
+        return self.interpret(intent)
+
+    def interpret(
+        self,
+        intent: AdbServerLifecycleIntent,
+    ) -> AdbServerLifecycleIntentResult:
+        """Interpret supervision intent against authoritative runtime state and identity."""
+
+        if isinstance(intent, AdbServerEnsureIntent):
+            return self._ensure()
+        if isinstance(intent, AdbServerReconcileIntent):
+            return self._reconcile(intent)
         raise TypeError("unsupported ADB server lifecycle intent")
+
+    def _ensure(self) -> AdbServerEnsureIntentResult:
+        """Ensure an active authoritative server without exposing runtime state to supervision."""
+
+        t0 = self._state.observe_server()
+        if t0.active:
+            return AdbServerEnsureSatisfied()
+
+        result = self.provision()
+        if isinstance(result, AdbServerProvisionCommitted):
+            return AdbServerEnsureSatisfied(AdbServerRecovered(result.server))
+
+        if isinstance(result, AdbServerProvisionDeferred):
+            # Provisioning may have raced a different lifecycle transaction. If that transaction
+            # already established an active authoritative lifetime, the ensure intent is satisfied
+            # even though this individual provisioning attempt did not commit it.
+            if self._state.observe_server().active:
+                return AdbServerEnsureSatisfied()
+            return result
+
+        if isinstance(result, AdbServerProvisionFailed):
+            return result
+        raise TypeError("server lifecycle facade returned an unsupported provision result")
+
+    def _reconcile(
+        self,
+        intent: AdbServerReconcileIntent,
+    ) -> AdbServerReconcileIntentResult:
+        """Interpret one liveness reconciliation request and perform identity fencing here."""
+
+        cause = intent.cause
+        if isinstance(cause, AdbServerReconciliationRequested):
+            expected_server = cause.server
+            failure = cause.failure
+        else:
+            expected_server = None
+            failure = cause
+
+        retired_server = self._retire(
+            expected=None,
+            expected_server=expected_server,
+        )
+        if retired_server is None:
+            return None
+        return AdbServerReconcileCompleted(
+            retired=AdbServerRetired(retired_server),
+            lost=AdbServerLost(retired_server, failure),
+        )
 
     def replace_provisioner(self, provisioner: AdbServerProvisioner) -> None:
         """Replace provisioning policy while preserving this runtime lifecycle authority."""
@@ -142,23 +209,23 @@ class AdbServerLifecycleRuntimeFacade:
         *,
         expected: AdbServerState | None,
         expected_server: AdbServerIdentity | None,
-    ) -> bool:
+    ) -> AdbServerIdentity | None:
         t0 = self._state.observe_server()
         if expected is not None and t0 != expected:
-            return False
+            return None
         server = t0.server
         endpoint = t0.endpoint
         if server is None or endpoint is None:
-            return False
+            return None
         if expected_server is not None and server != expected_server:
-            return False
+            return None
         if not self._state.deactivate_server(server):
-            return False
+            return None
 
         # Domain deactivation is authoritative before backend cleanup begins. The state CAS is the
         # retirement linearization point, so successor provisioning may race backend cleanup.
         self._retirer.retire(endpoint)
-        return True
+        return server
 
 
 __all__ = ["AdbServerLifecycleRuntimeFacade"]

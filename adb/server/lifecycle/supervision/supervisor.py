@@ -6,8 +6,9 @@ from random import random
 from threading import Lock, Thread, current_thread
 
 from adb.server.lifecycle.supervision.intent import (
+    AdbServerEnsureIntent,
     AdbServerLifecycleIntentDispatcher,
-    AdbServerRetireIntent,
+    AdbServerReconcileIntent,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
 from adb.server.lifecycle.supervision.transition import (
@@ -24,13 +25,9 @@ from adb.server.failure import (
     AdbServerLivenessFailure,
     AdbServerProcessExitedFailure,
 )
-from adb.server.identity import AdbServerIdentity
-from adb.server.state import AdbServerStateView
 from adb.server.signal import (
     AdbServerRecoveryCycleId,
-    AdbServerLost,
     AdbServerRecovered,
-    AdbServerRetired,
     AdbServerReconciliationRequested,
     AdbServerRecoveryExhausted,
     AdbServerRecoveryRetryDue,
@@ -62,7 +59,7 @@ class AdbServerSupervisor:
 
     def __init__(
         self,
-        runtime: AdbServerLifecycleIntentDispatcher,
+        lifecycle: AdbServerLifecycleIntentDispatcher,
         event_bus: EventBus,
         scheduler: TemporalScheduler[object],
         policy: AdbServerSupervisionPolicy,
@@ -71,12 +68,10 @@ class AdbServerSupervisor:
         _random: _RandomSource = random,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
-        if not isinstance(runtime, AdbServerLifecycleIntentDispatcher):
+        if not isinstance(lifecycle, AdbServerLifecycleIntentDispatcher):
             raise TypeError(
-                "runtime must satisfy AdbServerLifecycleIntentDispatcher"
+                "lifecycle must satisfy AdbServerLifecycleIntentDispatcher"
             )
-        if runtime.server is None:
-            raise ValueError("runtime must have an active initial server")
         if not callable(getattr(event_bus, "publish", None)) or not callable(
             getattr(event_bus, "subscribe", None)
         ) or not callable(getattr(event_bus, "unsubscribe", None)):
@@ -90,7 +85,7 @@ class AdbServerSupervisor:
             field_name="recovery_enabled",
         )
 
-        self._runtime = runtime
+        self._lifecycle = lifecycle
         self._bus = event_bus
         self._scheduler = scheduler
         self._policy = policy
@@ -105,18 +100,6 @@ class AdbServerSupervisor:
         self._retry_token: ScheduleToken | None = None
         self._attempt_threads: set[Thread] = set()
         self._closed = False
-
-    @property
-    def server(self) -> AdbServerIdentity | None:
-        """Current server lifetime from the runtime authoritative state."""
-
-        return self._runtime.server
-
-    @property
-    def server_state(self) -> AdbServerStateView:
-        """Authoritative server-state view provided by the owning runtime."""
-
-        return self._runtime.server_state
 
     @property
     def recovery_enabled(self) -> bool:
@@ -135,7 +118,7 @@ class AdbServerSupervisor:
                 if self._subscriptions:
                     raise RuntimeError("ADB server supervisor is already started")
                 self._ensure_subscriptions_locked()
-                if self.server is None and self._recovery_enabled:
+                if self._recovery_enabled:
                     launch_cycle = self._new_recovery_cycle_locked()
         if launch_cycle is not None:
             self._launch_recovery_attempt(launch_cycle, AdbServerRecoveryAttempt(1))
@@ -151,7 +134,7 @@ class AdbServerSupervisor:
                 "failure must be AdbServerConnectionFailure or "
                 "AdbServerProcessExitedFailure"
             )
-        self._retire_current_and_maybe_recover(failure)
+        self._reconcile_and_maybe_recover(AdbServerReconcileIntent(failure))
 
     def close(self) -> None:
         """Stop supervision while preserving the current healthy server."""
@@ -173,34 +156,29 @@ class AdbServerSupervisor:
             if thread is not current_thread():
                 thread.join()
 
-    def _retire_current_and_maybe_recover(
+    def _reconcile_and_maybe_recover(
         self,
-        failure: AdbServerLivenessFailure,
+        intent: AdbServerReconcileIntent,
     ) -> None:
-        retired_server: AdbServerIdentity | None = None
+        reconciliation = None
         launch_cycle: AdbServerRecoveryCycleId | None = None
         with self._mutation_lock:
             with self._lock:
                 self._require_open()
-                server = self.server
 
-            if server is not None:
-                retired = self._runtime.dispatch_server_lifecycle_intent(
-                    AdbServerRetireIntent(server)
-                )
-                if not retired:
-                    return
-                retired_server = server
-                with self._lock:
-                    if self._recovery_enabled and self._cycle_id is None:
-                        launch_cycle = self._new_recovery_cycle_locked()
+            reconciliation = self._lifecycle.dispatch(intent)
+            if reconciliation is None:
+                return
+            with self._lock:
+                if self._recovery_enabled and self._cycle_id is None:
+                    launch_cycle = self._new_recovery_cycle_locked()
 
-        if retired_server is None:
+        if reconciliation is None:
             return
 
         try:
-            self._bus.publish(AdbServerRetired(retired_server))
-            self._bus.publish(AdbServerLost(retired_server, failure))
+            self._bus.publish(reconciliation.retired)
+            self._bus.publish(reconciliation.lost)
         finally:
             if launch_cycle is not None:
                 self._launch_recovery_attempt(launch_cycle, AdbServerRecoveryAttempt(1))
@@ -236,6 +214,7 @@ class AdbServerSupervisor:
         active = current_thread()
         transition: AdbServerRecoveryTransition | None = None
         recovered_event: AdbServerRecovered | None = None
+        recovery_succeeded = False
         retry_token: ScheduleToken | None = None
         try:
             with self._mutation_lock:
@@ -243,26 +222,28 @@ class AdbServerSupervisor:
                     if not self._recovery_is_current_locked(cycle_id):
                         return
 
-                provision_result = self._runtime.provision_server()
+                ensure_result = self._lifecycle.dispatch(AdbServerEnsureIntent())
                 transition = transition_recovery(
                     attempt,
-                    provision_result,
+                    ensure_result,
                     max_attempts=self._policy.max_attempts,
                 )
 
                 if isinstance(transition, AdbServerRecoverySucceeded):
+                    recovery_succeeded = True
                     with self._lock:
                         if not self._recovery_is_current_locked(cycle_id):
                             return
                         retry_token = self._retry_token
                         self._retry_token = None
                         self._cycle_id = None
-                        recovered_event = AdbServerRecovered(transition.server)
+                        recovered_event = transition.recovered
 
-            if recovered_event is not None:
+            if recovery_succeeded:
                 if retry_token is not None:
                     self._scheduler.cancel(retry_token)
-                self._bus.publish(recovered_event)
+                if recovered_event is not None:
+                    self._bus.publish(recovered_event)
                 return
 
             if isinstance(transition, AdbServerRecoveryDefer):
@@ -335,11 +316,7 @@ class AdbServerSupervisor:
         self,
         event: AdbServerReconciliationRequested,
     ) -> None:
-        with self._lock:
-            server = self.server
-            if server is None or server != event.server:
-                return
-        self._retire_current_and_maybe_recover(event.failure)
+        self._reconcile_and_maybe_recover(AdbServerReconcileIntent(event))
 
     def _on_retry_due(self, event: AdbServerRecoveryRetryDue) -> None:
         with self._lock:
@@ -382,7 +359,6 @@ class AdbServerSupervisor:
             not self._closed
             and bool(self._subscriptions)
             and self._recovery_enabled
-            and self.server is None
             and self._cycle_id == cycle_id
         )
 

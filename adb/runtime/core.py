@@ -147,7 +147,7 @@ class AdbRuntime(AdbManagedRuntime):
             if event_bus is None:
                 raise RuntimeError("validated server supervision requires an event bus")
             self._server_supervisor = AdbServerSupervisor(
-                self,
+                self._server_lifecycle,
                 event_bus=event_bus,
                 scheduler=server_supervision_scheduler,
                 policy=server_supervision_policy,

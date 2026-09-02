@@ -4,15 +4,15 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from adb.server.failure import AdbServerLaunchFailure
-from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
 )
-from adb.server.lifecycle.transaction import (
-    AdbServerProvisionCommitted,
-    AdbServerProvisionTransactionResult,
+from adb.server.lifecycle.supervision.intent import (
+    AdbServerEnsureIntentResult,
+    AdbServerEnsureSatisfied,
 )
+from adb.server.signal import AdbServerRecovered
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,9 +47,9 @@ class AdbServerRecoveryAttempt:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoverySucceeded:
-    """A provisioned server has already committed as the authoritative runtime lifetime."""
+    """The ensure intent is satisfied, optionally by a newly recovered server lifetime."""
 
-    server: AdbServerIdentity
+    recovered: AdbServerRecovered | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,11 +85,11 @@ AdbServerRecoveryTransition: TypeAlias = (
 
 def transition_recovery(
     attempt: AdbServerRecoveryAttempt,
-    result: AdbServerProvisionTransactionResult,
+    result: AdbServerEnsureIntentResult,
     *,
     max_attempts: int | None,
 ) -> AdbServerRecoveryTransition:
-    """Pure recovery transition from immutable attempt state and one provision result."""
+    """Pure recovery transition from immutable attempt state and one ensure-intent result."""
 
     if not isinstance(attempt, AdbServerRecoveryAttempt):
         raise TypeError("attempt must be AdbServerRecoveryAttempt")
@@ -99,8 +99,8 @@ def transition_recovery(
         if max_attempts <= 0:
             raise ValueError("max_attempts must be greater than zero")
 
-    if isinstance(result, AdbServerProvisionCommitted):
-        return AdbServerRecoverySucceeded(result.server)
+    if isinstance(result, AdbServerEnsureSatisfied):
+        return AdbServerRecoverySucceeded(result.recovered)
 
     if isinstance(result, AdbServerProvisionDeferred):
         return AdbServerRecoveryDefer(attempt.after_deferral())
@@ -113,7 +113,7 @@ def transition_recovery(
             return AdbServerRecoveryExhaust(launch_attempts, failure)
         return AdbServerRecoveryRetry(next_attempt, failure)
 
-    raise TypeError("result must be AdbServerProvisionTransactionResult")
+    raise TypeError("result must be AdbServerEnsureIntentResult")
 
 
 __all__ = [

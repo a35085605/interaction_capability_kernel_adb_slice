@@ -3,75 +3,115 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias, overload, runtime_checkable
 
-from adb.server.identity import AdbServerIdentity
-from adb.server.lifecycle.transaction import AdbServerProvisionTransactionResult
-from adb.server.state import AdbServerStateView
+from adb.server.failure import (
+    AdbServerConnectionFailure,
+    AdbServerLivenessFailure,
+    AdbServerProcessExitedFailure,
+)
+from adb.server.lifecycle.control.result import (
+    AdbServerProvisionDeferred,
+    AdbServerProvisionFailed,
+)
+from adb.server.signal import (
+    AdbServerLost,
+    AdbServerReconciliationRequested,
+    AdbServerRecovered,
+    AdbServerRetired,
+)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerProvisionIntent:
-    """Request one complete provision-and-commit transaction from the owning runtime."""
+class AdbServerEnsureIntent:
+    """Request reconciliation to an authoritative active ADB server lifetime."""
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerRetireIntent:
-    """Request retirement of one exact current server identity."""
+class AdbServerReconcileIntent:
+    """Request retirement after terminal liveness failure without interpreting server identity."""
 
-    server: AdbServerIdentity
+    cause: AdbServerReconciliationRequested | AdbServerLivenessFailure
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServerIdentity):
-            raise TypeError("server must be AdbServerIdentity")
+        if not isinstance(
+            self.cause,
+            (
+                AdbServerReconciliationRequested,
+                AdbServerConnectionFailure,
+                AdbServerProcessExitedFailure,
+            ),
+        ):
+            raise TypeError(
+                "cause must be AdbServerReconciliationRequested or AdbServerLivenessFailure"
+            )
 
 
-AdbServerLifecycleIntent: TypeAlias = AdbServerProvisionIntent | AdbServerRetireIntent
-AdbServerLifecycleIntentResult: TypeAlias = AdbServerProvisionTransactionResult | bool
+@dataclass(frozen=True, slots=True)
+class AdbServerEnsureSatisfied:
+    """Ensure intent is satisfied; ``recovered`` exists only for a newly committed lifetime."""
+
+    recovered: AdbServerRecovered | None = None
+
+    def __post_init__(self) -> None:
+        if self.recovered is not None and not isinstance(self.recovered, AdbServerRecovered):
+            raise TypeError("recovered must be AdbServerRecovered or None")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerReconcileCompleted:
+    """Lifecycle signals produced by one authoritative retirement transaction."""
+
+    retired: AdbServerRetired
+    lost: AdbServerLost
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.retired, AdbServerRetired):
+            raise TypeError("retired must be AdbServerRetired")
+        if not isinstance(self.lost, AdbServerLost):
+            raise TypeError("lost must be AdbServerLost")
+        if self.retired.server != self.lost.server:
+            raise ValueError("retired and lost signals must describe the same server lifetime")
+
+
+AdbServerEnsureIntentResult: TypeAlias = (
+    AdbServerEnsureSatisfied | AdbServerProvisionDeferred | AdbServerProvisionFailed
+)
+AdbServerReconcileIntentResult: TypeAlias = AdbServerReconcileCompleted | None
+AdbServerLifecycleIntent: TypeAlias = AdbServerEnsureIntent | AdbServerReconcileIntent
+AdbServerLifecycleIntentResult: TypeAlias = (
+    AdbServerEnsureIntentResult | AdbServerReconcileIntentResult
+)
 
 
 @runtime_checkable
 class AdbServerLifecycleIntentDispatcher(Protocol):
-    """Runtime-owned port used by supervision to observe and request server lifecycle work."""
-
-    @property
-    def server(self) -> AdbServerIdentity | None:
-        """Return the runtime's authoritative current server identity."""
-        ...
-
-    @property
-    def server_state(self) -> AdbServerStateView:
-        """Return the runtime's authoritative server-state view."""
-        ...
-
-    def provision_server(self) -> AdbServerProvisionTransactionResult:
-        """Provision against the server state authoritative at execution time."""
-        ...
-
-    def retire_server(self) -> bool:
-        """Retire the server state authoritative at execution time."""
-        ...
+    """Lifecycle command port used by supervision without exposing runtime state or identity."""
 
     @overload
-    def dispatch_server_lifecycle_intent(
+    def dispatch(
         self,
-        intent: AdbServerProvisionIntent,
-    ) -> AdbServerProvisionTransactionResult: ...
+        intent: AdbServerEnsureIntent,
+    ) -> AdbServerEnsureIntentResult: ...
 
     @overload
-    def dispatch_server_lifecycle_intent(
+    def dispatch(
         self,
-        intent: AdbServerRetireIntent,
-    ) -> bool: ...
+        intent: AdbServerReconcileIntent,
+    ) -> AdbServerReconcileIntentResult: ...
 
-    def dispatch_server_lifecycle_intent(
+    def dispatch(
         self,
         intent: AdbServerLifecycleIntent,
     ) -> AdbServerLifecycleIntentResult: ...
 
 
 __all__ = [
+    "AdbServerEnsureIntent",
+    "AdbServerEnsureIntentResult",
+    "AdbServerEnsureSatisfied",
     "AdbServerLifecycleIntent",
     "AdbServerLifecycleIntentDispatcher",
     "AdbServerLifecycleIntentResult",
-    "AdbServerProvisionIntent",
-    "AdbServerRetireIntent",
+    "AdbServerReconcileCompleted",
+    "AdbServerReconcileIntent",
+    "AdbServerReconcileIntentResult",
 ]
