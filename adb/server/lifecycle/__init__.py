@@ -9,11 +9,13 @@ from adb.server.lifecycle.backend import AdbServerBackend
 from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
     AdbServerLifecycleCoordinator,
+    AdbServerProvisionEvidence,
     AdbServerProvisionResult,
 )
 
 __all__ = [
     "AdbServerAlreadyActive",
+    "AdbServerProvisionEvidence",
     "AdbServerProvisionResult",
     "AdbServerBackend",
     "AdbServerLifecycleCoordinator",

@@ -10,6 +10,8 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
+    AdbServerBackendAcquireSatisfied,
+    AdbServerBackendAcquireSucceeded,
 )
 from adb.server.lifecycle.errors import (
     AdbServerBootstrapError,
@@ -183,28 +185,55 @@ class AdbRuntime(AdbManagedRuntime):
         if self._state.server.current is not None:
             raise ValueError("bootstrap server provisioning requires empty runtime server state")
 
-        provision = self.provision_server()
-        if isinstance(provision, AdbServerAlreadyActive):
+        evidence = self.provision_server()
+        if not isinstance(evidence, tuple) or not evidence:
+            raise TypeError("server lifecycle provision() must return non-empty ordered evidence")
+
+        first = evidence[0]
+        if isinstance(first, AdbServerAlreadyActive):
+            if len(evidence) != 1:
+                raise TypeError("already-active provision evidence must be terminal")
             raise AdbServerLifecycleConsistencyError(
                 "initial ADB server provisioning unexpectedly found an active server"
             )
-        if isinstance(provision, AdbServerActivationStateConflict):
+        if isinstance(first, AdbServerBackendAcquireInProgress):
+            if len(evidence) != 1:
+                raise TypeError("non-usable backend acquire evidence must be terminal")
+            detail = first.diagnostic or "ADB server backend acquire is already in progress"
+            raise AdbServerBootstrapError(f"initial ADB server provisioning deferred: {detail}")
+        if isinstance(first, AdbServerBackendAcquireBlocked):
+            if len(evidence) != 1:
+                raise TypeError("non-usable backend acquire evidence must be terminal")
+            raise AdbServerBootstrapError(
+                f"initial ADB server provisioning deferred: {first.diagnostic}"
+            )
+        if isinstance(first, AdbServerBackendAcquireFailed):
+            if len(evidence) != 1:
+                raise TypeError("non-usable backend acquire evidence must be terminal")
+            raise AdbServerBootstrapError(
+                f"initial ADB server provisioning failed: {first.diagnostic}"
+            )
+        if not isinstance(
+            first,
+            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+        ):
+            raise TypeError(
+                "provision evidence must begin with already-active or backend acquire evidence"
+            )
+        if len(evidence) != 2:
+            raise TypeError(
+                "usable backend acquire evidence must be followed by activation evidence"
+            )
+
+        activation = evidence[1]
+        if isinstance(activation, AdbServerActivationStateConflict):
             raise AdbServerLifecycleConsistencyError(
                 "initial ADB server provisioning lost its authoritative-state activation fence"
             )
-        if isinstance(provision, AdbServerBackendAcquireInProgress):
-            detail = provision.diagnostic or "ADB server backend acquire is already in progress"
-            raise AdbServerBootstrapError(f"initial ADB server provisioning deferred: {detail}")
-        if isinstance(provision, AdbServerBackendAcquireBlocked):
-            raise AdbServerBootstrapError(
-                f"initial ADB server provisioning deferred: {provision.diagnostic}"
+        if not isinstance(activation, AdbServerActivated):
+            raise TypeError(
+                "usable backend acquire evidence must be followed by activation evidence"
             )
-        if isinstance(provision, AdbServerBackendAcquireFailed):
-            raise AdbServerBootstrapError(
-                f"initial ADB server provisioning failed: {provision.diagnostic}"
-            )
-        if not isinstance(provision, AdbServerActivated):
-            raise TypeError("server lifecycle provision() returned an unsupported result")
 
     def _configure_server_endpoint_constraint(
         self,

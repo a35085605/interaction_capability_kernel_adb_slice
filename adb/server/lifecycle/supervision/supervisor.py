@@ -6,6 +6,13 @@ from threading import RLock, Thread, current_thread
 from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServerIdentity
+from adb.server.lifecycle.backend import (
+    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireFailed,
+    AdbServerBackendAcquireInProgress,
+    AdbServerBackendAcquireSatisfied,
+    AdbServerBackendAcquireSucceeded,
+)
 from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
     AdbServerProvisionResult,
@@ -309,27 +316,41 @@ class AdbServerSupervisor:
                 if not self._is_current_recovery_locked(recovery, recovery_id):
                     return
 
-            provision = self._lifecycle.provision()
-            if isinstance(provision, (AdbServerActivated, AdbServerAlreadyActive)):
-                self._finish_recovery(recovery, recovery_id, completed=True)
-                return
-            if isinstance(provision, AdbServerActivationStateConflict):
-                # The backend attachment acquired by this attempt has already been released by the
-                # lifecycle coordinator. If the conflict observed an active authoritative server,
-                # that state satisfied this recovery cycle at the conflict linearization point. A
-                # later inactive state must not let this stale cycle resurrect a server unless a
-                # newer recovery request is pending. An inactive conflict remains unsatisfied and
-                # may immediately start a successor recovery cycle without consuming a backend
-                # failure attempt.
-                self._finish_recovery(
-                    recovery,
-                    recovery_id,
-                    completed=True,
-                    restart_if_inactive=not provision.state.active,
-                )
-                return
+            evidence = self._lifecycle.provision()
+            self._interpret_recovery_provision(recovery, recovery_id, evidence)
+        finally:
+            with self._lock:
+                self._attempt_threads.discard(active_thread)
 
-            decision = recovery.decide_after(provision)
+    def _interpret_recovery_provision(
+        self,
+        recovery: AdbServerRecovery,
+        recovery_id: AdbServerRecoveryId,
+        evidence: AdbServerProvisionResult,
+    ) -> None:
+        """Interpret ordered raw lifecycle evidence for one recovery provision call."""
+
+        if not isinstance(evidence, tuple) or not evidence:
+            raise TypeError("server lifecycle provision() must return non-empty ordered evidence")
+
+        first = evidence[0]
+        if isinstance(first, AdbServerAlreadyActive):
+            if len(evidence) != 1:
+                raise TypeError("already-active provision evidence must be terminal")
+            self._finish_recovery(recovery, recovery_id, completed=True)
+            return
+
+        if isinstance(
+            first,
+            (
+                AdbServerBackendAcquireInProgress,
+                AdbServerBackendAcquireBlocked,
+                AdbServerBackendAcquireFailed,
+            ),
+        ):
+            if len(evidence) != 1:
+                raise TypeError("non-usable backend acquire evidence must be terminal")
+            decision = recovery.decide_after(first)
             if isinstance(decision, AdbServerRecoveryAttempt):
                 self._apply_recovery_attempt(recovery, recovery_id, decision)
                 return
@@ -337,9 +358,39 @@ class AdbServerSupervisor:
                 self._finish_recovery(recovery, recovery_id, completed=False)
                 return
             raise TypeError("recovery returned an unsupported decision")
-        finally:
-            with self._lock:
-                self._attempt_threads.discard(active_thread)
+
+        if not isinstance(
+            first,
+            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+        ):
+            raise TypeError(
+                "provision evidence must begin with already-active or backend acquire evidence"
+            )
+        if len(evidence) != 2:
+            raise TypeError(
+                "usable backend acquire evidence must be followed by activation evidence"
+            )
+
+        activation = evidence[1]
+        if isinstance(activation, AdbServerActivated):
+            self._finish_recovery(recovery, recovery_id, completed=True)
+            return
+        if isinstance(activation, AdbServerActivationStateConflict):
+            # The backend attachment acquired by this attempt has already been released by the
+            # lifecycle coordinator. If the conflict observed an active authoritative server,
+            # that state satisfied this recovery cycle at the conflict linearization point. A
+            # later inactive state must not let this stale cycle resurrect a server unless a
+            # newer recovery request is pending. An inactive conflict remains unsatisfied and
+            # may immediately start a successor recovery cycle without consuming a backend
+            # failure attempt.
+            self._finish_recovery(
+                recovery,
+                recovery_id,
+                completed=True,
+                restart_if_inactive=not activation.state.active,
+            )
+            return
+        raise TypeError("usable backend acquire evidence must be followed by activation evidence")
 
     def _finish_recovery(
         self,
