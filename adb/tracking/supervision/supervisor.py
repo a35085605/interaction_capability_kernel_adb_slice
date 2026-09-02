@@ -13,7 +13,7 @@ from adb.server.state import AdbServerStateView
 from adb.tracking.supervision.policy import AdbTransportListWatchSupervisionPolicy
 from adb.server.signal import AdbServerReconciliationRequested
 from adb.tracking.snapshot.identity import AdbTransportListSnapshotEpoch
-from adb.tracking.snapshot.state import AdbTransportListSnapshotState
+from adb.tracking.snapshot.state import AdbTransportListStateStore
 from adb.tracking.publication import (
     AdbTransportListStateBackedWatchPublisher,
 )
@@ -62,7 +62,7 @@ class AdbTransportListWatchSupervisor:
         *,
         server_state: AdbServerStateView,
         transport_list_snapshot_epoch_issuer: EpochIssuer[AdbTransportListSnapshotEpoch],
-        transport_list_state: AdbTransportListSnapshotState | None = None,
+        transport_list_state: AdbTransportListStateStore | None = None,
         _controller_factory: _ControllerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
@@ -84,9 +84,9 @@ class AdbTransportListWatchSupervisor:
         if not isinstance(transport_list_snapshot_epoch_issuer, EpochIssuer):
             raise TypeError("transport_list_snapshot_epoch_issuer must satisfy EpochIssuer")
         if transport_list_state is None:
-            transport_list_state = AdbTransportListSnapshotState()
-        if not isinstance(transport_list_state, AdbTransportListSnapshotState):
-            raise TypeError("transport_list_state must be AdbTransportListSnapshotState or None")
+            transport_list_state = AdbTransportListStateStore()
+        if not isinstance(transport_list_state, AdbTransportListStateStore):
+            raise TypeError("transport_list_state must be AdbTransportListStateStore or None")
         if _controller_factory is not None and not callable(_controller_factory):
             raise TypeError("_controller_factory must be callable or None")
         if not callable(_thread_factory):
@@ -126,7 +126,7 @@ class AdbTransportListWatchSupervisor:
         return self._server_state
 
     @property
-    def transport_list_state(self) -> AdbTransportListSnapshotState:
+    def transport_list_state(self) -> AdbTransportListStateStore:
         """Shared transport-list snapshot state committed before watch events are published."""
 
         return self._transport_list_state

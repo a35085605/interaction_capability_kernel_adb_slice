@@ -6,9 +6,11 @@ from typing import Protocol, runtime_checkable
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.tracking.snapshot.state import (
+    AdbTransportListInvalidated,
     AdbTransportListObservation,
-    AdbTransportListSnapshotView,
-    AdbTransportListSnapshotWriter,
+    AdbTransportListObserved,
+    AdbTransportListStateView,
+    AdbTransportListStateWriter,
 )
 from adb.tracking.signal import (
     AdbTransportListSnapshotObserved,
@@ -20,9 +22,9 @@ from eventing import EventPublisher
 
 
 @runtime_checkable
-class _AdbTransportListSnapshotStateAccess(
-    AdbTransportListSnapshotView,
-    AdbTransportListSnapshotWriter,
+class _AdbTransportListStateAccess(
+    AdbTransportListStateView,
+    AdbTransportListStateWriter,
     Protocol,
 ):
     """Read and commit authoritative transport-list snapshot state."""
@@ -35,14 +37,14 @@ class AdbTransportListStateBackedWatchPublisher:
 
     def __init__(
         self,
-        transport_list_state: _AdbTransportListSnapshotStateAccess,
+        transport_list_state: _AdbTransportListStateAccess,
         server_state: AdbServerStateView,
         publisher: EventPublisher,
     ) -> None:
-        if not isinstance(transport_list_state, _AdbTransportListSnapshotStateAccess):
+        if not isinstance(transport_list_state, _AdbTransportListStateAccess):
             raise TypeError(
-                "transport_list_state must satisfy AdbTransportListSnapshotView and "
-                "AdbTransportListSnapshotWriter"
+                "transport_list_state must satisfy AdbTransportListStateView and "
+                "AdbTransportListStateWriter"
             )
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
@@ -83,9 +85,12 @@ class AdbTransportListStateBackedWatchPublisher:
                 return False
             if self._active_server == server:
                 return True
-            current = self._transport_list_state.current
+            state = self._transport_list_state.snapshot()
+            current = state.current
             if current is not None and current.server != server:
-                self._transport_list_state.invalidate_current()
+                invalidation = self._transport_list_state.invalidate(state)
+                if not isinstance(invalidation, AdbTransportListInvalidated):
+                    return False
             self._active_server = server
             return True
 
@@ -95,9 +100,9 @@ class AdbTransportListStateBackedWatchPublisher:
                 return False
             if self._server_state.current != event.server:
                 return False
-            return self._transport_list_state.observe(
-                AdbTransportListObservation(event.server, event.snapshot)
-            )
+            observation = AdbTransportListObservation(event.server, event.snapshot)
+            result = self._transport_list_state.observe(observation)
+            return isinstance(result, AdbTransportListObserved)
 
     @staticmethod
     def _require_server(server: AdbServerIdentity) -> None:

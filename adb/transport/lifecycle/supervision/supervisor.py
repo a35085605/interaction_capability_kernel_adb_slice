@@ -18,10 +18,12 @@ from adb.transport.configuration import (
     AdbUsbTransportConfiguration,
 )
 from adb.tracking.snapshot.state import (
+    AdbTransportListInvalidated,
     AdbTransportListObservation,
-    AdbTransportListSnapshotState,
-    AdbTransportListSnapshotView,
-    AdbTransportListSnapshotWriter,
+    AdbTransportListObserved,
+    AdbTransportListStateStore,
+    AdbTransportListStateView,
+    AdbTransportListStateWriter,
 )
 from adb.transport.resolution import (
     AdbConfiguredTransportProjection,
@@ -73,7 +75,7 @@ class AdbConfiguredTransportSupervisor:
         tcp_ensurer: AdbTcpTransportEnsurer | None,
         *,
         server_state: AdbServerStateView,
-        transport_list_state: AdbTransportListSnapshotView | None = None,
+        transport_list_state: AdbTransportListStateView | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(server, AdbServerIdentity):
@@ -90,20 +92,20 @@ class AdbConfiguredTransportSupervisor:
             raise ValueError("server_state current server must match server")
         owns_transport_list_state = transport_list_state is None
         if transport_list_state is None:
-            transport_list_state = AdbTransportListSnapshotState()
-        if not isinstance(transport_list_state, AdbTransportListSnapshotView):
+            transport_list_state = AdbTransportListStateStore()
+        if not isinstance(transport_list_state, AdbTransportListStateView):
             raise TypeError(
-                "transport_list_state must satisfy AdbTransportListSnapshotView or be None"
+                "transport_list_state must satisfy AdbTransportListStateView or be None"
             )
         self._server_state = server_state
         self._projection_server: AdbServerIdentity | None = server
         self._bus = event_bus
         self._tcp_ensurer = tcp_ensurer
         self._transport_list_state = transport_list_state
-        self._transport_list_writer: AdbTransportListSnapshotWriter | None = (
+        self._transport_list_writer: AdbTransportListStateWriter | None = (
             transport_list_state
             if owns_transport_list_state
-            and isinstance(transport_list_state, AdbTransportListSnapshotWriter)
+            and isinstance(transport_list_state, AdbTransportListStateWriter)
             else None
         )
         self._thread_factory = _thread_factory
@@ -133,7 +135,7 @@ class AdbConfiguredTransportSupervisor:
         return self._server_state
 
     @property
-    def transport_list_state(self) -> AdbTransportListSnapshotView:
+    def transport_list_state(self) -> AdbTransportListStateView:
         """Current transport-list snapshot state used to seed newly registered transport
         projections.
         """
@@ -295,7 +297,11 @@ class AdbConfiguredTransportSupervisor:
                 return
             writer = self._transport_list_writer
             if writer is not None and self._transport_list_needs_invalidation:
-                writer.invalidate_current()
+                expected = self._transport_list_state.snapshot()
+                if expected.current is not None:
+                    invalidation = writer.invalidate(expected)
+                    if not isinstance(invalidation, AdbTransportListInvalidated):
+                        return
                 self._transport_list_needs_invalidation = False
             self._watch_active = True
 
@@ -314,13 +320,14 @@ class AdbConfiguredTransportSupervisor:
             writer = self._transport_list_writer
             event_observation = AdbTransportListObservation(event.server, event.snapshot)
             if writer is not None:
-                if not writer.observe(event_observation):
+                result = writer.observe(event_observation)
+                if not isinstance(result, AdbTransportListObserved):
                     return
-                observation = writer.current
+                observation = result.observation
             else:
                 observation = self._transport_list_state.current
-            if observation != event_observation:
-                return
+                if observation != event_observation:
+                    return
             for registration in self._registrations.values():
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,

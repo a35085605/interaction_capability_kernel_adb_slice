@@ -16,7 +16,7 @@ from adb.tracking.snapshot.identity import (
     AdbTransportListSnapshotEpoch,
     AdbTransportListSnapshotEpochSequence,
 )
-from adb.tracking.snapshot.state import AdbTransportListSnapshotState
+from adb.tracking.snapshot.state import AdbTransportListStateStore
 from adb.tracking.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
 )
@@ -221,7 +221,7 @@ class AdbRuntimeBootstrap:
             server_backend=backend,
             runtime_state=AdbRuntimeState(
                 server=AdbServerStateStore(),
-                transport_list=AdbTransportListSnapshotState(),
+                transport_list=AdbTransportListStateStore(),
             ),
             transport_list_snapshot_epoch_issuer=transport_list_snapshot_epoch_issuer,
         )

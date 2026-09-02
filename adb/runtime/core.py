@@ -25,7 +25,7 @@ from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerActivated, AdbServerActivationStateConflict
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
-from adb.tracking.snapshot.state import AdbTransportListSnapshotView
+from adb.tracking.snapshot.state import AdbTransportListStateView
 from adb.tracking.supervision.supervisor import AdbTransportListWatchSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
@@ -162,7 +162,7 @@ class AdbRuntime(AdbManagedRuntime):
         self._closed = False
 
     @property
-    def transport_list(self) -> AdbTransportListSnapshotView:
+    def transport_list(self) -> AdbTransportListStateView:
         """Current server-bound transport-list observation exposed by this runtime."""
 
         return self._state.transport_list
