@@ -25,23 +25,28 @@ _UsableAcquireResult: TypeAlias = (
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerRecoveryRetry:
-    """Retry-policy decision requesting another acquisition after ``delay_seconds``."""
+class AdbServerRecoveryAttempt:
+    """One acquisition attempt selected by the recovery state machine."""
 
-    delay_seconds: float
+    attempt_number: int
+    delay_seconds: float = 0.0
 
     def __post_init__(self) -> None:
+        if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
+            raise TypeError("attempt_number must be an integer")
+        if self.attempt_number <= 0:
+            raise ValueError("attempt_number must be greater than zero")
         if isinstance(self.delay_seconds, bool) or not isinstance(self.delay_seconds, Real):
             raise TypeError("delay_seconds must be a real number")
         delay = float(self.delay_seconds)
-        if not isfinite(delay) or delay <= 0.0:
-            raise ValueError("delay_seconds must be finite and greater than zero")
+        if not isfinite(delay) or delay < 0.0:
+            raise ValueError("delay_seconds must be finite and greater than or equal to zero")
         object.__setattr__(self, "delay_seconds", delay)
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryCompleted:
-    """Retry-policy decision reporting a usable backend attachment."""
+    """Recovery decision reporting a usable backend attachment."""
 
     acquire: _UsableAcquireResult
 
@@ -55,7 +60,7 @@ class AdbServerRecoveryCompleted:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryExhaust:
-    """Retry-policy decision reporting that genuine failures exhausted the retry budget."""
+    """Recovery decision reporting that genuine failures exhausted the retry budget."""
 
     attempts: int
     acquire: AdbServerBackendAcquireFailed
@@ -70,18 +75,18 @@ class AdbServerRecoveryExhaust:
 
 
 AdbServerRecoveryDecision: TypeAlias = (
-    AdbServerRecoveryRetry | AdbServerRecoveryCompleted | AdbServerRecoveryExhaust
+    AdbServerRecoveryAttempt | AdbServerRecoveryCompleted | AdbServerRecoveryExhaust
 )
 
 
 class AdbServerRecovery:
-    """Retry decision engine for repeated ADB server backend acquisition.
+    """Decision engine for one bounded ADB server recovery cycle.
 
-    Recovery owns only retry-policy state: genuine backend failure count, retry backoff, jitter,
-    and exhaustion. It deliberately has no lifecycle of its own and has no knowledge of
-    authoritative runtime server state, activation, reconciliation, scheduling, threads, attempt
-    numbering, or the reason recovery was requested. Its supervisor owns the recovery cycle and
-    feeds each raw backend acquisition result into :meth:`decide_after`.
+    Recovery owns acquisition-attempt progression plus retry-policy state: attempt numbering,
+    genuine backend failure count, retry backoff, jitter, and exhaustion. It deliberately has no
+    knowledge of authoritative runtime server state, activation, reconciliation, scheduling,
+    threads, or the reason recovery was requested. Its supervisor executes each selected attempt
+    and feeds the raw backend acquisition result back into :meth:`decide_after`.
     """
 
     def __init__(
@@ -96,14 +101,29 @@ class AdbServerRecovery:
             raise TypeError("_random must be callable")
         self._policy = policy
         self._random = _random
+        self._attempt_number = 0
         self._failed_attempts = 0
+
+    @property
+    def attempt_number(self) -> int:
+        return self._attempt_number
 
     @property
     def failed_attempts(self) -> int:
         return self._failed_attempts
 
+    def begin(self) -> AdbServerRecoveryAttempt:
+        """Select the first immediate acquisition attempt for this recovery cycle."""
+
+        if self._attempt_number != 0:
+            raise RuntimeError("ADB server recovery has already begun")
+        return self._next_attempt(0.0)
+
     def decide_after(self, result: AdbServerBackendAcquireResult) -> AdbServerRecoveryDecision:
-        """Apply retry policy to one raw backend acquisition result."""
+        """Apply retry policy after one selected acquisition attempt completes."""
+
+        if self._attempt_number == 0:
+            raise RuntimeError("ADB server recovery has not begun")
 
         if not isinstance(
             result,
@@ -124,7 +144,7 @@ class AdbServerRecovery:
             return AdbServerRecoveryCompleted(result)
 
         if isinstance(result, (AdbServerBackendAcquireInProgress, AdbServerBackendAcquireBlocked)):
-            return AdbServerRecoveryRetry(self._policy.deferred_retry_seconds)
+            return self._next_attempt(self._policy.deferred_retry_seconds)
 
         self._failed_attempts += 1
         if (
@@ -133,7 +153,11 @@ class AdbServerRecovery:
         ):
             return AdbServerRecoveryExhaust(self._failed_attempts, result)
 
-        return AdbServerRecoveryRetry(self._retry_delay(self._failed_attempts))
+        return self._next_attempt(self._retry_delay(self._failed_attempts))
+
+    def _next_attempt(self, delay_seconds: float) -> AdbServerRecoveryAttempt:
+        self._attempt_number += 1
+        return AdbServerRecoveryAttempt(self._attempt_number, delay_seconds)
 
     def _retry_delay(self, failed_attempts: int) -> float:
         base = min(
@@ -151,8 +175,8 @@ class AdbServerRecovery:
 
 __all__ = [
     "AdbServerRecovery",
+    "AdbServerRecoveryAttempt",
     "AdbServerRecoveryCompleted",
     "AdbServerRecoveryDecision",
     "AdbServerRecoveryExhaust",
-    "AdbServerRecoveryRetry",
 ]

@@ -73,7 +73,7 @@ class AdbServerReconciliationRequested(_ServerSignalProjection):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryRetryDue:
-    """Runtime-supervision signal that one recovery acquisition intent became due."""
+    """Runtime-supervision signal that one scheduled recovery acquisition attempt became due."""
 
     recovery_id: AdbServerRecoveryId
     attempt_number: int

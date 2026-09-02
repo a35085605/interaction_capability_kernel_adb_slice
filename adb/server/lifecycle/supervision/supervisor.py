@@ -8,13 +8,12 @@ from typing import Protocol, runtime_checkable
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.coordinator import AdbServerAcquireOnceResult
-from adb.server.lifecycle.supervision.intent import AdbServerAcquireOnceIntent
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
+    AdbServerRecoveryAttempt,
     AdbServerRecoveryCompleted,
     AdbServerRecoveryExhaust,
-    AdbServerRecoveryRetry,
 )
 from adb.server.signal import (
     AdbServerReconciliationRequested,
@@ -95,8 +94,7 @@ class AdbServerSupervisor:
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._recovery: AdbServerRecovery | None = None
         self._recovery_id: AdbServerRecoveryId | None = None
-        self._recovery_attempt_number = 0
-        self._recovery_intent: AdbServerAcquireOnceIntent | None = None
+        self._recovery_attempt: AdbServerRecoveryAttempt | None = None
         self._retry_token: ScheduleToken | None = None
         self._attempt_threads: set[Thread] = set()
         self._recovery_pending = False
@@ -221,19 +219,18 @@ class AdbServerSupervisor:
             recovery_id = AdbServerRecoveryId.new()
             self._recovery = recovery
             self._recovery_id = recovery_id
-            self._recovery_attempt_number = 0
             self._recovery_pending = False
-            intent = self._next_recovery_intent_locked(0.0)
+            attempt = recovery.begin()
 
-        self._apply_recovery_intent(recovery, recovery_id, intent)
+        self._apply_recovery_attempt(recovery, recovery_id, attempt)
 
-    def _apply_recovery_intent(
+    def _apply_recovery_attempt(
         self,
         recovery: AdbServerRecovery,
         recovery_id: AdbServerRecoveryId,
-        intent: AdbServerAcquireOnceIntent,
+        attempt: AdbServerRecoveryAttempt,
     ) -> None:
-        """Execute immediately or arrange the retry delay selected by recovery policy."""
+        """Execute immediately or arrange one recovery acquisition attempt."""
 
         with self._lock:
             if not self._is_current_recovery_locked(recovery, recovery_id):
@@ -243,13 +240,13 @@ class AdbServerSupervisor:
             self._finish_recovery(recovery, recovery_id, completed=True)
             return
 
-        if intent.delay_seconds > 0.0:
+        if attempt.delay_seconds > 0.0:
             scheduler = self._scheduler
             if scheduler is None:
                 return
             token = scheduler.schedule_after(
-                timedelta(seconds=intent.delay_seconds),
-                AdbServerRecoveryRetryDue(recovery_id, intent.attempt_number),
+                timedelta(seconds=attempt.delay_seconds),
+                AdbServerRecoveryRetryDue(recovery_id, attempt.attempt_number),
             )
             with self._lock:
                 if not self._is_current_recovery_locked(recovery, recovery_id):
@@ -257,41 +254,41 @@ class AdbServerSupervisor:
                     return
                 old_token = self._retry_token
                 self._retry_token = token
-                self._recovery_intent = intent
+                self._recovery_attempt = attempt
             if old_token is not None:
                 scheduler.cancel(old_token)
             return
 
-        self._launch_recovery_attempt(recovery, recovery_id, intent)
+        self._launch_recovery_attempt(recovery, recovery_id, attempt)
 
     def _on_recovery_retry_due(self, event: AdbServerRecoveryRetryDue) -> None:
         with self._lock:
             recovery = self._recovery
             recovery_id = self._recovery_id
-            intent = self._recovery_intent
+            attempt = self._recovery_attempt
             if (
                 recovery is None
                 or recovery_id != event.recovery_id
-                or intent is None
-                or intent.attempt_number != event.attempt_number
+                or attempt is None
+                or attempt.attempt_number != event.attempt_number
                 or not self._is_current_recovery_locked(recovery, recovery_id)
             ):
                 return
             self._retry_token = None
-            self._recovery_intent = None
+            self._recovery_attempt = None
 
-        self._launch_recovery_attempt(recovery, recovery_id, intent)
+        self._launch_recovery_attempt(recovery, recovery_id, attempt)
 
     def _launch_recovery_attempt(
         self,
         recovery: AdbServerRecovery,
         recovery_id: AdbServerRecoveryId,
-        intent: AdbServerAcquireOnceIntent,
+        attempt: AdbServerRecoveryAttempt,
     ) -> None:
         thread = Thread(
             target=self._run_recovery_attempt,
-            args=(recovery, recovery_id, intent),
-            name=f"adb-server-recovery-{recovery_id.value[:12]}-{intent.attempt_number}",
+            args=(recovery, recovery_id, attempt),
+            name=f"adb-server-recovery-{recovery_id.value[:12]}-{attempt.attempt_number}",
             daemon=True,
         )
         with self._lock:
@@ -308,7 +305,7 @@ class AdbServerSupervisor:
         self,
         recovery: AdbServerRecovery,
         recovery_id: AdbServerRecoveryId,
-        intent: AdbServerAcquireOnceIntent,
+        attempt: AdbServerRecoveryAttempt,
     ) -> None:
         active_thread = current_thread()
         try:
@@ -342,12 +339,8 @@ class AdbServerSupervisor:
                 return
 
             decision = recovery.decide_after(acquire)
-            if isinstance(decision, AdbServerRecoveryRetry):
-                with self._lock:
-                    if not self._is_current_recovery_locked(recovery, recovery_id):
-                        return
-                    intent = self._next_recovery_intent_locked(decision.delay_seconds)
-                self._apply_recovery_intent(recovery, recovery_id, intent)
+            if isinstance(decision, AdbServerRecoveryAttempt):
+                self._apply_recovery_attempt(recovery, recovery_id, decision)
                 return
             if isinstance(decision, AdbServerRecoveryCompleted):
                 self._finish_recovery(recovery, recovery_id, completed=True)
@@ -388,8 +381,7 @@ class AdbServerSupervisor:
             retry_token = self._retry_token
             self._recovery = None
             self._recovery_id = None
-            self._recovery_attempt_number = 0
-            self._recovery_intent = None
+            self._recovery_attempt = None
             self._retry_token = None
             pending = self._recovery_pending
             self._recovery_pending = False
@@ -409,15 +401,6 @@ class AdbServerSupervisor:
         if restart:
             self._request_recovery()
 
-    def _next_recovery_intent_locked(
-        self,
-        delay_seconds: float,
-    ) -> AdbServerAcquireOnceIntent:
-        """Allocate the next execution attempt number for the current recovery cycle."""
-
-        self._recovery_attempt_number += 1
-        return AdbServerAcquireOnceIntent(self._recovery_attempt_number, delay_seconds)
-
     def _is_current_recovery_locked(
         self,
         recovery: AdbServerRecovery,
@@ -436,8 +419,7 @@ class AdbServerSupervisor:
         retry_token = self._retry_token
         self._recovery = None
         self._recovery_id = None
-        self._recovery_attempt_number = 0
-        self._recovery_intent = None
+        self._recovery_attempt = None
         self._retry_token = None
         self._recovery_pending = False
         return retry_token, tuple(self._attempt_threads)
