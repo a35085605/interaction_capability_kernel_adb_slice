@@ -143,21 +143,20 @@ class AdbServerLifecycleRuntimeFacade:
         expected: AdbServerState | None,
         expected_server: AdbServerIdentity | None,
     ) -> bool:
-        with self._lock:
-            t0 = self._state.observe_server()
-            if expected is not None and t0 != expected:
-                return False
-            server = t0.server
-            endpoint = t0.endpoint
-            if server is None or endpoint is None:
-                return False
-            if expected_server is not None and server != expected_server:
-                return False
-            if not self._state.deactivate_server(server):
-                return False
+        t0 = self._state.observe_server()
+        if expected is not None and t0 != expected:
+            return False
+        server = t0.server
+        endpoint = t0.endpoint
+        if server is None or endpoint is None:
+            return False
+        if expected_server is not None and server != expected_server:
+            return False
+        if not self._state.deactivate_server(server):
+            return False
 
-        # Domain deactivation is authoritative before backend cleanup begins. Releasing outside the
-        # facade lock permits successor provisioning to race cleanup, matching runtime semantics.
+        # Domain deactivation is authoritative before backend cleanup begins. The state CAS is the
+        # retirement linearization point, so successor provisioning may race backend cleanup.
         self._retirer.retire(endpoint)
         return True
 
