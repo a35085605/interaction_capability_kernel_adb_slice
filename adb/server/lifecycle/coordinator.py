@@ -24,7 +24,7 @@ from adb.server.state import (
 )
 
 
-AdbServerAcquireOnceResult: TypeAlias = (
+AdbServerProvisionResult: TypeAlias = (
     AdbServerBackendAcquireResult | AdbServerActivationStateConflict
 )
 
@@ -50,8 +50,8 @@ class AdbServerLifecycleCoordinator:
         self._provision_endpoint = provision_endpoint
         self._lock = RLock()
 
-    def acquire_once(self) -> AdbServerAcquireOnceResult | None:
-        """Execute at most one backend acquisition and commit a usable endpoint when still valid.
+    def provision(self) -> AdbServerProvisionResult | None:
+        """Provision the authoritative server lifetime through at most one backend acquisition.
 
         ``None`` means the authoritative server state was already active when this operation
         linearized, so no backend acquisition was attempted. Backend deferral/failure evidence is
@@ -139,4 +139,4 @@ class AdbServerLifecycleCoordinator:
             self._provision_endpoint = endpoint
 
 
-__all__ = ["AdbServerAcquireOnceResult", "AdbServerLifecycleCoordinator"]
+__all__ = ["AdbServerLifecycleCoordinator", "AdbServerProvisionResult"]

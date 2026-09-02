@@ -7,7 +7,7 @@ from typing import Protocol, runtime_checkable
 
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.identity import AdbServerIdentity
-from adb.server.lifecycle.coordinator import AdbServerAcquireOnceResult
+from adb.server.lifecycle.coordinator import AdbServerProvisionResult
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
@@ -34,7 +34,7 @@ from scheduling import ScheduleToken, TemporalScheduler
 class AdbServerLifecyclePort(Protocol):
     """Minimal authoritative lifecycle operations required by server supervision."""
 
-    def acquire_once(self) -> AdbServerAcquireOnceResult | None: ...
+    def provision(self) -> AdbServerProvisionResult | None: ...
 
     def retire(
         self,
@@ -318,11 +318,11 @@ class AdbServerSupervisor:
                 self._finish_recovery(recovery, recovery_id, completed=True)
                 return
 
-            acquire = self._lifecycle.acquire_once()
-            if acquire is None:
+            provision = self._lifecycle.provision()
+            if provision is None:
                 self._finish_recovery(recovery, recovery_id, completed=True)
                 return
-            if isinstance(acquire, AdbServerActivationStateConflict):
+            if isinstance(provision, AdbServerActivationStateConflict):
                 # The backend attachment acquired by this attempt has already been released by the
                 # lifecycle coordinator. If the conflict observed an active authoritative server,
                 # that state satisfied this recovery cycle at the conflict linearization point. A
@@ -334,11 +334,11 @@ class AdbServerSupervisor:
                     recovery,
                     recovery_id,
                     completed=True,
-                    restart_if_inactive=not acquire.state.active,
+                    restart_if_inactive=not provision.state.active,
                 )
                 return
 
-            decision = recovery.decide_after(acquire)
+            decision = recovery.decide_after(provision)
             if isinstance(decision, AdbServerRecoveryAttempt):
                 self._apply_recovery_attempt(recovery, recovery_id, decision)
                 return

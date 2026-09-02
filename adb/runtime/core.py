@@ -19,7 +19,7 @@ from adb.server.lifecycle.errors import (
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.coordinator import (
-    AdbServerAcquireOnceResult,
+    AdbServerProvisionResult,
     AdbServerLifecycleCoordinator,
 )
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
@@ -168,15 +168,10 @@ class AdbRuntime(AdbManagedRuntime):
 
         return self._state.transport_list
 
-    def acquire_server_once(self) -> AdbServerAcquireOnceResult | None:
-        """Execute at most one backend acquisition through runtime lifecycle ownership."""
+    def provision_server(self) -> AdbServerProvisionResult | None:
+        """Provision the authoritative server lifetime through runtime lifecycle ownership."""
 
-        return self._server_lifecycle.acquire_once()
-
-    def provision_server(self) -> AdbServerAcquireOnceResult | None:
-        """Compatibility name for one runtime-owned server acquisition attempt."""
-
-        return self.acquire_server_once()
+        return self._server_lifecycle.provision()
 
     def retire_server(self) -> bool:
         """Retire the server lifetime authoritative at execution time."""
@@ -184,41 +179,41 @@ class AdbRuntime(AdbManagedRuntime):
         return self._server_lifecycle.retire() is not None
 
     def _bootstrap_initial_server(self) -> None:
-        """Acquire and commit the initial server through the runtime lifecycle authority."""
+        """Provision the initial server through the runtime lifecycle authority."""
 
         if self._state.server.current is not None:
             raise ValueError("bootstrap server provisioning requires empty runtime server state")
 
-        acquire = self.acquire_server_once()
-        if acquire is None:
+        provision = self.provision_server()
+        if provision is None:
             raise AdbServerLifecycleConsistencyError(
-                "initial ADB server acquisition did not execute"
+                "initial ADB server provisioning did not execute"
             )
-        if isinstance(acquire, AdbServerActivationStateConflict):
+        if isinstance(provision, AdbServerActivationStateConflict):
             raise AdbServerLifecycleConsistencyError(
-                "initial ADB server acquisition lost its authoritative-state activation fence"
+                "initial ADB server provisioning lost its authoritative-state activation fence"
             )
-        if isinstance(acquire, AdbServerBackendAcquireInProgress):
-            detail = acquire.diagnostic or "ADB server backend acquire is already in progress"
-            raise AdbServerBootstrapError(f"initial ADB server acquisition deferred: {detail}")
-        if isinstance(acquire, AdbServerBackendAcquireBlocked):
+        if isinstance(provision, AdbServerBackendAcquireInProgress):
+            detail = provision.diagnostic or "ADB server backend acquire is already in progress"
+            raise AdbServerBootstrapError(f"initial ADB server provisioning deferred: {detail}")
+        if isinstance(provision, AdbServerBackendAcquireBlocked):
             raise AdbServerBootstrapError(
-                f"initial ADB server acquisition deferred: {acquire.diagnostic}"
+                f"initial ADB server provisioning deferred: {provision.diagnostic}"
             )
-        if isinstance(acquire, AdbServerBackendAcquireFailed):
+        if isinstance(provision, AdbServerBackendAcquireFailed):
             raise AdbServerBootstrapError(
-                f"initial ADB server acquisition failed: {acquire.diagnostic}"
+                f"initial ADB server provisioning failed: {provision.diagnostic}"
             )
         if not isinstance(
-            acquire,
+            provision,
             (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
         ):
             raise TypeError("server backend acquire() returned an unsupported result")
 
         state = self._state.server.snapshot()
-        if not state.active or state.endpoint != acquire.endpoint:
+        if not state.active or state.endpoint != provision.endpoint:
             raise AdbServerLifecycleConsistencyError(
-                "initial ADB server acquisition did not commit its server lifetime"
+                "initial ADB server provisioning did not commit its server lifetime"
             )
 
     def _configure_server_provision_endpoint(
