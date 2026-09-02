@@ -1,11 +1,19 @@
 """ADB server lifecycle control, runtime transactions, and supervision boundaries."""
 
 from adb.server.lifecycle.transaction import (
-    AdbServerProvisionCommitted,
+    AdbServerBackendAcquireUnavailable,
+    AdbServerBackendAcquireUsable,
+    AdbServerProvisionAcquireStopped,
+    AdbServerProvisionActivationAttempted,
+    AdbServerProvisionStateConflict,
     AdbServerProvisionTransactionResult,
 )
 
 __all__ = [
-    "AdbServerProvisionCommitted",
+    "AdbServerBackendAcquireUnavailable",
+    "AdbServerBackendAcquireUsable",
+    "AdbServerProvisionAcquireStopped",
+    "AdbServerProvisionActivationAttempted",
+    "AdbServerProvisionStateConflict",
     "AdbServerProvisionTransactionResult",
 ]

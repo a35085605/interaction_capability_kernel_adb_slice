@@ -14,10 +14,7 @@ from adb.server.lifecycle.control.backend import (
     AdbServerBackendAcquireSatisfied,
     AdbServerBackendAcquireSucceeded,
 )
-from adb.server.lifecycle.control.result import (
-    AdbServerProvisionDeferred,
-    AdbServerProvisionFailed,
-)
+from adb.server.lifecycle.control.errors import AdbServerLifecycleConsistencyError
 from adb.server.lifecycle.supervision.intent import (
     AdbServerLifecycleIntent,
     AdbServerLifecycleIntentResult,
@@ -29,10 +26,17 @@ from adb.server.lifecycle.supervision.transition import (
     transition_lifecycle_result,
 )
 from adb.server.lifecycle.transaction import (
-    AdbServerProvisionCommitted,
+    AdbServerProvisionAcquireStopped,
+    AdbServerProvisionActivationAttempted,
+    AdbServerProvisionStateConflict,
     AdbServerProvisionTransactionResult,
 )
-from adb.server.state import AdbServerActivated, AdbServerDeactivated, AdbServerState
+from adb.server.state import (
+    AdbServerActivated,
+    AdbServerActivationRejected,
+    AdbServerDeactivated,
+    AdbServerState,
+)
 
 
 class AdbServerLifecycleRuntimeFacade:
@@ -93,12 +97,7 @@ class AdbServerLifecycleRuntimeFacade:
 
         transition = transition_lifecycle_intent(intent, self._state.observe_server())
         if isinstance(transition, AdbServerProvisionAction):
-            result = self.provision()
-            return transition_lifecycle_result(
-                transition,
-                result,
-                self._state.observe_server(),
-            )
+            return transition_lifecycle_result(transition, self.provision())
         elif isinstance(transition, AdbServerRetireAction):
             result = self._retire(
                 expected=None,
@@ -116,29 +115,6 @@ class AdbServerLifecycleRuntimeFacade:
         with self._lock:
             self._provision_endpoint = endpoint
 
-    @staticmethod
-    def _backend_busy_diagnostic(
-        result: AdbServerBackendAcquireInProgress | AdbServerBackendAcquireBlocked,
-    ) -> str:
-        if isinstance(result, AdbServerBackendAcquireInProgress):
-            return result.diagnostic or "ADB server backend acquire is already in progress"
-        return result.diagnostic
-
-    def _acquire_backend(
-        self,
-    ) -> AdbServerEndpoint | AdbServerProvisionDeferred | AdbServerProvisionFailed:
-        result = self._backend.acquire(self._provision_endpoint)
-        if isinstance(result, (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied)):
-            return result.endpoint
-        if isinstance(
-            result,
-            (AdbServerBackendAcquireInProgress, AdbServerBackendAcquireBlocked),
-        ):
-            return AdbServerProvisionDeferred(self._backend_busy_diagnostic(result))
-        if isinstance(result, AdbServerBackendAcquireFailed):
-            return AdbServerProvisionFailed(result.diagnostic)
-        raise TypeError("server backend acquire() returned an unsupported result")
-
     def _provision(
         self,
         *,
@@ -149,19 +125,30 @@ class AdbServerLifecycleRuntimeFacade:
             if expected is not None and t0 != expected:
                 return None
             if t0.active:
-                return AdbServerProvisionDeferred(
-                    "ADB runtime already has an active server lifetime"
-                )
+                return AdbServerProvisionStateConflict(t0)
 
-            acquire_result = self._acquire_backend()
-            if isinstance(acquire_result, (AdbServerProvisionDeferred, AdbServerProvisionFailed)):
-                return acquire_result
-            endpoint = acquire_result
+            acquire = self._backend.acquire(self._provision_endpoint)
+            if isinstance(
+                acquire,
+                (
+                    AdbServerBackendAcquireInProgress,
+                    AdbServerBackendAcquireBlocked,
+                    AdbServerBackendAcquireFailed,
+                ),
+            ):
+                return AdbServerProvisionAcquireStopped(acquire)
+            if not isinstance(
+                acquire,
+                (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+            ):
+                raise TypeError("server backend acquire() returned an unsupported result")
 
+            endpoint = acquire.endpoint
             if self._provision_endpoint is not None and endpoint != self._provision_endpoint:
                 self._backend.release(endpoint)
-                return AdbServerProvisionFailed(
-                    "endpoint-constrained ADB server provisioning changed endpoint"
+                raise AdbServerLifecycleConsistencyError(
+                    "endpoint-constrained ADB server backend acquisition returned a "
+                    "different endpoint"
                 )
 
             try:
@@ -172,15 +159,15 @@ class AdbServerLifecycleRuntimeFacade:
                 self._backend.release(endpoint)
                 raise
 
-            if isinstance(activation, AdbServerActivated):
-                return AdbServerProvisionCommitted(activation.server, activation)
+            if isinstance(activation, AdbServerActivationRejected):
+                # The acquired endpoint lost its inactive-state comparison and never became
+                # authoritative. Relinquish it before allowing a successor lifecycle transaction.
+                self._backend.release(endpoint)
+            elif not isinstance(activation, AdbServerActivated):
+                self._backend.release(endpoint)
+                raise TypeError("runtime state activate_server() returned an unsupported result")
 
-            # The acquired endpoint lost its inactive-state comparison and never became
-            # authoritative. Relinquish it before allowing a successor lifecycle transaction.
-            self._backend.release(endpoint)
-            return AdbServerProvisionDeferred(
-                "ADB runtime server state changed before acquired endpoint could commit"
-            )
+            return AdbServerProvisionActivationAttempted(acquire, activation)
 
     def _retire(
         self,

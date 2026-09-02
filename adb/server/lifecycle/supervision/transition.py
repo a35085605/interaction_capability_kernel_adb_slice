@@ -5,6 +5,11 @@ from typing import TypeAlias
 
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.identity import AdbServerIdentity
+from adb.server.lifecycle.control.backend import (
+    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireFailed,
+    AdbServerBackendAcquireInProgress,
+)
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
@@ -18,11 +23,18 @@ from adb.server.lifecycle.supervision.intent import (
     AdbServerReconcileIntent,
 )
 from adb.server.lifecycle.transaction import (
-    AdbServerProvisionCommitted,
+    AdbServerProvisionAcquireStopped,
+    AdbServerProvisionActivationAttempted,
+    AdbServerProvisionStateConflict,
     AdbServerProvisionTransactionResult,
 )
 from adb.server.signal import AdbServerReconciliationRequested
-from adb.server.state import AdbServerActivated, AdbServerDeactivated, AdbServerState
+from adb.server.state import (
+    AdbServerActivated,
+    AdbServerActivationRejected,
+    AdbServerDeactivated,
+    AdbServerState,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,27 +88,71 @@ def transition_lifecycle_intent(
     raise TypeError("unsupported ADB server lifecycle intent")
 
 
+def _backend_busy_diagnostic(
+    result: AdbServerBackendAcquireInProgress | AdbServerBackendAcquireBlocked,
+) -> str:
+    if isinstance(result, AdbServerBackendAcquireInProgress):
+        return result.diagnostic or "ADB server backend acquire is already in progress"
+    return result.diagnostic
+
+
+def transition_provision_result(
+    result: AdbServerProvisionTransactionResult,
+) -> AdbServerEnsureIntentResult:
+    """Interpret raw runtime provisioning evidence into supervision-level ensure semantics."""
+
+    if isinstance(result, AdbServerProvisionStateConflict):
+        if result.state.active:
+            return AdbServerEnsureSatisfied()
+        return AdbServerProvisionDeferred(
+            "authoritative ADB server state prevented provisioning"
+        )
+
+    if isinstance(result, AdbServerProvisionAcquireStopped):
+        acquire = result.acquire
+        if isinstance(
+            acquire,
+            (AdbServerBackendAcquireInProgress, AdbServerBackendAcquireBlocked),
+        ):
+            return AdbServerProvisionDeferred(_backend_busy_diagnostic(acquire))
+        if isinstance(acquire, AdbServerBackendAcquireFailed):
+            return AdbServerProvisionFailed(acquire.diagnostic)
+        raise TypeError("provision acquire-stopped result contains unsupported acquire evidence")
+
+    if isinstance(result, AdbServerProvisionActivationAttempted):
+        activation = result.activation
+        if isinstance(activation, AdbServerActivated):
+            return AdbServerEnsureSatisfied(activation)
+        if isinstance(activation, AdbServerActivationRejected):
+            if activation.state.active:
+                return AdbServerEnsureSatisfied()
+            return AdbServerProvisionDeferred(
+                "ADB runtime server state changed before acquired endpoint could commit"
+            )
+        raise TypeError(
+            "provision activation-attempted result contains unsupported activation evidence"
+        )
+
+    raise TypeError("result must be an ADB server provision transaction result")
+
+
 def transition_lifecycle_result(
     action: AdbServerLifecycleAction,
     result: AdbServerLifecycleActionResult,
-    state_after: AdbServerState | None = None,
 ) -> AdbServerLifecycleIntentResult:
     """Purely interpret one runtime transaction result into its supervision-level result."""
 
     if isinstance(action, AdbServerProvisionAction):
-        if not isinstance(state_after, AdbServerState):
-            raise TypeError("provision result interpretation requires AdbServerState post-state")
-        if isinstance(result, AdbServerProvisionCommitted):
-            return AdbServerEnsureSatisfied(result.activation)
-        if isinstance(result, AdbServerProvisionDeferred):
-            # Provisioning may race another lifecycle transaction. An active post-state means the
-            # ensure semantic is satisfied even though this provisioning attempt did not commit it.
-            if state_after.active:
-                return AdbServerEnsureSatisfied()
-            return result
-        if isinstance(result, AdbServerProvisionFailed):
-            return result
-        raise TypeError("provision action requires an ADB server provision transaction result")
+        if not isinstance(
+            result,
+            (
+                AdbServerProvisionStateConflict,
+                AdbServerProvisionAcquireStopped,
+                AdbServerProvisionActivationAttempted,
+            ),
+        ):
+            raise TypeError("provision action requires an ADB server provision transaction result")
+        return transition_provision_result(result)
 
     if isinstance(action, AdbServerRetireAction):
         if result is None or isinstance(result, AdbServerDeactivated):
@@ -227,5 +283,6 @@ __all__ = [
     "AdbServerRecoveryTransition",
     "transition_lifecycle_intent",
     "transition_lifecycle_result",
+    "transition_provision_result",
     "transition_recovery",
 ]

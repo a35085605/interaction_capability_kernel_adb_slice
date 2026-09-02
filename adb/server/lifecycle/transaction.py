@@ -3,44 +3,92 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from adb.server.identity import AdbServerIdentity
-from adb.server.lifecycle.control.result import (
-    AdbServerProvisionDeferred,
-    AdbServerProvisionFailed,
+from adb.server.lifecycle.control.backend import (
+    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireFailed,
+    AdbServerBackendAcquireInProgress,
+    AdbServerBackendAcquireSatisfied,
+    AdbServerBackendAcquireSucceeded,
 )
-from adb.server.state import AdbServerActivated
+from adb.server.state import (
+    AdbServerActivated,
+    AdbServerActivationRejected,
+    AdbServerActivationResult,
+    AdbServerState,
+)
+
+
+AdbServerBackendAcquireUnavailable: TypeAlias = (
+    AdbServerBackendAcquireInProgress
+    | AdbServerBackendAcquireBlocked
+    | AdbServerBackendAcquireFailed
+)
+AdbServerBackendAcquireUsable: TypeAlias = (
+    AdbServerBackendAcquireSucceeded | AdbServerBackendAcquireSatisfied
+)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerProvisionCommitted:
-    """A provisioned endpoint committed as a fresh authoritative server identity.
+class AdbServerProvisionStateConflict:
+    """Provisioning could not begin from the observed authoritative server state."""
 
-    ``activation`` retains the canonical state-transition evidence when this result is produced by
-    the runtime lifecycle facade. It remains optional so callers that only persist the committed
-    identity do not need to manufacture state evidence.
-    """
-
-    server: AdbServerIdentity
-    activation: AdbServerActivated | None = None
+    state: AdbServerState
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServerIdentity):
-            raise TypeError("server must be AdbServerIdentity")
-        if self.activation is not None:
-            if not isinstance(self.activation, AdbServerActivated):
-                raise TypeError("activation must be AdbServerActivated or None")
-            if self.activation.server != self.server:
-                raise ValueError("activation must describe the committed server identity")
+        if not isinstance(self.state, AdbServerState):
+            raise TypeError("state must be AdbServerState")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerProvisionAcquireStopped:
+    """Provisioning stopped at backend acquisition while preserving its raw evidence."""
+
+    acquire: AdbServerBackendAcquireUnavailable
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.acquire,
+            (
+                AdbServerBackendAcquireInProgress,
+                AdbServerBackendAcquireBlocked,
+                AdbServerBackendAcquireFailed,
+            ),
+        ):
+            raise TypeError("acquire must be an unavailable ADB server backend acquire result")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerProvisionActivationAttempted:
+    """A usable backend attachment was acquired and authoritative activation was attempted."""
+
+    acquire: AdbServerBackendAcquireUsable
+    activation: AdbServerActivationResult
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.acquire,
+            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+        ):
+            raise TypeError("acquire must be a usable ADB server backend acquire result")
+        if not isinstance(
+            self.activation,
+            (AdbServerActivated, AdbServerActivationRejected),
+        ):
+            raise TypeError("activation must be AdbServerActivationResult")
 
 
 AdbServerProvisionTransactionResult: TypeAlias = (
-    AdbServerProvisionCommitted
-    | AdbServerProvisionDeferred
-    | AdbServerProvisionFailed
+    AdbServerProvisionStateConflict
+    | AdbServerProvisionAcquireStopped
+    | AdbServerProvisionActivationAttempted
 )
 
 
 __all__ = [
-    "AdbServerProvisionCommitted",
+    "AdbServerBackendAcquireUnavailable",
+    "AdbServerBackendAcquireUsable",
+    "AdbServerProvisionAcquireStopped",
+    "AdbServerProvisionActivationAttempted",
+    "AdbServerProvisionStateConflict",
     "AdbServerProvisionTransactionResult",
 ]

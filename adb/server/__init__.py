@@ -13,7 +13,9 @@ from adb.server.lifecycle.control.errors import (
 )
 from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.transaction import (
-    AdbServerProvisionCommitted,
+    AdbServerProvisionAcquireStopped,
+    AdbServerProvisionActivationAttempted,
+    AdbServerProvisionStateConflict,
     AdbServerProvisionTransactionResult,
 )
 from adb.server.failure import (
@@ -61,7 +63,9 @@ __all__ = [
     "AdbServerLifecycleError",
     "AdbServerProvisionDeferred",
     "AdbServerProvisionFailed",
-    "AdbServerProvisionCommitted",
+    "AdbServerProvisionAcquireStopped",
+    "AdbServerProvisionActivationAttempted",
+    "AdbServerProvisionStateConflict",
     "AdbServerProvisionTransactionResult",
     "AdbServerEndpoint",
     "AdbServerIdentity",

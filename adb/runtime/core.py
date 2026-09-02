@@ -19,11 +19,9 @@ from adb.server.lifecycle.supervision.intent import (
     AdbServerLifecycleIntentResult,
     AdbServerReconcileIntent,
 )
-from adb.server.lifecycle.transaction import (
-    AdbServerProvisionCommitted,
-    AdbServerProvisionTransactionResult,
-)
+from adb.server.lifecycle.transaction import AdbServerProvisionTransactionResult
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
+from adb.server.lifecycle.supervision.transition import transition_provision_result
 from adb.server.lifecycle.supervision.recovery import AdbServerRecoveryCycle
 from adb.server.signal import AdbServerReconciliationRequested
 from adb.runtime.server_lifecycle import AdbServerLifecycleRuntimeFacade
@@ -207,7 +205,8 @@ class AdbRuntime(AdbManagedRuntime):
         if self._state.server.current is not None:
             raise ValueError("bootstrap server provisioning requires empty runtime server state")
 
-        result = self.provision_server()
+        transaction = self.provision_server()
+        result = transition_provision_result(transaction)
         if isinstance(result, AdbServerProvisionDeferred):
             raise AdbServerBootstrapError(
                 f"initial ADB server provisioning deferred: {result.diagnostic}"
@@ -216,9 +215,11 @@ class AdbRuntime(AdbManagedRuntime):
             raise AdbServerBootstrapError(
                 f"initial ADB server provisioning failed: {result.diagnostic}"
             )
-        if not isinstance(result, AdbServerProvisionCommitted):
-            raise TypeError("server lifecycle facade returned an unsupported provision result")
-        if self._state.server.current != result.server:
+        if result.activation is None:
+            raise AdbServerLifecycleConsistencyError(
+                "initial ADB server provisioning did not commit a new server lifetime"
+            )
+        if self._state.server.current != result.activation.server:
             raise AdbServerLifecycleConsistencyError(
                 "initial ADB server provisioning did not commit its server lifetime"
             )
