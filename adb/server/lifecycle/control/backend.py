@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
@@ -17,15 +16,8 @@ def _normalize_diagnostic(value: object) -> str:
     return normalized
 
 
-class AdbServerBackendOperation(str, Enum):
-    """One mutually exclusive backend implementation operation."""
-
-    ACQUIRE = "acquire"
-    RELEASE = "release"
-
-
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendSucceeded:
+class AdbServerBackendAcquireSucceeded:
     """A backend acquisition created a usable attachment."""
 
     endpoint: AdbServerEndpoint
@@ -36,7 +28,7 @@ class AdbServerBackendSucceeded:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendSatisfied:
+class AdbServerBackendAcquireSatisfied:
     """A backend acquisition found an already-usable matching attachment."""
 
     endpoint: AdbServerEndpoint
@@ -47,37 +39,28 @@ class AdbServerBackendSatisfied:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendOperationInProgress:
+class AdbServerBackendAcquireInProgress:
     """The requested acquisition is already in progress."""
 
-    operation: AdbServerBackendOperation
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.operation, AdbServerBackendOperation):
-            raise TypeError("operation must be AdbServerBackendOperation")
         if self.diagnostic is not None:
             object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendOperationBlocked:
+class AdbServerBackendAcquireBlocked:
     """Backend acquisition cannot currently produce a usable attachment."""
 
     diagnostic: str
-    blocking_operation: AdbServerBackendOperation | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
-        if self.blocking_operation is not None and not isinstance(
-            self.blocking_operation,
-            AdbServerBackendOperation,
-        ):
-            raise TypeError("blocking_operation must be AdbServerBackendOperation or None")
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendFailed:
+class AdbServerBackendAcquireFailed:
     """Backend acquisition failed to produce a usable attachment."""
 
     diagnostic: str
@@ -87,11 +70,11 @@ class AdbServerBackendFailed:
 
 
 AdbServerBackendAcquireResult: TypeAlias = (
-    AdbServerBackendSucceeded
-    | AdbServerBackendSatisfied
-    | AdbServerBackendOperationInProgress
-    | AdbServerBackendOperationBlocked
-    | AdbServerBackendFailed
+    AdbServerBackendAcquireSucceeded
+    | AdbServerBackendAcquireSatisfied
+    | AdbServerBackendAcquireInProgress
+    | AdbServerBackendAcquireBlocked
+    | AdbServerBackendAcquireFailed
 )
 
 
@@ -133,11 +116,10 @@ class AdbServerBackend(Protocol):
 
 __all__ = [
     "AdbServerBackend",
+    "AdbServerBackendAcquireBlocked",
+    "AdbServerBackendAcquireFailed",
+    "AdbServerBackendAcquireInProgress",
     "AdbServerBackendAcquireResult",
-    "AdbServerBackendFailed",
-    "AdbServerBackendOperation",
-    "AdbServerBackendOperationBlocked",
-    "AdbServerBackendOperationInProgress",
-    "AdbServerBackendSatisfied",
-    "AdbServerBackendSucceeded",
+    "AdbServerBackendAcquireSatisfied",
+    "AdbServerBackendAcquireSucceeded",
 ]

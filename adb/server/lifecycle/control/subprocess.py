@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from enum import Enum
 import os
 import socket
 import subprocess
@@ -14,13 +15,12 @@ from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.control.backend import (
-    AdbServerBackendFailed,
-    AdbServerBackendOperation,
-    AdbServerBackendOperationBlocked,
-    AdbServerBackendOperationInProgress,
+    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireFailed,
+    AdbServerBackendAcquireInProgress,
     AdbServerBackendAcquireResult,
-    AdbServerBackendSatisfied,
-    AdbServerBackendSucceeded,
+    AdbServerBackendAcquireSatisfied,
+    AdbServerBackendAcquireSucceeded,
     _require_owned_release_endpoint,
 )
 from adb.adapters.aosp.server_status import SmartSocketAdbServerStatusReader
@@ -31,6 +31,13 @@ _Sleeper = Callable[[float], None]
 _PopenFactory = Callable[..., subprocess.Popen[bytes]]
 _Resolver = Callable[..., list[tuple[object, ...]]]
 _SocketFactory = Callable[[int, int, int], socket.socket]
+
+
+class _AdbServerBackendOperation(str, Enum):
+    """One mutually exclusive subprocess-backend implementation operation."""
+
+    ACQUIRE = "acquire"
+    RELEASE = "release"
 
 
 class _ServerStatusReader(Protocol):
@@ -343,33 +350,29 @@ class SubprocessAdbServerBackend:
         self._factory = _factory
         self._operation_state_lock = Lock()
         self._operation_condition = Condition(self._operation_state_lock)
-        self._active_operation: AdbServerBackendOperation | None = None
+        self._active_operation: _AdbServerBackendOperation | None = None
         self._attachment: _OwnedAdbServerProcess | None = None
         self._attachment_usable = False
 
     def _begin_operation(
         self,
-        operation: AdbServerBackendOperation,
-    ) -> AdbServerBackendOperationInProgress | AdbServerBackendOperationBlocked | None:
+        operation: _AdbServerBackendOperation,
+    ) -> AdbServerBackendAcquireInProgress | AdbServerBackendAcquireBlocked | None:
         with self._operation_condition:
             active_operation = self._active_operation
             if active_operation is operation:
-                return AdbServerBackendOperationInProgress(
-                    operation,
-                    f"ADB server backend {operation.value} is already in progress",
+                return AdbServerBackendAcquireInProgress(
+                    f"ADB server backend {operation.value} is already in progress"
                 )
             if active_operation is not None:
-                return AdbServerBackendOperationBlocked(
-                    (
-                        f"ADB server backend {operation.value} cannot begin while "
-                        f"{active_operation.value} is in progress"
-                    ),
-                    blocking_operation=active_operation,
+                return AdbServerBackendAcquireBlocked(
+                    f"ADB server backend {operation.value} cannot begin while "
+                    f"{active_operation.value} is in progress"
                 )
             self._active_operation = operation
             return None
 
-    def _end_operation(self, operation: AdbServerBackendOperation) -> None:
+    def _end_operation(self, operation: _AdbServerBackendOperation) -> None:
         with self._operation_condition:
             if self._active_operation is not operation:
                 raise RuntimeError("ADB server backend operation state is inconsistent")
@@ -383,7 +386,7 @@ class SubprocessAdbServerBackend:
         if endpoint is not None and not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress or None")
 
-        operation = AdbServerBackendOperation.ACQUIRE
+        operation = _AdbServerBackendOperation.ACQUIRE
         unavailable = self._begin_operation(operation)
         if unavailable is not None:
             return unavailable
@@ -397,14 +400,13 @@ class SubprocessAdbServerBackend:
                     self._attachment = None
                     self._attachment_usable = False
                 elif not self._attachment_usable:
-                    return AdbServerBackendOperationBlocked(
-                        "a prior ADB server backend cleanup is still converging",
-                        blocking_operation=AdbServerBackendOperation.RELEASE,
+                    return AdbServerBackendAcquireBlocked(
+                        "a prior ADB server backend cleanup is still converging"
                     )
                 elif endpoint is None or attachment.endpoint == endpoint:
-                    return AdbServerBackendSatisfied(attachment.endpoint)
+                    return AdbServerBackendAcquireSatisfied(attachment.endpoint)
                 else:
-                    return AdbServerBackendOperationBlocked(
+                    return AdbServerBackendAcquireBlocked(
                         "a different ADB server backend attachment is already staged"
                     )
 
@@ -413,16 +415,16 @@ class SubprocessAdbServerBackend:
             except _AdbServerSubprocessStartupCleanupUnconfirmed as exc:
                 self._attachment = exc.attachment
                 self._attachment_usable = False
-                return AdbServerBackendFailed(
+                return AdbServerBackendAcquireFailed(
                     "ADB subprocess backend acquire failed and child-process cleanup "
                     "could not be completed"
                 )
             except _AdbServerSubprocessStartError as exc:
-                return AdbServerBackendFailed(str(exc))
+                return AdbServerBackendAcquireFailed(str(exc))
 
             self._attachment = attachment
             self._attachment_usable = True
-            return AdbServerBackendSucceeded(attachment.endpoint)
+            return AdbServerBackendAcquireSucceeded(attachment.endpoint)
         finally:
             self._end_operation(operation)
 
@@ -430,7 +432,7 @@ class SubprocessAdbServerBackend:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
 
-        operation = AdbServerBackendOperation.RELEASE
+        operation = _AdbServerBackendOperation.RELEASE
         # Release is a relinquishment command, not an observable lifecycle result. Wait until any
         # in-flight backend operation has handed ownership back to the implementation, then accept
         # responsibility for converging the requested attachment to physical termination.

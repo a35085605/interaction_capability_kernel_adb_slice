@@ -8,11 +8,11 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.control.backend import (
     AdbServerBackend,
-    AdbServerBackendFailed,
-    AdbServerBackendOperationBlocked,
-    AdbServerBackendOperationInProgress,
-    AdbServerBackendSatisfied,
-    AdbServerBackendSucceeded,
+    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireFailed,
+    AdbServerBackendAcquireInProgress,
+    AdbServerBackendAcquireSatisfied,
+    AdbServerBackendAcquireSucceeded,
 )
 from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
@@ -118,9 +118,9 @@ class AdbServerLifecycleRuntimeFacade:
 
     @staticmethod
     def _backend_busy_diagnostic(
-        result: AdbServerBackendOperationInProgress | AdbServerBackendOperationBlocked,
+        result: AdbServerBackendAcquireInProgress | AdbServerBackendAcquireBlocked,
     ) -> str:
-        if isinstance(result, AdbServerBackendOperationInProgress):
+        if isinstance(result, AdbServerBackendAcquireInProgress):
             return result.diagnostic or "ADB server backend acquire is already in progress"
         return result.diagnostic
 
@@ -128,14 +128,14 @@ class AdbServerLifecycleRuntimeFacade:
         self,
     ) -> AdbServerEndpoint | AdbServerProvisionDeferred | AdbServerProvisionFailed:
         result = self._backend.acquire(self._provision_endpoint)
-        if isinstance(result, (AdbServerBackendSucceeded, AdbServerBackendSatisfied)):
+        if isinstance(result, (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied)):
             return result.endpoint
         if isinstance(
             result,
-            (AdbServerBackendOperationInProgress, AdbServerBackendOperationBlocked),
+            (AdbServerBackendAcquireInProgress, AdbServerBackendAcquireBlocked),
         ):
             return AdbServerProvisionDeferred(self._backend_busy_diagnostic(result))
-        if isinstance(result, AdbServerBackendFailed):
+        if isinstance(result, AdbServerBackendAcquireFailed):
             return AdbServerProvisionFailed(result.diagnostic)
         raise TypeError("server backend acquire() returned an unsupported result")
 
