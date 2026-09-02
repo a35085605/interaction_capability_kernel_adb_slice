@@ -32,7 +32,7 @@ from adb.server.signal import (
     AdbServerRecovered,
     AdbServerRetired,
 )
-from adb.server.state import AdbServerState
+from adb.server.state import AdbServerActivated, AdbServerDeactivated, AdbServerState
 
 
 class AdbServerLifecycleRuntimeFacade:
@@ -181,7 +181,7 @@ class AdbServerLifecycleRuntimeFacade:
                 return result
 
             try:
-                activated_server = self._state.activate_server(result.endpoint, t0)
+                activation = self._state.activate_server(result.endpoint, t0)
             except BaseException:
                 try:
                     self._retirer.retire(result.endpoint)
@@ -192,8 +192,8 @@ class AdbServerLifecycleRuntimeFacade:
                     ) from release_error
                 raise
 
-            if activated_server is not None:
-                return AdbServerProvisionCommitted(activated_server)
+            if isinstance(activation, AdbServerActivated):
+                return AdbServerProvisionCommitted(activation.server)
             cleanup_endpoint = result.endpoint
 
         # A provisioned endpoint that lost its observed inactive-state comparison never became
@@ -219,13 +219,16 @@ class AdbServerLifecycleRuntimeFacade:
             return None
         if expected_server is not None and server != expected_server:
             return None
-        if not self._state.deactivate_server(server):
+        deactivation = self._state.deactivate_server(server)
+        if not isinstance(deactivation, AdbServerDeactivated):
             return None
 
         # Domain deactivation is authoritative before backend cleanup begins. The state CAS is the
         # retirement linearization point, so successor provisioning may race backend cleanup.
-        self._retirer.retire(endpoint)
-        return server
+        committed_endpoint = deactivation.state.endpoint
+        assert committed_endpoint is not None
+        self._retirer.retire(committed_endpoint)
+        return deactivation.server
 
 
 __all__ = ["AdbServerLifecycleRuntimeFacade"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from threading import Lock
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
@@ -74,6 +74,84 @@ class AdbServerState:
         return self.identity if self.active else None
 
 
+@dataclass(frozen=True, slots=True)
+class AdbServerActivated:
+    """Evidence that an activation transition committed this authoritative state."""
+
+    state: AdbServerState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, AdbServerState):
+            raise TypeError("state must be AdbServerState")
+        if not self.state.active:
+            raise ValueError("activated result requires active server state")
+
+    @property
+    def server(self) -> AdbServerIdentity:
+        """Return the server identity committed by this activation."""
+
+        server = self.state.server
+        assert server is not None
+        return server
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerActivationRejected:
+    """Evidence that activation did not commit, with state observed at rejection."""
+
+    state: AdbServerState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, AdbServerState):
+            raise TypeError("state must be AdbServerState")
+
+
+AdbServerActivationResult: TypeAlias = (
+    AdbServerActivated | AdbServerActivationRejected
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerDeactivated:
+    """Evidence that a deactivation transition committed this authoritative state."""
+
+    state: AdbServerState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, AdbServerState):
+            raise TypeError("state must be AdbServerState")
+        if self.state.active:
+            raise ValueError("deactivated result requires inactive server state")
+        if self.state.endpoint is None or self.state.identity is None:
+            raise ValueError(
+                "deactivated result requires preserved endpoint and identity metadata"
+            )
+
+    @property
+    def server(self) -> AdbServerIdentity:
+        """Return the server identity retired by this deactivation."""
+
+        server = self.state.identity
+        assert server is not None
+        return server
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerDeactivationRejected:
+    """Evidence that deactivation did not commit, with state observed at rejection."""
+
+    state: AdbServerState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state, AdbServerState):
+            raise TypeError("state must be AdbServerState")
+
+
+AdbServerDeactivationResult: TypeAlias = (
+    AdbServerDeactivated | AdbServerDeactivationRejected
+)
+
+
 @runtime_checkable
 class AdbServerStateView(Protocol):
     """Authoritative endpoint and server-identity view for one runtime."""
@@ -104,9 +182,9 @@ class AdbServerStateWriter(Protocol):
         self,
         endpoint: AdbServerEndpoint,
         expected: AdbServerState,
-    ) -> AdbServerIdentity | None: ...
+    ) -> AdbServerActivationResult: ...
 
-    def deactivate(self, expected: AdbServerIdentity) -> bool: ...
+    def deactivate(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult: ...
 
 
 class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
@@ -159,7 +237,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         self,
         endpoint: AdbServerEndpoint,
         expected: AdbServerState,
-    ) -> AdbServerIdentity | None:
+    ) -> AdbServerActivationResult:
         """Activate ``endpoint`` as a fresh server lifetime iff ``expected`` is current and
         inactive.
 
@@ -173,8 +251,9 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
             raise TypeError("expected must be AdbServerState")
 
         with self._lock:
-            if self._state != expected or expected.active:
-                return None
+            current = self._state
+            if current != expected or expected.active:
+                return AdbServerActivationRejected(current)
 
             previous_identity = expected.identity
             next_identity = (
@@ -182,32 +261,40 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
                 if previous_identity is None
                 else self._identity_issuer.successor(previous_identity)
             )
-            self._state = AdbServerState(
+            next_state = AdbServerState(
                 endpoint,
                 next_identity,
                 AdbServerStateStatus.ACTIVE,
             )
-            return next_identity
+            self._state = next_state
+            return AdbServerActivated(next_state)
 
-    def deactivate(self, expected: AdbServerIdentity) -> bool:
+    def deactivate(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult:
         """Make ``expected`` inactive while preserving endpoint and identity metadata."""
 
         if not isinstance(expected, AdbServerIdentity):
             raise TypeError("expected must be AdbServerIdentity")
 
         with self._lock:
-            state = self._state
-            if state.server != expected:
-                return False
-            self._state = AdbServerState(
-                endpoint=state.endpoint,
-                identity=state.identity,
+            current = self._state
+            if current.server != expected:
+                return AdbServerDeactivationRejected(current)
+            next_state = AdbServerState(
+                endpoint=current.endpoint,
+                identity=current.identity,
                 status=AdbServerStateStatus.INACTIVE,
             )
-            return True
+            self._state = next_state
+            return AdbServerDeactivated(next_state)
 
 
 __all__ = [
+    "AdbServerActivated",
+    "AdbServerActivationRejected",
+    "AdbServerActivationResult",
+    "AdbServerDeactivated",
+    "AdbServerDeactivationRejected",
+    "AdbServerDeactivationResult",
     "AdbServerState",
     "AdbServerStateStatus",
     "AdbServerStateStore",

@@ -4,7 +4,12 @@ from dataclasses import dataclass
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
-from adb.server.state import AdbServerState, AdbServerStateStore
+from adb.server.state import (
+    AdbServerActivationResult,
+    AdbServerDeactivationResult,
+    AdbServerState,
+    AdbServerStateStore,
+)
 from adb.tracking.snapshot.state import AdbTransportListSnapshotState
 
 
@@ -30,12 +35,12 @@ class AdbRuntimeState:
         self,
         endpoint: AdbServerEndpoint,
         expected: AdbServerState,
-    ) -> AdbServerIdentity | None:
+    ) -> AdbServerActivationResult:
         """Activate an endpoint when the observed inactive state is still authoritative."""
 
         return self.server.activate(endpoint, expected)
 
-    def deactivate_server(self, expected: AdbServerIdentity) -> bool:
+    def deactivate_server(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult:
         """Deactivate the expected authoritative server identity."""
 
         return self.server.deactivate(expected)

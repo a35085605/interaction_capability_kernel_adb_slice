@@ -30,6 +30,12 @@ from adb.server.failure import (
 )
 from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
 from adb.server.state import (
+    AdbServerActivated,
+    AdbServerActivationRejected,
+    AdbServerActivationResult,
+    AdbServerDeactivated,
+    AdbServerDeactivationRejected,
+    AdbServerDeactivationResult,
     AdbServerState,
     AdbServerStateStatus,
     AdbServerStateStore,
@@ -42,7 +48,13 @@ from adb.adapters.aosp.server_status import AdbServerStatusReader
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
 
 __all__ = [
+    "AdbServerActivated",
+    "AdbServerActivationRejected",
+    "AdbServerActivationResult",
     "AdbServerBackend",
+    "AdbServerDeactivated",
+    "AdbServerDeactivationRejected",
+    "AdbServerDeactivationResult",
     "AdbMdnsBackend",
     "AdbServerConnectionFailure",
     "AdbServerControlError",
