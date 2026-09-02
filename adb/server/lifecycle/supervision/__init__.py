@@ -9,6 +9,11 @@ from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecoveryExhaust,
 )
 
+from adb.server.lifecycle.supervision.supervisor import (
+    AdbServerLifecyclePort,
+    AdbServerSupervisor,
+)
+
 __all__ = [
     "AdbServerAcquireOnceIntent",
     "AdbServerRecovery",
@@ -16,4 +21,6 @@ __all__ = [
     "AdbServerRecoveryDecision",
     "AdbServerRecoveryExhaust",
     "AdbServerRecoveryPolicy",
+    "AdbServerLifecyclePort",
+    "AdbServerSupervisor",
 ]
