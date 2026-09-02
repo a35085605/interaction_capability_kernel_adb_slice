@@ -11,7 +11,7 @@ from adb.server.lifecycle.control.backend import AdbServerBackend
 from adb.server.lifecycle.control.provisioner import AdbServerProvisioner
 from adb.server.lifecycle.control.retirer import AdbServerRetirer
 from adb.server.lifecycle.control.subprocess import SubprocessAdbServerBackend
-from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
+from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.state import AdbServerStateStore
 from adb.runtime.state import AdbRuntimeState
 from adb.tracking.snapshot.identity import (
@@ -62,7 +62,7 @@ class AdbRuntimeBootstrap:
         endpoint: AdbServerEndpoint | None = None,
         pin_endpoint: bool = True,
         server_recovery_enabled: bool = True,
-        server_supervision_policy: AdbServerSupervisionPolicy | None = None,
+        server_supervision_policy: AdbServerRecoveryPolicy | None = None,
         transport_list_watch_supervision_policy: AdbTransportListWatchSupervisionPolicy
         | None = None,
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
@@ -78,10 +78,10 @@ class AdbRuntimeBootstrap:
         if not isinstance(server_recovery_enabled, bool):
             raise TypeError("server_recovery_enabled must be bool")
         if server_supervision_policy is None:
-            server_supervision_policy = AdbServerSupervisionPolicy()
-        if not isinstance(server_supervision_policy, AdbServerSupervisionPolicy):
+            server_supervision_policy = AdbServerRecoveryPolicy()
+        if not isinstance(server_supervision_policy, AdbServerRecoveryPolicy):
             raise TypeError(
-                "server_supervision_policy must be AdbServerSupervisionPolicy or None"
+                "server_supervision_policy must be AdbServerRecoveryPolicy or None"
             )
         if transport_list_watch_supervision_policy is None:
             transport_list_watch_supervision_policy = AdbTransportListWatchSupervisionPolicy()
@@ -106,7 +106,7 @@ class AdbRuntimeBootstrap:
         self._endpoint = endpoint
         self._pin_endpoint = pin_endpoint
         self._server_recovery_enabled = server_recovery_enabled
-        self._server_supervision_policy = server_supervision_policy
+        self._server_recovery_policy = server_supervision_policy
         self._transport_list_watch_supervision_policy = transport_list_watch_supervision_policy
         self._transport_supervision_policy = transport_supervision_policy
 
@@ -139,7 +139,7 @@ class AdbRuntimeBootstrap:
         watch_transports: bool = True,
         configured_transports: bool = True,
     ) -> AdbRuntime:
-        """Build a runtime with server supervision and optional transport automation."""
+        """Build a runtime with server recovery and optional transport automation."""
 
         if not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus")
@@ -167,7 +167,7 @@ class AdbRuntimeBootstrap:
                 server_retirer=core.server_retirer,
                 event_bus=event_bus,
                 server_supervision_scheduler=scheduler,
-                server_supervision_policy=self._server_supervision_policy,
+                server_supervision_policy=self._server_recovery_policy,
                 server_recovery_enabled=self._server_recovery_enabled,
                 transport_supervision_policy=self._transport_supervision_policy,
                 _bootstrap_server=True,

@@ -13,14 +13,19 @@ from adb.server.lifecycle.control.result import (
 from adb.server.lifecycle.supervision.intent import (
     AdbServerLifecycleIntent,
     AdbServerLifecycleIntentResult,
+    AdbServerReconcileIntent,
 )
 from adb.server.lifecycle.transaction import (
     AdbServerProvisionCommitted,
     AdbServerProvisionTransactionResult,
 )
-from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
-from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
-from adb.server.signal import AdbServerRecovered, AdbServerRetired
+from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
+from adb.server.lifecycle.supervision.recovery import AdbServerRecoveryCycle
+from adb.server.signal import (
+    AdbServerReconciliationRequested,
+    AdbServerRecovered,
+    AdbServerRetired,
+)
 from adb.runtime.server_lifecycle import AdbServerLifecycleRuntimeFacade
 from adb.runtime.state import AdbRuntimeState
 from adb.server.state import AdbServerState
@@ -46,7 +51,7 @@ class AdbRuntime(AdbManagedRuntime):
         server_retirer: AdbServerRetirer,
         event_bus: EventBus | None = None,
         server_supervision_scheduler: TemporalScheduler[object] | None = None,
-        server_supervision_policy: AdbServerSupervisionPolicy | None = None,
+        server_supervision_policy: AdbServerRecoveryPolicy | None = None,
         server_recovery_enabled: bool = True,
         transport_list_watch_supervisor: AdbTransportListWatchSupervisor | None = None,
         transport_supervisor: AdbConfiguredTransportSupervisor | None = None,
@@ -68,10 +73,10 @@ class AdbRuntime(AdbManagedRuntime):
                 "server_supervision_scheduler must satisfy TemporalScheduler or be None"
             )
         if server_supervision_policy is None:
-            server_supervision_policy = AdbServerSupervisionPolicy()
-        if not isinstance(server_supervision_policy, AdbServerSupervisionPolicy):
+            server_supervision_policy = AdbServerRecoveryPolicy()
+        if not isinstance(server_supervision_policy, AdbServerRecoveryPolicy):
             raise TypeError(
-                "server_supervision_policy must be AdbServerSupervisionPolicy or None"
+                "server_supervision_policy must be AdbServerRecoveryPolicy or None"
             )
         if not isinstance(server_recovery_enabled, bool):
             raise TypeError("server_recovery_enabled must be bool")
@@ -142,17 +147,11 @@ class AdbRuntime(AdbManagedRuntime):
         if _bootstrap_server:
             self._bootstrap_initial_server()
 
-        self._server_supervisor: AdbServerSupervisor | None = None
-        if server_supervision_scheduler is not None:
-            if event_bus is None:
-                raise RuntimeError("validated server supervision requires an event bus")
-            self._server_supervisor = AdbServerSupervisor(
-                self._server_lifecycle,
-                event_bus=event_bus,
-                scheduler=server_supervision_scheduler,
-                policy=server_supervision_policy,
-                recovery_enabled=server_recovery_enabled,
-            )
+        self._server_recovery_scheduler = server_supervision_scheduler
+        self._server_recovery_policy = server_supervision_policy
+        self._server_recovery_enabled = server_recovery_enabled
+        self._server_recovery_cycle: AdbServerRecoveryCycle | None = None
+        self._server_recovery_pending = False
         self._transport_list_watch_supervisor = transport_list_watch_supervisor
         self._transport_supervisor = transport_supervisor
         self._transport_supervision_policy = transport_supervision_policy
@@ -315,10 +314,9 @@ class AdbRuntime(AdbManagedRuntime):
                 raise RuntimeError("ADB runtime is already started")
             self._starting = True
 
-        server_started = False
         watch_started = False
         transport_started = False
-        subscriptions: tuple[EventSubscriptionToken, ...] = ()
+        subscription_tokens: list[EventSubscriptionToken] = []
         try:
             transport_supervisor = self._transport_supervisor
             if transport_supervisor is not None:
@@ -326,17 +324,23 @@ class AdbRuntime(AdbManagedRuntime):
                 transport_supervisor.start()
 
             event_bus = self._event_bus
-            if event_bus is not None and transport_supervisor is not None:
-                # Rebind configured transports before a successor watch can publish observations.
-                subscriptions = (
-                    event_bus.subscribe(AdbServerRetired, self._on_server_retired),
-                    event_bus.subscribe(AdbServerRecovered, self._on_server_recovered),
+            if event_bus is not None:
+                # Runtime owns server reconciliation; recovery is a bounded child cycle started only
+                # after the authoritative retirement transaction commits.
+                subscription_tokens.append(
+                    event_bus.subscribe(
+                        AdbServerReconciliationRequested,
+                        self._on_server_reconciliation_requested,
+                    )
                 )
-
-            server_supervisor = self._server_supervisor
-            if server_supervisor is not None:
-                server_started = True
-                server_supervisor.start()
+                if transport_supervisor is not None:
+                    # Rebind configured transports before a successor watch can publish observations.
+                    subscription_tokens.append(
+                        event_bus.subscribe(AdbServerRetired, self._on_server_retired)
+                    )
+                    subscription_tokens.append(
+                        event_bus.subscribe(AdbServerRecovered, self._on_server_recovered)
+                    )
 
             transport_list_watch_supervisor = self._transport_list_watch_supervisor
             if transport_list_watch_supervisor is not None:
@@ -344,17 +348,22 @@ class AdbRuntime(AdbManagedRuntime):
                 transport_list_watch_supervisor.start()
         except BaseException:
             if self._event_bus is not None:
-                for token in subscriptions:
+                for token in subscription_tokens:
                     self._event_bus.unsubscribe(token)
             if watch_started and self._transport_list_watch_supervisor is not None:
                 self._transport_list_watch_supervisor.close()
             if transport_started and self._transport_supervisor is not None:
                 self._transport_supervisor.close()
-            if server_started and self._server_supervisor is not None:
-                self._server_supervisor.close()
             with self._runtime_lock:
+                recovery_cycle = self._server_recovery_cycle
+                self._server_recovery_cycle = None
+                self._server_recovery_pending = False
                 self._starting = False
+            if recovery_cycle is not None:
+                recovery_cycle.close()
             raise
+
+        subscriptions = tuple(subscription_tokens)
 
         with self._runtime_lock:
             self._subscriptions = subscriptions
@@ -371,20 +380,23 @@ class AdbRuntime(AdbManagedRuntime):
             self._started = False
             subscriptions = self._subscriptions
             self._subscriptions = ()
+            recovery_cycle = self._server_recovery_cycle
+            self._server_recovery_cycle = None
+            self._server_recovery_pending = False
 
         event_bus = self._event_bus
         if event_bus is not None:
             for token in subscriptions:
                 event_bus.unsubscribe(token)
 
-        # Stop producers before consumers, then stop server-recovery automation.  None of these
-        # close operations terminate the current healthy server lifetime.
+        # Stop producers before consumers, then stop any bounded server-recovery work. None of
+        # these close operations terminate the current healthy server lifetime.
         if self._transport_list_watch_supervisor is not None:
             self._transport_list_watch_supervisor.close()
         if self._transport_supervisor is not None:
             self._transport_supervisor.close()
-        if self._server_supervisor is not None:
-            self._server_supervisor.close()
+        if recovery_cycle is not None:
+            recovery_cycle.close()
         self._close_transport_registrations()
 
     def _register_transport(
@@ -404,6 +416,91 @@ class AdbRuntime(AdbManagedRuntime):
         supervisor = self._require_transport_supervisor()
         if not supervisor.unregister(configuration):
             raise RuntimeError("configured transport registration disappeared from supervision")
+
+    def _on_server_reconciliation_requested(
+        self,
+        event: AdbServerReconciliationRequested,
+    ) -> None:
+        """Commit one requested retirement, then start bounded recovery for that deactivation."""
+
+        with self._runtime_lock:
+            if self._closed or not (self._started or self._starting):
+                return
+            event_bus = self._event_bus
+        if event_bus is None:
+            return
+
+        reconciliation = self._server_lifecycle.dispatch(AdbServerReconcileIntent(event))
+        if reconciliation is None:
+            return
+
+        try:
+            event_bus.publish(reconciliation.retired)
+            event_bus.publish(reconciliation.lost)
+        finally:
+            self._request_server_recovery()
+
+    def _request_server_recovery(self) -> None:
+        """Start one recovery cycle, or remember a newer deactivation while one is active."""
+
+        with self._runtime_lock:
+            if (
+                self._closed
+                or not (self._started or self._starting)
+                or not self._server_recovery_enabled
+                or self._server_recovery_scheduler is None
+                or self._event_bus is None
+            ):
+                return
+
+            current = self._server_recovery_cycle
+            if current is not None and not current.finished:
+                self._server_recovery_pending = True
+                return
+
+            self._server_recovery_pending = False
+            cycle = AdbServerRecoveryCycle(
+                self._server_lifecycle,
+                self._event_bus,
+                self._server_recovery_scheduler,
+                self._server_recovery_policy,
+                _on_finished=self._on_server_recovery_finished,
+            )
+            self._server_recovery_cycle = cycle
+
+        try:
+            cycle.start()
+        except BaseException:
+            with self._runtime_lock:
+                if self._server_recovery_cycle is cycle:
+                    self._server_recovery_cycle = None
+                    self._server_recovery_pending = False
+            cycle.close()
+            raise
+
+    def _on_server_recovery_finished(self, cycle: AdbServerRecoveryCycle) -> None:
+        """Release a finished cycle and cover a deactivation that raced its final ensure."""
+
+        restart = False
+        with self._runtime_lock:
+            if self._server_recovery_cycle is not cycle:
+                return
+            self._server_recovery_cycle = None
+            pending = self._server_recovery_pending
+            self._server_recovery_pending = False
+            if (
+                pending
+                and not self._closed
+                and (self._started or self._starting)
+                and self._server_recovery_enabled
+                and self._server_recovery_scheduler is not None
+            ):
+                # If the finishing cycle's final ensure already covered the newer deactivation,
+                # authoritative state is active and no successor cycle is needed.
+                restart = not self._state.observe_server().active
+
+        if restart:
+            self._request_server_recovery()
 
     def _on_server_retired(self, _event: AdbServerRetired) -> None:
         supervisor = self._transport_supervisor

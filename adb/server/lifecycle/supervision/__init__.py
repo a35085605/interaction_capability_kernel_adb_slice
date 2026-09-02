@@ -1,4 +1,4 @@
-"""ADB server lifecycle supervision retry policy and orchestration."""
+"""ADB server lifecycle intents plus bounded recovery retry orchestration."""
 
 from adb.server.lifecycle.supervision.intent import (
     AdbServerEnsureIntent,
@@ -11,8 +11,11 @@ from adb.server.lifecycle.supervision.intent import (
     AdbServerReconcileIntent,
     AdbServerReconcileIntentResult,
 )
-from adb.server.lifecycle.supervision.policy import AdbServerSupervisionPolicy
-from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
+from adb.server.lifecycle.supervision.policy import (
+    AdbServerRecoveryPolicy,
+    AdbServerSupervisionPolicy,
+)
+from adb.server.lifecycle.supervision.recovery import AdbServerRecoveryCycle
 from adb.server.signal import AdbServerRecoveryCycleId
 
 __all__ = [
@@ -25,7 +28,8 @@ __all__ = [
     "AdbServerReconcileCompleted",
     "AdbServerReconcileIntent",
     "AdbServerReconcileIntentResult",
+    "AdbServerRecoveryCycle",
     "AdbServerRecoveryCycleId",
+    "AdbServerRecoveryPolicy",
     "AdbServerSupervisionPolicy",
-    "AdbServerSupervisor",
 ]

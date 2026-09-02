@@ -25,40 +25,40 @@ def _normalize_retry_configuration(
 ) -> tuple[float, float, float, float, float, int | None]:
     initial = _normalize_positive_seconds(
         retry_initial_seconds,
-        field_name="ADB server supervision initial retry",
+        field_name="ADB server recovery initial retry",
     )
     maximum = _normalize_positive_seconds(
         retry_max_seconds,
-        field_name="ADB server supervision maximum retry",
+        field_name="ADB server recovery maximum retry",
     )
     multiplier = _normalize_positive_seconds(
         retry_multiplier,
-        field_name="ADB server supervision retry multiplier",
+        field_name="ADB server recovery retry multiplier",
     )
     if multiplier < 1.0:
-        raise ValueError("ADB server supervision retry multiplier must be at least one")
+        raise ValueError("ADB server recovery retry multiplier must be at least one")
     if maximum < initial:
-        raise ValueError("ADB server supervision maximum retry must be >= initial retry")
+        raise ValueError("ADB server recovery maximum retry must be >= initial retry")
     if isinstance(retry_jitter_ratio, bool) or not isinstance(retry_jitter_ratio, Real):
-        raise TypeError("ADB server supervision retry jitter ratio must be a real number")
+        raise TypeError("ADB server recovery retry jitter ratio must be a real number")
     jitter = float(retry_jitter_ratio)
     if not math.isfinite(jitter) or not 0.0 <= jitter < 1.0:
-        raise ValueError("ADB server supervision retry jitter ratio must be in [0, 1)")
+        raise ValueError("ADB server recovery retry jitter ratio must be in [0, 1)")
     deferred = _normalize_positive_seconds(
         deferred_retry_seconds,
-        field_name="ADB server supervision deferred retry",
+        field_name="ADB server recovery deferred retry",
     )
     if max_attempts is not None:
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
-            raise TypeError("ADB server supervision max_attempts must be an integer or None")
+            raise TypeError("ADB server recovery max_attempts must be an integer or None")
         if max_attempts <= 0:
-            raise ValueError("ADB server supervision max_attempts must be greater than zero")
+            raise ValueError("ADB server recovery max_attempts must be greater than zero")
     return initial, maximum, multiplier, jitter, deferred, max_attempts
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerSupervisionPolicy:
-    """Retry policy for ADB server recovery supervision."""
+class AdbServerRecoveryPolicy:
+    """Retry and backoff policy for one ADB server recovery cycle."""
 
     retry_initial_seconds: float = 0.5
     retry_max_seconds: float = 30.0
@@ -84,4 +84,8 @@ class AdbServerSupervisionPolicy:
         object.__setattr__(self, "max_attempts", max_attempts)
 
 
-__all__ = ["AdbServerSupervisionPolicy"]
+AdbServerSupervisionPolicy = AdbServerRecoveryPolicy
+"""Compatibility alias for the former recovery-policy name."""
+
+
+__all__ = ["AdbServerRecoveryPolicy", "AdbServerSupervisionPolicy"]
