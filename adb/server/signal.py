@@ -72,42 +72,6 @@ class AdbServerReconciliationRequested(_ServerSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerRetired(_ServerSignalProjection):
-    """Signal one retired ADB server domain lifetime."""
-
-    server: AdbServerIdentity
-
-    def __post_init__(self) -> None:
-        _require_server(self.server)
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerLost(_ServerSignalProjection):
-    """Failure evidence explaining why one already-retired server lifetime was lost."""
-
-    server: AdbServerIdentity
-    failure: AdbServerLivenessFailure
-
-    def __post_init__(self) -> None:
-        _require_server(self.server)
-        if not isinstance(self.failure, _LIVENESS_FAILURE_TYPES):
-            raise TypeError(
-                "failure must be AdbServerConnectionFailure or "
-                "AdbServerProcessExitedFailure"
-            )
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerRecovered(_ServerSignalProjection):
-    """Signal carrying the recovered ADB server."""
-
-    server: AdbServerIdentity
-
-    def __post_init__(self) -> None:
-        _require_server(self.server)
-
-
-@dataclass(frozen=True, slots=True)
 class AdbServerRecoveryRetryDue:
     """Signal delivered when one ADB server recovery retry is due."""
 
@@ -149,18 +113,12 @@ class AdbServerRecoveryExhausted:
 
 AdbServerSignal: TypeAlias = (
     AdbServerReconciliationRequested
-    | AdbServerRetired
-    | AdbServerLost
-    | AdbServerRecovered
     | AdbServerRecoveryRetryDue
     | AdbServerRecoveryExhausted
 )
 
 
 __all__ = [
-    "AdbServerLost",
-    "AdbServerRecovered",
-    "AdbServerRetired",
     "AdbServerReconciliationRequested",
     "AdbServerRecoveryCycleId",
     "AdbServerRecoveryExhausted",

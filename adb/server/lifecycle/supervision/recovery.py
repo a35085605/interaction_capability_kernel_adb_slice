@@ -20,7 +20,6 @@ from adb.server.lifecycle.supervision.transition import (
     transition_recovery,
 )
 from adb.server.signal import (
-    AdbServerRecovered,
     AdbServerRecoveryCycleId,
     AdbServerRecoveryExhausted,
     AdbServerRecoveryRetryDue,
@@ -42,7 +41,7 @@ def _default_thread_factory(*args: object, **kwargs: object) -> Thread:
 class AdbServerRecoveryCycle:
     """Run one bounded inactive-to-active ADB server recovery cycle.
 
-    The runtime owns failure reconciliation and decides when a recovery cycle is needed.  This
+    The runtime owns failure reconciliation and decides when a recovery cycle is needed. This
     object only drives ensure-intent results through retry policy until the ensure is satisfied,
     the launch-attempt budget is exhausted, or the cycle is closed.
     """
@@ -87,6 +86,7 @@ class AdbServerRecoveryCycle:
         self._retry_subscription: EventSubscriptionToken | None = None
         self._retry_token: ScheduleToken | None = None
         self._attempt_threads: set[Thread] = set()
+        self._succeeded: AdbServerRecoverySucceeded | None = None
         self._started = False
         self._finished = False
         self._closed = False
@@ -104,6 +104,13 @@ class AdbServerRecoveryCycle:
     def finished(self) -> bool:
         with self._lock:
             return self._finished
+
+    @property
+    def succeeded(self) -> AdbServerRecoverySucceeded | None:
+        """Return the successful terminal result, or ``None`` when not successfully finished."""
+
+        with self._lock:
+            return self._succeeded
 
     def start(self) -> None:
         """Start this single-use recovery cycle with the first ensure attempt."""
@@ -190,7 +197,7 @@ class AdbServerRecoveryCycle:
                 )
 
             if isinstance(transition, AdbServerRecoverySucceeded):
-                self._finish(recovered=transition.recovered)
+                self._finish(succeeded=transition)
                 return
 
             if isinstance(transition, AdbServerRecoveryDefer):
@@ -257,16 +264,19 @@ class AdbServerRecoveryCycle:
     def _finish(
         self,
         *,
-        recovered: AdbServerRecovered | None = None,
+        succeeded: AdbServerRecoverySucceeded | None = None,
         exhausted: AdbServerRecoveryExhausted | None = None,
     ) -> None:
-        if recovered is not None and exhausted is not None:
-            raise ValueError("recovery cycle cannot recover and exhaust simultaneously")
+        if succeeded is not None and exhausted is not None:
+            raise ValueError("recovery cycle cannot succeed and exhaust simultaneously")
+        if succeeded is None and exhausted is None:
+            raise ValueError("recovery cycle requires one terminal result")
 
         with self._mutation_lock:
             with self._lock:
                 if not self._is_active_locked():
                     return
+                self._succeeded = succeeded
                 self._finished = True
                 subscription = self._retry_subscription
                 self._retry_subscription = None
@@ -280,8 +290,6 @@ class AdbServerRecoveryCycle:
             self._scheduler.cancel(retry_token)
 
         try:
-            if recovered is not None:
-                self._bus.publish(recovered)
             if exhausted is not None:
                 self._bus.publish(exhausted)
         finally:

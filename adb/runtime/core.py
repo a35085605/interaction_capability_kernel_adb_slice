@@ -21,11 +21,7 @@ from adb.server.lifecycle.transaction import (
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import AdbServerRecoveryCycle
-from adb.server.signal import (
-    AdbServerReconciliationRequested,
-    AdbServerRecovered,
-    AdbServerRetired,
-)
+from adb.server.signal import AdbServerReconciliationRequested
 from adb.runtime.server_lifecycle import AdbServerLifecycleRuntimeFacade
 from adb.runtime.state import AdbRuntimeState
 from adb.server.state import AdbServerState
@@ -333,14 +329,6 @@ class AdbRuntime(AdbManagedRuntime):
                         self._on_server_reconciliation_requested,
                     )
                 )
-                if transport_supervisor is not None:
-                    # Rebind configured transports before a successor watch can publish observations.
-                    subscription_tokens.append(
-                        event_bus.subscribe(AdbServerRetired, self._on_server_retired)
-                    )
-                    subscription_tokens.append(
-                        event_bus.subscribe(AdbServerRecovered, self._on_server_recovered)
-                    )
 
             transport_list_watch_supervisor = self._transport_list_watch_supervisor
             if transport_list_watch_supervisor is not None:
@@ -426,17 +414,13 @@ class AdbRuntime(AdbManagedRuntime):
         with self._runtime_lock:
             if self._closed or not (self._started or self._starting):
                 return
-            event_bus = self._event_bus
-        if event_bus is None:
-            return
 
-        reconciliation = self._server_lifecycle.dispatch(AdbServerReconcileIntent(event))
-        if reconciliation is None:
+        deactivation = self._server_lifecycle.dispatch(AdbServerReconcileIntent(event))
+        if deactivation is None:
             return
 
         try:
-            event_bus.publish(reconciliation.retired)
-            event_bus.publish(reconciliation.lost)
+            self._reconcile_server_dependents()
         finally:
             self._request_server_recovery()
 
@@ -499,18 +483,23 @@ class AdbRuntime(AdbManagedRuntime):
                 # authoritative state is active and no successor cycle is needed.
                 restart = not self._state.observe_server().active
 
+        if cycle.succeeded is not None:
+            self._reconcile_server_dependents()
         if restart:
             self._request_server_recovery()
 
-    def _on_server_retired(self, _event: AdbServerRetired) -> None:
-        supervisor = self._transport_supervisor
-        if supervisor is not None:
-            supervisor.reconcile()
+    def _reconcile_server_dependents(self) -> None:
+        """Rebind runtime-owned server dependents to the current authoritative lifetime."""
 
-    def _on_server_recovered(self, _event: AdbServerRecovered) -> None:
-        supervisor = self._transport_supervisor
-        if supervisor is not None:
-            supervisor.reconcile()
+        # Configured transports must reset their server-scoped projections before a successor
+        # transport-list watch can publish observations for the new lifetime.
+        transport_supervisor = self._transport_supervisor
+        if transport_supervisor is not None:
+            transport_supervisor.reconcile()
+
+        watch_supervisor = self._transport_list_watch_supervisor
+        if watch_supervisor is not None:
+            watch_supervisor.reconcile()
 
     def _require_started(self) -> None:
         with self._runtime_lock:

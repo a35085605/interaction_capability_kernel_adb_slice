@@ -12,7 +12,7 @@ from adb.server.lifecycle.supervision.intent import (
     AdbServerEnsureIntentResult,
     AdbServerEnsureSatisfied,
 )
-from adb.server.signal import AdbServerRecovered
+from adb.server.state import AdbServerActivated
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,9 +47,15 @@ class AdbServerRecoveryAttempt:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoverySucceeded:
-    """The ensure intent is satisfied, optionally by a newly recovered server lifetime."""
+    """The ensure intent is satisfied, optionally by a newly committed activation."""
 
-    recovered: AdbServerRecovered | None = None
+    activation: AdbServerActivated | None = None
+
+    def __post_init__(self) -> None:
+        if self.activation is not None and not isinstance(
+            self.activation, AdbServerActivated
+        ):
+            raise TypeError("activation must be AdbServerActivated or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +106,7 @@ def transition_recovery(
             raise ValueError("max_attempts must be greater than zero")
 
     if isinstance(result, AdbServerEnsureSatisfied):
-        return AdbServerRecoverySucceeded(result.recovered)
+        return AdbServerRecoverySucceeded(result.activation)
 
     if isinstance(result, AdbServerProvisionDeferred):
         return AdbServerRecoveryDefer(attempt.after_deferral())

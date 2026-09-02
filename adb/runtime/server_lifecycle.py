@@ -18,7 +18,6 @@ from adb.server.lifecycle.supervision.intent import (
     AdbServerEnsureSatisfied,
     AdbServerLifecycleIntent,
     AdbServerLifecycleIntentResult,
-    AdbServerReconcileCompleted,
     AdbServerReconcileIntent,
     AdbServerReconcileIntentResult,
 )
@@ -26,12 +25,7 @@ from adb.server.lifecycle.transaction import (
     AdbServerProvisionCommitted,
     AdbServerProvisionTransactionResult,
 )
-from adb.server.signal import (
-    AdbServerLost,
-    AdbServerReconciliationRequested,
-    AdbServerRecovered,
-    AdbServerRetired,
-)
+from adb.server.signal import AdbServerReconciliationRequested
 from adb.server.state import AdbServerActivated, AdbServerDeactivated, AdbServerState
 
 
@@ -114,7 +108,7 @@ class AdbServerLifecycleRuntimeFacade:
 
         result = self.provision()
         if isinstance(result, AdbServerProvisionCommitted):
-            return AdbServerEnsureSatisfied(AdbServerRecovered(result.server))
+            return AdbServerEnsureSatisfied(result.activation)
 
         if isinstance(result, AdbServerProvisionDeferred):
             # Provisioning may have raced a different lifecycle transaction. If that transaction
@@ -135,22 +129,12 @@ class AdbServerLifecycleRuntimeFacade:
         """Interpret one liveness reconciliation request and perform identity fencing here."""
 
         cause = intent.cause
-        if isinstance(cause, AdbServerReconciliationRequested):
-            expected_server = cause.server
-            failure = cause.failure
-        else:
-            expected_server = None
-            failure = cause
-
-        retired_server = self._retire(
+        expected_server = (
+            cause.server if isinstance(cause, AdbServerReconciliationRequested) else None
+        )
+        return self._retire(
             expected=None,
             expected_server=expected_server,
-        )
-        if retired_server is None:
-            return None
-        return AdbServerReconcileCompleted(
-            retired=AdbServerRetired(retired_server),
-            lost=AdbServerLost(retired_server, failure),
         )
 
     def replace_provisioner(self, provisioner: AdbServerProvisioner) -> None:
@@ -193,7 +177,7 @@ class AdbServerLifecycleRuntimeFacade:
                 raise
 
             if isinstance(activation, AdbServerActivated):
-                return AdbServerProvisionCommitted(activation.server)
+                return AdbServerProvisionCommitted(activation.server, activation)
             cleanup_endpoint = result.endpoint
 
         # A provisioned endpoint that lost its observed inactive-state comparison never became
@@ -209,7 +193,7 @@ class AdbServerLifecycleRuntimeFacade:
         *,
         expected: AdbServerState | None,
         expected_server: AdbServerIdentity | None,
-    ) -> AdbServerIdentity | None:
+    ) -> AdbServerDeactivated | None:
         t0 = self._state.observe_server()
         if expected is not None and t0 != expected:
             return None
@@ -228,7 +212,7 @@ class AdbServerLifecycleRuntimeFacade:
         committed_endpoint = deactivation.state.endpoint
         assert committed_endpoint is not None
         self._retirer.retire(committed_endpoint)
-        return deactivation.server
+        return deactivation
 
 
 __all__ = ["AdbServerLifecycleRuntimeFacade"]

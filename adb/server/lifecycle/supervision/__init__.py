@@ -7,7 +7,6 @@ from adb.server.lifecycle.supervision.intent import (
     AdbServerLifecycleIntent,
     AdbServerLifecycleIntentDispatcher,
     AdbServerLifecycleIntentResult,
-    AdbServerReconcileCompleted,
     AdbServerReconcileIntent,
     AdbServerReconcileIntentResult,
 )
@@ -22,7 +21,6 @@ __all__ = [
     "AdbServerLifecycleIntent",
     "AdbServerLifecycleIntentDispatcher",
     "AdbServerLifecycleIntentResult",
-    "AdbServerReconcileCompleted",
     "AdbServerReconcileIntent",
     "AdbServerReconcileIntentResult",
     "AdbServerRecoveryCycle",

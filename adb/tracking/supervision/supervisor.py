@@ -11,11 +11,7 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.tracking.supervision.policy import AdbTransportListWatchSupervisionPolicy
-from adb.server.signal import (
-    AdbServerRetired,
-    AdbServerRecovered,
-    AdbServerReconciliationRequested,
-)
+from adb.server.signal import AdbServerReconciliationRequested
 from adb.tracking.snapshot.identity import AdbTransportListSnapshotEpoch
 from adb.tracking.snapshot.state import AdbTransportListSnapshotState
 from adb.tracking.publication import (
@@ -283,12 +279,6 @@ class AdbTransportListWatchSupervisor:
         assert controller is not None
         controller.stop()
 
-    def _on_server_retired(self, _event: AdbServerRetired) -> None:
-        self.reconcile()
-
-    def _on_server_recovered(self, _event: AdbServerRecovered) -> None:
-        self.reconcile()
-
     def _run_start_attempt(self, controller: AdbTransportListWatchController) -> None:
         active_thread = current_thread()
         try:
@@ -449,14 +439,6 @@ class AdbTransportListWatchSupervisor:
             self._bus.subscribe(AdbTransportListWatchStarted, self._on_watch_started),
             self._bus.subscribe(AdbTransportListWatchFailed, self._on_watch_failed),
             self._bus.subscribe(AdbTransportListWatchStopped, self._on_watch_stopped),
-            self._bus.subscribe(
-                AdbServerRetired,
-                self._on_server_retired,
-            ),
-            self._bus.subscribe(
-                AdbServerRecovered,
-                self._on_server_recovered,
-            ),
         )
 
     def _require_open(self) -> None:

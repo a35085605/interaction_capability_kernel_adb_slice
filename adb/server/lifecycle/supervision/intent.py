@@ -12,12 +12,8 @@ from adb.server.lifecycle.control.result import (
     AdbServerProvisionDeferred,
     AdbServerProvisionFailed,
 )
-from adb.server.signal import (
-    AdbServerLost,
-    AdbServerReconciliationRequested,
-    AdbServerRecovered,
-    AdbServerRetired,
-)
+from adb.server.signal import AdbServerReconciliationRequested
+from adb.server.state import AdbServerActivated, AdbServerDeactivated
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,35 +43,21 @@ class AdbServerReconcileIntent:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerEnsureSatisfied:
-    """Ensure intent is satisfied; ``recovered`` exists only for a newly committed lifetime."""
+    """Ensure is satisfied; ``activation`` exists only when this ensure committed a new lifetime."""
 
-    recovered: AdbServerRecovered | None = None
-
-    def __post_init__(self) -> None:
-        if self.recovered is not None and not isinstance(self.recovered, AdbServerRecovered):
-            raise TypeError("recovered must be AdbServerRecovered or None")
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerReconcileCompleted:
-    """Lifecycle signals produced by one authoritative retirement transaction."""
-
-    retired: AdbServerRetired
-    lost: AdbServerLost
+    activation: AdbServerActivated | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.retired, AdbServerRetired):
-            raise TypeError("retired must be AdbServerRetired")
-        if not isinstance(self.lost, AdbServerLost):
-            raise TypeError("lost must be AdbServerLost")
-        if self.retired.server != self.lost.server:
-            raise ValueError("retired and lost signals must describe the same server lifetime")
+        if self.activation is not None and not isinstance(
+            self.activation, AdbServerActivated
+        ):
+            raise TypeError("activation must be AdbServerActivated or None")
 
 
 AdbServerEnsureIntentResult: TypeAlias = (
     AdbServerEnsureSatisfied | AdbServerProvisionDeferred | AdbServerProvisionFailed
 )
-AdbServerReconcileIntentResult: TypeAlias = AdbServerReconcileCompleted | None
+AdbServerReconcileIntentResult: TypeAlias = AdbServerDeactivated | None
 AdbServerLifecycleIntent: TypeAlias = AdbServerEnsureIntent | AdbServerReconcileIntent
 AdbServerLifecycleIntentResult: TypeAlias = (
     AdbServerEnsureIntentResult | AdbServerReconcileIntentResult
@@ -111,7 +93,6 @@ __all__ = [
     "AdbServerLifecycleIntent",
     "AdbServerLifecycleIntentDispatcher",
     "AdbServerLifecycleIntentResult",
-    "AdbServerReconcileCompleted",
     "AdbServerReconcileIntent",
     "AdbServerReconcileIntentResult",
 ]
