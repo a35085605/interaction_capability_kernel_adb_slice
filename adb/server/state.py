@@ -98,9 +98,9 @@ class AdbServerStateView(Protocol):
 
 @runtime_checkable
 class AdbServerStateWriter(Protocol):
-    """Commit authoritative server activation and deactivation transitions."""
+    """Apply authoritative server activation and deactivation transitions."""
 
-    def commit(
+    def activate(
         self,
         endpoint: AdbServerEndpoint,
         expected: AdbServerState,
@@ -155,12 +155,13 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
 
         return self.state
 
-    def commit(
+    def activate(
         self,
         endpoint: AdbServerEndpoint,
         expected: AdbServerState,
     ) -> AdbServerIdentity | None:
-        """Activate ``endpoint`` iff ``expected`` is the current inactive state.
+        """Activate ``endpoint`` as a fresh server lifetime iff ``expected`` is current and
+        inactive.
 
         A successful compare-and-set allocates the next runtime-scoped server identity at the same
         linearization point that makes the endpoint authoritative.

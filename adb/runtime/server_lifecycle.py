@@ -114,7 +114,7 @@ class AdbServerLifecycleRuntimeFacade:
                 return result
 
             try:
-                committed = self._state.commit_server(result.endpoint, t0)
+                activated_server = self._state.activate_server(result.endpoint, t0)
             except BaseException:
                 try:
                     self._retirer.retire(result.endpoint)
@@ -125,8 +125,8 @@ class AdbServerLifecycleRuntimeFacade:
                     ) from release_error
                 raise
 
-            if committed is not None:
-                return AdbServerProvisionCommitted(committed)
+            if activated_server is not None:
+                return AdbServerProvisionCommitted(activated_server)
             cleanup_endpoint = result.endpoint
 
         # A provisioned endpoint that lost its observed inactive-state comparison never became

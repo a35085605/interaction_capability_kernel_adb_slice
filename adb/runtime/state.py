@@ -26,14 +26,14 @@ class AdbRuntimeState:
 
         return self.server.snapshot()
 
-    def commit_server(
+    def activate_server(
         self,
         endpoint: AdbServerEndpoint,
         expected: AdbServerState,
     ) -> AdbServerIdentity | None:
         """Activate an endpoint when the observed inactive state is still authoritative."""
 
-        return self.server.commit(endpoint, expected)
+        return self.server.activate(endpoint, expected)
 
     def deactivate_server(self, expected: AdbServerIdentity) -> bool:
         """Deactivate the expected authoritative server identity."""
