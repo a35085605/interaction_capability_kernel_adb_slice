@@ -2,18 +2,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from adb.epoch import Epoch
+from adb.epoch import Epoch, EpochSequence
 
 
 class _AdbServerEpoch(Epoch):
-    """Internal ordinal backing one committed ADB server identity."""
+    """Internal ordinal backing one runtime-scoped ADB server identity."""
 
     __slots__ = ()
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerIdentity:
-    """Runtime-scoped identity of one committed ADB server lifetime."""
+    """Runtime-scoped identity of one logical ADB server occurrence.
+
+    Identity alone does not imply that the identified occurrence became authoritative, nor does it
+    identify a physical adb server process lifetime.
+    """
 
     _epoch: _AdbServerEpoch = field(repr=False)
 
@@ -26,21 +30,20 @@ class AdbServerIdentity:
 
 
 class AdbServerIdentityIssuer:
-    """Issue the initial and direct successor identities for committed server lifetimes."""
+    """Issue monotonically increasing identities within one ADB runtime scope."""
 
-    __slots__ = ()
+    __slots__ = ("_sequence",)
 
-    def initial(self) -> AdbServerIdentity:
-        """Return the identity of the first committed server lifetime."""
+    def __init__(self, *, after: AdbServerIdentity | None = None) -> None:
+        if after is not None and not isinstance(after, AdbServerIdentity):
+            raise TypeError("after must be AdbServerIdentity or None")
+        initial_value = 0 if after is None else after._epoch.value
+        self._sequence = EpochSequence(_AdbServerEpoch, initial_value=initial_value)
 
-        return AdbServerIdentity(_AdbServerEpoch(1))
+    def issue(self) -> AdbServerIdentity:
+        """Issue one fresh logical server-occurrence identity."""
 
-    def successor(self, previous: AdbServerIdentity) -> AdbServerIdentity:
-        """Return the direct successor of ``previous`` within the same runtime scope."""
-
-        if not isinstance(previous, AdbServerIdentity):
-            raise TypeError("previous must be AdbServerIdentity")
-        return AdbServerIdentity(_AdbServerEpoch(previous._epoch.value + 1))
+        return AdbServerIdentity(self._sequence.issue())
 
 
 __all__ = ["AdbServerIdentity", "AdbServerIdentityIssuer"]

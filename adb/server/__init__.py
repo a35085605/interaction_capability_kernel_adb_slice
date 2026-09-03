@@ -1,6 +1,7 @@
 """ADB server endpoint, identity, lifecycle, failure, and status contracts."""
 
 from adb.server.availability import AdbServerUnavailableError
+from adb.server.candidate import AdbServerCandidate
 
 from adb.server.lifecycle.errors import (
     AdbServerBootstrapError,
@@ -50,6 +51,7 @@ __all__ = [
     "AdbMdnsBackend",
     "AdbServerConnectionFailure",
     "AdbServerBootstrapError",
+    "AdbServerCandidate",
     "AdbServerLifecycleConsistencyError",
     "AdbServerLifecycleCoordinator",
     "AdbServerLifecycleError",

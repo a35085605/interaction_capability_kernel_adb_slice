@@ -5,6 +5,7 @@ from threading import RLock
 from adb.runtime.managed import AdbManagedRuntime
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.identity import AdbServerIdentityIssuer
 from adb.server.lifecycle.backend import (
     AdbServerBackend,
     AdbServerBackendAcquireBlocked,
@@ -140,10 +141,12 @@ class AdbRuntime(AdbManagedRuntime):
 
         super().__init__(state.server)
         self._state = state
+        self._server_identity_issuer = AdbServerIdentityIssuer(after=state.server.identity)
         self._server_lifecycle = AdbServerLifecycleCoordinator(
             state.server,
             backend=server_backend,
             endpoint_constraint=server_endpoint_constraint,
+            identity_issuer=self._server_identity_issuer,
         )
         if _bootstrap_server:
             self._bootstrap_initial_server()

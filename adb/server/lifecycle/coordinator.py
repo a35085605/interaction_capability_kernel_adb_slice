@@ -5,8 +5,9 @@ from threading import RLock
 from typing import TypeAlias
 
 from networking import TcpAddress
+from adb.server.candidate import AdbServerCandidate
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServerIdentity
+from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
 from adb.server.lifecycle.backend import (
     AdbServerBackend,
     AdbServerBackendAcquireBlocked,
@@ -80,6 +81,7 @@ class AdbServerLifecycleCoordinator:
         *,
         backend: AdbServerBackend,
         endpoint_constraint: AdbServerEndpoint | None,
+        identity_issuer: AdbServerIdentityIssuer,
     ) -> None:
         if not isinstance(state, AdbServerStateStore):
             raise TypeError("state must be AdbServerStateStore")
@@ -87,19 +89,24 @@ class AdbServerLifecycleCoordinator:
             raise TypeError("backend must satisfy AdbServerBackend")
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
             raise TypeError("endpoint_constraint must be TcpAddress or None")
+        if not isinstance(identity_issuer, AdbServerIdentityIssuer):
+            raise TypeError("identity_issuer must be AdbServerIdentityIssuer")
         self._state = state
         self._backend = backend
         self._endpoint_constraint = endpoint_constraint
+        self._identity_issuer = identity_issuer
         self._lock = RLock()
 
     def provision(self) -> AdbServerProvisionResult:
         """Return ordered raw evidence produced by one provision operation.
 
         Backend acquisition and state activation results are returned unchanged and in execution
-        order. Already-active state is represented by :class:`AdbServerAlreadyActive` because no
-        backend acquisition or state activation is performed in that path. A usable backend
-        acquisition that loses the authoritative activation fence is released before its raw
-        acquisition and activation evidence are returned.
+        order. A validated usable acquisition is first materialized as an identified server
+        candidate, then submitted to authoritative state arbitration. Already-active state is
+        represented by :class:`AdbServerAlreadyActive` because no backend acquisition or state
+        activation is performed in that path. A usable backend acquisition that loses the
+        authoritative activation fence is released before its raw acquisition and activation
+        evidence are returned.
         """
 
         with self._lock:
@@ -135,7 +142,11 @@ class AdbServerLifecycleCoordinator:
                 )
 
             try:
-                activation = self._state.activate(endpoint, t0)
+                candidate = AdbServerCandidate(
+                    identity=self._identity_issuer.issue(),
+                    endpoint=endpoint,
+                )
+                activation = self._state.activate(candidate, t0)
             except BaseException:
                 self._backend.release(endpoint)
                 raise

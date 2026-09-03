@@ -6,8 +6,9 @@ from threading import Lock
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
+from adb.server.candidate import AdbServerCandidate
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
+from adb.server.identity import AdbServerIdentity
 
 
 class AdbServerStateStatus(str, Enum):
@@ -21,9 +22,9 @@ class AdbServerStateStatus(str, Enum):
 class AdbServerState:
     """Immutable authoritative ADB server state for one runtime observation.
 
-    ``endpoint`` and ``identity`` describe the last committed server. Inactive states may preserve
-    both values so lifecycle status does not depend on clearing endpoint metadata. The preserved
-    identity is the committed-lifetime watermark used to fence stale work.
+    ``endpoint`` and ``identity`` describe the last authoritative server. Inactive states may
+    preserve both values so lifecycle status does not depend on clearing endpoint metadata. The
+    preserved identity is the authoritative-server watermark used to fence stale work.
     """
 
     endpoint: AdbServerEndpoint | None = None
@@ -88,7 +89,7 @@ class AdbServerActivated:
 
     @property
     def server(self) -> AdbServerIdentity:
-        """Return the server identity committed by this activation."""
+        """Return the server identity made authoritative by this activation."""
 
         server = self.state.server
         assert server is not None
@@ -180,7 +181,7 @@ class AdbServerStateWriter(Protocol):
 
     def activate(
         self,
-        endpoint: AdbServerEndpoint,
+        candidate: AdbServerCandidate,
         expected: AdbServerState,
     ) -> AdbServerActivationResult: ...
 
@@ -198,7 +199,6 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         else:
             raise TypeError("initial must be AdbServerState or None")
         self._lock = Lock()
-        self._identity_issuer = AdbServerIdentityIssuer()
         self._state = state
 
     @property
@@ -235,18 +235,17 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
 
     def activate(
         self,
-        endpoint: AdbServerEndpoint,
+        candidate: AdbServerCandidate,
         expected: AdbServerState,
     ) -> AdbServerActivationResult:
-        """Activate ``endpoint`` as a fresh server lifetime iff ``expected`` is current and
-        inactive.
+        """Make ``candidate`` authoritative iff ``expected`` is current and inactive.
 
-        A successful compare-and-set allocates the next runtime-scoped server identity at the same
-        linearization point that makes the endpoint authoritative.
+        Identity is materialized before this boundary. This store only arbitrates authority and
+        projects the accepted candidate into immutable authoritative state.
         """
 
-        if not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
+        if not isinstance(candidate, AdbServerCandidate):
+            raise TypeError("candidate must be AdbServerCandidate")
         if not isinstance(expected, AdbServerState):
             raise TypeError("expected must be AdbServerState")
         if expected.active:
@@ -257,15 +256,9 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
             if current != expected:
                 return AdbServerActivationStateConflict(current)
 
-            previous_identity = expected.identity
-            next_identity = (
-                self._identity_issuer.initial()
-                if previous_identity is None
-                else self._identity_issuer.successor(previous_identity)
-            )
             next_state = AdbServerState(
-                endpoint,
-                next_identity,
+                candidate.endpoint,
+                candidate.identity,
                 AdbServerStateStatus.ACTIVE,
             )
             self._state = next_state

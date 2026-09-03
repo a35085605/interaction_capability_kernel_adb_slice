@@ -35,12 +35,16 @@ class EpochIssuer(Protocol[EpochT]):
 class EpochSequence(Generic[EpochT]):
     """Thread-safe monotonically increasing issuer for one concrete epoch type."""
 
-    def __init__(self, epoch_type: type[EpochT]) -> None:
+    def __init__(self, epoch_type: type[EpochT], *, initial_value: int = 0) -> None:
         if not isinstance(epoch_type, type) or not issubclass(epoch_type, Epoch):
             raise TypeError("epoch_type must be an Epoch subclass")
+        if isinstance(initial_value, bool) or not isinstance(initial_value, int):
+            raise TypeError("initial_value must be an integer")
+        if initial_value < 0:
+            raise ValueError("initial_value must be greater than or equal to zero")
         self._epoch_type = epoch_type
         self._lock = Lock()
-        self._current = 0
+        self._current = initial_value
 
     def issue(self) -> EpochT:
         with self._lock:
