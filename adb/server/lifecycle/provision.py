@@ -7,8 +7,8 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
-    AdbServerBackendAcquireSatisfied,
-    AdbServerBackendAcquireSucceeded,
+    AdbServerBackendAcquireAlreadySatisfied,
+    AdbServerBackendAcquireAchieved,
 )
 from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
@@ -22,7 +22,7 @@ from adb.server.state import (
 
 
 AdbServerUsableAcquireResult: TypeAlias = (
-    AdbServerBackendAcquireSucceeded | AdbServerBackendAcquireSatisfied
+    AdbServerBackendAcquireAchieved | AdbServerBackendAcquireAlreadySatisfied
 )
 AdbServerNonUsableAcquireResult: TypeAlias = (
     AdbServerBackendAcquireInProgress
@@ -41,7 +41,7 @@ class AdbServerProvisionActivated:
     def __post_init__(self) -> None:
         if not isinstance(
             self.acquisition,
-            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+            (AdbServerBackendAcquireAchieved, AdbServerBackendAcquireAlreadySatisfied),
         ):
             raise TypeError("acquisition must be a usable backend acquire result")
         if not isinstance(self.activation, AdbServerActivated):
@@ -62,7 +62,7 @@ class AdbServerProvisionActivationConflict:
     def __post_init__(self) -> None:
         if not isinstance(
             self.acquisition,
-            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+            (AdbServerBackendAcquireAchieved, AdbServerBackendAcquireAlreadySatisfied),
         ):
             raise TypeError("acquisition must be a usable backend acquire result")
         if not isinstance(self.activation, AdbServerActivationStateConflict):
@@ -100,7 +100,7 @@ def classify_provision_result(
             return first
         if isinstance(
             first,
-            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+            (AdbServerBackendAcquireAchieved, AdbServerBackendAcquireAlreadySatisfied),
         ):
             raise TypeError(
                 "usable backend acquire evidence must be followed by activation evidence"
@@ -113,7 +113,7 @@ def classify_provision_result(
         acquisition, activation = evidence
         if not isinstance(
             acquisition,
-            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+            (AdbServerBackendAcquireAchieved, AdbServerBackendAcquireAlreadySatisfied),
         ):
             if isinstance(
                 acquisition,

@@ -17,8 +17,11 @@ def _normalize_diagnostic(value: object) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireSucceeded:
-    """A backend acquisition created a usable attachment."""
+class AdbServerBackendAcquireAchieved:
+    """The requested acquisition became satisfied during this call.
+
+    This call established a new acquisition for ``endpoint``.
+    """
 
     endpoint: AdbServerEndpoint
 
@@ -28,8 +31,11 @@ class AdbServerBackendAcquireSucceeded:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireSatisfied:
-    """A backend acquisition found an already-usable matching attachment."""
+class AdbServerBackendAcquireAlreadySatisfied:
+    """The requested acquisition was already satisfied before this call.
+
+    This call did not establish a new acquisition.
+    """
 
     endpoint: AdbServerEndpoint
 
@@ -70,8 +76,8 @@ class AdbServerBackendAcquireFailed:
 
 
 AdbServerBackendAcquireResult: TypeAlias = (
-    AdbServerBackendAcquireSucceeded
-    | AdbServerBackendAcquireSatisfied
+    AdbServerBackendAcquireAchieved
+    | AdbServerBackendAcquireAlreadySatisfied
     | AdbServerBackendAcquireInProgress
     | AdbServerBackendAcquireBlocked
     | AdbServerBackendAcquireFailed
@@ -80,7 +86,7 @@ AdbServerBackendAcquireResult: TypeAlias = (
 
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Own acquisition and physical convergence of one usable ADB server attachment."""
+    """Own acquisition and relinquishment of one usable ADB server attachment."""
 
     def acquire(
         self,
@@ -90,7 +96,7 @@ class AdbServerBackend(Protocol):
         ...
 
     def release(self, endpoint: AdbServerEndpoint) -> None:
-        """Accept relinquishment of ``endpoint`` and own its physical cleanup convergence."""
+        """Relinquish the backend acquisition for ``endpoint``."""
         ...
 
 
@@ -100,6 +106,6 @@ __all__ = [
     "AdbServerBackendAcquireFailed",
     "AdbServerBackendAcquireInProgress",
     "AdbServerBackendAcquireResult",
-    "AdbServerBackendAcquireSatisfied",
-    "AdbServerBackendAcquireSucceeded",
+    "AdbServerBackendAcquireAlreadySatisfied",
+    "AdbServerBackendAcquireAchieved",
 ]

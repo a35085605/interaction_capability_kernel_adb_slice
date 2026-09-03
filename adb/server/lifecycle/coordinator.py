@@ -14,8 +14,8 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
     AdbServerBackendAcquireResult,
-    AdbServerBackendAcquireSatisfied,
-    AdbServerBackendAcquireSucceeded,
+    AdbServerBackendAcquireAlreadySatisfied,
+    AdbServerBackendAcquireAchieved,
 )
 from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
 from adb.server.state import (
@@ -65,7 +65,7 @@ AdbServerProvisionResult: TypeAlias = (
         | AdbServerBackendAcquireFailed
     ]
     | tuple[
-        AdbServerBackendAcquireSucceeded | AdbServerBackendAcquireSatisfied,
+        AdbServerBackendAcquireAchieved | AdbServerBackendAcquireAlreadySatisfied,
         AdbServerActivationResult,
     ]
 )
@@ -100,13 +100,13 @@ class AdbServerLifecycleCoordinator:
     def provision(self) -> AdbServerProvisionResult:
         """Return ordered raw evidence produced by one provision operation.
 
-        Provisioning executes in two phases: backend acquisition first establishes a usable
-        physical attachment, then authoritative state activation commits that attachment as the
+        Provisioning executes in two phases: backend acquisition first satisfies the requested
+        attachment acquisition, then authoritative state activation commits that attachment as the
         runtime server. Backend acquisition and state activation results are returned unchanged
         and in execution order. Already-active state is represented by
-        :class:`AdbServerAlreadyActive` because neither phase is performed in that path. A usable
-        backend acquisition that cannot be committed is released before its raw acquisition and
-        activation evidence are returned.
+        :class:`AdbServerAlreadyActive` because neither phase is performed in that path. If this
+        provision call newly achieves an acquisition that cannot be committed, that acquisition is
+        relinquished before its raw acquisition and activation evidence are returned.
         """
 
         with self._lock:
@@ -150,13 +150,13 @@ class AdbServerLifecycleCoordinator:
             return acquisition
         if not isinstance(
             acquisition,
-            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+            (AdbServerBackendAcquireAchieved, AdbServerBackendAcquireAlreadySatisfied),
         ):
             raise TypeError("server backend acquire() returned an unsupported result")
 
         endpoint = acquisition.endpoint
         if self._endpoint_constraint is not None and endpoint != self._endpoint_constraint:
-            self._backend.release(endpoint)
+            self._rollback_acquisition(acquisition)
             raise AdbServerLifecycleConsistencyError(
                 "endpoint-constrained ADB server backend acquisition returned a different endpoint"
             )
@@ -164,11 +164,11 @@ class AdbServerLifecycleCoordinator:
 
     def _commit_acquisition(
         self,
-        acquisition: AdbServerBackendAcquireSucceeded | AdbServerBackendAcquireSatisfied,
+        acquisition: AdbServerBackendAcquireAchieved | AdbServerBackendAcquireAlreadySatisfied,
         *,
         expected_state: AdbServerState,
     ) -> AdbServerActivationResult:
-        """Commit one usable backend acquisition or relinquish it if commit cannot succeed."""
+        """Commit one usable backend acquisition and rollback only effects of this provision."""
 
         endpoint = acquisition.endpoint
         try:
@@ -178,15 +178,24 @@ class AdbServerLifecycleCoordinator:
             )
             activation = self._state.activate(candidate, expected_state)
         except BaseException:
-            self._backend.release(endpoint)
+            self._rollback_acquisition(acquisition)
             raise
 
         if isinstance(activation, AdbServerActivationStateConflict):
-            self._backend.release(endpoint)
+            self._rollback_acquisition(acquisition)
         elif not isinstance(activation, AdbServerActivated):
-            self._backend.release(endpoint)
+            self._rollback_acquisition(acquisition)
             raise TypeError("server state activate() returned an unsupported result")
         return activation
+
+    def _rollback_acquisition(
+        self,
+        acquisition: AdbServerBackendAcquireAchieved | AdbServerBackendAcquireAlreadySatisfied,
+    ) -> None:
+        """Relinquish only an acquisition established by the current provision call."""
+
+        if isinstance(acquisition, AdbServerBackendAcquireAchieved):
+            self._backend.release(acquisition.endpoint)
 
     def retire(
         self,

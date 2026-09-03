@@ -12,8 +12,8 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
     AdbServerBackendAcquireResult,
-    AdbServerBackendAcquireSatisfied,
-    AdbServerBackendAcquireSucceeded,
+    AdbServerBackendAcquireAlreadySatisfied,
+    AdbServerBackendAcquireAchieved,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 
@@ -115,8 +115,8 @@ class AdbServerRecovery:
         if not isinstance(
             result,
             (
-                AdbServerBackendAcquireSucceeded,
-                AdbServerBackendAcquireSatisfied,
+                AdbServerBackendAcquireAchieved,
+                AdbServerBackendAcquireAlreadySatisfied,
                 AdbServerBackendAcquireInProgress,
                 AdbServerBackendAcquireBlocked,
                 AdbServerBackendAcquireFailed,
@@ -126,7 +126,7 @@ class AdbServerRecovery:
 
         if isinstance(
             result,
-            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+            (AdbServerBackendAcquireAchieved, AdbServerBackendAcquireAlreadySatisfied),
         ):
             return AdbServerRecoveryAcquired()
 
