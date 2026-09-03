@@ -142,18 +142,6 @@ class AdbServerRecovery:
 
         return self._next_attempt(self._retry_delay(self._failed_attempts))
 
-    def retry_after_unsatisfied(self) -> AdbServerRecoveryAttempt:
-        """Select a deferred retry after a non-failure attempt remained unsatisfied.
-
-        This advances the attempt sequence without consuming the backend-failure budget. It is
-        used when provisioning completed with valid lifecycle evidence but did not establish or
-        observe an active authoritative server for this recovery cycle.
-        """
-
-        if self._attempt_number == 0:
-            raise RuntimeError("ADB server recovery has not begun")
-        return self._next_attempt(self._policy.deferred_retry_seconds)
-
     def _next_attempt(self, delay_seconds: float) -> AdbServerRecoveryAttempt:
         self._attempt_number += 1
         return AdbServerRecoveryAttempt(self._attempt_number, delay_seconds)

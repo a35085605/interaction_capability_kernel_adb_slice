@@ -26,6 +26,12 @@ from adb.server.lifecycle.supervision.recovery import (
 class AdbServerRecoveryCompleted:
     """Instruction to finish the current recovery cycle after a satisfied provision outcome."""
 
+    restart_if_inactive: bool = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.restart_if_inactive, bool):
+            raise TypeError("restart_if_inactive must be bool")
+
 
 AdbServerRecoveryInstruction: TypeAlias = (
     AdbServerRecoveryCompleted | AdbServerRecoveryAttempt | AdbServerRecoveryFailed
@@ -45,13 +51,13 @@ def decide_recovery_after_provision(
         return AdbServerRecoveryCompleted()
 
     if isinstance(outcome, AdbServerProvisionActivationConflict):
-        # The conflict result is authoritative evidence at the activation linearization point.
-        # An active conflict satisfies this task. An inactive conflict leaves the same task
-        # unsatisfied, so retry it without consuming a backend-failure attempt; do not manufacture
-        # a successor recovery task from a later state observation.
-        if outcome.activation.state.active:
-            return AdbServerRecoveryCompleted()
-        return recovery.retry_after_unsatisfied()
+        # An active conflict satisfied this cycle at its activation linearization point. A later
+        # inactive state must not let this stale cycle resurrect a server unless newer work is
+        # pending. An inactive conflict remains unsatisfied and may start a successor cycle without
+        # consuming a backend failure attempt.
+        return AdbServerRecoveryCompleted(
+            restart_if_inactive=not outcome.activation.state.active,
+        )
 
     if isinstance(
         outcome,

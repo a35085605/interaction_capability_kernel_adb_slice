@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Callable
 from datetime import timedelta
 from threading import RLock, Thread, current_thread
@@ -82,7 +81,7 @@ class AdbServerSupervisor:
         self._recovery_attempt: AdbServerRecoveryAttempt | None = None
         self._retry_token: ScheduleToken | None = None
         self._attempt_threads: set[Thread] = set()
-        self._pending_recovery_ids: deque[AdbServerRecoveryId] = deque()
+        self._recovery_pending = False
         self._started = False
         self._starting = False
         self._closed = False
@@ -184,7 +183,7 @@ class AdbServerSupervisor:
             self._request_recovery()
 
     def _request_recovery(self) -> None:
-        """Queue one bounded acquisition-recovery task and run it in request order."""
+        """Start bounded acquisition recovery when authoritative state requires it."""
 
         with self._lock:
             if (
@@ -192,15 +191,20 @@ class AdbServerSupervisor:
                 or not self._recovery_enabled
                 or self._scheduler is None
                 or self._event_bus is None
+                or self._server_state.snapshot().active
             ):
                 return
 
-            recovery_id = AdbServerRecoveryId.new()
             if self._recovery is not None:
-                self._pending_recovery_ids.append(recovery_id)
+                self._recovery_pending = True
                 return
 
-            recovery, attempt = self._begin_recovery_locked(recovery_id)
+            recovery = AdbServerRecovery(self._policy)
+            recovery_id = AdbServerRecoveryId.new()
+            self._recovery = recovery
+            self._recovery_id = recovery_id
+            self._recovery_pending = False
+            attempt = recovery.begin()
 
         self._apply_recovery_attempt(recovery, recovery_id, attempt)
 
@@ -314,6 +318,7 @@ class AdbServerSupervisor:
                 recovery,
                 recovery_id,
                 completed=True,
+                restart_if_inactive=instruction.restart_if_inactive,
             )
             return
         if isinstance(instruction, AdbServerRecoveryAttempt):
@@ -329,10 +334,9 @@ class AdbServerSupervisor:
         recovery: AdbServerRecovery,
         recovery_id: AdbServerRecoveryId,
     ) -> None:
-        """Fail-stop one broken recovery cycle, then continue with explicitly queued work."""
+        """Fail-stop one broken recovery cycle without reconciliation or automatic restart."""
 
         scheduler = self._scheduler
-        successor: tuple[AdbServerRecovery, AdbServerRecoveryId, AdbServerRecoveryAttempt] | None
         with self._lock:
             if self._recovery is not recovery or self._recovery_id != recovery_id:
                 return
@@ -341,13 +345,10 @@ class AdbServerSupervisor:
             self._recovery_id = None
             self._recovery_attempt = None
             self._retry_token = None
-            successor = self._begin_next_recovery_locked()
+            self._recovery_pending = False
 
         if retry_token is not None and scheduler is not None:
             scheduler.cancel(retry_token)
-        if successor is not None:
-            next_recovery, next_recovery_id, next_attempt = successor
-            self._apply_recovery_attempt(next_recovery, next_recovery_id, next_attempt)
 
     def _finish_recovery(
         self,
@@ -355,11 +356,13 @@ class AdbServerSupervisor:
         recovery_id: AdbServerRecoveryId,
         *,
         completed: bool,
+        restart_if_inactive: bool = True,
     ) -> None:
-        """Release one recovery task and continue with the next explicitly queued task."""
+        """Release one recovery cycle and let authoritative state decide successor work."""
 
+        restart = False
+        reconcile = False
         scheduler = self._scheduler
-        successor: tuple[AdbServerRecovery, AdbServerRecoveryId, AdbServerRecoveryAttempt] | None
         with self._lock:
             if not self._is_current_recovery_locked(recovery, recovery_id):
                 return
@@ -368,37 +371,23 @@ class AdbServerSupervisor:
             self._recovery_id = None
             self._recovery_attempt = None
             self._retry_token = None
-            successor = self._begin_next_recovery_locked()
+            pending = self._recovery_pending
+            self._recovery_pending = False
+
+            if self._running_locked():
+                active = self._server_state.snapshot().active
+                reconcile = completed and active
+                restart = (
+                    (completed and restart_if_inactive and not active)
+                    or (pending and not active)
+                )
 
         if retry_token is not None and scheduler is not None:
             scheduler.cancel(retry_token)
-        try:
-            if completed:
-                self._reconcile_dependents()
-        finally:
-            if successor is not None:
-                next_recovery, next_recovery_id, next_attempt = successor
-                self._apply_recovery_attempt(next_recovery, next_recovery_id, next_attempt)
-
-    def _begin_recovery_locked(
-        self,
-        recovery_id: AdbServerRecoveryId,
-    ) -> tuple[AdbServerRecovery, AdbServerRecoveryAttempt]:
-        if self._recovery is not None or self._recovery_id is not None:
-            raise RuntimeError("an ADB server recovery is already active")
-        recovery = AdbServerRecovery(self._policy)
-        self._recovery = recovery
-        self._recovery_id = recovery_id
-        return recovery, recovery.begin()
-
-    def _begin_next_recovery_locked(
-        self,
-    ) -> tuple[AdbServerRecovery, AdbServerRecoveryId, AdbServerRecoveryAttempt] | None:
-        if not self._running_locked() or not self._pending_recovery_ids:
-            return None
-        recovery_id = self._pending_recovery_ids.popleft()
-        recovery, attempt = self._begin_recovery_locked(recovery_id)
-        return recovery, recovery_id, attempt
+        if reconcile:
+            self._reconcile_dependents()
+        if restart:
+            self._request_recovery()
 
     def _is_current_recovery_locked(
         self,
@@ -420,7 +409,7 @@ class AdbServerSupervisor:
         self._recovery_id = None
         self._recovery_attempt = None
         self._retry_token = None
-        self._pending_recovery_ids.clear()
+        self._recovery_pending = False
         return retry_token, tuple(self._attempt_threads)
 
     def _cancel_retry(self, token: ScheduleToken | None) -> None:
