@@ -31,7 +31,11 @@ from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerActivated, AdbServerDeactivated
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
+from adb.transport_list.identity import AdbTransportListIdentityIssuer
 from adb.transport_list.state import AdbTransportListStateView
+from adb.transport_list.watch.supervision.policy import (
+    AdbTransportListWatchSupervisionPolicy,
+)
 from adb.transport_list.watch.supervision.supervisor import AdbTransportListWatchSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
@@ -142,6 +146,9 @@ class AdbRuntime(AdbManagedRuntime):
         super().__init__(state.server)
         self._state = state
         self._server_identity_issuer = AdbServerIdentityIssuer(after=state.server.identity)
+        self._transport_list_identity_issuer = AdbTransportListIdentityIssuer(
+            after=state.transport_list.identity
+        )
         self._server_lifecycle = AdbServerLifecycleCoordinator(
             state.server,
             backend=server_backend,
@@ -175,6 +182,31 @@ class AdbRuntime(AdbManagedRuntime):
         """Current server-bound transport-list observation exposed by this runtime."""
 
         return self._state.transport_list
+
+    def _build_transport_list_watch_supervisor(
+        self,
+        policy: AdbTransportListWatchSupervisionPolicy,
+    ) -> AdbTransportListWatchSupervisor:
+        """Build the runtime-bound transport-list watch from runtime-owned identity authority."""
+
+        if not isinstance(policy, AdbTransportListWatchSupervisionPolicy):
+            raise TypeError("policy must be AdbTransportListWatchSupervisionPolicy")
+        event_bus = self._event_bus
+        if event_bus is None:
+            raise RuntimeError("transport-list watch requires an event bus")
+        server = self.server
+        endpoint = self.current_endpoint
+        if server is None or endpoint is None:
+            raise RuntimeError("ADB runtime has no active server binding")
+        return AdbTransportListWatchSupervisor(
+            server,
+            endpoint,
+            event_bus,
+            policy,
+            server_state=self._state.server,
+            transport_list_identity_issuer=self._transport_list_identity_issuer,
+            transport_list_state=self._state.transport_list,
+        )
 
     def provision_server(self) -> AdbServerProvisionResult:
         """Provision the authoritative server lifetime through runtime lifecycle ownership."""

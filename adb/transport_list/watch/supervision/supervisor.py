@@ -11,6 +11,7 @@ from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.transport_list.watch.supervision.policy import AdbTransportListWatchSupervisionPolicy
 from adb.server.signal import AdbServerReconciliationRequested
+from adb.transport_list.identity import AdbTransportListIdentityIssuer
 from adb.transport_list.state import AdbTransportListStateStore
 from adb.transport_list.watch.publication import (
     AdbTransportListStateBackedWatchPublisher,
@@ -54,6 +55,7 @@ class AdbTransportListWatchSupervisor:
         policy: AdbTransportListWatchSupervisionPolicy,
         *,
         server_state: AdbServerStateView,
+        transport_list_identity_issuer: AdbTransportListIdentityIssuer,
         transport_list_state: AdbTransportListStateStore | None = None,
         _controller_factory: _ControllerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
@@ -70,6 +72,13 @@ class AdbTransportListWatchSupervisor:
             raise TypeError("policy must be AdbTransportListWatchSupervisionPolicy")
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
+        if not isinstance(
+            transport_list_identity_issuer, AdbTransportListIdentityIssuer
+        ):
+            raise TypeError(
+                "transport_list_identity_issuer must be "
+                "AdbTransportListIdentityIssuer"
+            )
         initial_state = server_state.snapshot()
         if initial_state.server != server or initial_state.endpoint != endpoint:
             raise ValueError("server_state current server and endpoint must match")
@@ -88,6 +97,7 @@ class AdbTransportListWatchSupervisor:
         self._watch_publisher = AdbTransportListStateBackedWatchPublisher(
             self._transport_list_state,
             self._server_state,
+            transport_list_identity_issuer,
             self._bus,
         )
         self._policy = policy

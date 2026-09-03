@@ -6,14 +6,17 @@ from adb.epoch import Epoch, EpochSequence
 
 
 class _AdbTransportListEpoch(Epoch):
-    """Internal ordinal backing one committed transport-list identity."""
+    """Internal ordinal backing one transport-list revision identity."""
 
     __slots__ = ()
 
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListIdentity:
-    """Runtime-scoped identity of one committed authoritative transport-list revision."""
+    """Runtime-scoped identity of one logical transport-list revision.
+
+    Identity alone does not imply that the identified revision became authoritative.
+    """
 
     _epoch: _AdbTransportListEpoch = field(repr=False)
 

@@ -5,8 +5,9 @@ from enum import Enum
 from threading import Lock
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb.transport_list.identity import AdbTransportListIdentity, AdbTransportListIdentityIssuer
+from adb.transport_list.identity import AdbTransportListIdentity
 from adb.transport_list.model import AdbTransportList
+from adb.transport_list.revision import AdbTransportListRevision
 
 
 class AdbTransportListStateStatus(str, Enum):
@@ -199,7 +200,7 @@ class AdbTransportListStateWriter(Protocol):
 
     def observe(
         self,
-        transport_list: AdbTransportList,
+        revision: AdbTransportListRevision,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult: ...
 
@@ -215,7 +216,6 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         else:
             raise TypeError("initial must be AdbTransportListState or None")
         self._lock = Lock()
-        self._identity_issuer = AdbTransportListIdentityIssuer(after=state.identity)
         self._state = state
 
     @property
@@ -272,13 +272,17 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
 
     def observe(
         self,
-        transport_list: AdbTransportList,
+        revision: AdbTransportListRevision,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult:
-        """Commit one transport list iff ``expected`` is the current authoritative state."""
+        """Commit one materialized revision iff ``expected`` is authoritative.
 
-        if not isinstance(transport_list, AdbTransportList):
-            raise TypeError("transport_list must be AdbTransportList")
+        Identity is materialized before this boundary. This store only arbitrates authority
+        and projects the accepted revision into immutable authoritative state.
+        """
+
+        if not isinstance(revision, AdbTransportListRevision):
+            raise TypeError("revision must be AdbTransportListRevision")
         if not isinstance(expected, AdbTransportListState):
             raise TypeError("expected must be AdbTransportListState")
 
@@ -286,10 +290,9 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
             current = self._state
             if current != expected:
                 return AdbTransportListObservationStateConflict(current)
-            next_identity = self._identity_issuer.issue()
             next_state = AdbTransportListState(
-                transport_list=transport_list,
-                identity=next_identity,
+                transport_list=revision.transport_list,
+                identity=revision.identity,
                 status=AdbTransportListStateStatus.CURRENT,
             )
             self._state = next_state

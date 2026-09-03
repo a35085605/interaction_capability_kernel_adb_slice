@@ -5,6 +5,8 @@ from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
+from adb.transport_list.identity import AdbTransportListIdentityIssuer
+from adb.transport_list.revision import AdbTransportListRevision
 from adb.transport_list.state import (
     AdbTransportListInvalidated,
     AdbTransportListObserved,
@@ -40,6 +42,7 @@ class AdbTransportListStateBackedWatchPublisher:
         self,
         transport_list_state: _AdbTransportListStateAccess,
         server_state: AdbServerStateView,
+        identity_issuer: AdbTransportListIdentityIssuer,
         publisher: EventPublisher,
     ) -> None:
         if not isinstance(transport_list_state, _AdbTransportListStateAccess):
@@ -49,10 +52,13 @@ class AdbTransportListStateBackedWatchPublisher:
             )
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
+        if not isinstance(identity_issuer, AdbTransportListIdentityIssuer):
+            raise TypeError("identity_issuer must be AdbTransportListIdentityIssuer")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
         self._transport_list_state = transport_list_state
         self._server_state = server_state
+        self._identity_issuer = identity_issuer
         self._publisher = publisher
         self._lock = Lock()
         self._active_server: AdbServerIdentity | None = None
@@ -104,7 +110,11 @@ class AdbTransportListStateBackedWatchPublisher:
             if self._server_state.current != event.server:
                 return False
             expected = self._transport_list_state.snapshot()
-            result = self._transport_list_state.observe(event.transport_list, expected)
+            revision = AdbTransportListRevision(
+                identity=self._identity_issuer.issue(),
+                transport_list=event.transport_list,
+            )
+            result = self._transport_list_state.observe(revision, expected)
             if not isinstance(result, AdbTransportListObserved):
                 return False
             self._committed_server = event.server

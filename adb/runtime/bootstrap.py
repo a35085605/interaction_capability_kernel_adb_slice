@@ -15,9 +15,6 @@ from adb.transport_list.state import AdbTransportListStateStore
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
 )
-from adb.transport_list.watch.supervision.supervisor import (
-    AdbTransportListWatchSupervisor,
-)
 from adb.transport.lifecycle.ensure import AdbTcpTransportEnsurer
 from adb.transport.lifecycle.supervision.policy import (
     AdbConfiguredTransportSupervisionPolicy,
@@ -169,13 +166,8 @@ class AdbRuntimeBootstrap:
                 raise RuntimeError("bootstrapped ADB runtime has no initial server binding")
 
             transport_list_watch_supervisor = (
-                AdbTransportListWatchSupervisor(
-                    initial_server,
-                    initial_endpoint,
-                    event_bus,
-                    self._transport_list_watch_supervision_policy,
-                    server_state=core.runtime_state.server,
-                    transport_list_state=core.runtime_state.transport_list,
+                runtime._build_transport_list_watch_supervisor(
+                    self._transport_list_watch_supervision_policy
                 )
                 if watch_transports
                 else None
