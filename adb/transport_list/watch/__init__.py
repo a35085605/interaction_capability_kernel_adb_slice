@@ -1,11 +1,10 @@
-"""ADB transport-list watch protocols, lifecycle control, signals, and publication."""
+"""ADB transport-list watch protocols, lifecycle control, and signals."""
 
 from adb.transport_list.watch.controller import (
     AdbTransportListWatchController,
     ThreadedAdbTransportListWatchController,
 )
 from adb.transport_list.watch.protocol import AdbTransportListWatch, AdbTransportListWatcher
-from adb.transport_list.watch.publication import AdbTransportListStateBackedWatchPublisher
 from adb.transport_list.watch.signal import (
     AdbTransportListWatchFailed,
     AdbTransportListWatchFailure,
@@ -16,7 +15,6 @@ from adb.transport_list.watch.signal import (
 )
 
 __all__ = [
-    "AdbTransportListStateBackedWatchPublisher",
     "AdbTransportListWatch",
     "AdbTransportListWatchController",
     "AdbTransportListWatchFailed",

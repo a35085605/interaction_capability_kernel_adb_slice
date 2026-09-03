@@ -14,9 +14,6 @@ from adb.server.signal import AdbServerReconciliationRequested
 from adb.transport_list.coordinator import AdbTransportListObservationCoordinator
 from adb.transport_list.identity import AdbTransportListIdentityIssuer
 from adb.transport_list.state import AdbTransportListStateStore
-from adb.transport_list.watch.publication import (
-    AdbTransportListStateBackedWatchPublisher,
-)
 from adb.transport_list.watch.controller import (
     AdbTransportListWatchController,
     ThreadedAdbTransportListWatchController,
@@ -32,7 +29,12 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 _ThreadFactory = Callable[..., Thread]
 _ControllerFactory = Callable[
-    [AdbServerIdentity, AdbServerEndpoint, EventPublisher],
+    [
+        AdbServerIdentity,
+        AdbServerEndpoint,
+        EventPublisher,
+        AdbTransportListObservationCoordinator,
+    ],
     AdbTransportListWatchController,
 ]
 
@@ -136,10 +138,6 @@ class AdbTransportListWatchSupervisor:
         self._transport_list_state = transport_list_state
         self._transport_list_observation_coordinator = (
             transport_list_observation_coordinator
-        )
-        self._watch_publisher = AdbTransportListStateBackedWatchPublisher(
-            publisher=self._bus,
-            coordinator=self._transport_list_observation_coordinator,
         )
         self._policy = policy
         self._controller_factory = _controller_factory
@@ -451,14 +449,16 @@ class AdbTransportListWatchSupervisor:
             ThreadedAdbTransportListWatchController(
                 server,
                 endpoint,
-                self._watch_publisher,
+                self._bus,
+                self._transport_list_observation_coordinator,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
             )
             if factory is None
             else factory(
                 server,
                 endpoint,
-                self._watch_publisher,
+                self._bus,
+                self._transport_list_observation_coordinator,
             )
         )
         if not isinstance(controller, AdbTransportListWatchController):
@@ -472,7 +472,7 @@ class AdbTransportListWatchSupervisor:
     def _detach_controller_locked(self) -> AdbTransportListWatchController | None:
         controller = self._controller
         if controller is not None:
-            self._watch_publisher.end_watch(controller.server)
+            controller.revoke()
         self._controller = None
         self._watch_active = False
         self._start_in_progress = False

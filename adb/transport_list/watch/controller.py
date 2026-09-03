@@ -13,7 +13,12 @@ from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
 from adb.transport.model import AdbTransport
+from adb.transport_list.coordinator import (
+    AdbTransportListObservationCoordinator,
+    AdbTransportListObservationServerConflict,
+)
 from adb.transport_list.model import AdbTransportList
+from adb.transport_list.state import AdbTransportListObserved
 from adb.transport_list.watch.protocol import AdbTransportListWatch, AdbTransportListWatcher
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
 from adb.transport_list.watch.signal import (
@@ -56,15 +61,21 @@ class AdbTransportListWatchController(Protocol):
         """Establish the watch and return its initial complete transport list."""
         ...
 
+    def revoke(self) -> None:
+        """Synchronously prevent further authoritative watch commits."""
+        ...
+
     def stop(self) -> None:
         """Stop the watch and return after its worker has terminated."""
         ...
 
 
 class ThreadedAdbTransportListWatchController:
-    """Single-use threaded controller for one transport-list watch, publishing initial and
-    subsequent transport lists until terminal stop or failure. The default watcher uses AOSP
-    ``track-devices`` over smart socket.
+    """Single-use threaded controller for one transport-list watch.
+
+    Authoritative observations are committed through the shared observation coordinator before
+    their watch signals are published. The default watcher uses AOSP ``track-devices`` over smart
+    socket.
     """
 
     def __init__(
@@ -72,6 +83,7 @@ class ThreadedAdbTransportListWatchController:
         server: AdbServerIdentity,
         endpoint: AdbServerEndpoint,
         publisher: EventPublisher,
+        observation_coordinator: AdbTransportListObservationCoordinator,
         startup_timeout_seconds: float = 5.0,
         *,
         _watcher_factory: _TransportListWatcherFactory | None = None,
@@ -83,6 +95,10 @@ class ThreadedAdbTransportListWatchController:
             raise TypeError("endpoint must be TcpAddress")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
+        if not isinstance(observation_coordinator, AdbTransportListObservationCoordinator):
+            raise TypeError(
+                "observation_coordinator must be AdbTransportListObservationCoordinator"
+            )
         if _watcher_factory is not None and not callable(_watcher_factory):
             raise TypeError("_watcher_factory must be callable or None")
         if not callable(_thread_factory):
@@ -91,6 +107,7 @@ class ThreadedAdbTransportListWatchController:
         self.endpoint = endpoint
         self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
+        self._observation_coordinator = observation_coordinator
         self._watcher_factory = _watcher_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
@@ -188,6 +205,12 @@ class ThreadedAdbTransportListWatchController:
             )
         return startup_transport_lists[0]
 
+    def revoke(self) -> None:
+        """Synchronously prevent further authoritative commits from this controller."""
+
+        with self._lock:
+            self._closed = True
+
     def stop(self) -> None:
         """Stop the watch and return after its worker has terminated."""
 
@@ -240,14 +263,18 @@ class ThreadedAdbTransportListWatchController:
         terminal: object | None = None
         startup_succeeded = False
         try:
-            if not self._can_publish_from(watcher):
+            initial_transport_list = self._normalize_transport_list(watch.initial)
+            if not self._prepare_watch(watcher):
                 raise RuntimeError(
-                    "ADB transport-list watch controller was stopped before its initial "
-                    "transport list was published"
+                    "ADB transport-list watch lost authority before entering stream mode"
                 )
 
             self._publisher.publish(AdbTransportListWatchStarted(server))
-            initial_transport_list = self._normalize_transport_list(watch.initial)
+            if not self._commit_observation(watcher, initial_transport_list):
+                raise RuntimeError(
+                    "ADB transport-list watch lost authority before its initial transport list "
+                    "could be committed"
+                )
             self._publisher.publish(
                 AdbTransportListWatchObservation(
                     server,
@@ -259,12 +286,13 @@ class ThreadedAdbTransportListWatchController:
             startup_complete.set()
 
             for transport_list in watch.updates():
-                if not self._can_publish_from(watcher):
+                normalized = self._normalize_transport_list(transport_list)
+                if not self._commit_observation(watcher, normalized):
                     break
                 self._publisher.publish(
                     AdbTransportListWatchObservation(
                         server,
-                        self._normalize_transport_list(transport_list),
+                        normalized,
                     )
                 )
             terminal = AdbTransportListWatchStopped(server)
@@ -313,9 +341,31 @@ class ThreadedAdbTransportListWatchController:
     ) -> AdbTransportList:
         return AdbTransportList(transports)
 
-    def _can_publish_from(self, watcher: AdbTransportListWatcher) -> bool:
+    def _prepare_watch(self, watcher: AdbTransportListWatcher) -> bool:
         with self._lock:
-            return not self._closed and self._active_watcher is watcher
+            if self._closed or self._active_watcher is not watcher:
+                return False
+            return self._observation_coordinator.prepare_server(self.server)
+
+    def _commit_observation(
+        self,
+        watcher: AdbTransportListWatcher,
+        transport_list: AdbTransportList,
+    ) -> bool:
+        with self._lock:
+            if self._closed or self._active_watcher is not watcher:
+                return False
+            return self._commit_observation_locked(transport_list)
+
+    def _commit_observation_locked(self, transport_list: AdbTransportList) -> bool:
+        result = self._observation_coordinator.observe(self.server, transport_list)
+        if isinstance(result, AdbTransportListObserved):
+            return True
+        if isinstance(result, AdbTransportListObservationServerConflict):
+            return False
+        raise RuntimeError(
+            "ADB transport-list watch observation lost the authoritative state fence"
+        )
 
     def _mark_terminal(self, watcher: AdbTransportListWatcher) -> bool:
         with self._lock:
