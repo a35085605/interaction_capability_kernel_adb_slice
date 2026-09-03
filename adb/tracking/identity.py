@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from adb.epoch import Epoch
+from adb.epoch import Epoch, EpochSequence
 
 
 class _AdbTransportListEpoch(Epoch):
@@ -26,21 +26,20 @@ class AdbTransportListIdentity:
 
 
 class AdbTransportListIdentityIssuer:
-    """Issue the initial and direct successor identities for committed list revisions."""
+    """Issue monotonically increasing identities within one ADB runtime scope."""
 
-    __slots__ = ()
+    __slots__ = ("_sequence",)
 
-    def initial(self) -> AdbTransportListIdentity:
-        """Return the identity of the first committed transport-list revision."""
+    def __init__(self, *, after: AdbTransportListIdentity | None = None) -> None:
+        if after is not None and not isinstance(after, AdbTransportListIdentity):
+            raise TypeError("after must be AdbTransportListIdentity or None")
+        initial_value = 0 if after is None else after._epoch.value
+        self._sequence = EpochSequence(_AdbTransportListEpoch, initial_value=initial_value)
 
-        return AdbTransportListIdentity(_AdbTransportListEpoch(1))
+    def issue(self) -> AdbTransportListIdentity:
+        """Issue one fresh transport-list revision identity."""
 
-    def successor(self, previous: AdbTransportListIdentity) -> AdbTransportListIdentity:
-        """Return the direct successor of ``previous`` within the same runtime scope."""
-
-        if not isinstance(previous, AdbTransportListIdentity):
-            raise TypeError("previous must be AdbTransportListIdentity")
-        return AdbTransportListIdentity(_AdbTransportListEpoch(previous._epoch.value + 1))
+        return AdbTransportListIdentity(self._sequence.issue())
 
 
 __all__ = ["AdbTransportListIdentity", "AdbTransportListIdentityIssuer"]

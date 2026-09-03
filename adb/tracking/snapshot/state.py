@@ -234,7 +234,7 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         else:
             raise TypeError("initial must be AdbTransportListState or None")
         self._lock = Lock()
-        self._identity_issuer = AdbTransportListIdentityIssuer()
+        self._identity_issuer = AdbTransportListIdentityIssuer(after=state.identity)
         self._state = state
 
     @property
@@ -305,12 +305,7 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
             current = self._state
             if current != expected:
                 return AdbTransportListObservationStateConflict(current)
-            previous_identity = expected.identity
-            next_identity = (
-                self._identity_issuer.initial()
-                if previous_identity is None
-                else self._identity_issuer.successor(previous_identity)
-            )
+            next_identity = self._identity_issuer.issue()
             next_state = AdbTransportListState(
                 observation=observation,
                 identity=next_identity,
