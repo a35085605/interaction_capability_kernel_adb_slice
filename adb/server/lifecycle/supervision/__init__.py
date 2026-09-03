@@ -10,15 +10,23 @@ from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecoveryResult,
 )
 
+from adb.server.lifecycle.supervision.transition import (
+    AdbServerRecoveryCompleted,
+    AdbServerRecoveryInstruction,
+    decide_recovery_after_provision,
+)
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 
 __all__ = [
     "AdbServerRecovery",
     "AdbServerRecoveryAcquired",
     "AdbServerRecoveryAttempt",
+    "AdbServerRecoveryCompleted",
     "AdbServerRecoveryDecision",
     "AdbServerRecoveryFailed",
+    "AdbServerRecoveryInstruction",
     "AdbServerRecoveryResult",
     "AdbServerRecoveryPolicy",
     "AdbServerSupervisor",
+    "decide_recovery_after_provision",
 ]

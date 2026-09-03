@@ -10,8 +10,6 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
-    AdbServerBackendAcquireSatisfied,
-    AdbServerBackendAcquireSucceeded,
 )
 from adb.server.lifecycle.errors import (
     AdbServerBootstrapError,
@@ -23,12 +21,13 @@ from adb.server.lifecycle.coordinator import (
     AdbServerLifecycleCoordinator,
     AdbServerProvisionResult,
 )
-from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
-from adb.server.state import (
-    AdbServerActivated,
-    AdbServerActivationStateConflict,
-    AdbServerDeactivated,
+from adb.server.lifecycle.provision import (
+    AdbServerProvisionActivated,
+    AdbServerProvisionActivationConflict,
+    classify_provision_result,
 )
+from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
+from adb.server.state import AdbServerDeactivated
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.state import AdbTransportListStateView
@@ -189,55 +188,28 @@ class AdbRuntime(AdbManagedRuntime):
         if self._state.server.current is not None:
             raise ValueError("bootstrap server provisioning requires empty runtime server state")
 
-        evidence = self.provision_server()
-        if not isinstance(evidence, tuple) or not evidence:
-            raise TypeError("server lifecycle provision() must return non-empty ordered evidence")
-
-        first = evidence[0]
-        if isinstance(first, AdbServerAlreadyActive):
-            if len(evidence) != 1:
-                raise TypeError("already-active provision evidence must be terminal")
+        outcome = classify_provision_result(self.provision_server())
+        if isinstance(outcome, AdbServerAlreadyActive):
             raise AdbServerLifecycleConsistencyError(
                 "initial ADB server provisioning unexpectedly found an active server"
             )
-        if isinstance(first, AdbServerBackendAcquireInProgress):
-            if len(evidence) != 1:
-                raise TypeError("non-usable backend acquire evidence must be terminal")
-            detail = first.diagnostic or "ADB server backend acquire is already in progress"
+        if isinstance(outcome, AdbServerBackendAcquireInProgress):
+            detail = outcome.diagnostic or "ADB server backend acquire is already in progress"
             raise AdbServerBootstrapError(f"initial ADB server provisioning deferred: {detail}")
-        if isinstance(first, AdbServerBackendAcquireBlocked):
-            if len(evidence) != 1:
-                raise TypeError("non-usable backend acquire evidence must be terminal")
+        if isinstance(outcome, AdbServerBackendAcquireBlocked):
             raise AdbServerBootstrapError(
-                f"initial ADB server provisioning deferred: {first.diagnostic}"
+                f"initial ADB server provisioning deferred: {outcome.diagnostic}"
             )
-        if isinstance(first, AdbServerBackendAcquireFailed):
-            if len(evidence) != 1:
-                raise TypeError("non-usable backend acquire evidence must be terminal")
+        if isinstance(outcome, AdbServerBackendAcquireFailed):
             raise AdbServerBootstrapError(
-                f"initial ADB server provisioning failed: {first.diagnostic}"
+                f"initial ADB server provisioning failed: {outcome.diagnostic}"
             )
-        if not isinstance(
-            first,
-            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
-        ):
-            raise TypeError(
-                "provision evidence must begin with already-active or backend acquire evidence"
-            )
-        if len(evidence) != 2:
-            raise TypeError(
-                "usable backend acquire evidence must be followed by activation evidence"
-            )
-
-        activation = evidence[1]
-        if isinstance(activation, AdbServerActivationStateConflict):
+        if isinstance(outcome, AdbServerProvisionActivationConflict):
             raise AdbServerLifecycleConsistencyError(
                 "initial ADB server provisioning lost its authoritative-state activation fence"
             )
-        if not isinstance(activation, AdbServerActivated):
-            raise TypeError(
-                "usable backend acquire evidence must be followed by activation evidence"
-            )
+        if not isinstance(outcome, AdbServerProvisionActivated):
+            raise TypeError("server lifecycle provision() returned an unsupported outcome")
 
     def _configure_server_endpoint_constraint(
         self,

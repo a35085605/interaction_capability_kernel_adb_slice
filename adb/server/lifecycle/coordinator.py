@@ -61,7 +61,18 @@ AdbServerProvisionEvidence: TypeAlias = (
     | AdbServerBackendAcquireResult
     | AdbServerActivationResult
 )
-AdbServerProvisionResult: TypeAlias = tuple[AdbServerProvisionEvidence, ...]
+AdbServerProvisionResult: TypeAlias = (
+    tuple[AdbServerAlreadyActive]
+    | tuple[
+        AdbServerBackendAcquireInProgress
+        | AdbServerBackendAcquireBlocked
+        | AdbServerBackendAcquireFailed
+    ]
+    | tuple[
+        AdbServerBackendAcquireSucceeded | AdbServerBackendAcquireSatisfied,
+        AdbServerActivationResult,
+    ]
+)
 AdbServerRetireResult: TypeAlias = AdbServerAlreadyInactive | AdbServerDeactivationResult
 
 

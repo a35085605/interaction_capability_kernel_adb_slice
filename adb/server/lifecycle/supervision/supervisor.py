@@ -4,31 +4,25 @@ from collections.abc import Callable
 from datetime import timedelta
 from threading import RLock, Thread, current_thread
 
-from adb.server.lifecycle.backend import AdbServerBackendAcquireResult
-from adb.server.lifecycle.coordinator import (
-    AdbServerAlreadyActive,
-    AdbServerLifecycleCoordinator,
-    AdbServerProvisionResult,
-)
+from adb.server.lifecycle.coordinator import AdbServerLifecycleCoordinator
+from adb.server.lifecycle.provision import classify_provision_result
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
-    AdbServerRecoveryAcquired,
     AdbServerRecoveryAttempt,
     AdbServerRecoveryFailed,
+)
+from adb.server.lifecycle.supervision.transition import (
+    AdbServerRecoveryCompleted,
+    AdbServerRecoveryInstruction,
+    decide_recovery_after_provision,
 )
 from adb.server.signal import (
     AdbServerReconciliationRequested,
     AdbServerRecoveryId,
     AdbServerRecoveryRetryDue,
 )
-from adb.server.state import (
-    AdbServerActivated,
-    AdbServerActivationResult,
-    AdbServerActivationStateConflict,
-    AdbServerDeactivated,
-    AdbServerStateView,
-)
+from adb.server.state import AdbServerDeactivated, AdbServerStateView
 from eventing import EventBus, EventSubscriptionToken
 from scheduling import ScheduleToken, TemporalScheduler
 
@@ -298,72 +292,63 @@ class AdbServerSupervisor:
                 if not self._is_current_recovery_locked(recovery, recovery_id):
                     return
 
-            evidence = self._lifecycle.provision()
-            self._interpret_recovery_provision(recovery, recovery_id, evidence)
+            outcome = classify_provision_result(self._lifecycle.provision())
+            instruction = decide_recovery_after_provision(recovery, outcome)
+            self._apply_recovery_instruction(recovery, recovery_id, instruction)
+        except BaseException:
+            # Contract/invariant failures are not retryable backend outcomes. Release this cycle so
+            # later explicit recovery requests cannot become permanently pending behind a dead
+            # worker, but do not automatically restart the broken cycle.
+            self._abort_recovery(recovery, recovery_id)
+            raise
         finally:
             with self._lock:
                 self._attempt_threads.discard(active_thread)
 
-    def _interpret_recovery_provision(
+    def _apply_recovery_instruction(
         self,
         recovery: AdbServerRecovery,
         recovery_id: AdbServerRecoveryId,
-        evidence: AdbServerProvisionResult,
+        instruction: AdbServerRecoveryInstruction,
     ) -> None:
-        """Interpret lifecycle evidence by semantic outcome rather than tuple shape."""
+        """Apply one stateful recovery instruction through supervisor-owned effects."""
 
-        if not isinstance(evidence, tuple) or not evidence:
-            raise TypeError("server lifecycle provision() must return non-empty ordered evidence")
-
-        already_active = next(
-            (item for item in evidence if isinstance(item, AdbServerAlreadyActive)),
-            None,
-        )
-        if already_active is not None:
-            self._finish_recovery(recovery, recovery_id, completed=True)
-            return
-
-        activation = next(
-            (item for item in evidence if isinstance(item, AdbServerActivationResult)),
-            None,
-        )
-        if isinstance(activation, AdbServerActivated):
-            self._finish_recovery(recovery, recovery_id, completed=True)
-            return
-        if isinstance(activation, AdbServerActivationStateConflict):
-            # If the conflict observed an active authoritative server, that state satisfied this
-            # recovery cycle at the conflict linearization point. A later inactive state must not
-            # let this stale cycle resurrect a server unless a newer recovery request is pending.
-            # An inactive conflict remains unsatisfied and may immediately start a successor
-            # recovery cycle without consuming a backend failure attempt.
+        if isinstance(instruction, AdbServerRecoveryCompleted):
             self._finish_recovery(
                 recovery,
                 recovery_id,
                 completed=True,
-                restart_if_inactive=not activation.state.active,
+                restart_if_inactive=instruction.restart_if_inactive,
             )
             return
-
-        acquisition = next(
-            (item for item in evidence if isinstance(item, AdbServerBackendAcquireResult)),
-            None,
-        )
-        if acquisition is None:
-            raise TypeError(
-                "server lifecycle provision() returned no recognized recovery evidence"
-            )
-
-        decision = recovery.decide_after(acquisition)
-        if isinstance(decision, AdbServerRecoveryAttempt):
-            self._apply_recovery_attempt(recovery, recovery_id, decision)
+        if isinstance(instruction, AdbServerRecoveryAttempt):
+            self._apply_recovery_attempt(recovery, recovery_id, instruction)
             return
-        if isinstance(decision, AdbServerRecoveryAcquired):
-            self._finish_recovery(recovery, recovery_id, completed=True)
-            return
-        if isinstance(decision, AdbServerRecoveryFailed):
+        if isinstance(instruction, AdbServerRecoveryFailed):
             self._finish_recovery(recovery, recovery_id, completed=False)
             return
-        raise TypeError("recovery returned an unsupported decision")
+        raise TypeError("instruction must be AdbServerRecoveryInstruction")
+
+    def _abort_recovery(
+        self,
+        recovery: AdbServerRecovery,
+        recovery_id: AdbServerRecoveryId,
+    ) -> None:
+        """Fail-stop one broken recovery cycle without reconciliation or automatic restart."""
+
+        scheduler = self._scheduler
+        with self._lock:
+            if self._recovery is not recovery or self._recovery_id != recovery_id:
+                return
+            retry_token = self._retry_token
+            self._recovery = None
+            self._recovery_id = None
+            self._recovery_attempt = None
+            self._retry_token = None
+            self._recovery_pending = False
+
+        if retry_token is not None and scheduler is not None:
+            scheduler.cancel(retry_token)
 
     def _finish_recovery(
         self,
