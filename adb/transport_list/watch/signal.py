@@ -5,7 +5,6 @@ from enum import Enum
 from typing import TypeAlias
 
 from adb.server.identity import AdbServerIdentity
-from adb.transport_list.model import AdbTransportList
 
 
 def _require_server(value: object) -> AdbServerIdentity:
@@ -85,31 +84,16 @@ class AdbTransportListWatchFailed(_TransportListWatchServerSignalProjection):
         )
 
 
-@dataclass(frozen=True, slots=True)
-class AdbTransportListWatchObservation(_TransportListWatchServerSignalProjection):
-    """Signal carrying one complete transport list observed from one server lifetime."""
-
-    server: AdbServerIdentity
-    transport_list: AdbTransportList
-
-    def __post_init__(self) -> None:
-        _require_server(self.server)
-        if not isinstance(self.transport_list, AdbTransportList):
-            raise TypeError("transport_list must be AdbTransportList")
-
-
 AdbTransportListWatchSignal: TypeAlias = (
     AdbTransportListWatchStarted
     | AdbTransportListWatchStopped
     | AdbTransportListWatchFailed
-    | AdbTransportListWatchObservation
 )
 
 
 __all__ = [
     "AdbTransportListWatchFailed",
     "AdbTransportListWatchFailure",
-    "AdbTransportListWatchObservation",
     "AdbTransportListWatchSignal",
     "AdbTransportListWatchStarted",
     "AdbTransportListWatchStopped",

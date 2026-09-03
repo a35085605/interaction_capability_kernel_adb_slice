@@ -98,6 +98,7 @@ class AdbTransportListWatchSupervisor:
                 transport_list_state,
                 server_state,
                 transport_list_identity_issuer,
+                publisher=event_bus,
             )
         else:
             if not isinstance(
@@ -165,7 +166,7 @@ class AdbTransportListWatchSupervisor:
 
     @property
     def transport_list_state(self) -> AdbTransportListStateStore:
-        """Shared transport-list state committed before watch events are published."""
+        """Shared transport-list state committed by the observation coordinator."""
 
         return self._transport_list_state
 
@@ -173,7 +174,7 @@ class AdbTransportListWatchSupervisor:
     def transport_list_observation_coordinator(
         self,
     ) -> AdbTransportListObservationCoordinator:
-        """Shared authority boundary used to commit watch observations."""
+        """Shared authority boundary used to commit and publish watch observations."""
 
         return self._transport_list_observation_coordinator
 

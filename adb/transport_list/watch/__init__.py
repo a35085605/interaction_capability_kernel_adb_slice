@@ -8,7 +8,6 @@ from adb.transport_list.watch.protocol import AdbTransportListWatch, AdbTranspor
 from adb.transport_list.watch.signal import (
     AdbTransportListWatchFailed,
     AdbTransportListWatchFailure,
-    AdbTransportListWatchObservation,
     AdbTransportListWatchSignal,
     AdbTransportListWatchStarted,
     AdbTransportListWatchStopped,
@@ -19,7 +18,6 @@ __all__ = [
     "AdbTransportListWatchController",
     "AdbTransportListWatchFailed",
     "AdbTransportListWatchFailure",
-    "AdbTransportListWatchObservation",
     "AdbTransportListWatcher",
     "AdbTransportListWatchSignal",
     "AdbTransportListWatchStarted",

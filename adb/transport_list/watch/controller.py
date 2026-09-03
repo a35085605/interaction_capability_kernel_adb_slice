@@ -22,7 +22,6 @@ from adb.transport_list.state import AdbTransportListObserved
 from adb.transport_list.watch.protocol import AdbTransportListWatch, AdbTransportListWatcher
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
 from adb.transport_list.watch.signal import (
-    AdbTransportListWatchObservation,
     AdbTransportListWatchFailed,
     AdbTransportListWatchFailure,
     AdbTransportListWatchStarted,
@@ -73,9 +72,9 @@ class AdbTransportListWatchController(Protocol):
 class ThreadedAdbTransportListWatchController:
     """Single-use threaded controller for one transport-list watch.
 
-    Authoritative observations are committed through the shared observation coordinator before
-    their watch signals are published. The default watcher uses AOSP ``track-devices`` over smart
-    socket.
+    Authoritative observations are committed and published through the shared observation
+    coordinator. This controller publishes only watch-lifecycle signals. The default watcher uses
+    AOSP ``track-devices`` over smart socket.
     """
 
     def __init__(
@@ -275,12 +274,6 @@ class ThreadedAdbTransportListWatchController:
                     "ADB transport-list watch lost authority before its initial transport list "
                     "could be committed"
                 )
-            self._publisher.publish(
-                AdbTransportListWatchObservation(
-                    server,
-                    initial_transport_list,
-                )
-            )
             startup_transport_lists.append(initial_transport_list)
             startup_succeeded = True
             startup_complete.set()
@@ -289,12 +282,6 @@ class ThreadedAdbTransportListWatchController:
                 normalized = self._normalize_transport_list(transport_list)
                 if not self._commit_observation(watcher, normalized):
                     break
-                self._publisher.publish(
-                    AdbTransportListWatchObservation(
-                        server,
-                        normalized,
-                    )
-                )
             terminal = AdbTransportListWatchStopped(server)
         except AdbServerConnectionError as exc:
             if startup_succeeded:

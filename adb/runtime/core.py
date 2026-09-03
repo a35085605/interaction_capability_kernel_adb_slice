@@ -169,6 +169,7 @@ class AdbRuntime(AdbManagedRuntime):
             state.transport_list,
             state.server,
             self._transport_list_identity_issuer,
+            publisher=event_bus,
             authority_lock=self._authority_lock,
         )
         if _bootstrap_server:

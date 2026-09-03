@@ -19,9 +19,10 @@ from adb.transport.configuration import (
     AdbUsbTransportConfiguration,
 )
 from adb.transport_list.model import AdbTransportList
+from adb.transport_list.revision import AdbTransportListRevision
 from adb.transport_list.state import (
-    AdbTransportListInvalidated,
     AdbTransportListObserved,
+    AdbTransportListState,
     AdbTransportListStateStore,
     AdbTransportListStateView,
     AdbTransportListStateWriter,
@@ -35,12 +36,6 @@ from adb.transport.lifecycle.ensure import (
     AdbTcpTransportEnsureResult,
     AdbTcpTransportEnsureStatus,
     AdbTcpTransportEnsurer,
-)
-from adb.transport_list.watch.signal import (
-    AdbTransportListWatchObservation,
-    AdbTransportListWatchFailed,
-    AdbTransportListWatchStarted,
-    AdbTransportListWatchStopped,
 )
 from adb.transport.identity import AdbDeviceSerial
 from eventing import EventBus, EventSubscriptionToken
@@ -116,8 +111,7 @@ class AdbConfiguredTransportSupervisor:
             _ConfiguredTransportRegistration,
         ] = {}
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
-        self._watch_active = False
-        self._transport_list_needs_invalidation = False
+        self._transport_list_fence: AdbTransportListState | None = None
         self._recovery_threads: set[Thread] = set()
         self._closed = False
 
@@ -144,7 +138,7 @@ class AdbConfiguredTransportSupervisor:
         return self._transport_list_state
 
     def start(self) -> None:
-        """Subscribe to transport-list watch events used for configured-transport projection."""
+        """Subscribe to authoritative transport-list observations used for projection."""
 
         with self._lock:
             if self._closed:
@@ -152,13 +146,7 @@ class AdbConfiguredTransportSupervisor:
             if self._subscriptions:
                 raise RuntimeError("configured transport supervisor is already started")
             self._subscriptions = (
-                self._bus.subscribe(AdbTransportListWatchStarted, self._on_watch_started),
-                self._bus.subscribe(
-                    AdbTransportListWatchObservation,
-                    self._on_transport_list_observed,
-                ),
-                self._bus.subscribe(AdbTransportListWatchFailed, self._on_watch_terminal),
-                self._bus.subscribe(AdbTransportListWatchStopped, self._on_watch_terminal),
+                self._bus.subscribe(AdbTransportListObserved, self._on_transport_list_observed),
             )
             server = self._server_state.current
             if server != self._projection_server:
@@ -225,16 +213,15 @@ class AdbConfiguredTransportSupervisor:
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
             transport_list_state = self._transport_list_state.snapshot()
-            transport_list = transport_list_state.current if self._watch_active else None
-            transport_list_identity = (
-                transport_list_state.current_identity if self._watch_active else None
-            )
+            transport_list = transport_list_state.current
+            transport_list_identity = transport_list_state.current_identity
             server = self._server_state.current
             if (
                 transport_list is not None
                 and transport_list_identity is not None
                 and server is not None
                 and self._projection_server == server
+                and self._crosses_transport_list_fence_locked(transport_list_state)
             ):
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
@@ -286,7 +273,6 @@ class AdbConfiguredTransportSupervisor:
             self._closed = True
             subscriptions = self._subscriptions
             self._subscriptions = ()
-            self._watch_active = False
             threads = tuple(self._recovery_threads)
             self._recovery_threads.clear()
             self._registrations.clear()
@@ -296,51 +282,36 @@ class AdbConfiguredTransportSupervisor:
             if thread is not current_thread():
                 thread.join()
 
-    def _on_watch_started(self, event: AdbTransportListWatchStarted) -> None:
-        with self._lock:
-            server = self._server_state.current
-            if (
-                self._closed
-                or event.server != server
-                or self._projection_server != server
-            ):
-                return
-            writer = self._transport_list_writer
-            if writer is not None and self._transport_list_needs_invalidation:
-                expected = self._transport_list_state.current_identity
-                if expected is not None:
-                    invalidation = writer.invalidate(expected)
-                    if not isinstance(invalidation, AdbTransportListInvalidated):
-                        return
-                self._transport_list_needs_invalidation = False
-            self._watch_active = True
-
-    def _on_transport_list_observed(self, event: AdbTransportListWatchObservation) -> None:
+    def _on_transport_list_observed(self, event: AdbTransportListObserved) -> None:
         publications: list[object] = []
         recovery_launch_requests: list[AdbConfiguredTransport] = []
         with self._lock:
             server = self._server_state.current
             if (
                 self._closed
-                or event.server != server
+                or server is None
                 or self._projection_server != server
-                or not self._watch_active
             ):
                 return
             writer = self._transport_list_writer
             if writer is not None:
+                if not self._crosses_transport_list_fence_locked(event.state):
+                    return
                 expected = self._transport_list_state.snapshot()
-                result = writer.observe(event.transport_list, expected)
+                result = writer.observe(
+                    AdbTransportListRevision(event.identity, event.transport_list),
+                    expected,
+                )
                 if not isinstance(result, AdbTransportListObserved):
                     return
                 transport_list = result.transport_list
                 transport_list_identity = result.identity
             else:
                 state = self._transport_list_state.snapshot()
-                transport_list = state.current
-                transport_list_identity = state.current_identity
-                if transport_list != event.transport_list or transport_list_identity is None:
+                if state != event.state or not self._crosses_transport_list_fence_locked(state):
                     return
+                transport_list = event.transport_list
+                transport_list_identity = event.identity
             for registration in self._registrations.values():
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
@@ -357,21 +328,6 @@ class AdbConfiguredTransportSupervisor:
             self._bus.publish(publication)
         for recovery_configuration in recovery_launch_requests:
             self._launch_recovery(recovery_configuration)
-
-    def _on_watch_terminal(
-        self,
-        event: AdbTransportListWatchFailed | AdbTransportListWatchStopped,
-    ) -> None:
-        with self._lock:
-            server = self._server_state.current
-            if (
-                self._closed
-                or event.server != server
-                or self._projection_server != server
-                or not self._watch_active
-            ):
-                return
-            self._watch_active = False
 
     def _project_registration_locked(
         self,
@@ -530,15 +486,23 @@ class AdbConfiguredTransportSupervisor:
                         registration.active_recovery_token = None
 
     def _reset_server_lifetime_locked(self) -> None:
-        self._watch_active = False
-        if self._transport_list_writer is not None:
-            self._transport_list_needs_invalidation = True
+        # ``AdbTransportListObserved`` intentionally carries no server identity. Record the
+        # authoritative transport-list state visible at the lifetime transition so a delayed
+        # publication from the retired server cannot be projected onto its successor. The first
+        # observation committed for the successor necessarily produces a different state identity.
+        self._transport_list_fence = self._transport_list_state.snapshot()
         for registration in self._registrations.values():
             registration.projection = None
             registration.active_recovery_token = None
             # The thread may still finish against its captured server lifetime, but it is no
             # longer allowed to affect this registration or block recovery in a successor.
             registration.active_recovery_thread = None
+
+    def _crosses_transport_list_fence_locked(self, state: AdbTransportListState) -> bool:
+        if not isinstance(state, AdbTransportListState):
+            raise TypeError("state must be AdbTransportListState")
+        fence = self._transport_list_fence
+        return fence is None or state != fence
 
     def _resolve_registration_key_locked(
         self,

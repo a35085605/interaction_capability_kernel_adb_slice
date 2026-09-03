@@ -12,10 +12,12 @@ from adb.transport_list.revision import AdbTransportListRevision
 from adb.transport_list.state import (
     AdbTransportListInvalidated,
     AdbTransportListObservationResult,
+    AdbTransportListObserved,
     AdbTransportListState,
     AdbTransportListStateView,
     AdbTransportListStateWriter,
 )
+from eventing import EventPublisher
 
 
 _RLockType = type(RLock())
@@ -73,6 +75,7 @@ class AdbTransportListObservationCoordinator:
         server_state: AdbServerStateView,
         identity_issuer: AdbTransportListIdentityIssuer,
         *,
+        publisher: EventPublisher | None = None,
         authority_lock: _RLockType | None = None,
     ) -> None:
         if not isinstance(transport_list_state, _AdbTransportListStateAccess):
@@ -84,11 +87,14 @@ class AdbTransportListObservationCoordinator:
             raise TypeError("server_state must satisfy AdbServerStateView")
         if not isinstance(identity_issuer, AdbTransportListIdentityIssuer):
             raise TypeError("identity_issuer must be AdbTransportListIdentityIssuer")
+        if publisher is not None and not isinstance(publisher, EventPublisher):
+            raise TypeError("publisher must satisfy EventPublisher or be None")
         if authority_lock is not None and not isinstance(authority_lock, _RLockType):
             raise TypeError("authority_lock must be a reentrant lock or None")
         self._transport_list_state = transport_list_state
         self._server_state = server_state
         self._identity_issuer = identity_issuer
+        self._publisher = publisher
         self._lock = RLock() if authority_lock is None else authority_lock
         self._committed_server: AdbServerIdentity | None = None
 
@@ -162,7 +168,10 @@ class AdbTransportListObservationCoordinator:
             result = self._transport_list_state.observe(revision, commit_expected)
             if result:
                 self._committed_server = server
-            return result
+
+        if isinstance(result, AdbTransportListObserved) and self._publisher is not None:
+            self._publisher.publish(result)
+        return result
 
     @staticmethod
     def _require_server(server: AdbServerIdentity) -> None:
