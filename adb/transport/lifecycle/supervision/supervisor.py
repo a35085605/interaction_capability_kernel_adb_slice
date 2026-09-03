@@ -10,8 +10,15 @@ from adb.server.state import AdbServerStateView
 from adb.transport_list.identity import AdbTransportListIdentity
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.signal import (
-    AdbConfiguredTransportRecoveryExhausted,
     AdbConfiguredTransportResolutionChanged,
+)
+from adb.transport.lifecycle.supervision.transition import (
+    AdbConfiguredTransportPublishRecoveryExhausted,
+    AdbConfiguredTransportRecoveryIdle,
+    AdbConfiguredTransportRecoveryInstruction,
+    AdbConfiguredTransportStartRecovery,
+    decide_recovery_after_ensure,
+    decide_recovery_after_projection,
 )
 from adb.transport.configuration import (
     AdbConfiguredTransport,
@@ -34,7 +41,6 @@ from adb.transport.resolution import (
 from adb.transport.lifecycle.ensure import (
     AdbTcpTransportEnsureReadiness,
     AdbTcpTransportEnsureResult,
-    AdbTcpTransportEnsureStatus,
     AdbTcpTransportEnsurer,
 )
 from adb.transport.identity import AdbDeviceSerial
@@ -194,7 +200,9 @@ class AdbConfiguredTransportSupervisor:
                 raise TypeError("unsupported configured transport type")
 
         publication: AdbConfiguredTransportResolutionChanged | None = None
-        recovery_launch_requested = False
+        recovery_instruction: AdbConfiguredTransportRecoveryInstruction = (
+            AdbConfiguredTransportRecoveryIdle()
+        )
         with self._lock:
             if self._closed:
                 raise RuntimeError("configured transport supervisor is closed")
@@ -223,7 +231,7 @@ class AdbConfiguredTransportSupervisor:
                 and self._projection_server == server
                 and self._crosses_transport_list_fence_locked(transport_list_state)
             ):
-                publication, recovery_launch_requested = self._project_registration_locked(
+                publication, recovery_instruction = self._project_registration_locked(
                     registration,
                     server,
                     transport_list,
@@ -232,8 +240,7 @@ class AdbConfiguredTransportSupervisor:
 
         if publication is not None:
             self._bus.publish(publication)
-        if recovery_launch_requested:
-            self._launch_recovery(configuration)
+        self._apply_recovery_instruction(recovery_instruction)
 
     def unregister(
         self,
@@ -284,7 +291,7 @@ class AdbConfiguredTransportSupervisor:
 
     def _on_transport_list_observed(self, event: AdbTransportListObserved) -> None:
         publications: list[object] = []
-        recovery_launch_requests: list[AdbConfiguredTransport] = []
+        recovery_instructions: list[AdbConfiguredTransportRecoveryInstruction] = []
         with self._lock:
             server = self._server_state.current
             if (
@@ -313,7 +320,7 @@ class AdbConfiguredTransportSupervisor:
                 transport_list = event.transport_list
                 transport_list_identity = event.identity
             for registration in self._registrations.values():
-                publication, recovery_launch_requested = self._project_registration_locked(
+                publication, recovery_instruction = self._project_registration_locked(
                     registration,
                     server,
                     transport_list,
@@ -321,13 +328,12 @@ class AdbConfiguredTransportSupervisor:
                 )
                 if publication is not None:
                     publications.append(publication)
-                if recovery_launch_requested:
-                    recovery_launch_requests.append(registration.configuration)
+                recovery_instructions.append(recovery_instruction)
 
         for publication in publications:
             self._bus.publish(publication)
-        for recovery_configuration in recovery_launch_requests:
-            self._launch_recovery(recovery_configuration)
+        for recovery_instruction in recovery_instructions:
+            self._apply_recovery_instruction(recovery_instruction)
 
     def _project_registration_locked(
         self,
@@ -335,7 +341,10 @@ class AdbConfiguredTransportSupervisor:
         server: AdbServerIdentity,
         transport_list: AdbTransportList,
         transport_list_identity: AdbTransportListIdentity,
-    ) -> tuple[AdbConfiguredTransportResolutionChanged | None, bool]:
+    ) -> tuple[
+        AdbConfiguredTransportResolutionChanged | None,
+        AdbConfiguredTransportRecoveryInstruction,
+    ]:
         if not isinstance(server, AdbServerIdentity):
             raise TypeError("server must be AdbServerIdentity")
         if server != self._projection_server:
@@ -362,21 +371,13 @@ class AdbConfiguredTransportSupervisor:
             if changed
             else None
         )
-        match registration.configuration.transport:
-            case AdbUsbTransportConfiguration():
-                recovery_launch_requested = False
-            case AdbTcpTransportConfiguration():
-                recovery_launch_requested = (
-                    current.status is AdbConfiguredTransportResolutionStatus.ABSENT
-                    and registration.policy.tcp_recovery_ensure_policy is not None
-                )
-            case _:
-                raise TypeError("unsupported configured transport type")
-        recovery_launch_requested = (
-            recovery_launch_requested
-            and registration.active_recovery_thread is None
+        recovery_instruction = decide_recovery_after_projection(
+            registration.configuration,
+            registration.policy,
+            current,
+            recovery_active=registration.active_recovery_thread is not None,
         )
-        return publication, recovery_launch_requested
+        return publication, recovery_instruction
 
     def _launch_recovery(self, configuration: AdbConfiguredTransport) -> None:
         with self._lock:
@@ -392,15 +393,16 @@ class AdbConfiguredTransportSupervisor:
                 or self._projection_server != server
             ):
                 return
-            if registration.active_recovery_thread is not None:
-                return
             projection = registration.projection
-            if (
-                projection is None
-                or projection.server != server
-                or projection.status is not AdbConfiguredTransportResolutionStatus.ABSENT
-                or registration.policy.tcp_recovery_ensure_policy is None
-            ):
+            if projection is None or projection.server != server:
+                return
+            recovery_instruction = decide_recovery_after_projection(
+                configuration,
+                registration.policy,
+                projection,
+                recovery_active=registration.active_recovery_thread is not None,
+            )
+            if not isinstance(recovery_instruction, AdbConfiguredTransportStartRecovery):
                 return
             recovery_token = object()
             thread = self._thread_factory(
@@ -452,10 +454,7 @@ class AdbConfiguredTransportSupervisor:
             )
             if not isinstance(result, AdbTcpTransportEnsureResult):
                 raise TypeError("TCP ensurer must return AdbTcpTransportEnsureResult")
-            if result.operation.configuration != configuration:
-                raise ValueError(
-                    "ensure result configuration does not match supervised transport"
-                )
+            recovery_instruction = decide_recovery_after_ensure(configuration, result)
             if result.operation.server != server or result.operation.endpoint != endpoint:
                 raise ValueError("ensure result server binding does not match recovery binding")
             with self._lock:
@@ -469,10 +468,7 @@ class AdbConfiguredTransportSupervisor:
                 )
             if not result_is_current:
                 return
-            if result.status is not AdbTcpTransportEnsureStatus.SATISFIED:
-                self._bus.publish(
-                    AdbConfiguredTransportRecoveryExhausted(configuration, result)
-                )
+            self._apply_recovery_instruction(recovery_instruction)
         finally:
             with self._lock:
                 self._recovery_threads.discard(current_thread())
@@ -484,6 +480,22 @@ class AdbConfiguredTransportSupervisor:
                     registration.active_recovery_thread = None
                     if registration.active_recovery_token is recovery_token:
                         registration.active_recovery_token = None
+
+    def _apply_recovery_instruction(
+        self,
+        instruction: AdbConfiguredTransportRecoveryInstruction,
+    ) -> None:
+        """Execute one configured-transport recovery instruction through supervisor-owned effects."""
+
+        if isinstance(instruction, AdbConfiguredTransportRecoveryIdle):
+            return
+        if isinstance(instruction, AdbConfiguredTransportStartRecovery):
+            self._launch_recovery(instruction.configuration)
+            return
+        if isinstance(instruction, AdbConfiguredTransportPublishRecoveryExhausted):
+            self._bus.publish(instruction.signal)
+            return
+        raise TypeError("instruction must be AdbConfiguredTransportRecoveryInstruction")
 
     def _reset_server_lifetime_locked(self) -> None:
         # ``AdbTransportListObserved`` intentionally carries no server identity. Record the

@@ -6,7 +6,7 @@ from enum import Enum
 import math
 from numbers import Real
 from time import monotonic, sleep
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeAlias, runtime_checkable
 
 from adb.errors import AdbError
 from networking import TcpAddress
@@ -254,31 +254,133 @@ _MonotonicClock = Callable[[], float]
 _Sleeper = Callable[[float], None]
 
 
+@dataclass(frozen=True, slots=True)
+class AdbTcpTransportEnsureProbe:
+    """Instruction to probe the bound server transport list after an optional delay."""
+
+    delay_seconds: float = 0.0
+
+    def __post_init__(self) -> None:
+        if isinstance(self.delay_seconds, bool) or not isinstance(self.delay_seconds, Real):
+            raise TypeError("delay_seconds must be a real number")
+        delay = float(self.delay_seconds)
+        if not math.isfinite(delay) or delay < 0.0:
+            raise ValueError("delay_seconds must be finite and greater than or equal to zero")
+        object.__setattr__(self, "delay_seconds", delay)
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTcpTransportEnsureConnect:
+    """Instruction to issue the single TCP connect attempt allowed by one ensure episode."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTcpTransportEnsureCompleted:
+    """Terminal instruction carrying the canonical evidence for one ensure episode."""
+
+    result: AdbTcpTransportEnsureResult
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.result, AdbTcpTransportEnsureResult):
+            raise TypeError("result must be AdbTcpTransportEnsureResult")
+
+
+AdbTcpTransportEnsureInstruction: TypeAlias = (
+    AdbTcpTransportEnsureProbe
+    | AdbTcpTransportEnsureConnect
+    | AdbTcpTransportEnsureCompleted
+)
+
+
 @dataclass(slots=True)
-class _ReadinessEpisodeState:
-    """Mutable state for one readiness ensure operation."""
+class AdbTcpTransportEnsureEpisode:
+    """Pure decision state for one bounded TCP transport-readiness episode.
+
+    The episode owns readiness interpretation, connect-attempt eligibility, terminal status, and
+    result construction. It does not read transport lists, issue ADB commands, sleep, publish
+    signals, or observe a clock. The orchestrator executes the returned instructions and feeds
+    evidence back into this decision engine.
+    """
 
     operation: AdbTcpTransportEnsureReadiness
-    attempts: list[NativeAttemptResult] = field(default_factory=list)
-    presence: AdbTcpTransportPresenceSatisfaction | None = None
-    satisfaction: AdbTcpTransportReadinessSatisfaction | None = None
-    final_transport_list: AdbTransportList | None = None
-    final_transport: AdbTransport | None = None
-    diagnostic: str | None = None
-    probes_attempted: int = 0
-    connect_attempted: bool = False
-    latest_resolution_status: AdbConfiguredTransportResolutionStatus | None = None
+    attempts: list[NativeAttemptResult] = field(default_factory=list, init=False)
+    presence: AdbTcpTransportPresenceSatisfaction | None = field(default=None, init=False)
+    satisfaction: AdbTcpTransportReadinessSatisfaction | None = field(default=None, init=False)
+    final_transport_list: AdbTransportList | None = field(default=None, init=False)
+    final_transport: AdbTransport | None = field(default=None, init=False)
+    diagnostic: str | None = field(default=None, init=False)
+    probes_attempted: int = field(default=0, init=False)
+    connect_attempted: bool = field(default=False, init=False)
+    latest_resolution_status: AdbConfiguredTransportResolutionStatus | None = field(
+        default=None, init=False
+    )
+    _started: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.operation, AdbTcpTransportEnsureReadiness):
+            raise TypeError("operation must be AdbTcpTransportEnsureReadiness")
 
     @property
     def policy(self) -> AdbTcpTransportEnsurePolicy:
         return self.operation.policy
 
-    def record_probe_failure(self, error: AdbError) -> None:
+    def begin(self) -> AdbTcpTransportEnsureInstruction:
+        """Select the first immediate transport-list probe for this episode."""
+
+        if self._started:
+            raise RuntimeError("ADB TCP transport ensure episode has already begun")
+        self._started = True
+        return AdbTcpTransportEnsureProbe()
+
+    def decide_after_probe_failure(
+        self,
+        error: AdbError,
+    ) -> AdbTcpTransportEnsureInstruction:
+        """Apply one transport-list probe failure and select the next probe."""
+
+        self._require_started()
+        if not isinstance(error, AdbError):
+            raise TypeError("error must be AdbError")
         self.probes_attempted += 1
         self.latest_resolution_status = None
         self.diagnostic = str(error) or error.__class__.__name__
+        return AdbTcpTransportEnsureProbe(self.policy.probe_interval_seconds)
 
-    def evaluate_transport_list(
+    def decide_after_probe(
+        self,
+        transport_list: AdbTransportList,
+    ) -> AdbTcpTransportEnsureInstruction:
+        """Interpret one transport-list observation and select the next instruction."""
+
+        self._require_started()
+        if not isinstance(transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
+
+        terminal = self._evaluate_transport_list(transport_list)
+        if terminal is not None:
+            return self._complete(terminal)
+        if self._should_attempt_connect:
+            return AdbTcpTransportEnsureConnect()
+        return AdbTcpTransportEnsureProbe(self.policy.probe_interval_seconds)
+
+    def decide_after_connect(
+        self,
+        attempt: NativeAttemptResult,
+    ) -> AdbTcpTransportEnsureInstruction:
+        """Record the selected connect effect and require one immediate verification probe."""
+
+        self._require_started()
+        if not isinstance(attempt, NativeAttemptResult):
+            raise TypeError("attempt must be NativeAttemptResult")
+        if not self._should_attempt_connect:
+            raise RuntimeError("ADB TCP transport ensure connect was not selected")
+        self.connect_attempted = True
+        self.attempts.append(attempt)
+        # Preserve the existing contract: always verify once immediately after ``adb connect``,
+        # even when the command consumed the remaining deadline.
+        return AdbTcpTransportEnsureProbe()
+
+    def _evaluate_transport_list(
         self,
         transport_list: AdbTransportList,
     ) -> AdbTcpTransportEnsureStatus | None:
@@ -321,7 +423,7 @@ class _ReadinessEpisodeState:
         return None
 
     @property
-    def should_attempt_connect(self) -> bool:
+    def _should_attempt_connect(self) -> bool:
         return (
             self.latest_resolution_status
             is AdbConfiguredTransportResolutionStatus.ABSENT
@@ -329,33 +431,41 @@ class _ReadinessEpisodeState:
             and not self.connect_attempted
         )
 
-    def record_connect(self, attempt: NativeAttemptResult) -> None:
-        self.connect_attempted = True
-        self.attempts.append(attempt)
+    def decide_deadline(self) -> AdbTcpTransportEnsureCompleted:
+        """Select terminal timeout/failure evidence after the orchestrator observes the deadline."""
 
-    def deadline_status(self) -> AdbTcpTransportEnsureStatus:
+        self._require_started()
+        return self._complete(self._deadline_status())
+
+    def _deadline_status(self) -> AdbTcpTransportEnsureStatus:
         if self.attempts and self.attempts[-1].status is NativeAttemptStatus.FAILED:
             return AdbTcpTransportEnsureStatus.FAILED
         return AdbTcpTransportEnsureStatus.TIMED_OUT
 
-    def result(
+    def _complete(
         self,
         status: AdbTcpTransportEnsureStatus,
-    ) -> AdbTcpTransportEnsureResult:
-        return AdbTcpTransportEnsureResult(
-            operation=self.operation,
-            status=status,
-            satisfaction=(
-                self.satisfaction
-                if status is AdbTcpTransportEnsureStatus.SATISFIED
-                else None
-            ),
-            presence_satisfaction=self.presence,
-            attempts=tuple(self.attempts),
-            final_transport_list=self.final_transport_list,
-            final_transport=self.final_transport,
-            diagnostic=self.diagnostic,
+    ) -> AdbTcpTransportEnsureCompleted:
+        return AdbTcpTransportEnsureCompleted(
+            AdbTcpTransportEnsureResult(
+                operation=self.operation,
+                status=status,
+                satisfaction=(
+                    self.satisfaction
+                    if status is AdbTcpTransportEnsureStatus.SATISFIED
+                    else None
+                ),
+                presence_satisfaction=self.presence,
+                attempts=tuple(self.attempts),
+                final_transport_list=self.final_transport_list,
+                final_transport=self.final_transport,
+                diagnostic=self.diagnostic,
+            )
         )
+
+    def _require_started(self) -> None:
+        if not self._started:
+            raise RuntimeError("ADB TCP transport ensure episode has not begun")
 
 
 class AdbTcpTransportEnsureOrchestrator:
@@ -405,28 +515,35 @@ class AdbTcpTransportEnsureOrchestrator:
 
         policy = operation.policy
         deadline = self._monotonic() + policy.timeout_seconds
-        episode = _ReadinessEpisodeState(operation)
+        episode = AdbTcpTransportEnsureEpisode(operation)
+        instruction = episode.begin()
 
         while True:
+            if isinstance(instruction, AdbTcpTransportEnsureCompleted):
+                return self._complete(instruction.result)
+
+            if isinstance(instruction, AdbTcpTransportEnsureConnect):
+                instruction = episode.decide_after_connect(
+                    self._connect(operation.configuration)
+                )
+                continue
+
+            if not isinstance(instruction, AdbTcpTransportEnsureProbe):
+                raise TypeError("ensure episode returned an unsupported instruction")
+
+            if instruction.delay_seconds > 0.0:
+                remaining = deadline - self._monotonic()
+                if remaining <= 0.0:
+                    instruction = episode.decide_deadline()
+                    continue
+                self._sleep(min(instruction.delay_seconds, remaining))
+
             try:
                 transport_list = self._transport_list_reader.read(self.endpoint)
             except AdbError as exc:
-                episode.record_probe_failure(exc)
+                instruction = episode.decide_after_probe_failure(exc)
             else:
-                terminal = episode.evaluate_transport_list(transport_list)
-                if terminal is not None:
-                    return self._complete(episode, terminal)
-
-                if episode.should_attempt_connect:
-                    episode.record_connect(self._connect(operation.configuration))
-                    # Verify once immediately after ``adb connect``, even when the command
-                    # consumed the remaining deadline.
-                    continue
-
-            remaining = deadline - self._monotonic()
-            if remaining <= 0.0:
-                return self._complete(episode, episode.deadline_status())
-            self._sleep(min(policy.probe_interval_seconds, remaining))
+                instruction = episode.decide_after_probe(transport_list)
 
     def _connect(
         self,
@@ -446,21 +563,26 @@ class AdbTcpTransportEnsureOrchestrator:
 
     def _complete(
         self,
-        episode: _ReadinessEpisodeState,
-        status: AdbTcpTransportEnsureStatus,
+        result: AdbTcpTransportEnsureResult,
     ) -> AdbTcpTransportEnsureResult:
         from adb.transport.lifecycle.signal import AdbTcpTransportEnsureCompleted
 
-        result = episode.result(status)
+        if not isinstance(result, AdbTcpTransportEnsureResult):
+            raise TypeError("result must be AdbTcpTransportEnsureResult")
         self._publisher.publish(AdbTcpTransportEnsureCompleted(result))
         return result
 
 
 __all__ = [
+    "AdbTcpTransportEnsureCompleted",
+    "AdbTcpTransportEnsureConnect",
+    "AdbTcpTransportEnsureEpisode",
+    "AdbTcpTransportEnsureInstruction",
+    "AdbTcpTransportEnsureOrchestrator",
     "AdbTcpTransportEnsurePolicy",
+    "AdbTcpTransportEnsureProbe",
     "AdbTcpTransportEnsureReadiness",
     "AdbTcpTransportEnsureResult",
-    "AdbTcpTransportEnsureOrchestrator",
     "AdbTcpTransportEnsureStatus",
     "AdbTcpTransportEnsurer",
     "AdbTcpTransportPresenceSatisfaction",
