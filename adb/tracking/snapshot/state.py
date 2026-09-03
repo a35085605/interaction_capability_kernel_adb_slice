@@ -5,23 +5,8 @@ from enum import Enum
 from threading import Lock
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb.server.identity import AdbServerIdentity
 from adb.tracking.identity import AdbTransportListIdentity, AdbTransportListIdentityIssuer
 from adb.tracking.snapshot.model import AdbTransportListSnapshot
-
-
-@dataclass(frozen=True, slots=True)
-class AdbTransportListObservation:
-    """One complete transport-list snapshot bound to its source server lifetime."""
-
-    server: AdbServerIdentity
-    snapshot: AdbTransportListSnapshot
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServerIdentity):
-            raise TypeError("server must be AdbServerIdentity")
-        if not isinstance(self.snapshot, AdbTransportListSnapshot):
-            raise TypeError("snapshot must be AdbTransportListSnapshot")
 
 
 class AdbTransportListStateStatus(str, Enum):
@@ -35,57 +20,53 @@ class AdbTransportListStateStatus(str, Enum):
 class AdbTransportListState:
     """Immutable authoritative transport-list state for one runtime observation.
 
-    ``observation`` and ``identity`` describe the last committed transport-list revision.
+    ``snapshot`` and ``identity`` describe the last committed transport-list revision.
     Invalidated states preserve both values so visibility does not depend on erasing evidence.
     The preserved identity is the committed-revision watermark used to fence stale work.
     """
 
-    observation: AdbTransportListObservation | None = None
+    snapshot: AdbTransportListSnapshot | None = None
     identity: AdbTransportListIdentity | None = None
     status: AdbTransportListStateStatus = AdbTransportListStateStatus.INVALIDATED
 
     def __init__(
         self,
-        observation: AdbTransportListObservation | None = None,
+        snapshot: AdbTransportListSnapshot | None = None,
         identity: AdbTransportListIdentity | None = None,
         status: AdbTransportListStateStatus | None = None,
     ) -> None:
         if status is None:
             status = (
                 AdbTransportListStateStatus.CURRENT
-                if observation is not None
+                if snapshot is not None
                 else AdbTransportListStateStatus.INVALIDATED
             )
-        object.__setattr__(self, "observation", observation)
+        object.__setattr__(self, "snapshot", snapshot)
         object.__setattr__(self, "identity", identity)
         object.__setattr__(self, "status", status)
         self.__post_init__()
 
     def __post_init__(self) -> None:
-        if self.observation is not None and not isinstance(
-            self.observation, AdbTransportListObservation
+        if self.snapshot is not None and not isinstance(
+            self.snapshot, AdbTransportListSnapshot
         ):
-            raise TypeError("observation must be AdbTransportListObservation or None")
+            raise TypeError("snapshot must be AdbTransportListSnapshot or None")
         if self.identity is not None and not isinstance(
             self.identity, AdbTransportListIdentity
         ):
             raise TypeError("identity must be AdbTransportListIdentity or None")
         if not isinstance(self.status, AdbTransportListStateStatus):
             raise TypeError("status must be AdbTransportListStateStatus")
-        if (self.observation is None) != (self.identity is None):
-            raise ValueError("transport-list observation and identity must be present together")
-        if self.status is AdbTransportListStateStatus.CURRENT and self.observation is None:
-            raise ValueError("current transport-list state must have an observation and identity")
+        if (self.snapshot is None) != (self.identity is None):
+            raise ValueError("transport-list snapshot and identity must be present together")
+        if self.status is AdbTransportListStateStatus.CURRENT and self.snapshot is None:
+            raise ValueError("current transport-list state must have a snapshot and identity")
 
     @property
-    def current(self) -> AdbTransportListObservation | None:
-        """Return the current authoritative observation, if one is visible."""
+    def current(self) -> AdbTransportListSnapshot | None:
+        """Return the current authoritative snapshot, if one is visible."""
 
-        return (
-            self.observation
-            if self.status is AdbTransportListStateStatus.CURRENT
-            else None
-        )
+        return self.snapshot if self.status is AdbTransportListStateStatus.CURRENT else None
 
     @property
     def current_identity(self) -> AdbTransportListIdentity | None:
@@ -111,10 +92,10 @@ class AdbTransportListObserved:
             raise ValueError("observed result requires current transport-list state")
 
     @property
-    def observation(self) -> AdbTransportListObservation:
-        observation = self.state.current
-        assert observation is not None
-        return observation
+    def snapshot(self) -> AdbTransportListSnapshot:
+        snapshot = self.state.current
+        assert snapshot is not None
+        return snapshot
 
     @property
     def identity(self) -> AdbTransportListIdentity:
@@ -156,8 +137,8 @@ class AdbTransportListInvalidated:
             raise TypeError("state must be AdbTransportListState")
         if self.state.status is not AdbTransportListStateStatus.INVALIDATED:
             raise ValueError("invalidated result requires invalidated transport-list state")
-        if self.state.observation is None or self.state.identity is None:
-            raise ValueError("invalidated result requires preserved observation and identity")
+        if self.state.snapshot is None or self.state.identity is None:
+            raise ValueError("invalidated result requires preserved snapshot and identity")
 
     @property
     def identity(self) -> AdbTransportListIdentity:
@@ -190,7 +171,7 @@ AdbTransportListInvalidationResult: TypeAlias = (
 
 @runtime_checkable
 class AdbTransportListStateView(Protocol):
-    """Authoritative server-bound transport-list state view for one runtime."""
+    """Authoritative transport-list state view for one runtime."""
 
     @property
     def identity(self) -> AdbTransportListIdentity | None: ...
@@ -199,7 +180,7 @@ class AdbTransportListStateView(Protocol):
     def status(self) -> AdbTransportListStateStatus: ...
 
     @property
-    def current(self) -> AdbTransportListObservation | None: ...
+    def current(self) -> AdbTransportListSnapshot | None: ...
 
     @property
     def current_identity(self) -> AdbTransportListIdentity | None: ...
@@ -218,7 +199,7 @@ class AdbTransportListStateWriter(Protocol):
 
     def observe(
         self,
-        observation: AdbTransportListObservation,
+        snapshot: AdbTransportListSnapshot,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult: ...
 
@@ -253,7 +234,7 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         return self.state.status
 
     @property
-    def current(self) -> AdbTransportListObservation | None:
+    def current(self) -> AdbTransportListSnapshot | None:
         return self.state.current
 
     @property
@@ -278,11 +259,11 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
             current = self._state
             if current.current_identity != expected:
                 return AdbTransportListInvalidationStateConflict(current)
-            observation = current.observation
+            snapshot = current.snapshot
             identity = current.identity
-            assert observation is not None and identity is not None
+            assert snapshot is not None and identity is not None
             next_state = AdbTransportListState(
-                observation=observation,
+                snapshot=snapshot,
                 identity=identity,
                 status=AdbTransportListStateStatus.INVALIDATED,
             )
@@ -291,13 +272,13 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
 
     def observe(
         self,
-        observation: AdbTransportListObservation,
+        snapshot: AdbTransportListSnapshot,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult:
-        """Commit one observation iff ``expected`` is the current authoritative state."""
+        """Commit one snapshot iff ``expected`` is the current authoritative state."""
 
-        if not isinstance(observation, AdbTransportListObservation):
-            raise TypeError("observation must be AdbTransportListObservation")
+        if not isinstance(snapshot, AdbTransportListSnapshot):
+            raise TypeError("snapshot must be AdbTransportListSnapshot")
         if not isinstance(expected, AdbTransportListState):
             raise TypeError("expected must be AdbTransportListState")
 
@@ -307,7 +288,7 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
                 return AdbTransportListObservationStateConflict(current)
             next_identity = self._identity_issuer.issue()
             next_state = AdbTransportListState(
-                observation=observation,
+                snapshot=snapshot,
                 identity=next_identity,
                 status=AdbTransportListStateStatus.CURRENT,
             )
@@ -319,7 +300,6 @@ __all__ = [
     "AdbTransportListInvalidated",
     "AdbTransportListInvalidationResult",
     "AdbTransportListInvalidationStateConflict",
-    "AdbTransportListObservation",
     "AdbTransportListObservationResult",
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",

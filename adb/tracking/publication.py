@@ -7,7 +7,6 @@ from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.tracking.snapshot.state import (
     AdbTransportListInvalidated,
-    AdbTransportListObservation,
     AdbTransportListObserved,
     AdbTransportListStateView,
     AdbTransportListStateWriter,
@@ -31,8 +30,10 @@ class _AdbTransportListStateAccess(
 
 
 class AdbTransportListStateBackedWatchPublisher:
-    """Commit current-server transport-list observations into snapshot state before publication
-    while retaining server provenance.
+    """Commit current-server transport-list snapshots into state before publication.
+
+    Server provenance remains a watch-lifecycle concern. The committed transport-list state
+    contains only the snapshot revision, its identity, and visibility status.
     """
 
     def __init__(
@@ -55,6 +56,7 @@ class AdbTransportListStateBackedWatchPublisher:
         self._publisher = publisher
         self._lock = Lock()
         self._active_server: AdbServerIdentity | None = None
+        self._committed_server: AdbServerIdentity | None = None
 
     def publish(self, event: object) -> None:
         accepted = True
@@ -69,7 +71,7 @@ class AdbTransportListStateBackedWatchPublisher:
             self._publisher.publish(event)
 
     def end_watch(self, server: AdbServerIdentity) -> bool:
-        """End the watch for one server while preserving the last committed observation."""
+        """End the watch for one server while preserving the last committed snapshot."""
 
         self._require_server(server)
         with self._lock:
@@ -86,8 +88,7 @@ class AdbTransportListStateBackedWatchPublisher:
             if self._active_server == server:
                 return True
             state = self._transport_list_state.snapshot()
-            current = state.current
-            if current is not None and current.server != server:
+            if state.current is not None and self._committed_server != server:
                 identity = state.current_identity
                 assert identity is not None
                 invalidation = self._transport_list_state.invalidate(identity)
@@ -102,10 +103,12 @@ class AdbTransportListStateBackedWatchPublisher:
                 return False
             if self._server_state.current != event.server:
                 return False
-            observation = AdbTransportListObservation(event.server, event.snapshot)
             expected = self._transport_list_state.snapshot()
-            result = self._transport_list_state.observe(observation, expected)
-            return isinstance(result, AdbTransportListObserved)
+            result = self._transport_list_state.observe(event.snapshot, expected)
+            if not isinstance(result, AdbTransportListObserved):
+                return False
+            self._committed_server = event.server
+            return True
 
     @staticmethod
     def _require_server(server: AdbServerIdentity) -> None:
