@@ -5,13 +5,13 @@ from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
-from adb.tracking.snapshot.state import (
+from adb.transport_list.state import (
     AdbTransportListInvalidated,
     AdbTransportListObserved,
     AdbTransportListStateView,
     AdbTransportListStateWriter,
 )
-from adb.tracking.signal import (
+from adb.transport_list.watch.signal import (
     AdbTransportListSnapshotObserved,
     AdbTransportListWatchFailed,
     AdbTransportListWatchStarted,

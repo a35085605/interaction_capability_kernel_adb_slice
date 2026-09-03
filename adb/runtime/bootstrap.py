@@ -11,11 +11,11 @@ from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.state import AdbServerStateStore
 from adb.runtime.state import AdbRuntimeState
-from adb.tracking.snapshot.state import AdbTransportListStateStore
-from adb.tracking.supervision.policy import (
+from adb.transport_list.state import AdbTransportListStateStore
+from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
 )
-from adb.tracking.supervision.supervisor import (
+from adb.transport_list.watch.supervision.supervisor import (
     AdbTransportListWatchSupervisor,
 )
 from adb.transport.lifecycle.ensure import AdbTcpTransportEnsurer

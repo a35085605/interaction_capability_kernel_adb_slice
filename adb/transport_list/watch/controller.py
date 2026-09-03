@@ -12,12 +12,11 @@ from adb.errors import (
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
-from adb.tracking.observation import AdbTrackedTransportObservation
-from adb.tracking.transport_list import AdbTransportList
-from adb.tracking.watch import AdbTransportListWatch, AdbTransportListWatcher
-from adb.tracking.snapshot.model import AdbTransportListSnapshot
+from adb.transport_list.observation import AdbTrackedTransportObservation
+from adb.transport_list.model import AdbTransportList, AdbTransportListSnapshot
+from adb.transport_list.watch.protocol import AdbTransportListWatch, AdbTransportListWatcher
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
-from adb.tracking.signal import (
+from adb.transport_list.watch.signal import (
     AdbTransportListSnapshotObserved,
     AdbTransportListWatchFailed,
     AdbTransportListWatchFailure,

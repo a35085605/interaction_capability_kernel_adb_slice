@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from enum import Enum
 
 from adb.server.identity import AdbServerIdentity
-from adb.tracking.observation import AdbTrackedTransportObservation
-from adb.tracking.identity import AdbTransportListIdentity
-from adb.tracking.snapshot.interpretation import (
+from adb.transport_list.observation import AdbTrackedTransportObservation
+from adb.transport_list.identity import AdbTransportListIdentity
+from adb.transport_list.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
 )

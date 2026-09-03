@@ -5,8 +5,8 @@ from enum import Enum
 from threading import Lock
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb.tracking.identity import AdbTransportListIdentity, AdbTransportListIdentityIssuer
-from adb.tracking.snapshot.model import AdbTransportListSnapshot
+from adb.transport_list.identity import AdbTransportListIdentity, AdbTransportListIdentityIssuer
+from adb.transport_list.model import AdbTransportListSnapshot
 
 
 class AdbTransportListStateStatus(str, Enum):

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListReader
 from networking import TcpAddress
-from adb.tracking.transport_list import AdbTransportListReader
-from adb.tracking.snapshot.model import AdbTransportListSnapshot
+from adb.transport_list.model import AdbTransportList, AdbTransportListSnapshot
+
+
+@runtime_checkable
+class AdbTransportListReader(Protocol):
+    """Read one complete current transport list from an ADB server endpoint."""
+
+    def read(self, address: TcpAddress) -> AdbTransportList:
+        ...
 
 
 class AdbTransportListSnapshotReader(Protocol):
@@ -37,4 +44,8 @@ class SmartSocketAdbTransportListSnapshotReader:
         )
 
 
-__all__ = ["AdbTransportListSnapshotReader", "SmartSocketAdbTransportListSnapshotReader"]
+__all__ = [
+    "AdbTransportListReader",
+    "AdbTransportListSnapshotReader",
+    "SmartSocketAdbTransportListSnapshotReader",
+]

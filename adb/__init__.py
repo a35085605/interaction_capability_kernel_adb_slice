@@ -1,4 +1,4 @@
-"""Host-side ADB server, tracking, transport, and protocol capabilities."""
+"""Host-side ADB server, transport-list, transport, and protocol capabilities."""
 
 from adb.epoch import Epoch, EpochIssuer, EpochSequence
 from adb.errors import (
@@ -46,7 +46,7 @@ from adb.server import (
     AdbServerStatusReader,
     AdbServerUnavailableError,
 )
-from adb.tracking import (
+from adb.transport_list import (
     AdbTransportListIdentity,
     AdbTransportListIdentityIssuer,
     AdbTransportListInvalidated,

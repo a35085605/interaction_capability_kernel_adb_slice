@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from adb.tracking.observation import AdbTrackedTransportObservation
+from adb.transport_list.observation import AdbTrackedTransportObservation
 from adb.transport.configuration import AdbConfiguredTransport
 
 

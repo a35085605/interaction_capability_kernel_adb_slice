@@ -7,7 +7,7 @@ from threading import Lock, Thread, current_thread
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
-from adb.tracking.identity import AdbTransportListIdentity
+from adb.transport_list.identity import AdbTransportListIdentity
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.signal import (
     AdbConfiguredTransportRecoveryExhausted,
@@ -18,8 +18,8 @@ from adb.transport.configuration import (
     AdbTcpTransportConfiguration,
     AdbUsbTransportConfiguration,
 )
-from adb.tracking.snapshot.model import AdbTransportListSnapshot
-from adb.tracking.snapshot.state import (
+from adb.transport_list.model import AdbTransportListSnapshot
+from adb.transport_list.state import (
     AdbTransportListInvalidated,
     AdbTransportListObserved,
     AdbTransportListStateStore,
@@ -36,7 +36,7 @@ from adb.transport.lifecycle.ensure import (
     AdbTcpTransportEnsureStatus,
     AdbTcpTransportEnsurer,
 )
-from adb.tracking.signal import (
+from adb.transport_list.watch.signal import (
     AdbTransportListSnapshotObserved,
     AdbTransportListWatchFailed,
     AdbTransportListWatchStarted,

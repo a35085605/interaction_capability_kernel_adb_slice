@@ -31,8 +31,8 @@ from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerActivated, AdbServerDeactivated
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
-from adb.tracking.snapshot.state import AdbTransportListStateView
-from adb.tracking.supervision.supervisor import AdbTransportListWatchSupervisor
+from adb.transport_list.state import AdbTransportListStateView
+from adb.transport_list.watch.supervision.supervisor import AdbTransportListWatchSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
 from eventing import EventBus, EventSubscriptionToken

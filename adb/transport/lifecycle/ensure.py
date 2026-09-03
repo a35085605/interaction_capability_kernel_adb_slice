@@ -16,13 +16,13 @@ from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
 )
-from adb.tracking.observation import (
+from adb.transport_list.observation import (
     AdbTrackedTransportObservation,
     AdbTransportState,
 )
-from adb.tracking.snapshot.model import AdbTransportListSnapshot
-from adb.tracking.snapshot.reader import AdbTransportListSnapshotReader
-from adb.tracking.snapshot.interpretation import (
+from adb.transport_list.model import AdbTransportListSnapshot
+from adb.transport_list.reader import AdbTransportListSnapshotReader
+from adb.transport_list.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
 )

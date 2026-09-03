@@ -5,7 +5,7 @@ from enum import Enum
 from typing import TypeAlias
 
 from adb.server.identity import AdbServerIdentity
-from adb.tracking.snapshot.model import AdbTransportListSnapshot
+from adb.transport_list.model import AdbTransportListSnapshot
 
 
 def _require_server(value: object) -> AdbServerIdentity:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from adb.server.state import AdbServerStateStore
-from adb.tracking.snapshot.state import AdbTransportListStateStore
+from adb.transport_list.state import AdbTransportListStateStore
 
 
 @dataclass(frozen=True, slots=True)

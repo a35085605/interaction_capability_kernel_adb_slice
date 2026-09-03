@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from typing import Protocol, runtime_checkable
 
 from networking import TcpAddress
-from adb.tracking.transport_list import AdbTransportList
+from adb.transport_list.model import AdbTransportList
 
 
 @runtime_checkable

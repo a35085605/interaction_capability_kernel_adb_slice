@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
-from adb.tracking.observation import AdbTrackedTransportObservation
-from adb.tracking.snapshot.interpretation import (
+from adb.transport_list.observation import AdbTrackedTransportObservation
+from adb.transport_list.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
 )
@@ -14,11 +14,14 @@ if TYPE_CHECKING:
     from adb.transport.resolution import AdbConfiguredTransportResolution
 
 
+AdbTransportList: TypeAlias = tuple[AdbTrackedTransportObservation, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class AdbTransportListSnapshot:
     """Complete domain transport-list value observed from one ADB server."""
 
-    observations: tuple[AdbTrackedTransportObservation, ...]
+    observations: AdbTransportList
 
     def __post_init__(self) -> None:
         if not isinstance(self.observations, tuple) or not all(
@@ -72,4 +75,4 @@ class AdbTransportListSnapshot:
         )
 
 
-__all__ = ["AdbTransportListSnapshot"]
+__all__ = ["AdbTransportList", "AdbTransportListSnapshot"]
