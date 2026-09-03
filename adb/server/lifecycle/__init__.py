@@ -10,7 +10,6 @@ from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
     AdbServerAlreadyInactive,
     AdbServerLifecycleCoordinator,
-    AdbServerProvisionEvidence,
     AdbServerProvisionResult,
     AdbServerRetireResult,
 )
@@ -29,7 +28,6 @@ __all__ = [
     "AdbServerNonUsableAcquireResult",
     "AdbServerProvisionActivated",
     "AdbServerProvisionActivationConflict",
-    "AdbServerProvisionEvidence",
     "AdbServerProvisionOutcome",
     "AdbServerProvisionResult",
     "AdbServerUsableAcquireResult",

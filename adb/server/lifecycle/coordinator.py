@@ -56,11 +56,6 @@ class AdbServerAlreadyInactive:
             raise ValueError("already-inactive result requires inactive server state")
 
 
-AdbServerProvisionEvidence: TypeAlias = (
-    AdbServerAlreadyActive
-    | AdbServerBackendAcquireResult
-    | AdbServerActivationResult
-)
 AdbServerProvisionResult: TypeAlias = (
     tuple[AdbServerAlreadyActive]
     | tuple[
@@ -202,7 +197,6 @@ __all__ = [
     "AdbServerAlreadyActive",
     "AdbServerAlreadyInactive",
     "AdbServerLifecycleCoordinator",
-    "AdbServerProvisionEvidence",
     "AdbServerProvisionResult",
     "AdbServerRetireResult",
 ]
