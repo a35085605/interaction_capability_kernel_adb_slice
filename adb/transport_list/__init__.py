@@ -15,7 +15,6 @@ from adb.transport_list.lookup import (
 )
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.reader import (
-    AdbTransportListReader,
     AdbTransportListSnapshotReader,
     SmartSocketAdbTransportListSnapshotReader,
 )
@@ -45,7 +44,6 @@ __all__ = [
     "AdbTransportListObservationResult",
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",
-    "AdbTransportListReader",
     "AdbTransportListSnapshotReader",
     "AdbTransportListState",
     "AdbTransportListStateStatus",
