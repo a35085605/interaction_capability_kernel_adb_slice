@@ -101,9 +101,9 @@ class AdbServerLifecycleCoordinator:
         """Return ordered raw evidence produced by one provision operation.
 
         Provisioning executes in two phases: backend acquisition first satisfies the requested
-        attachment acquisition, then authoritative state activation commits that attachment as the
-        runtime server. Backend acquisition and state activation results are returned unchanged
-        and in execution order. Already-active state is represented by
+        acquisition, then authoritative state activation commits a candidate materialized from the
+        usable acquisition as the runtime server. Backend acquisition and state activation results are
+        returned unchanged and in execution order. Already-active state is represented by
         :class:`AdbServerAlreadyActive` because neither phase is performed in that path. If this
         provision call newly achieves an acquisition that cannot be committed, that acquisition is
         relinquished before its raw acquisition and activation evidence are returned.
@@ -136,7 +136,7 @@ class AdbServerLifecycleCoordinator:
             return (acquisition, activation)
 
     def _acquire_backend(self) -> AdbServerBackendAcquireResult:
-        """Run the backend-acquisition phase and validate its usable attachment."""
+        """Run the backend-acquisition phase and validate its usable result."""
 
         acquisition = self._backend.acquire(self._endpoint_constraint)
         if isinstance(
@@ -233,7 +233,7 @@ class AdbServerLifecycleCoordinator:
         self,
         server: AdbServerIdentity,
     ) -> AdbServerDeactivationResult:
-        """Commit authoritative deactivation before relinquishing the backend attachment."""
+        """Commit authoritative deactivation before relinquishing the backend acquisition."""
 
         deactivation = self._state.deactivate(server)
         if isinstance(deactivation, AdbServerDeactivationStateConflict):
@@ -243,7 +243,7 @@ class AdbServerLifecycleCoordinator:
         return deactivation
 
     def _release_deactivated_server(self, deactivation: AdbServerDeactivated) -> None:
-        """Relinquish the backend attachment recorded by one committed deactivation."""
+        """Relinquish the backend acquisition associated with one committed deactivation."""
 
         committed_endpoint = deactivation.state.endpoint
         assert committed_endpoint is not None

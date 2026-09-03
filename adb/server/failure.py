@@ -59,7 +59,7 @@ class AdbServerProcessExitedFailure(_AdbServerFailure):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerLaunchFailure(_AdbServerFailure):
-    """Acquiring a fresh usable ADB server attachment failed."""
+    """Acquiring fresh usable ADB server access failed."""
 
 
 AdbServerRequestFailure: TypeAlias = (

@@ -46,7 +46,10 @@ class AdbServerBackendAcquireAlreadySatisfied:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquireInProgress:
-    """The requested acquisition is already in progress."""
+    """Backend acquisition work is already in progress.
+
+    This call did not establish a new acquisition.
+    """
 
     diagnostic: str | None = None
 
@@ -57,7 +60,7 @@ class AdbServerBackendAcquireInProgress:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquireBlocked:
-    """Backend acquisition cannot currently produce a usable attachment."""
+    """Backend acquisition is currently unable to satisfy the request."""
 
     diagnostic: str
 
@@ -67,7 +70,7 @@ class AdbServerBackendAcquireBlocked:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquireFailed:
-    """Backend acquisition failed to produce a usable attachment."""
+    """Backend acquisition failed to satisfy the request."""
 
     diagnostic: str
 
@@ -86,17 +89,21 @@ AdbServerBackendAcquireResult: TypeAlias = (
 
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Own acquisition and relinquishment of one usable ADB server attachment."""
+    """Provide acquisition and relinquishment of usable ADB server access."""
 
     def acquire(
         self,
         endpoint: AdbServerEndpoint | None = None,
     ) -> AdbServerBackendAcquireResult:
-        """Acquire a usable attachment, optionally constrained to ``endpoint``."""
+        """Acquire usable ADB server access, optionally constrained to ``endpoint``."""
         ...
 
     def release(self, endpoint: AdbServerEndpoint) -> None:
-        """Relinquish the backend acquisition for ``endpoint``."""
+        """Relinquish the backend acquisition for ``endpoint``.
+
+        Relinquishment is complete at this boundary when the backend accepts responsibility for release;
+        implementation-specific cleanup may continue afterward and is not part of the lifecycle result.
+        """
         ...
 
 

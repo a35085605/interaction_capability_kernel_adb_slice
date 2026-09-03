@@ -43,7 +43,7 @@ class AdbServerRecoveryAttempt:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryAcquired:
-    """Terminal decision that acquisition produced a usable backend attachment."""
+    """Terminal decision that backend acquisition produced a usable result."""
 
 
 @dataclass(frozen=True, slots=True)

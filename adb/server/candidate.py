@@ -9,7 +9,7 @@ from adb.server.identity import AdbServerIdentity
 
 @dataclass(frozen=True, slots=True)
 class AdbServerCandidate:
-    """One usable ADB server acquisition materialized for authoritative arbitration."""
+    """One usable ADB server endpoint paired with a runtime-scoped identity for authoritative arbitration."""
 
     identity: AdbServerIdentity
     endpoint: AdbServerEndpoint
