@@ -37,7 +37,7 @@ from adb.transport.lifecycle.ensure import (
     AdbTcpTransportEnsurer,
 )
 from adb.transport_list.watch.signal import (
-    AdbTransportListSnapshotObserved,
+    AdbTransportListWatchObservation,
     AdbTransportListWatchFailed,
     AdbTransportListWatchStarted,
     AdbTransportListWatchStopped,
@@ -137,7 +137,7 @@ class AdbConfiguredTransportSupervisor:
 
     @property
     def transport_list_state(self) -> AdbTransportListStateView:
-        """Current transport-list snapshot state used to seed newly registered transport
+        """Current transport-list state used to seed newly registered transport
         projections.
         """
 
@@ -153,7 +153,10 @@ class AdbConfiguredTransportSupervisor:
                 raise RuntimeError("configured transport supervisor is already started")
             self._subscriptions = (
                 self._bus.subscribe(AdbTransportListWatchStarted, self._on_watch_started),
-                self._bus.subscribe(AdbTransportListSnapshotObserved, self._on_snapshot_observed),
+                self._bus.subscribe(
+                    AdbTransportListWatchObservation,
+                    self._on_transport_list_observed,
+                ),
                 self._bus.subscribe(AdbTransportListWatchFailed, self._on_watch_terminal),
                 self._bus.subscribe(AdbTransportListWatchStopped, self._on_watch_terminal),
             )
@@ -222,13 +225,13 @@ class AdbConfiguredTransportSupervisor:
             registration = _ConfiguredTransportRegistration(configuration, policy)
             self._registrations[configuration] = registration
             transport_list_state = self._transport_list_state.snapshot()
-            snapshot = transport_list_state.current if self._watch_active else None
+            transport_list = transport_list_state.current if self._watch_active else None
             transport_list_identity = (
                 transport_list_state.current_identity if self._watch_active else None
             )
             server = self._server_state.current
             if (
-                snapshot is not None
+                transport_list is not None
                 and transport_list_identity is not None
                 and server is not None
                 and self._projection_server == server
@@ -236,7 +239,7 @@ class AdbConfiguredTransportSupervisor:
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
                     server,
-                    snapshot,
+                    transport_list,
                     transport_list_identity,
                 )
 
@@ -312,7 +315,7 @@ class AdbConfiguredTransportSupervisor:
                 self._transport_list_needs_invalidation = False
             self._watch_active = True
 
-    def _on_snapshot_observed(self, event: AdbTransportListSnapshotObserved) -> None:
+    def _on_transport_list_observed(self, event: AdbTransportListWatchObservation) -> None:
         publications: list[object] = []
         recovery_launch_requests: list[AdbConfiguredTransport] = []
         with self._lock:
@@ -327,22 +330,22 @@ class AdbConfiguredTransportSupervisor:
             writer = self._transport_list_writer
             if writer is not None:
                 expected = self._transport_list_state.snapshot()
-                result = writer.observe(event.snapshot, expected)
+                result = writer.observe(event.transport_list, expected)
                 if not isinstance(result, AdbTransportListObserved):
                     return
-                snapshot = result.snapshot
+                transport_list = result.transport_list
                 transport_list_identity = result.identity
             else:
                 state = self._transport_list_state.snapshot()
-                snapshot = state.current
+                transport_list = state.current
                 transport_list_identity = state.current_identity
-                if snapshot != event.snapshot or transport_list_identity is None:
+                if transport_list != event.transport_list or transport_list_identity is None:
                     return
             for registration in self._registrations.values():
                 publication, recovery_launch_requested = self._project_registration_locked(
                     registration,
                     server,
-                    snapshot,
+                    transport_list,
                     transport_list_identity,
                 )
                 if publication is not None:
@@ -374,19 +377,19 @@ class AdbConfiguredTransportSupervisor:
         self,
         registration: _ConfiguredTransportRegistration,
         server: AdbServerIdentity,
-        snapshot: AdbTransportList,
+        transport_list: AdbTransportList,
         transport_list_identity: AdbTransportListIdentity,
     ) -> tuple[AdbConfiguredTransportResolutionChanged | None, bool]:
         if not isinstance(server, AdbServerIdentity):
             raise TypeError("server must be AdbServerIdentity")
         if server != self._projection_server:
-            raise ValueError("transport-list snapshot does not match projection server lifetime")
-        if not isinstance(snapshot, AdbTransportList):
-            raise TypeError("snapshot must be AdbTransportList")
+            raise ValueError("transport list does not match projection server lifetime")
+        if not isinstance(transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
         if not isinstance(transport_list_identity, AdbTransportListIdentity):
             raise TypeError("transport_list_identity must be AdbTransportListIdentity")
         previous = registration.projection
-        resolution = snapshot.resolve_configured_transport(registration.configuration)
+        resolution = transport_list.resolve_configured_transport(registration.configuration)
         current = AdbConfiguredTransportProjection(
             server=server,
             transport_list=transport_list_identity,

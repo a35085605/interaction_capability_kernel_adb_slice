@@ -12,7 +12,7 @@ from adb.transport_list.state import (
     AdbTransportListStateWriter,
 )
 from adb.transport_list.watch.signal import (
-    AdbTransportListSnapshotObserved,
+    AdbTransportListWatchObservation,
     AdbTransportListWatchFailed,
     AdbTransportListWatchStarted,
     AdbTransportListWatchStopped,
@@ -26,14 +26,14 @@ class _AdbTransportListStateAccess(
     AdbTransportListStateWriter,
     Protocol,
 ):
-    """Read and commit authoritative transport-list snapshot state."""
+    """Read and commit authoritative transport-list state."""
 
 
 class AdbTransportListStateBackedWatchPublisher:
-    """Commit current-server transport-list snapshots into state before publication.
+    """Commit current-server transport lists into state before publication.
 
     Server provenance remains a watch-lifecycle concern. The committed transport-list state
-    contains only the snapshot revision, its identity, and visibility status.
+    contains only the transport-list revision, its identity, and visibility status.
     """
 
     def __init__(
@@ -62,7 +62,7 @@ class AdbTransportListStateBackedWatchPublisher:
         accepted = True
         if isinstance(event, AdbTransportListWatchStarted):
             accepted = self._begin_watch(event.server)
-        elif isinstance(event, AdbTransportListSnapshotObserved):
+        elif isinstance(event, AdbTransportListWatchObservation):
             accepted = self._observe(event)
         elif isinstance(event, (AdbTransportListWatchFailed, AdbTransportListWatchStopped)):
             accepted = self.end_watch(event.server)
@@ -71,7 +71,7 @@ class AdbTransportListStateBackedWatchPublisher:
             self._publisher.publish(event)
 
     def end_watch(self, server: AdbServerIdentity) -> bool:
-        """End the watch for one server while preserving the last committed snapshot."""
+        """End the watch for one server while preserving the last committed transport list."""
 
         self._require_server(server)
         with self._lock:
@@ -97,14 +97,14 @@ class AdbTransportListStateBackedWatchPublisher:
             self._active_server = server
             return True
 
-    def _observe(self, event: AdbTransportListSnapshotObserved) -> bool:
+    def _observe(self, event: AdbTransportListWatchObservation) -> bool:
         with self._lock:
             if event.server != self._active_server:
                 return False
             if self._server_state.current != event.server:
                 return False
             expected = self._transport_list_state.snapshot()
-            result = self._transport_list_state.observe(event.snapshot, expected)
+            result = self._transport_list_state.observe(event.transport_list, expected)
             if not isinstance(result, AdbTransportListObserved):
                 return False
             self._committed_server = event.server

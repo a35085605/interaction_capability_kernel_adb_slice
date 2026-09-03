@@ -8,7 +8,7 @@ from adb.transport_list.state import AdbTransportListStateStore
 
 @dataclass(frozen=True, slots=True)
 class AdbRuntimeState:
-    """Authoritative server and transport-list snapshot state owned by one ADB runtime."""
+    """Authoritative server and transport-list state owned by one ADB runtime."""
 
     server: AdbServerStateStore
     transport_list: AdbTransportListStateStore

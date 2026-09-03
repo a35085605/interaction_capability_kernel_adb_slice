@@ -116,7 +116,7 @@ class AdbTransportListWatchSupervisor:
 
     @property
     def transport_list_state(self) -> AdbTransportListStateStore:
-        """Shared transport-list snapshot state committed before watch events are published."""
+        """Shared transport-list state committed before watch events are published."""
 
         return self._transport_list_state
 

@@ -18,7 +18,7 @@ from adb.transport.configuration import (
 )
 from adb.transport.model import AdbTransport, AdbTransportState
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.reader import AdbTransportListSnapshotReader
+from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
@@ -171,7 +171,7 @@ class AdbTcpTransportEnsureResult:
     satisfaction: AdbTcpTransportReadinessSatisfaction | None
     presence_satisfaction: AdbTcpTransportPresenceSatisfaction | None
     attempts: tuple[NativeAttemptResult, ...]
-    final_snapshot: AdbTransportList | None = None
+    final_transport_list: AdbTransportList | None = None
     final_transport: AdbTransport | None = None
     diagnostic: str | None = None
 
@@ -194,20 +194,20 @@ class AdbTcpTransportEnsureResult:
             isinstance(attempt, NativeAttemptResult) for attempt in self.attempts
         ):
             raise TypeError("attempts must be a tuple of NativeAttemptResult values")
-        if self.final_snapshot is not None and not isinstance(
-            self.final_snapshot, AdbTransportList
+        if self.final_transport_list is not None and not isinstance(
+            self.final_transport_list, AdbTransportList
         ):
-            raise TypeError("final_snapshot must be AdbTransportList or None")
+            raise TypeError("final_transport_list must be AdbTransportList or None")
         if self.final_transport is not None and not isinstance(
             self.final_transport, AdbTransport
         ):
             raise TypeError("final_transport must be AdbTransport or None")
         if self.final_transport is not None:
             if (
-                self.final_snapshot is None
-                or self.final_transport not in self.final_snapshot.transports
+                self.final_transport_list is None
+                or self.final_transport not in self.final_transport_list.transports
             ):
-                raise ValueError("final_transport must belong to final_snapshot")
+                raise ValueError("final_transport must belong to final_transport_list")
             if not self.final_transport.matches_serial(self.operation.serial):
                 raise ValueError("final_transport serial must match ensure operation")
             if (
@@ -262,7 +262,7 @@ class _ReadinessEpisodeState:
     attempts: list[NativeAttemptResult] = field(default_factory=list)
     presence: AdbTcpTransportPresenceSatisfaction | None = None
     satisfaction: AdbTcpTransportReadinessSatisfaction | None = None
-    final_snapshot: AdbTransportList | None = None
+    final_transport_list: AdbTransportList | None = None
     final_transport: AdbTransport | None = None
     diagnostic: str | None = None
     probes_attempted: int = 0
@@ -278,15 +278,15 @@ class _ReadinessEpisodeState:
         self.latest_resolution_status = None
         self.diagnostic = str(error) or error.__class__.__name__
 
-    def evaluate_snapshot(
+    def evaluate_transport_list(
         self,
-        snapshot: AdbTransportList,
+        transport_list: AdbTransportList,
     ) -> AdbTcpTransportEnsureStatus | None:
         initial = self.probes_attempted == 0
         self.probes_attempted += 1
-        self.final_snapshot = snapshot
+        self.final_transport_list = transport_list
 
-        resolution = snapshot.resolve_configured_transport(self.operation.configuration)
+        resolution = transport_list.resolve_configured_transport(self.operation.configuration)
         self.latest_resolution_status = resolution.status
 
         if resolution.status is AdbConfiguredTransportResolutionStatus.AMBIGUOUS:
@@ -352,22 +352,22 @@ class _ReadinessEpisodeState:
             ),
             presence_satisfaction=self.presence,
             attempts=tuple(self.attempts),
-            final_snapshot=self.final_snapshot,
+            final_transport_list=self.final_transport_list,
             final_transport=self.final_transport,
             diagnostic=self.diagnostic,
         )
 
 
 class AdbTcpTransportEnsureOrchestrator:
-    """Drive one configured TCP transport toward readiness before a deadline by probing snapshots,
-    issuing at most one ``adb connect``, and polling to a terminal state.
+    """Drive one configured TCP transport toward readiness before a deadline by probing
+    transport lists, issuing at most one ``adb connect``, and polling to a terminal state.
     """
 
     def __init__(
         self,
         server: AdbServerIdentity,
         endpoint: AdbServerEndpoint,
-        snapshot_reader: AdbTransportListSnapshotReader,
+        transport_list_reader: AdbTransportListReader,
         connector: AdbTcpConnector,
         publisher: EventPublisher,
         *,
@@ -378,15 +378,15 @@ class AdbTcpTransportEnsureOrchestrator:
             raise TypeError("server must be AdbServerIdentity")
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
-        if not callable(getattr(snapshot_reader, "read", None)):
-            raise TypeError("snapshot_reader must provide read()")
+        if not callable(getattr(transport_list_reader, "read", None)):
+            raise TypeError("transport_list_reader must provide read()")
         if not callable(getattr(connector, "connect", None)):
             raise TypeError("connector must provide connect()")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
         self.server = server
         self.endpoint = endpoint
-        self._snapshot_reader = snapshot_reader
+        self._transport_list_reader = transport_list_reader
         self._connector = connector
         self._publisher = publisher
         self._monotonic = _monotonic
@@ -409,11 +409,11 @@ class AdbTcpTransportEnsureOrchestrator:
 
         while True:
             try:
-                snapshot = self._snapshot_reader.read(self.endpoint)
+                transport_list = self._transport_list_reader.read(self.endpoint)
             except AdbError as exc:
                 episode.record_probe_failure(exc)
             else:
-                terminal = episode.evaluate_snapshot(snapshot)
+                terminal = episode.evaluate_transport_list(transport_list)
                 if terminal is not None:
                     return self._complete(episode, terminal)
 

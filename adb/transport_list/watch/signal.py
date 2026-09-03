@@ -86,30 +86,30 @@ class AdbTransportListWatchFailed(_TransportListWatchServerSignalProjection):
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListSnapshotObserved(_TransportListWatchServerSignalProjection):
-    """Signal carrying one complete snapshot observed from one server lifetime."""
+class AdbTransportListWatchObservation(_TransportListWatchServerSignalProjection):
+    """Signal carrying one complete transport list observed from one server lifetime."""
 
     server: AdbServerIdentity
-    snapshot: AdbTransportList
+    transport_list: AdbTransportList
 
     def __post_init__(self) -> None:
         _require_server(self.server)
-        if not isinstance(self.snapshot, AdbTransportList):
-            raise TypeError("snapshot must be AdbTransportList")
+        if not isinstance(self.transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
 
 
 AdbTransportListWatchSignal: TypeAlias = (
     AdbTransportListWatchStarted
     | AdbTransportListWatchStopped
     | AdbTransportListWatchFailed
-    | AdbTransportListSnapshotObserved
+    | AdbTransportListWatchObservation
 )
 
 
 __all__ = [
-    "AdbTransportListSnapshotObserved",
     "AdbTransportListWatchFailed",
     "AdbTransportListWatchFailure",
+    "AdbTransportListWatchObservation",
     "AdbTransportListWatchSignal",
     "AdbTransportListWatchStarted",
     "AdbTransportListWatchStopped",

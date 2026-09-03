@@ -15,7 +15,7 @@ from adb.transport.identity import AdbTransportId
 
 
 class AdbConfiguredTransportResolutionStatus(str, Enum):
-    """How one configured transport identity appears in one complete transport-list snapshot."""
+    """How one configured transport identity appears in one complete transport list."""
 
     ABSENT = "absent"
     RESOLVED = "resolved"

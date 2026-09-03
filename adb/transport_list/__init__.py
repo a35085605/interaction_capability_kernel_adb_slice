@@ -1,4 +1,4 @@
-"""ADB transport-list values, snapshots, state, identities, readers, and queries."""
+"""ADB transport-list values, state, identities, readers, and queries."""
 
 from adb.transport_list.identity import (
     AdbTransportListIdentity,
@@ -10,13 +10,13 @@ from adb.transport_list.interpretation import (
 )
 from adb.transport_list.lookup import (
     AdbTransportLookup,
-    SnapshotAdbTransportLookup,
+    ReadingAdbTransportLookup,
     find_transport,
 )
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.reader import (
-    AdbTransportListSnapshotReader,
-    SmartSocketAdbTransportListSnapshotReader,
+    AdbTransportListReader,
+    SmartSocketAdbTransportListReader,
 )
 from adb.transport_list.state import (
     AdbTransportListInvalidated,
@@ -44,14 +44,14 @@ __all__ = [
     "AdbTransportListObservationResult",
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",
-    "AdbTransportListSnapshotReader",
+    "AdbTransportListReader",
     "AdbTransportListState",
     "AdbTransportListStateStatus",
     "AdbTransportListStateStore",
     "AdbTransportListStateView",
     "AdbTransportListStateWriter",
-    "SmartSocketAdbTransportListSnapshotReader",
-    "SnapshotAdbTransportLookup",
+    "ReadingAdbTransportLookup",
+    "SmartSocketAdbTransportListReader",
     "classify_observed_transport",
     "find_transport",
 ]

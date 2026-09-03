@@ -17,7 +17,7 @@ from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.protocol import AdbTransportListWatch, AdbTransportListWatcher
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
 from adb.transport_list.watch.signal import (
-    AdbTransportListSnapshotObserved,
+    AdbTransportListWatchObservation,
     AdbTransportListWatchFailed,
     AdbTransportListWatchFailure,
     AdbTransportListWatchStarted,
@@ -53,7 +53,7 @@ class AdbTransportListWatchController(Protocol):
         ...
 
     def start(self) -> AdbTransportList:
-        """Establish the watch and return its initial complete snapshot."""
+        """Establish the watch and return its initial complete transport list."""
         ...
 
     def stop(self) -> None:
@@ -63,7 +63,7 @@ class AdbTransportListWatchController(Protocol):
 
 class ThreadedAdbTransportListWatchController:
     """Single-use threaded controller for one transport-list watch, publishing initial and
-    subsequent snapshots until terminal stop or failure. The default watcher uses AOSP
+    subsequent transport lists until terminal stop or failure. The default watcher uses AOSP
     ``track-devices`` over smart socket.
     """
 
@@ -105,7 +105,7 @@ class ThreadedAdbTransportListWatchController:
             return not self._closed and self._active_thread is not None
 
     def start(self) -> AdbTransportList:
-        """Establish the watch and return its initial complete snapshot."""
+        """Establish the watch and return its initial complete transport list."""
 
         with self._lock:
             if self._closed:
@@ -127,12 +127,12 @@ class ThreadedAdbTransportListWatchController:
         if watch is None:
             self._abort_start(watcher)
             raise RuntimeError(
-                "ADB transport-list watch controller was stopped before its initial snapshot "
+                "ADB transport-list watch controller was stopped before its initial transport list "
                 "was established"
             )
 
         startup_complete = Event()
-        startup_snapshots: list[AdbTransportList] = []
+        startup_transport_lists: list[AdbTransportList] = []
         startup_errors: list[BaseException] = []
         try:
             thread = self._thread_factory(
@@ -141,7 +141,7 @@ class ThreadedAdbTransportListWatchController:
                     watcher,
                     watch,
                     startup_complete,
-                    startup_snapshots,
+                    startup_transport_lists,
                     startup_errors,
                 ),
                 name=(
@@ -181,11 +181,12 @@ class ThreadedAdbTransportListWatchController:
             if thread is not current_thread():
                 thread.join()
             raise startup_errors[0]
-        if len(startup_snapshots) != 1:
+        if len(startup_transport_lists) != 1:
             raise RuntimeError(
-                "ADB transport-list watch controller did not produce exactly one initial snapshot"
+                "ADB transport-list watch controller did not produce exactly one initial "
+                "transport list"
             )
-        return startup_snapshots[0]
+        return startup_transport_lists[0]
 
     def stop(self) -> None:
         """Stop the watch and return after its worker has terminated."""
@@ -232,7 +233,7 @@ class ThreadedAdbTransportListWatchController:
         watcher: AdbTransportListWatcher,
         watch: AdbTransportListWatch,
         startup_complete: Event,
-        startup_snapshots: list[AdbTransportList],
+        startup_transport_lists: list[AdbTransportList],
         startup_errors: list[BaseException],
     ) -> None:
         server = self.server
@@ -241,19 +242,19 @@ class ThreadedAdbTransportListWatchController:
         try:
             if not self._can_publish_from(watcher):
                 raise RuntimeError(
-                    "ADB transport-list watch controller was stopped before its initial snapshot "
-                    "was published"
+                    "ADB transport-list watch controller was stopped before its initial "
+                    "transport list was published"
                 )
 
             self._publisher.publish(AdbTransportListWatchStarted(server))
-            initial_snapshot = self._snapshot(watch.initial)
+            initial_transport_list = self._normalize_transport_list(watch.initial)
             self._publisher.publish(
-                AdbTransportListSnapshotObserved(
+                AdbTransportListWatchObservation(
                     server,
-                    initial_snapshot,
+                    initial_transport_list,
                 )
             )
-            startup_snapshots.append(initial_snapshot)
+            startup_transport_lists.append(initial_transport_list)
             startup_succeeded = True
             startup_complete.set()
 
@@ -261,7 +262,10 @@ class ThreadedAdbTransportListWatchController:
                 if not self._can_publish_from(watcher):
                     break
                 self._publisher.publish(
-                    AdbTransportListSnapshotObserved(server, self._snapshot(transport_list))
+                    AdbTransportListWatchObservation(
+                        server,
+                        self._normalize_transport_list(transport_list),
+                    )
                 )
             terminal = AdbTransportListWatchStopped(server)
         except AdbServerConnectionError as exc:
@@ -303,7 +307,7 @@ class ThreadedAdbTransportListWatchController:
         if startup_succeeded and terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
-    def _snapshot(
+    def _normalize_transport_list(
         self,
         transports: AdbTransportList | tuple[AdbTransport, ...],
     ) -> AdbTransportList:
