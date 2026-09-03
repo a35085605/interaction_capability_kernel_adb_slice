@@ -289,17 +289,6 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
             self._state = next_state
             return AdbTransportListInvalidated(next_state)
 
-    def invalidate_current(self) -> None:
-        """Compatibility facade that invalidates the currently visible state when present."""
-
-        while True:
-            expected = self.current_identity
-            if expected is None:
-                return
-            result = self.invalidate(expected)
-            if isinstance(result, AdbTransportListInvalidated):
-                return
-
     def observe(
         self,
         observation: AdbTransportListObservation,
@@ -331,12 +320,6 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
             return AdbTransportListObserved(next_state)
 
 
-# Compatibility aliases for the pre-State/Store naming. New code should use the names above.
-AdbTransportListSnapshotState = AdbTransportListStateStore
-AdbTransportListSnapshotView = AdbTransportListStateView
-AdbTransportListSnapshotWriter = AdbTransportListStateWriter
-
-
 __all__ = [
     "AdbTransportListInvalidated",
     "AdbTransportListInvalidationResult",
@@ -345,9 +328,6 @@ __all__ = [
     "AdbTransportListObservationResult",
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",
-    "AdbTransportListSnapshotState",
-    "AdbTransportListSnapshotView",
-    "AdbTransportListSnapshotWriter",
     "AdbTransportListState",
     "AdbTransportListStateStatus",
     "AdbTransportListStateStore",
