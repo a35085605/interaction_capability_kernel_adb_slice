@@ -237,7 +237,10 @@ class AdbServerLifecycleCoordinator:
                 return deactivation
 
             self._release_deactivated_server(deactivation)
-            return deactivation
+
+        if self._publisher is not None:
+            self._publisher.publish(deactivation)
+        return deactivation
 
     def _commit_retirement(
         self,
