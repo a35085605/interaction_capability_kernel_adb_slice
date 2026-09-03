@@ -5,10 +5,9 @@ from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
+from adb.transport_list.coordinator import AdbTransportListObservationCoordinator
 from adb.transport_list.identity import AdbTransportListIdentityIssuer
-from adb.transport_list.revision import AdbTransportListRevision
 from adb.transport_list.state import (
-    AdbTransportListInvalidated,
     AdbTransportListObserved,
     AdbTransportListStateView,
     AdbTransportListStateWriter,
@@ -32,37 +31,57 @@ class _AdbTransportListStateAccess(
 
 
 class AdbTransportListStateBackedWatchPublisher:
-    """Commit current-server transport lists into state before publication.
+    """Publish watch signals after authoritative observation coordination.
 
-    Server provenance remains a watch-lifecycle concern. The committed transport-list state
-    contains only the transport-list revision, its identity, and visibility status.
+    Watch lifetime remains local to this adapter. Server provenance, revision identity issuance, and
+    transport-list state commits are delegated to the shared observation coordinator so read- and
+    watch-produced authoritative observations use one arbitration boundary.
+
+    The legacy state/server/issuer constructor remains supported for standalone callers. Runtime
+    composition should inject ``coordinator`` so all authoritative producers share one boundary.
     """
 
     def __init__(
         self,
-        transport_list_state: _AdbTransportListStateAccess,
-        server_state: AdbServerStateView,
-        identity_issuer: AdbTransportListIdentityIssuer,
-        publisher: EventPublisher,
+        transport_list_state: _AdbTransportListStateAccess | None = None,
+        server_state: AdbServerStateView | None = None,
+        identity_issuer: AdbTransportListIdentityIssuer | None = None,
+        publisher: EventPublisher | None = None,
+        *,
+        coordinator: AdbTransportListObservationCoordinator | None = None,
     ) -> None:
-        if not isinstance(transport_list_state, _AdbTransportListStateAccess):
-            raise TypeError(
-                "transport_list_state must satisfy AdbTransportListStateView and "
-                "AdbTransportListStateWriter"
+        if coordinator is None:
+            if not isinstance(transport_list_state, _AdbTransportListStateAccess):
+                raise TypeError(
+                    "transport_list_state must satisfy AdbTransportListStateView and "
+                    "AdbTransportListStateWriter"
+                )
+            if not isinstance(server_state, AdbServerStateView):
+                raise TypeError("server_state must satisfy AdbServerStateView")
+            if not isinstance(identity_issuer, AdbTransportListIdentityIssuer):
+                raise TypeError("identity_issuer must be AdbTransportListIdentityIssuer")
+            coordinator = AdbTransportListObservationCoordinator(
+                transport_list_state,
+                server_state,
+                identity_issuer,
             )
-        if not isinstance(server_state, AdbServerStateView):
-            raise TypeError("server_state must satisfy AdbServerStateView")
-        if not isinstance(identity_issuer, AdbTransportListIdentityIssuer):
-            raise TypeError("identity_issuer must be AdbTransportListIdentityIssuer")
-        if not isinstance(publisher, EventPublisher):
+        else:
+            if not isinstance(coordinator, AdbTransportListObservationCoordinator):
+                raise TypeError("coordinator must be AdbTransportListObservationCoordinator")
+            if any(
+                value is not None
+                for value in (transport_list_state, server_state, identity_issuer)
+            ):
+                raise ValueError(
+                    "transport-list state, server state, and identity issuer must be omitted "
+                    "when coordinator is provided"
+                )
+        if publisher is None or not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
-        self._transport_list_state = transport_list_state
-        self._server_state = server_state
-        self._identity_issuer = identity_issuer
+        self._coordinator = coordinator
         self._publisher = publisher
         self._lock = Lock()
         self._active_server: AdbServerIdentity | None = None
-        self._committed_server: AdbServerIdentity | None = None
 
     def publish(self, event: object) -> None:
         accepted = True
@@ -89,17 +108,10 @@ class AdbTransportListStateBackedWatchPublisher:
     def _begin_watch(self, server: AdbServerIdentity) -> bool:
         self._require_server(server)
         with self._lock:
-            if self._server_state.current != server:
-                return False
             if self._active_server == server:
                 return True
-            state = self._transport_list_state.snapshot()
-            if state.current is not None and self._committed_server != server:
-                identity = state.current_identity
-                assert identity is not None
-                invalidation = self._transport_list_state.invalidate(identity)
-                if not isinstance(invalidation, AdbTransportListInvalidated):
-                    return False
+            if not self._coordinator.prepare_server(server):
+                return False
             self._active_server = server
             return True
 
@@ -107,18 +119,8 @@ class AdbTransportListStateBackedWatchPublisher:
         with self._lock:
             if event.server != self._active_server:
                 return False
-            if self._server_state.current != event.server:
-                return False
-            expected = self._transport_list_state.snapshot()
-            revision = AdbTransportListRevision(
-                identity=self._identity_issuer.issue(),
-                transport_list=event.transport_list,
-            )
-            result = self._transport_list_state.observe(revision, expected)
-            if not isinstance(result, AdbTransportListObserved):
-                return False
-            self._committed_server = event.server
-            return True
+            result = self._coordinator.observe(event.server, event.transport_list)
+            return isinstance(result, AdbTransportListObserved)
 
     @staticmethod
     def _require_server(server: AdbServerIdentity) -> None:

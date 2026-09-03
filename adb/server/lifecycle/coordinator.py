@@ -32,6 +32,9 @@ from adb.server.state import (
 )
 
 
+_RLockType = type(RLock())
+
+
 @dataclass(frozen=True, slots=True)
 class AdbServerAlreadyActive:
     """Evidence that provision linearized against an already-active authoritative server."""
@@ -85,6 +88,7 @@ class AdbServerLifecycleCoordinator:
         endpoint_constraint: AdbServerEndpoint | None,
         identity_issuer: AdbServerIdentityIssuer,
         publisher: EventPublisher | None = None,
+        authority_lock: _RLockType | None = None,
     ) -> None:
         if not isinstance(state, AdbServerStateStore):
             raise TypeError("state must be AdbServerStateStore")
@@ -96,12 +100,14 @@ class AdbServerLifecycleCoordinator:
             raise TypeError("identity_issuer must be AdbServerIdentityIssuer")
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
+        if authority_lock is not None and not isinstance(authority_lock, _RLockType):
+            raise TypeError("authority_lock must be a reentrant lock or None")
         self._state = state
         self._backend = backend
         self._endpoint_constraint = endpoint_constraint
         self._identity_issuer = identity_issuer
         self._publisher = publisher
-        self._lock = RLock()
+        self._lock = RLock() if authority_lock is None else authority_lock
 
     def provision(self) -> AdbServerProvisionResult:
         """Return ordered raw evidence produced by one provision operation.

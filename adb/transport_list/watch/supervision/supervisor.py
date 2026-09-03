@@ -11,6 +11,7 @@ from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.transport_list.watch.supervision.policy import AdbTransportListWatchSupervisionPolicy
 from adb.server.signal import AdbServerReconciliationRequested
+from adb.transport_list.coordinator import AdbTransportListObservationCoordinator
 from adb.transport_list.identity import AdbTransportListIdentityIssuer
 from adb.transport_list.state import AdbTransportListStateStore
 from adb.transport_list.watch.publication import (
@@ -55,8 +56,10 @@ class AdbTransportListWatchSupervisor:
         policy: AdbTransportListWatchSupervisionPolicy,
         *,
         server_state: AdbServerStateView,
-        transport_list_identity_issuer: AdbTransportListIdentityIssuer,
+        transport_list_identity_issuer: AdbTransportListIdentityIssuer | None = None,
         transport_list_state: AdbTransportListStateStore | None = None,
+        transport_list_observation_coordinator: AdbTransportListObservationCoordinator
+        | None = None,
         _controller_factory: _ControllerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
@@ -72,20 +75,57 @@ class AdbTransportListWatchSupervisor:
             raise TypeError("policy must be AdbTransportListWatchSupervisionPolicy")
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
-        if not isinstance(
-            transport_list_identity_issuer, AdbTransportListIdentityIssuer
-        ):
-            raise TypeError(
-                "transport_list_identity_issuer must be "
-                "AdbTransportListIdentityIssuer"
-            )
         initial_state = server_state.snapshot()
         if initial_state.server != server or initial_state.endpoint != endpoint:
             raise ValueError("server_state current server and endpoint must match")
-        if transport_list_state is None:
-            transport_list_state = AdbTransportListStateStore()
-        if not isinstance(transport_list_state, AdbTransportListStateStore):
-            raise TypeError("transport_list_state must be AdbTransportListStateStore or None")
+        if transport_list_observation_coordinator is None:
+            if not isinstance(
+                transport_list_identity_issuer, AdbTransportListIdentityIssuer
+            ):
+                raise TypeError(
+                    "transport_list_identity_issuer must be "
+                    "AdbTransportListIdentityIssuer when no observation coordinator is provided"
+                )
+            if transport_list_state is None:
+                transport_list_state = AdbTransportListStateStore()
+            if not isinstance(transport_list_state, AdbTransportListStateStore):
+                raise TypeError(
+                    "transport_list_state must be AdbTransportListStateStore or None"
+                )
+            transport_list_observation_coordinator = AdbTransportListObservationCoordinator(
+                transport_list_state,
+                server_state,
+                transport_list_identity_issuer,
+            )
+        else:
+            if not isinstance(
+                transport_list_observation_coordinator,
+                AdbTransportListObservationCoordinator,
+            ):
+                raise TypeError(
+                    "transport_list_observation_coordinator must be "
+                    "AdbTransportListObservationCoordinator or None"
+                )
+            if transport_list_observation_coordinator.server_state is not server_state:
+                raise ValueError(
+                    "transport-list observation coordinator must share server_state"
+                )
+            coordinator_state = (
+                transport_list_observation_coordinator.transport_list_state
+            )
+            if not isinstance(coordinator_state, AdbTransportListStateStore):
+                raise TypeError(
+                    "transport-list observation coordinator state must be "
+                    "AdbTransportListStateStore"
+                )
+            if (
+                transport_list_state is not None
+                and transport_list_state is not coordinator_state
+            ):
+                raise ValueError(
+                    "transport_list_state must match observation coordinator state"
+                )
+            transport_list_state = coordinator_state
         if _controller_factory is not None and not callable(_controller_factory):
             raise TypeError("_controller_factory must be callable or None")
         if not callable(_thread_factory):
@@ -94,11 +134,12 @@ class AdbTransportListWatchSupervisor:
         self._server_state = server_state
         self._bus = event_bus
         self._transport_list_state = transport_list_state
+        self._transport_list_observation_coordinator = (
+            transport_list_observation_coordinator
+        )
         self._watch_publisher = AdbTransportListStateBackedWatchPublisher(
-            self._transport_list_state,
-            self._server_state,
-            transport_list_identity_issuer,
-            self._bus,
+            publisher=self._bus,
+            coordinator=self._transport_list_observation_coordinator,
         )
         self._policy = policy
         self._controller_factory = _controller_factory
@@ -129,6 +170,14 @@ class AdbTransportListWatchSupervisor:
         """Shared transport-list state committed before watch events are published."""
 
         return self._transport_list_state
+
+    @property
+    def transport_list_observation_coordinator(
+        self,
+    ) -> AdbTransportListObservationCoordinator:
+        """Shared authority boundary used to commit watch observations."""
+
+        return self._transport_list_observation_coordinator
 
     @property
     def watch_requested(self) -> bool:

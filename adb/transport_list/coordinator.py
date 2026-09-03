@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from threading import RLock
+from typing import Protocol, TypeAlias, runtime_checkable
+
+from adb.server.identity import AdbServerIdentity
+from adb.server.state import AdbServerStateView
+from adb.transport_list.identity import AdbTransportListIdentityIssuer
+from adb.transport_list.model import AdbTransportList
+from adb.transport_list.revision import AdbTransportListRevision
+from adb.transport_list.state import (
+    AdbTransportListInvalidated,
+    AdbTransportListObservationResult,
+    AdbTransportListState,
+    AdbTransportListStateView,
+    AdbTransportListStateWriter,
+)
+
+
+_RLockType = type(RLock())
+
+
+@runtime_checkable
+class _AdbTransportListStateAccess(
+    AdbTransportListStateView,
+    AdbTransportListStateWriter,
+    Protocol,
+):
+    """Read and commit authoritative transport-list state."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListObservationServerConflict:
+    """Evidence that an observation belongs to a non-authoritative server lifetime."""
+
+    server: AdbServerIdentity
+    current_server: AdbServerIdentity | None
+    state: AdbTransportListState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+        if self.current_server is not None and not isinstance(
+            self.current_server, AdbServerIdentity
+        ):
+            raise TypeError("current_server must be AdbServerIdentity or None")
+        if not isinstance(self.state, AdbTransportListState):
+            raise TypeError("state must be AdbTransportListState")
+        if self.current_server == self.server:
+            raise ValueError("server conflict requires a different authoritative server")
+
+    def __bool__(self) -> bool:
+        return False
+
+
+AdbTransportListCoordinatedObservationResult: TypeAlias = (
+    AdbTransportListObservationResult | AdbTransportListObservationServerConflict
+)
+
+
+class AdbTransportListObservationCoordinator:
+    """Coordinate authoritative transport-list observations against server lifetime authority.
+
+    Readers and watchers may produce transport-list evidence independently. This coordinator is the
+    shared authority boundary that validates server provenance, issues revision identities, and
+    commits accepted observations into runtime transport-list state.
+    """
+
+    def __init__(
+        self,
+        transport_list_state: _AdbTransportListStateAccess,
+        server_state: AdbServerStateView,
+        identity_issuer: AdbTransportListIdentityIssuer,
+        *,
+        authority_lock: _RLockType | None = None,
+    ) -> None:
+        if not isinstance(transport_list_state, _AdbTransportListStateAccess):
+            raise TypeError(
+                "transport_list_state must satisfy AdbTransportListStateView and "
+                "AdbTransportListStateWriter"
+            )
+        if not isinstance(server_state, AdbServerStateView):
+            raise TypeError("server_state must satisfy AdbServerStateView")
+        if not isinstance(identity_issuer, AdbTransportListIdentityIssuer):
+            raise TypeError("identity_issuer must be AdbTransportListIdentityIssuer")
+        if authority_lock is not None and not isinstance(authority_lock, _RLockType):
+            raise TypeError("authority_lock must be a reentrant lock or None")
+        self._transport_list_state = transport_list_state
+        self._server_state = server_state
+        self._identity_issuer = identity_issuer
+        self._lock = RLock() if authority_lock is None else authority_lock
+        self._committed_server: AdbServerIdentity | None = None
+
+    @property
+    def server_state(self) -> AdbServerStateView:
+        """Server authority used to fence transport-list observations."""
+
+        return self._server_state
+
+    @property
+    def transport_list_state(self) -> _AdbTransportListStateAccess:
+        """Authoritative transport-list state committed by this coordinator."""
+
+        return self._transport_list_state
+
+    def prepare_server(self, server: AdbServerIdentity) -> bool:
+        """Prepare visibility for ``server``, invalidating evidence from another lifetime.
+
+        Returns ``False`` when ``server`` is no longer authoritative. A successful call does not
+        require that a transport list already exists; it only guarantees that any visible current
+        list is either known to belong to ``server`` or has been invalidated before return.
+        """
+
+        self._require_server(server)
+        with self._lock:
+            if self._server_state.current != server:
+                return False
+            state = self._transport_list_state.snapshot()
+            if state.current is None or self._committed_server == server:
+                return True
+            identity = state.current_identity
+            assert identity is not None
+            invalidation = self._transport_list_state.invalidate(identity)
+            return isinstance(invalidation, AdbTransportListInvalidated)
+
+    def observe(
+        self,
+        server: AdbServerIdentity,
+        transport_list: AdbTransportList,
+        *,
+        expected: AdbTransportListState | None = None,
+    ) -> AdbTransportListCoordinatedObservationResult:
+        """Commit one complete observation when server and transport-list fences still hold.
+
+        ``expected`` is optional for stream observations that should linearize at commit time. A
+        read-based refresh should pass the state captured before its blocking I/O so a watch update
+        committed during that read wins instead of being overwritten by stale read evidence.
+        """
+
+        self._require_server(server)
+        if not isinstance(transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
+        if expected is not None and not isinstance(expected, AdbTransportListState):
+            raise TypeError("expected must be AdbTransportListState or None")
+
+        with self._lock:
+            current_server = self._server_state.current
+            if current_server != server:
+                return AdbTransportListObservationServerConflict(
+                    server=server,
+                    current_server=current_server,
+                    state=self._transport_list_state.snapshot(),
+                )
+            commit_expected = (
+                self._transport_list_state.snapshot() if expected is None else expected
+            )
+            revision = AdbTransportListRevision(
+                identity=self._identity_issuer.issue(),
+                transport_list=transport_list,
+            )
+            result = self._transport_list_state.observe(revision, commit_expected)
+            if result:
+                self._committed_server = server
+            return result
+
+    @staticmethod
+    def _require_server(server: AdbServerIdentity) -> None:
+        if not isinstance(server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+
+
+__all__ = [
+    "AdbTransportListCoordinatedObservationResult",
+    "AdbTransportListObservationCoordinator",
+    "AdbTransportListObservationServerConflict",
+]
