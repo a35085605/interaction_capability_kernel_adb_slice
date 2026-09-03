@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import timedelta
 from threading import RLock, Thread, current_thread
 
@@ -22,35 +21,28 @@ from adb.server.signal import (
     AdbServerRecoveryId,
     AdbServerRecoveryRetryDue,
 )
-from adb.server.state import AdbServerDeactivated, AdbServerStateView
+from adb.server.state import AdbServerDeactivated
 from eventing import EventBus, EventSubscriptionToken
 from scheduling import ScheduleToken, TemporalScheduler
 
 
-_ReconcileDependents = Callable[[], None]
-
-
 class AdbServerSupervisor:
-    """Maintain the requested authoritative ADB server lifetime across failures.
+    """Execute reconcile-driven bounded ADB server recovery cycles.
 
-    The runtime owns the lifecycle coordinator and injects it into server supervision.
-    This supervisor owns only continuous orchestration: reconciliation subscriptions, bounded
-    recovery cycles, retry scheduling, and recovery worker lifetime.
+    The runtime owns the lifecycle coordinator and injects it into server supervision. This
+    supervisor owns reconciliation subscriptions, bounded recovery cycles, retry scheduling, and
+    recovery worker lifetime; it does not infer successor work from authoritative server state.
     """
 
     def __init__(
         self,
-        server_state: AdbServerStateView,
-        *,
         lifecycle: AdbServerLifecycleCoordinator,
+        *,
         event_bus: EventBus | None,
         scheduler: TemporalScheduler[object] | None,
         policy: AdbServerRecoveryPolicy,
         recovery_enabled: bool,
-        reconcile_dependents: _ReconcileDependents,
     ) -> None:
-        if not isinstance(server_state, AdbServerStateView):
-            raise TypeError("server_state must satisfy AdbServerStateView")
         if not isinstance(lifecycle, AdbServerLifecycleCoordinator):
             raise TypeError("lifecycle must be AdbServerLifecycleCoordinator")
         if event_bus is not None and not _is_event_bus(event_bus):
@@ -63,16 +55,11 @@ class AdbServerSupervisor:
             raise TypeError("policy must be AdbServerRecoveryPolicy")
         if not isinstance(recovery_enabled, bool):
             raise TypeError("recovery_enabled must be bool")
-        if not callable(reconcile_dependents):
-            raise TypeError("reconcile_dependents must be callable")
-
-        self._server_state = server_state
         self._lifecycle = lifecycle
         self._event_bus = event_bus
         self._scheduler = scheduler
         self._policy = policy
         self._recovery_enabled = recovery_enabled
-        self._reconcile_dependents = reconcile_dependents
 
         self._lock = RLock()
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
@@ -81,14 +68,10 @@ class AdbServerSupervisor:
         self._recovery_attempt: AdbServerRecoveryAttempt | None = None
         self._retry_token: ScheduleToken | None = None
         self._attempt_threads: set[Thread] = set()
-        self._recovery_pending = False
+        self._reconciliation_pending = False
         self._started = False
         self._starting = False
         self._closed = False
-
-    @property
-    def server_state(self) -> AdbServerStateView:
-        return self._server_state
 
     @property
     def started(self) -> bool:
@@ -177,13 +160,10 @@ class AdbServerSupervisor:
         if not isinstance(retirement, AdbServerDeactivated):
             return
 
-        try:
-            self._reconcile_dependents()
-        finally:
-            self._request_recovery()
+        self._request_recovery()
 
     def _request_recovery(self) -> None:
-        """Start bounded acquisition recovery when authoritative state requires it."""
+        """Consume one committed reconciliation demand through bounded acquisition recovery."""
 
         with self._lock:
             if (
@@ -191,19 +171,18 @@ class AdbServerSupervisor:
                 or not self._recovery_enabled
                 or self._scheduler is None
                 or self._event_bus is None
-                or self._server_state.snapshot().active
             ):
                 return
 
             if self._recovery is not None:
-                self._recovery_pending = True
+                self._reconciliation_pending = True
                 return
 
             recovery = AdbServerRecovery(self._policy)
             recovery_id = AdbServerRecoveryId.new()
             self._recovery = recovery
             self._recovery_id = recovery_id
-            self._recovery_pending = False
+            self._reconciliation_pending = False
             attempt = recovery.begin()
 
         self._apply_recovery_attempt(recovery, recovery_id, attempt)
@@ -314,18 +293,13 @@ class AdbServerSupervisor:
         """Apply one stateful recovery instruction through supervisor-owned effects."""
 
         if isinstance(instruction, AdbServerRecoveryCompleted):
-            self._finish_recovery(
-                recovery,
-                recovery_id,
-                completed=True,
-                restart_if_inactive=instruction.restart_if_inactive,
-            )
+            self._finish_recovery(recovery, recovery_id)
             return
         if isinstance(instruction, AdbServerRecoveryAttempt):
             self._apply_recovery_attempt(recovery, recovery_id, instruction)
             return
         if isinstance(instruction, AdbServerRecoveryFailed):
-            self._finish_recovery(recovery, recovery_id, completed=False)
+            self._finish_recovery(recovery, recovery_id)
             return
         raise TypeError("instruction must be AdbServerRecoveryInstruction")
 
@@ -345,7 +319,7 @@ class AdbServerSupervisor:
             self._recovery_id = None
             self._recovery_attempt = None
             self._retry_token = None
-            self._recovery_pending = False
+            self._reconciliation_pending = False
 
         if retry_token is not None and scheduler is not None:
             scheduler.cancel(retry_token)
@@ -354,14 +328,9 @@ class AdbServerSupervisor:
         self,
         recovery: AdbServerRecovery,
         recovery_id: AdbServerRecoveryId,
-        *,
-        completed: bool,
-        restart_if_inactive: bool = True,
     ) -> None:
-        """Release one recovery cycle and let authoritative state decide successor work."""
+        """Release one terminal recovery cycle and consume queued reconciliation demand."""
 
-        restart = False
-        reconcile = False
         scheduler = self._scheduler
         with self._lock:
             if not self._is_current_recovery_locked(recovery, recovery_id):
@@ -371,22 +340,13 @@ class AdbServerSupervisor:
             self._recovery_id = None
             self._recovery_attempt = None
             self._retry_token = None
-            pending = self._recovery_pending
-            self._recovery_pending = False
-
-            if self._running_locked():
-                active = self._server_state.snapshot().active
-                reconcile = completed and active
-                restart = (
-                    (completed and restart_if_inactive and not active)
-                    or (pending and not active)
-                )
+            pending_reconciliation = self._reconciliation_pending
+            self._reconciliation_pending = False
+            running = self._running_locked()
 
         if retry_token is not None and scheduler is not None:
             scheduler.cancel(retry_token)
-        if reconcile:
-            self._reconcile_dependents()
-        if restart:
+        if pending_reconciliation and running:
             self._request_recovery()
 
     def _is_current_recovery_locked(
@@ -409,7 +369,7 @@ class AdbServerSupervisor:
         self._recovery_id = None
         self._recovery_attempt = None
         self._retry_token = None
-        self._recovery_pending = False
+        self._reconciliation_pending = False
         return retry_token, tuple(self._attempt_threads)
 
     def _cancel_retry(self, token: ScheduleToken | None) -> None:

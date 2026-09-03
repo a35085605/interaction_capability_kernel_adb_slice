@@ -28,14 +28,14 @@ from adb.server.lifecycle.provision import (
     classify_provision_result,
 )
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
-from adb.server.state import AdbServerDeactivated
+from adb.server.state import AdbServerActivated, AdbServerDeactivated
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.tracking.snapshot.state import AdbTransportListStateView
 from adb.tracking.supervision.supervisor import AdbTransportListWatchSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
-from eventing import EventBus
+from eventing import EventBus, EventSubscriptionToken
 from scheduling import TemporalScheduler
 
 
@@ -147,6 +147,7 @@ class AdbRuntime(AdbManagedRuntime):
             backend=server_backend,
             endpoint_constraint=server_endpoint_constraint,
             identity_issuer=self._server_identity_issuer,
+            publisher=event_bus,
         )
         if _bootstrap_server:
             self._bootstrap_initial_server()
@@ -155,15 +156,15 @@ class AdbRuntime(AdbManagedRuntime):
         self._transport_supervisor = transport_supervisor
         self._transport_supervision_policy = transport_supervision_policy
         self._server_supervisor = AdbServerSupervisor(
-            state.server,
-            lifecycle=self._server_lifecycle,
+            self._server_lifecycle,
             event_bus=event_bus,
             scheduler=server_supervision_scheduler,
             policy=server_supervision_policy,
             recovery_enabled=server_recovery_enabled,
-            reconcile_dependents=self._reconcile_server_dependents,
         )
 
+        self._event_bus = event_bus
+        self._server_activation_subscription: EventSubscriptionToken | None = None
         self._runtime_lock = RLock()
         self._started = False
         self._starting = False
@@ -310,14 +311,22 @@ class AdbRuntime(AdbManagedRuntime):
         watch_started = False
         transport_started = False
         server_started = False
+        activation_subscription: EventSubscriptionToken | None = None
         try:
             transport_supervisor = self._transport_supervisor
             if transport_supervisor is not None:
                 transport_started = True
                 transport_supervisor.start()
 
-            # Server supervision owns reconciliation subscriptions and bounded recovery, while
-            # Runtime keeps ownership of the lifecycle facade and cross-subsystem reconciliation.
+            event_bus = self._event_bus
+            if event_bus is not None:
+                activation_subscription = event_bus.subscribe(
+                    AdbServerActivated,
+                    self._on_server_activated,
+                )
+
+            # Server supervision owns reconciliation subscriptions and bounded recovery. Runtime
+            # reacts to committed server activations by reconciling server-bound dependents.
             server_started = True
             self._server_supervisor.start()
 
@@ -326,6 +335,8 @@ class AdbRuntime(AdbManagedRuntime):
                 watch_started = True
                 transport_list_watch_supervisor.start()
         except BaseException:
+            if activation_subscription is not None and self._event_bus is not None:
+                self._event_bus.unsubscribe(activation_subscription)
             if server_started:
                 self._server_supervisor.close()
             if watch_started and self._transport_list_watch_supervisor is not None:
@@ -337,6 +348,7 @@ class AdbRuntime(AdbManagedRuntime):
             raise
 
         with self._runtime_lock:
+            self._server_activation_subscription = activation_subscription
             self._started = True
             self._starting = False
 
@@ -348,9 +360,13 @@ class AdbRuntime(AdbManagedRuntime):
                 return
             self._closed = True
             self._started = False
+            activation_subscription = self._server_activation_subscription
+            self._server_activation_subscription = None
 
-        # Disable server callbacks first so dependent supervisors cannot be reconciled while they
-        # are being closed. None of these close operations retire the current healthy server.
+        # Disable activation reconciliation before dependent supervisors are closed. None of these
+        # close operations retire the current healthy server.
+        if activation_subscription is not None and self._event_bus is not None:
+            self._event_bus.unsubscribe(activation_subscription)
         self._server_supervisor.close()
         if self._transport_list_watch_supervisor is not None:
             self._transport_list_watch_supervisor.close()
@@ -375,6 +391,16 @@ class AdbRuntime(AdbManagedRuntime):
         supervisor = self._require_transport_supervisor()
         if not supervisor.unregister(configuration):
             raise RuntimeError("configured transport registration disappeared from supervision")
+
+    def _on_server_activated(self, event: AdbServerActivated) -> None:
+        """Reconcile server-bound dependents after an authoritative activation commits."""
+
+        if not isinstance(event, AdbServerActivated):
+            raise TypeError("event must be AdbServerActivated")
+        with self._runtime_lock:
+            if self._closed or not (self._started or self._starting):
+                return
+        self._reconcile_server_dependents()
 
     def _reconcile_server_dependents(self) -> None:
         """Rebind runtime-owned server dependents to the current authoritative lifetime."""

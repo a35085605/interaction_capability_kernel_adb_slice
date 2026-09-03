@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import TypeAlias
 
+from eventing import EventPublisher
+
 from networking import TcpAddress
 from adb.server.candidate import AdbServerCandidate
 from adb.server.endpoint import AdbServerEndpoint
@@ -82,6 +84,7 @@ class AdbServerLifecycleCoordinator:
         backend: AdbServerBackend,
         endpoint_constraint: AdbServerEndpoint | None,
         identity_issuer: AdbServerIdentityIssuer,
+        publisher: EventPublisher | None = None,
     ) -> None:
         if not isinstance(state, AdbServerStateStore):
             raise TypeError("state must be AdbServerStateStore")
@@ -91,10 +94,13 @@ class AdbServerLifecycleCoordinator:
             raise TypeError("endpoint_constraint must be TcpAddress or None")
         if not isinstance(identity_issuer, AdbServerIdentityIssuer):
             raise TypeError("identity_issuer must be AdbServerIdentityIssuer")
+        if publisher is not None and not isinstance(publisher, EventPublisher):
+            raise TypeError("publisher must satisfy EventPublisher or be None")
         self._state = state
         self._backend = backend
         self._endpoint_constraint = endpoint_constraint
         self._identity_issuer = identity_issuer
+        self._publisher = publisher
         self._lock = RLock()
 
     def provision(self) -> AdbServerProvisionResult:
@@ -133,7 +139,11 @@ class AdbServerLifecycleCoordinator:
                 acquisition,
                 expected_state=t0,
             )
-            return (acquisition, activation)
+            result = (acquisition, activation)
+
+        if isinstance(activation, AdbServerActivated) and self._publisher is not None:
+            self._publisher.publish(activation)
+        return result
 
     def _acquire_backend(self) -> AdbServerBackendAcquireResult:
         """Run the backend-acquisition phase and validate its usable result."""
