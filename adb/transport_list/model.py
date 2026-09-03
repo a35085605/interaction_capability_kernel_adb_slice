@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
-from adb.transport_list.observation import AdbTrackedTransportObservation
+from adb.transport.model import AdbTransport
 from adb.transport_list.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
@@ -14,21 +14,21 @@ if TYPE_CHECKING:
     from adb.transport.resolution import AdbConfiguredTransportResolution
 
 
-AdbTransportList: TypeAlias = tuple[AdbTrackedTransportObservation, ...]
+AdbTransportList: TypeAlias = tuple[AdbTransport, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListSnapshot:
     """Complete domain transport-list value observed from one ADB server."""
 
-    observations: AdbTransportList
+    transports: AdbTransportList
 
     def __post_init__(self) -> None:
-        if not isinstance(self.observations, tuple) or not all(
-            isinstance(row, AdbTrackedTransportObservation) for row in self.observations
+        if not isinstance(self.transports, tuple) or not all(
+            isinstance(transport, AdbTransport) for transport in self.transports
         ):
             raise TypeError(
-                "observations must be a tuple of AdbTrackedTransportObservation values"
+                "transports must be a tuple of AdbTransport values"
             )
 
     def resolve_configured_transport(
@@ -46,26 +46,28 @@ class AdbTransportListSnapshot:
             raise TypeError("configuration must be AdbConfiguredTransport")
 
         serial_matches = tuple(
-            row for row in self.observations if row.matches_serial(configuration.serial)
+            transport
+            for transport in self.transports
+            if transport.matches_serial(configuration.serial)
         )
         classified = tuple(
-            (row, classify_observed_transport(configuration, row))
-            for row in serial_matches
+            (transport, classify_observed_transport(configuration, transport))
+            for transport in serial_matches
         )
         exact_matches = tuple(
-            row
-            for row, compatibility in classified
+            transport
+            for transport, compatibility in classified
             if compatibility is AdbObservedTransportCompatibility.MATCH
         )
         unspecified_matches = tuple(
-            row
-            for row, compatibility in classified
+            transport
+            for transport, compatibility in classified
             if compatibility is AdbObservedTransportCompatibility.UNSPECIFIED
         )
         matches = exact_matches if exact_matches else unspecified_matches
         type_mismatches = tuple(
-            row
-            for row, compatibility in classified
+            transport
+            for transport, compatibility in classified
             if compatibility is AdbObservedTransportCompatibility.MISMATCH
         )
         return AdbConfiguredTransportResolution(

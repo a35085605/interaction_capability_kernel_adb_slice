@@ -16,10 +16,7 @@ from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
 )
-from adb.transport_list.observation import (
-    AdbTrackedTransportObservation,
-    AdbTransportState,
-)
+from adb.transport.model import AdbTransport, AdbTransportState
 from adb.transport_list.model import AdbTransportListSnapshot
 from adb.transport_list.reader import AdbTransportListSnapshotReader
 from adb.transport_list.interpretation import (
@@ -175,7 +172,7 @@ class AdbTcpTransportEnsureResult:
     presence_satisfaction: AdbTcpTransportPresenceSatisfaction | None
     attempts: tuple[NativeAttemptResult, ...]
     final_snapshot: AdbTransportListSnapshot | None = None
-    final_row: AdbTrackedTransportObservation | None = None
+    final_transport: AdbTransport | None = None
     diagnostic: str | None = None
 
     def __post_init__(self) -> None:
@@ -201,23 +198,23 @@ class AdbTcpTransportEnsureResult:
             self.final_snapshot, AdbTransportListSnapshot
         ):
             raise TypeError("final_snapshot must be AdbTransportListSnapshot or None")
-        if self.final_row is not None and not isinstance(
-            self.final_row, AdbTrackedTransportObservation
+        if self.final_transport is not None and not isinstance(
+            self.final_transport, AdbTransport
         ):
-            raise TypeError("final_row must be AdbTrackedTransportObservation or None")
-        if self.final_row is not None:
+            raise TypeError("final_transport must be AdbTransport or None")
+        if self.final_transport is not None:
             if (
                 self.final_snapshot is None
-                or self.final_row not in self.final_snapshot.observations
+                or self.final_transport not in self.final_snapshot.transports
             ):
-                raise ValueError("final_row must belong to final_snapshot")
-            if not self.final_row.matches_serial(self.operation.serial):
-                raise ValueError("final_row serial must match ensure operation")
+                raise ValueError("final_transport must belong to final_snapshot")
+            if not self.final_transport.matches_serial(self.operation.serial):
+                raise ValueError("final_transport serial must match ensure operation")
             if (
-                classify_observed_transport(self.operation.configuration, self.final_row)
+                classify_observed_transport(self.operation.configuration, self.final_transport)
                 is AdbObservedTransportCompatibility.MISMATCH
             ):
-                raise ValueError("final_row transport type must match configured transport")
+                raise ValueError("final_transport type must match configured transport")
         object.__setattr__(
             self,
             "diagnostic",
@@ -228,10 +225,10 @@ class AdbTcpTransportEnsureResult:
         )
 
         if self.status is AdbTcpTransportEnsureStatus.SATISFIED:
-            if self.satisfaction is None or self.final_row is None:
-                raise ValueError("satisfied ensure requires satisfaction and final_row")
+            if self.satisfaction is None or self.final_transport is None:
+                raise ValueError("satisfied ensure requires satisfaction and final_transport")
             if (
-                self.final_row.state.transport_state
+                self.final_transport.state.transport_state
                 not in self.operation.policy.acceptable_states
             ):
                 raise ValueError("satisfied ensure requires an acceptable final state")
@@ -266,7 +263,7 @@ class _ReadinessEpisodeState:
     presence: AdbTcpTransportPresenceSatisfaction | None = None
     satisfaction: AdbTcpTransportReadinessSatisfaction | None = None
     final_snapshot: AdbTransportListSnapshot | None = None
-    final_row: AdbTrackedTransportObservation | None = None
+    final_transport: AdbTransport | None = None
     diagnostic: str | None = None
     probes_attempted: int = 0
     connect_attempted: bool = False
@@ -293,18 +290,18 @@ class _ReadinessEpisodeState:
         self.latest_resolution_status = resolution.status
 
         if resolution.status is AdbConfiguredTransportResolutionStatus.AMBIGUOUS:
-            self.final_row = None
+            self.final_transport = None
             return AdbTcpTransportEnsureStatus.AMBIGUOUS
         if resolution.status is AdbConfiguredTransportResolutionStatus.TYPE_MISMATCH:
-            self.final_row = None
+            self.final_transport = None
             return AdbTcpTransportEnsureStatus.TYPE_MISMATCH
         if resolution.status is AdbConfiguredTransportResolutionStatus.ABSENT:
-            self.final_row = None
+            self.final_transport = None
             return None
 
-        row = resolution.row
-        assert row is not None
-        self.final_row = row
+        transport = resolution.transport
+        assert transport is not None
+        self.final_transport = transport
         if self.presence is None:
             self.presence = (
                 AdbTcpTransportPresenceSatisfaction.ALREADY_PRESENT
@@ -312,14 +309,14 @@ class _ReadinessEpisodeState:
                 else AdbTcpTransportPresenceSatisfaction.OBSERVED
             )
 
-        if row.state.transport_state in self.policy.acceptable_states:
+        if transport.state.transport_state in self.policy.acceptable_states:
             self.satisfaction = (
                 AdbTcpTransportReadinessSatisfaction.ALREADY_SATISFIED
                 if initial
                 else AdbTcpTransportReadinessSatisfaction.ACHIEVED
             )
             return AdbTcpTransportEnsureStatus.SATISFIED
-        if row.state.transport_state in self.policy.blocked_states:
+        if transport.state.transport_state in self.policy.blocked_states:
             return AdbTcpTransportEnsureStatus.BLOCKED
         return None
 
@@ -356,7 +353,7 @@ class _ReadinessEpisodeState:
             presence_satisfaction=self.presence,
             attempts=tuple(self.attempts),
             final_snapshot=self.final_snapshot,
-            final_row=self.final_row,
+            final_transport=self.final_transport,
             diagnostic=self.diagnostic,
         )
 

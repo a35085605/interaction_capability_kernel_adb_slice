@@ -9,7 +9,7 @@ from adb.transport.identity import AdbDeviceSerial, AdbTransportId
 
 
 class AdbTransportState(str, Enum):
-    """Domain transport states that are meaningful to transport-list consumers."""
+    """Domain states that are meaningful to ADB transport consumers."""
 
     CONNECTING = "connecting"
     AUTHORIZING = "authorizing"
@@ -118,8 +118,8 @@ class AdbObservedTransportState:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTrackedTransportObservation:
-    """Domain observation preserving protocol serial text, open kind/state evidence, and validated
+class AdbTransport:
+    """Domain transport preserving protocol serial text, open kind/state evidence, and validated
     positive server-local transport identity.
     """
 
@@ -139,7 +139,7 @@ class AdbTrackedTransportObservation:
             raise TypeError("state must be AdbObservedTransportState")
 
     def matches_serial(self, serial: AdbDeviceSerial) -> bool:
-        """Whether this observation exactly matches one stable serial identity."""
+        """Whether this transport exactly matches one stable serial identity."""
 
         if not isinstance(serial, AdbDeviceSerial):
             raise TypeError("serial must be AdbDeviceSerial")
@@ -149,6 +149,6 @@ class AdbTrackedTransportObservation:
 __all__ = [
     "AdbObservedTransportKind",
     "AdbObservedTransportState",
-    "AdbTrackedTransportObservation",
+    "AdbTransport",
     "AdbTransportState",
 ]

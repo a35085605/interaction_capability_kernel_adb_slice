@@ -40,7 +40,7 @@ class SmartSocketAdbTransportListSnapshotReader:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
         return AdbTransportListSnapshot(
-            observations=self._transport_list_reader.read(endpoint),
+            transports=self._transport_list_reader.read(endpoint),
         )
 
 

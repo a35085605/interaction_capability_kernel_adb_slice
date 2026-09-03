@@ -12,6 +12,13 @@ from adb.transport.features import (
     AdbTransportFeatures,
     AdbTransportFeaturesReader,
 )
+from adb.transport.identity import AdbDeviceSerial, AdbTransportId
+from adb.transport.model import (
+    AdbObservedTransportKind,
+    AdbObservedTransportState,
+    AdbTransport,
+    AdbTransportState,
+)
 from adb.transport.lifecycle import (
     AdbDeviceSideReconnect,
     AdbDeviceSideReconnector,
@@ -37,7 +44,6 @@ from adb.transport.resolution import (
     AdbConfiguredTransportResolution,
     AdbConfiguredTransportResolutionStatus,
 )
-from adb.transport.identity import AdbDeviceSerial, AdbTransportId
 from adb.transport.selection import (
     AdbTransportById,
     AdbTransportBySerial,
@@ -49,6 +55,8 @@ __all__ = [
     "AdbConfiguredTransportProjection",
     "AdbConfiguredTransportResolution",
     "AdbConfiguredTransportResolutionStatus",
+    "AdbObservedTransportKind",
+    "AdbObservedTransportState",
     "AdbDeviceSerial",
     "AdbDeviceSideReconnect",
     "AdbDeviceSideReconnector",
@@ -68,6 +76,7 @@ __all__ = [
     "AdbTcpTransportEnsurer",
     "AdbTcpTransportPresenceSatisfaction",
     "AdbTcpTransportReadinessSatisfaction",
+    "AdbTransport",
     "AdbTransportById",
     "AdbTransportBySerial",
     "AdbTransportConfiguration",
@@ -77,6 +86,7 @@ __all__ = [
     "AdbTransportReconnect",
     "AdbTransportReconnector",
     "AdbTransportSelector",
+    "AdbTransportState",
     "AdbTransportType",
     "AdbUsbTransportConfiguration",
 ]

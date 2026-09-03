@@ -406,7 +406,7 @@ class AdbRuntime(AdbManagedRuntime):
         """Rebind runtime-owned server dependents to the current authoritative lifetime."""
 
         # Configured transports must reset their server-scoped projections before a successor
-        # transport-list watch can publish observations for the new lifetime.
+        # transport-list watch can publish snapshots for the new lifetime.
         transport_supervisor = self._transport_supervisor
         if transport_supervisor is not None:
             transport_supervisor.reconcile()

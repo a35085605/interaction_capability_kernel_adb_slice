@@ -1,4 +1,4 @@
-"""ADB transport-list observations, values, state, identities, readers, and queries."""
+"""ADB transport-list values, snapshots, state, identities, readers, and queries."""
 
 from adb.transport_list.identity import (
     AdbTransportListIdentity,
@@ -9,17 +9,11 @@ from adb.transport_list.interpretation import (
     classify_observed_transport,
 )
 from adb.transport_list.lookup import (
-    AdbTrackedTransportLookup,
-    SnapshotAdbTrackedTransportLookup,
-    find_tracked_transport,
+    AdbTransportLookup,
+    SnapshotAdbTransportLookup,
+    find_transport,
 )
 from adb.transport_list.model import AdbTransportList, AdbTransportListSnapshot
-from adb.transport_list.observation import (
-    AdbObservedTransportKind,
-    AdbObservedTransportState,
-    AdbTrackedTransportObservation,
-    AdbTransportState,
-)
 from adb.transport_list.reader import (
     AdbTransportListReader,
     AdbTransportListSnapshotReader,
@@ -41,10 +35,7 @@ from adb.transport_list.state import (
 
 __all__ = [
     "AdbObservedTransportCompatibility",
-    "AdbObservedTransportKind",
-    "AdbObservedTransportState",
-    "AdbTrackedTransportLookup",
-    "AdbTrackedTransportObservation",
+    "AdbTransportLookup",
     "AdbTransportList",
     "AdbTransportListIdentity",
     "AdbTransportListIdentityIssuer",
@@ -62,9 +53,8 @@ __all__ = [
     "AdbTransportListStateStore",
     "AdbTransportListStateView",
     "AdbTransportListStateWriter",
-    "AdbTransportState",
     "SmartSocketAdbTransportListSnapshotReader",
-    "SnapshotAdbTrackedTransportLookup",
+    "SnapshotAdbTransportLookup",
     "classify_observed_transport",
-    "find_tracked_transport",
+    "find_transport",
 ]

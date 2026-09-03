@@ -12,7 +12,7 @@ from adb.errors import (
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
-from adb.transport_list.observation import AdbTrackedTransportObservation
+from adb.transport.model import AdbTransport
 from adb.transport_list.model import AdbTransportList, AdbTransportListSnapshot
 from adb.transport_list.watch.protocol import AdbTransportListWatch, AdbTransportListWatcher
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
@@ -305,15 +305,15 @@ class ThreadedAdbTransportListWatchController:
 
     def _snapshot(
         self,
-        observations: AdbTransportList,
+        transports: AdbTransportList,
     ) -> AdbTransportListSnapshot:
-        if not isinstance(observations, tuple) or not all(
-            isinstance(row, AdbTrackedTransportObservation) for row in observations
+        if not isinstance(transports, tuple) or not all(
+            isinstance(transport, AdbTransport) for transport in transports
         ):
             raise TypeError(
-                "observations must be a tuple of AdbTrackedTransportObservation values"
+                "transports must be a tuple of AdbTransport values"
             )
-        return AdbTransportListSnapshot(observations=observations)
+        return AdbTransportListSnapshot(transports=transports)
 
     def _can_publish_from(self, watcher: AdbTransportListWatcher) -> bool:
         with self._lock:

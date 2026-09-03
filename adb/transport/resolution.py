@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from adb.server.identity import AdbServerIdentity
-from adb.transport_list.observation import AdbTrackedTransportObservation
+from adb.transport.model import AdbTransport
 from adb.transport_list.identity import AdbTransportListIdentity
 from adb.transport_list.interpretation import (
     AdbObservedTransportCompatibility,
@@ -28,40 +28,36 @@ class AdbConfiguredTransportResolution:
     """Resolution of one configured transport against domain transport-list evidence."""
 
     configuration: AdbConfiguredTransport
-    matches: tuple[AdbTrackedTransportObservation, ...]
-    type_mismatches: tuple[AdbTrackedTransportObservation, ...] = ()
+    matches: tuple[AdbTransport, ...]
+    type_mismatches: tuple[AdbTransport, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.configuration, AdbConfiguredTransport):
             raise TypeError("configuration must be AdbConfiguredTransport")
         if not isinstance(self.matches, tuple) or not all(
-            isinstance(row, AdbTrackedTransportObservation) for row in self.matches
+            isinstance(transport, AdbTransport) for transport in self.matches
         ):
-            raise TypeError(
-                "matches must be a tuple of AdbTrackedTransportObservation values"
-            )
+            raise TypeError("matches must be a tuple of AdbTransport values")
         if not isinstance(self.type_mismatches, tuple) or not all(
-            isinstance(row, AdbTrackedTransportObservation)
-            for row in self.type_mismatches
+            isinstance(transport, AdbTransport)
+            for transport in self.type_mismatches
         ):
-            raise TypeError(
-                "type_mismatches must be a tuple of AdbTrackedTransportObservation values"
-            )
+            raise TypeError("type_mismatches must be a tuple of AdbTransport values")
         if any(
-            not row.matches_serial(self.configuration.serial)
-            for row in (*self.matches, *self.type_mismatches)
+            not transport.matches_serial(self.configuration.serial)
+            for transport in (*self.matches, *self.type_mismatches)
         ):
-            raise ValueError("resolution rows must match configured serial")
+            raise ValueError("resolution transports must match configured serial")
         if any(
-            classify_observed_transport(self.configuration, row)
+            classify_observed_transport(self.configuration, transport)
             is AdbObservedTransportCompatibility.MISMATCH
-            for row in self.matches
+            for transport in self.matches
         ):
             raise ValueError("matches must be compatible with the configured transport type")
         if any(
-            classify_observed_transport(self.configuration, row)
+            classify_observed_transport(self.configuration, transport)
             is not AdbObservedTransportCompatibility.MISMATCH
-            for row in self.type_mismatches
+            for transport in self.type_mismatches
         ):
             raise ValueError("type_mismatches must have a different transport type")
 
@@ -80,7 +76,7 @@ class AdbConfiguredTransportResolution:
         return AdbConfiguredTransportResolutionStatus.AMBIGUOUS
 
     @property
-    def row(self) -> AdbTrackedTransportObservation | None:
+    def transport(self) -> AdbTransport | None:
         return (
             self.matches[0]
             if self.status is AdbConfiguredTransportResolutionStatus.RESOLVED
@@ -89,10 +85,10 @@ class AdbConfiguredTransportResolution:
 
     @property
     def transport_id(self) -> AdbTransportId | None:
-        """Return the already-validated server-local identity of a resolved observation."""
+        """Return the already-validated server-local identity of a resolved transport."""
 
-        row = self.row
-        return row.transport_id if row is not None else None
+        transport = self.transport
+        return transport.transport_id if transport is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,8 +116,8 @@ class AdbConfiguredTransportProjection:
         return self.resolution.status
 
     @property
-    def row(self) -> AdbTrackedTransportObservation | None:
-        return self.resolution.row
+    def transport(self) -> AdbTransport | None:
+        return self.resolution.transport
 
 
 __all__ = [
