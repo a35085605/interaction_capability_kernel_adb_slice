@@ -100,13 +100,13 @@ class AdbServerLifecycleCoordinator:
     def provision(self) -> AdbServerProvisionResult:
         """Return ordered raw evidence produced by one provision operation.
 
-        Backend acquisition and state activation results are returned unchanged and in execution
-        order. A validated usable acquisition is first materialized as an identified server
-        candidate, then submitted to authoritative state arbitration. Already-active state is
-        represented by :class:`AdbServerAlreadyActive` because no backend acquisition or state
-        activation is performed in that path. A usable backend acquisition that loses the
-        authoritative activation fence is released before its raw acquisition and activation
-        evidence are returned.
+        Provisioning executes in two phases: backend acquisition first establishes a usable
+        physical attachment, then authoritative state activation commits that attachment as the
+        runtime server. Backend acquisition and state activation results are returned unchanged
+        and in execution order. Already-active state is represented by
+        :class:`AdbServerAlreadyActive` because neither phase is performed in that path. A usable
+        backend acquisition that cannot be committed is released before its raw acquisition and
+        activation evidence are returned.
         """
 
         with self._lock:
@@ -118,46 +118,75 @@ class AdbServerLifecycleCoordinator:
                 assert endpoint is not None
                 return (AdbServerAlreadyActive(server, endpoint),)
 
-            acquire = self._backend.acquire(self._endpoint_constraint)
+            acquisition = self._acquire_backend()
             if isinstance(
-                acquire,
+                acquisition,
                 (
                     AdbServerBackendAcquireInProgress,
                     AdbServerBackendAcquireBlocked,
                     AdbServerBackendAcquireFailed,
                 ),
             ):
-                return (acquire,)
-            if not isinstance(
-                acquire,
-                (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
-            ):
-                raise TypeError("server backend acquire() returned an unsupported result")
+                return (acquisition,)
 
-            endpoint = acquire.endpoint
-            if self._endpoint_constraint is not None and endpoint != self._endpoint_constraint:
-                self._backend.release(endpoint)
-                raise AdbServerLifecycleConsistencyError(
-                    "endpoint-constrained ADB server backend acquisition returned a different endpoint"
-                )
+            activation = self._commit_acquisition(
+                acquisition,
+                expected_state=t0,
+            )
+            return (acquisition, activation)
 
-            try:
-                candidate = AdbServerCandidate(
-                    identity=self._identity_issuer.issue(),
-                    endpoint=endpoint,
-                )
-                activation = self._state.activate(candidate, t0)
-            except BaseException:
-                self._backend.release(endpoint)
-                raise
+    def _acquire_backend(self) -> AdbServerBackendAcquireResult:
+        """Run the backend-acquisition phase and validate its usable attachment."""
 
-            if isinstance(activation, AdbServerActivationStateConflict):
-                self._backend.release(endpoint)
-            elif not isinstance(activation, AdbServerActivated):
-                self._backend.release(endpoint)
-                raise TypeError("server state activate() returned an unsupported result")
+        acquisition = self._backend.acquire(self._endpoint_constraint)
+        if isinstance(
+            acquisition,
+            (
+                AdbServerBackendAcquireInProgress,
+                AdbServerBackendAcquireBlocked,
+                AdbServerBackendAcquireFailed,
+            ),
+        ):
+            return acquisition
+        if not isinstance(
+            acquisition,
+            (AdbServerBackendAcquireSucceeded, AdbServerBackendAcquireSatisfied),
+        ):
+            raise TypeError("server backend acquire() returned an unsupported result")
 
-            return (acquire, activation)
+        endpoint = acquisition.endpoint
+        if self._endpoint_constraint is not None and endpoint != self._endpoint_constraint:
+            self._backend.release(endpoint)
+            raise AdbServerLifecycleConsistencyError(
+                "endpoint-constrained ADB server backend acquisition returned a different endpoint"
+            )
+        return acquisition
+
+    def _commit_acquisition(
+        self,
+        acquisition: AdbServerBackendAcquireSucceeded | AdbServerBackendAcquireSatisfied,
+        *,
+        expected_state: AdbServerState,
+    ) -> AdbServerActivationResult:
+        """Commit one usable backend acquisition or relinquish it if commit cannot succeed."""
+
+        endpoint = acquisition.endpoint
+        try:
+            candidate = AdbServerCandidate(
+                identity=self._identity_issuer.issue(),
+                endpoint=endpoint,
+            )
+            activation = self._state.activate(candidate, expected_state)
+        except BaseException:
+            self._backend.release(endpoint)
+            raise
+
+        if isinstance(activation, AdbServerActivationStateConflict):
+            self._backend.release(endpoint)
+        elif not isinstance(activation, AdbServerActivated):
+            self._backend.release(endpoint)
+            raise TypeError("server state activate() returned an unsupported result")
+        return activation
 
     def retire(
         self,
@@ -184,16 +213,32 @@ class AdbServerLifecycleCoordinator:
             else:
                 server = expected_server
 
-            deactivation = self._state.deactivate(server)
+            deactivation = self._commit_retirement(server)
             if isinstance(deactivation, AdbServerDeactivationStateConflict):
                 return deactivation
-            if not isinstance(deactivation, AdbServerDeactivated):
-                raise TypeError("server state deactivate() returned an unsupported result")
 
-            committed_endpoint = deactivation.state.endpoint
-            assert committed_endpoint is not None
-            self._backend.release(committed_endpoint)
+            self._release_deactivated_server(deactivation)
             return deactivation
+
+    def _commit_retirement(
+        self,
+        server: AdbServerIdentity,
+    ) -> AdbServerDeactivationResult:
+        """Commit authoritative deactivation before relinquishing the backend attachment."""
+
+        deactivation = self._state.deactivate(server)
+        if isinstance(deactivation, AdbServerDeactivationStateConflict):
+            return deactivation
+        if not isinstance(deactivation, AdbServerDeactivated):
+            raise TypeError("server state deactivate() returned an unsupported result")
+        return deactivation
+
+    def _release_deactivated_server(self, deactivation: AdbServerDeactivated) -> None:
+        """Relinquish the backend attachment recorded by one committed deactivation."""
+
+        committed_endpoint = deactivation.state.endpoint
+        assert committed_endpoint is not None
+        self._backend.release(committed_endpoint)
 
     def configure_endpoint_constraint(self, endpoint_constraint: AdbServerEndpoint | None) -> None:
         """Replace the endpoint constraint used by subsequent acquisition attempts."""
