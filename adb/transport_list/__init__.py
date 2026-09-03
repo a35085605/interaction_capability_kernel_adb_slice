@@ -13,7 +13,7 @@ from adb.transport_list.lookup import (
     SnapshotAdbTransportLookup,
     find_transport,
 )
-from adb.transport_list.model import AdbTransportList, AdbTransportListSnapshot
+from adb.transport_list.model import AdbTransportList
 from adb.transport_list.reader import (
     AdbTransportListReader,
     AdbTransportListSnapshotReader,
@@ -46,7 +46,6 @@ __all__ = [
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",
     "AdbTransportListReader",
-    "AdbTransportListSnapshot",
     "AdbTransportListSnapshotReader",
     "AdbTransportListState",
     "AdbTransportListStateStatus",

@@ -4,7 +4,7 @@ from typing import Protocol, runtime_checkable
 
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListReader
 from networking import TcpAddress
-from adb.transport_list.model import AdbTransportList, AdbTransportListSnapshot
+from adb.transport_list.model import AdbTransportList
 
 
 @runtime_checkable
@@ -18,7 +18,7 @@ class AdbTransportListReader(Protocol):
 class AdbTransportListSnapshotReader(Protocol):
     """Read one complete current domain transport-list snapshot."""
 
-    def read(self, endpoint: TcpAddress) -> AdbTransportListSnapshot:
+    def read(self, endpoint: TcpAddress) -> AdbTransportList:
         ...
 
 
@@ -36,10 +36,10 @@ class SmartSocketAdbTransportListSnapshotReader:
             raise TypeError("_transport_list_reader must satisfy AdbTransportListReader")
         self._transport_list_reader = _transport_list_reader
 
-    def read(self, endpoint: TcpAddress) -> AdbTransportListSnapshot:
+    def read(self, endpoint: TcpAddress) -> AdbTransportList:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
-        return AdbTransportListSnapshot(
+        return AdbTransportList(
             transports=self._transport_list_reader.read(endpoint),
         )
 

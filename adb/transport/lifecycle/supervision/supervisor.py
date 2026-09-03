@@ -18,7 +18,7 @@ from adb.transport.configuration import (
     AdbTcpTransportConfiguration,
     AdbUsbTransportConfiguration,
 )
-from adb.transport_list.model import AdbTransportListSnapshot
+from adb.transport_list.model import AdbTransportList
 from adb.transport_list.state import (
     AdbTransportListInvalidated,
     AdbTransportListObserved,
@@ -374,15 +374,15 @@ class AdbConfiguredTransportSupervisor:
         self,
         registration: _ConfiguredTransportRegistration,
         server: AdbServerIdentity,
-        snapshot: AdbTransportListSnapshot,
+        snapshot: AdbTransportList,
         transport_list_identity: AdbTransportListIdentity,
     ) -> tuple[AdbConfiguredTransportResolutionChanged | None, bool]:
         if not isinstance(server, AdbServerIdentity):
             raise TypeError("server must be AdbServerIdentity")
         if server != self._projection_server:
             raise ValueError("transport-list snapshot does not match projection server lifetime")
-        if not isinstance(snapshot, AdbTransportListSnapshot):
-            raise TypeError("snapshot must be AdbTransportListSnapshot")
+        if not isinstance(snapshot, AdbTransportList):
+            raise TypeError("snapshot must be AdbTransportList")
         if not isinstance(transport_list_identity, AdbTransportListIdentity):
             raise TypeError("transport_list_identity must be AdbTransportListIdentity")
         previous = registration.projection

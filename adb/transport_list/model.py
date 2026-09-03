@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, overload
 
 from adb.transport.model import AdbTransport
 from adb.transport_list.interpretation import (
@@ -14,22 +15,38 @@ if TYPE_CHECKING:
     from adb.transport.resolution import AdbConfiguredTransportResolution
 
 
-AdbTransportList: TypeAlias = tuple[AdbTransport, ...]
+@dataclass(frozen=True, slots=True, init=False)
+class AdbTransportList:
+    """Immutable complete domain transport-list value observed from one ADB server."""
 
+    transports: tuple[AdbTransport, ...]
 
-@dataclass(frozen=True, slots=True)
-class AdbTransportListSnapshot:
-    """Complete domain transport-list value observed from one ADB server."""
+    def __init__(self, transports: Iterable[AdbTransport] = ()) -> None:
+        if isinstance(transports, AdbTransportList):
+            normalized = transports.transports
+        else:
+            try:
+                normalized = tuple(transports)
+            except TypeError as exc:
+                raise TypeError("transports must be an iterable of AdbTransport values") from exc
+        if not all(isinstance(transport, AdbTransport) for transport in normalized):
+            raise TypeError("transports must contain only AdbTransport values")
+        object.__setattr__(self, "transports", normalized)
 
-    transports: AdbTransportList
+    def __iter__(self) -> Iterator[AdbTransport]:
+        return iter(self.transports)
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.transports, tuple) or not all(
-            isinstance(transport, AdbTransport) for transport in self.transports
-        ):
-            raise TypeError(
-                "transports must be a tuple of AdbTransport values"
-            )
+    def __len__(self) -> int:
+        return len(self.transports)
+
+    @overload
+    def __getitem__(self, index: int) -> AdbTransport: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[AdbTransport, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> AdbTransport | tuple[AdbTransport, ...]:
+        return self.transports[index]
 
     def resolve_configured_transport(
         self,
@@ -77,4 +94,4 @@ class AdbTransportListSnapshot:
         )
 
 
-__all__ = ["AdbTransportList", "AdbTransportListSnapshot"]
+__all__ = ["AdbTransportList"]

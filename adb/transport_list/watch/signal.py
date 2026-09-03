@@ -5,7 +5,7 @@ from enum import Enum
 from typing import TypeAlias
 
 from adb.server.identity import AdbServerIdentity
-from adb.transport_list.model import AdbTransportListSnapshot
+from adb.transport_list.model import AdbTransportList
 
 
 def _require_server(value: object) -> AdbServerIdentity:
@@ -90,12 +90,12 @@ class AdbTransportListSnapshotObserved(_TransportListWatchServerSignalProjection
     """Signal carrying one complete snapshot observed from one server lifetime."""
 
     server: AdbServerIdentity
-    snapshot: AdbTransportListSnapshot
+    snapshot: AdbTransportList
 
     def __post_init__(self) -> None:
         _require_server(self.server)
-        if not isinstance(self.snapshot, AdbTransportListSnapshot):
-            raise TypeError("snapshot must be AdbTransportListSnapshot")
+        if not isinstance(self.snapshot, AdbTransportList):
+            raise TypeError("snapshot must be AdbTransportList")
 
 
 AdbTransportListWatchSignal: TypeAlias = (

@@ -5,7 +5,7 @@ from typing import Protocol
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.transport.model import AdbTransport
-from adb.transport_list.model import AdbTransportListSnapshot
+from adb.transport_list.model import AdbTransportList
 from adb.transport_list.reader import AdbTransportListSnapshotReader
 from adb.transport.selection import (
     AdbTransportById,
@@ -26,23 +26,23 @@ class AdbTransportLookup(Protocol):
 
 
 def find_transport(
-    snapshot: AdbTransportListSnapshot,
+    snapshot: AdbTransportList,
     selector: AdbTransportSelector,
 ) -> AdbTransport | None:
     """Select one domain transport from a transport-list snapshot."""
 
-    if not isinstance(snapshot, AdbTransportListSnapshot):
-        raise TypeError("snapshot must be AdbTransportListSnapshot")
+    if not isinstance(snapshot, AdbTransportList):
+        raise TypeError("snapshot must be AdbTransportList")
     if isinstance(selector, AdbTransportBySerial):
         matches = [
             transport
-            for transport in snapshot.transports
+            for transport in snapshot
             if transport.matches_serial(selector.serial)
         ]
     elif isinstance(selector, AdbTransportById):
         matches = [
             transport
-            for transport in snapshot.transports
+            for transport in snapshot
             if transport.transport_id == selector.transport_id
         ]
     else:
@@ -69,8 +69,8 @@ class SnapshotAdbTransportLookup:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
         snapshot = self.snapshot_reader.read(endpoint)
-        if not isinstance(snapshot, AdbTransportListSnapshot):
-            raise TypeError("snapshot reader must return AdbTransportListSnapshot")
+        if not isinstance(snapshot, AdbTransportList):
+            raise TypeError("snapshot reader must return AdbTransportList")
         return find_transport(snapshot, selector)
 
 

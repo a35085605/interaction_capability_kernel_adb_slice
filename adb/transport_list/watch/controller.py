@@ -13,7 +13,7 @@ from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
 from adb.transport.model import AdbTransport
-from adb.transport_list.model import AdbTransportList, AdbTransportListSnapshot
+from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.protocol import AdbTransportListWatch, AdbTransportListWatcher
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
 from adb.transport_list.watch.signal import (
@@ -52,7 +52,7 @@ class AdbTransportListWatchController(Protocol):
     def active(self) -> bool:
         ...
 
-    def start(self) -> AdbTransportListSnapshot:
+    def start(self) -> AdbTransportList:
         """Establish the watch and return its initial complete snapshot."""
         ...
 
@@ -104,7 +104,7 @@ class ThreadedAdbTransportListWatchController:
         with self._lock:
             return not self._closed and self._active_thread is not None
 
-    def start(self) -> AdbTransportListSnapshot:
+    def start(self) -> AdbTransportList:
         """Establish the watch and return its initial complete snapshot."""
 
         with self._lock:
@@ -132,7 +132,7 @@ class ThreadedAdbTransportListWatchController:
             )
 
         startup_complete = Event()
-        startup_snapshots: list[AdbTransportListSnapshot] = []
+        startup_snapshots: list[AdbTransportList] = []
         startup_errors: list[BaseException] = []
         try:
             thread = self._thread_factory(
@@ -232,7 +232,7 @@ class ThreadedAdbTransportListWatchController:
         watcher: AdbTransportListWatcher,
         watch: AdbTransportListWatch,
         startup_complete: Event,
-        startup_snapshots: list[AdbTransportListSnapshot],
+        startup_snapshots: list[AdbTransportList],
         startup_errors: list[BaseException],
     ) -> None:
         server = self.server
@@ -305,15 +305,9 @@ class ThreadedAdbTransportListWatchController:
 
     def _snapshot(
         self,
-        transports: AdbTransportList,
-    ) -> AdbTransportListSnapshot:
-        if not isinstance(transports, tuple) or not all(
-            isinstance(transport, AdbTransport) for transport in transports
-        ):
-            raise TypeError(
-                "transports must be a tuple of AdbTransport values"
-            )
-        return AdbTransportListSnapshot(transports=transports)
+        transports: AdbTransportList | tuple[AdbTransport, ...],
+    ) -> AdbTransportList:
+        return AdbTransportList(transports)
 
     def _can_publish_from(self, watcher: AdbTransportListWatcher) -> bool:
         with self._lock:

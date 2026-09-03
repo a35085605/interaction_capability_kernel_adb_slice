@@ -17,7 +17,7 @@ from adb.transport.configuration import (
     AdbTcpTransportConfiguration,
 )
 from adb.transport.model import AdbTransport, AdbTransportState
-from adb.transport_list.model import AdbTransportListSnapshot
+from adb.transport_list.model import AdbTransportList
 from adb.transport_list.reader import AdbTransportListSnapshotReader
 from adb.transport_list.interpretation import (
     AdbObservedTransportCompatibility,
@@ -171,7 +171,7 @@ class AdbTcpTransportEnsureResult:
     satisfaction: AdbTcpTransportReadinessSatisfaction | None
     presence_satisfaction: AdbTcpTransportPresenceSatisfaction | None
     attempts: tuple[NativeAttemptResult, ...]
-    final_snapshot: AdbTransportListSnapshot | None = None
+    final_snapshot: AdbTransportList | None = None
     final_transport: AdbTransport | None = None
     diagnostic: str | None = None
 
@@ -195,9 +195,9 @@ class AdbTcpTransportEnsureResult:
         ):
             raise TypeError("attempts must be a tuple of NativeAttemptResult values")
         if self.final_snapshot is not None and not isinstance(
-            self.final_snapshot, AdbTransportListSnapshot
+            self.final_snapshot, AdbTransportList
         ):
-            raise TypeError("final_snapshot must be AdbTransportListSnapshot or None")
+            raise TypeError("final_snapshot must be AdbTransportList or None")
         if self.final_transport is not None and not isinstance(
             self.final_transport, AdbTransport
         ):
@@ -262,7 +262,7 @@ class _ReadinessEpisodeState:
     attempts: list[NativeAttemptResult] = field(default_factory=list)
     presence: AdbTcpTransportPresenceSatisfaction | None = None
     satisfaction: AdbTcpTransportReadinessSatisfaction | None = None
-    final_snapshot: AdbTransportListSnapshot | None = None
+    final_snapshot: AdbTransportList | None = None
     final_transport: AdbTransport | None = None
     diagnostic: str | None = None
     probes_attempted: int = 0
@@ -280,7 +280,7 @@ class _ReadinessEpisodeState:
 
     def evaluate_snapshot(
         self,
-        snapshot: AdbTransportListSnapshot,
+        snapshot: AdbTransportList,
     ) -> AdbTcpTransportEnsureStatus | None:
         initial = self.probes_attempted == 0
         self.probes_attempted += 1
