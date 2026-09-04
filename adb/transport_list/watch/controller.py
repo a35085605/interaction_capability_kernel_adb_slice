@@ -19,7 +19,8 @@ from adb.transport_list.coordinator import (
 )
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.state import AdbTransportListObserved
-from adb.transport_list.watch.protocol import AdbTransportListWatch, AdbTransportListWatcher
+from adb.transport_list.watch.session import AdbTransportListWatchSession
+from adb.transport_list.watch.watcher import AdbTransportListWatcher
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
 from adb.transport_list.watch.signal import (
     AdbTransportListWatchFailed,
@@ -135,12 +136,12 @@ class ThreadedAdbTransportListWatchController:
             self._active_watcher = watcher
 
         try:
-            watch = watcher.open()
+            session = watcher.open()
         except BaseException:
             self._abort_start(watcher)
             raise
 
-        if watch is None:
+        if session is None:
             self._abort_start(watcher)
             raise RuntimeError(
                 "ADB transport-list watch controller was stopped before its initial transport list "
@@ -155,7 +156,7 @@ class ThreadedAdbTransportListWatchController:
                 target=self._run,
                 args=(
                     watcher,
-                    watch,
+                    session,
                     startup_complete,
                     startup_transport_lists,
                     startup_errors,
@@ -166,7 +167,7 @@ class ThreadedAdbTransportListWatchController:
                 ),
             )
         except BaseException:
-            watch.close()
+            session.close()
             self._abort_start(watcher)
             raise
 
@@ -188,7 +189,7 @@ class ThreadedAdbTransportListWatchController:
                     self._closed = True
                     raise
         except BaseException:
-            watch.close()
+            session.close()
             watcher.close()
             raise
 
@@ -253,7 +254,7 @@ class ThreadedAdbTransportListWatchController:
     def _run(
         self,
         watcher: AdbTransportListWatcher,
-        watch: AdbTransportListWatch,
+        session: AdbTransportListWatchSession,
         startup_complete: Event,
         startup_transport_lists: list[AdbTransportList],
         startup_errors: list[BaseException],
@@ -262,7 +263,7 @@ class ThreadedAdbTransportListWatchController:
         terminal: object | None = None
         startup_succeeded = False
         try:
-            initial_transport_list = self._normalize_transport_list(watch.initial)
+            initial_transport_list = self._normalize_transport_list(session.initial)
             if not self._prepare_watch(watcher):
                 raise RuntimeError(
                     "ADB transport-list watch lost authority before entering stream mode"
@@ -278,7 +279,7 @@ class ThreadedAdbTransportListWatchController:
             startup_succeeded = True
             startup_complete.set()
 
-            for transport_list in watch.updates():
+            for transport_list in session.updates():
                 normalized = self._normalize_transport_list(transport_list)
                 if not self._commit_observation(watcher, normalized):
                     break
@@ -316,7 +317,7 @@ class ThreadedAdbTransportListWatchController:
             startup_errors.append(exc)
         finally:
             startup_complete.set()
-            watch.close()
+            session.close()
             publish_terminal = self._mark_terminal(watcher)
 
         if startup_succeeded and terminal is not None and publish_terminal:

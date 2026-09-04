@@ -4,7 +4,8 @@ from adb.transport_list.watch.controller import (
     AdbTransportListWatchController,
     ThreadedAdbTransportListWatchController,
 )
-from adb.transport_list.watch.protocol import AdbTransportListWatch, AdbTransportListWatcher
+from adb.transport_list.watch.session import AdbTransportListWatchSession
+from adb.transport_list.watch.watcher import AdbTransportListWatcher
 from adb.transport_list.watch.signal import (
     AdbTransportListWatchFailed,
     AdbTransportListWatchFailure,
@@ -14,7 +15,7 @@ from adb.transport_list.watch.signal import (
 )
 
 __all__ = [
-    "AdbTransportListWatch",
+    "AdbTransportListWatchSession",
     "AdbTransportListWatchController",
     "AdbTransportListWatchFailed",
     "AdbTransportListWatchFailure",
