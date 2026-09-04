@@ -23,13 +23,13 @@ from adb.aosp.model.track_devices import (
 )
 from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
 from networking import TcpAddress
-from adb.tracking.observation import (
+from adb.transport.model import (
     AdbObservedTransportKind,
     AdbObservedTransportState,
-    AdbTrackedTransportObservation,
+    AdbTransport,
     AdbTransportState,
 )
-from adb.tracking.transport_list import AdbTransportList
+from adb.transport_list.model import AdbTransportList
 from adb.transport.configuration import AdbTransportType
 from adb.transport.identity import AdbTransportId
 
@@ -48,7 +48,7 @@ def _normalize_startup_timeout(value: object) -> float:
 
 
 def _parse_transport_list(payload: bytes) -> AdbTransportList:
-    return to_tracked_transport_observations(parse_devices(payload))
+    return to_transport_list(parse_devices(payload))
 
 
 _ClientFactory = Callable[[TcpAddress], AdbServiceClient]
@@ -85,12 +85,8 @@ class SmartSocketAdbTransportListWatch:
         stream_socket: socket.socket,
         initial: AdbTransportList,
     ) -> None:
-        if not isinstance(initial, tuple) or not all(
-            isinstance(row, AdbTrackedTransportObservation) for row in initial
-        ):
-            raise TypeError(
-                "initial must be a tuple of AdbTrackedTransportObservation values"
-            )
+        if not isinstance(initial, AdbTransportList):
+            raise TypeError("initial must be AdbTransportList")
         self._watcher = watcher
         self._socket = stream_socket
         self.initial = initial
@@ -438,13 +434,13 @@ def _translate_transport_state(
     return AdbObservedTransportState.recognized(translated)
 
 
-def to_tracked_transport_observation(device: Device) -> AdbTrackedTransportObservation:
-    """Translate one raw AOSP device row at the protocol/domain boundary."""
+def to_transport(device: Device) -> AdbTransport:
+    """Translate one raw AOSP device row into the current domain transport value."""
 
     if not isinstance(device, Device):
         raise TypeError("device must be AOSP Device")
     transport_id = AdbTransportId(device.transport_id) if device.transport_id > 0 else None
-    return AdbTrackedTransportObservation(
+    return AdbTransport(
         serial_text=device.serial,
         transport_kind=_translate_transport_kind(device.connection_type),
         transport_id=transport_id,
@@ -452,20 +448,18 @@ def to_tracked_transport_observation(device: Device) -> AdbTrackedTransportObser
     )
 
 
-def to_tracked_transport_observations(
-    devices: Devices,
-) -> tuple[AdbTrackedTransportObservation, ...]:
-    """Translate one complete raw AOSP devices payload into domain observations."""
+def to_transport_list(devices: Devices) -> AdbTransportList:
+    """Translate one complete raw AOSP devices payload into a domain transport list."""
 
     if not isinstance(devices, Devices):
         raise TypeError("devices must be AOSP Devices")
-    return tuple(to_tracked_transport_observation(device) for device in devices.devices)
+    return AdbTransportList(to_transport(device) for device in devices.devices)
 
 
 __all__ = [
     "SmartSocketAdbTransportListReader",
     "SmartSocketAdbTransportListWatch",
     "SmartSocketAdbTransportListWatcher",
-    "to_tracked_transport_observation",
-    "to_tracked_transport_observations",
+    "to_transport",
+    "to_transport_list",
 ]

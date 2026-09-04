@@ -20,10 +20,7 @@ from adb.transport_list.lookup import (
 )
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.revision import AdbTransportListRevision
-from adb.transport_list.reader import (
-    AdbTransportListReader,
-    SmartSocketAdbTransportListReader,
-)
+from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.state import (
     AdbTransportListInvalidated,
     AdbTransportListInvalidationResult,
@@ -61,7 +58,6 @@ __all__ = [
     "AdbTransportListStateView",
     "AdbTransportListStateWriter",
     "ReadingAdbTransportLookup",
-    "SmartSocketAdbTransportListReader",
     "classify_observed_transport",
     "find_transport",
 ]
