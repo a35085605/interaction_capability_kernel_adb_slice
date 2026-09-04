@@ -23,7 +23,7 @@ def _default_client_factory(endpoint: TcpAddress) -> AdbServiceClient:
 
 
 class SmartSocketAdbServerStatusReader:
-    """Adapt a domain server endpoint to one AOSP ``host:server-status`` query."""
+    """Read one AOSP ``host:server-status`` query over smart socket."""
 
     def __init__(self, *, _client_factory: _ClientFactory = _default_client_factory) -> None:
         self._client_factory = _client_factory

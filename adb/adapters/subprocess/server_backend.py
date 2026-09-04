@@ -22,7 +22,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireAlreadySatisfied,
     AdbServerBackendAcquireAchieved,
 )
-from adb.adapters.aosp.server_status import SmartSocketAdbServerStatusReader
+from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
 
 
 _MonotonicClock = Callable[[], float]
