@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Protocol, runtime_checkable
+from dataclasses import dataclass
+from typing import Protocol, TypeAlias, runtime_checkable
 
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from networking import TcpAddress
@@ -11,6 +12,7 @@ from adb.transport_list.watch.error import (
     AdbTransportListWatchError,
 )
 from adb.transport_list.watch.failure import (
+    AdbTransportListWatchFailure,
     AdbTransportListWatchProtocolFailure,
     AdbTransportListWatchServerConnectionFailure,
     AdbTransportListWatchServiceFailure,
@@ -35,8 +37,45 @@ class AdbTransportListWatcher(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class AdbTransportListWatchOpened:
+    """A watch session and its initial complete transport list were established."""
+
+    session: AdbTransportListWatchSession
+    initial: AdbTransportList
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.session, AdbTransportListWatchSession):
+            raise TypeError("session must satisfy AdbTransportListWatchSession")
+        if not isinstance(self.initial, AdbTransportList):
+            raise TypeError("initial must be AdbTransportList")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListWatchOpenCancelled:
+    """Opening was interrupted by watcher closure before an initial list was established."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListWatchOpenFailed:
+    """Opening completed with a known transport-list watch domain failure."""
+
+    failure: AdbTransportListWatchFailure
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.failure, AdbTransportListWatchFailure):
+            raise TypeError("failure must be AdbTransportListWatchFailure")
+
+
+AdbTransportListWatchOpenResult: TypeAlias = (
+    AdbTransportListWatchOpened
+    | AdbTransportListWatchOpenCancelled
+    | AdbTransportListWatchOpenFailed
+)
+
+
 class _FailureNormalizingAdbTransportListWatchSession:
-    """Translate raw ADB request errors into transport-list watch domain errors."""
+    """Translate raw ADB request errors from an established stream into watch-domain errors."""
 
     def __init__(self, session: AdbTransportListWatchSession) -> None:
         if not isinstance(session, AdbTransportListWatchSession):
@@ -64,12 +103,12 @@ class _FailureNormalizingAdbTransportListWatchSession:
 
 def open_transport_list_watch(
     watcher: AdbTransportListWatcher,
-) -> AdbTransportListWatchSession:
-    """Open one watcher through the domain error boundary.
+) -> AdbTransportListWatchOpenResult:
+    """Open one watcher and materialize expected startup outcomes as domain results.
 
     Concrete watchers may surface low-level ADB request exceptions or use ``None`` to report that
-    closure interrupted startup. This boundary translates those implementation details into the
-    stable watch-domain exceptions consumed by controllers and supervisors.
+    closure interrupted startup. Known startup failures are translated into typed domain evidence;
+    contract violations and unexpected implementation exceptions still propagate.
     """
 
     if not isinstance(watcher, AdbTransportListWatcher):
@@ -77,40 +116,68 @@ def open_transport_list_watch(
 
     try:
         session = watcher.open()
+    except AdbTransportListWatchCancelledError:
+        return AdbTransportListWatchOpenCancelled()
     except BaseException as exc:
-        _raise_normalized_watch_error(exc)
-        raise AssertionError("unreachable")
+        failure = _watch_failure_from_exception(exc)
+        if failure is None:
+            raise
+        return AdbTransportListWatchOpenFailed(failure)
 
     if session is None:
-        raise AdbTransportListWatchCancelledError(
-            "ADB transport-list watcher was closed before its initial transport list was established"
-        )
+        return AdbTransportListWatchOpenCancelled()
     if not isinstance(session, AdbTransportListWatchSession):
         raise TypeError("transport-list watcher must return AdbTransportListWatchSession or None")
-    return _FailureNormalizingAdbTransportListWatchSession(session)
+
+    normalized_session = _FailureNormalizingAdbTransportListWatchSession(session)
+    try:
+        initial = normalized_session.initial
+    except AdbTransportListWatchCancelledError:
+        normalized_session.close()
+        return AdbTransportListWatchOpenCancelled()
+    except AdbTransportListWatchError as exc:
+        normalized_session.close()
+        return AdbTransportListWatchOpenFailed(exc.failure)
+    except BaseException:
+        normalized_session.close()
+        raise
+
+    if not isinstance(initial, AdbTransportList):
+        normalized_session.close()
+        raise TypeError("transport-list watch session initial must be AdbTransportList")
+    return AdbTransportListWatchOpened(normalized_session, initial)
+
+
+def _watch_failure_from_exception(
+    exc: BaseException,
+) -> AdbTransportListWatchFailure | None:
+    if isinstance(exc, AdbTransportListWatchError):
+        return exc.failure
+    if isinstance(exc, AdbServerConnectionError):
+        return AdbTransportListWatchServerConnectionFailure(str(exc) or None)
+    if isinstance(exc, AdbServiceError):
+        return AdbTransportListWatchServiceFailure(str(exc) or None)
+    if isinstance(exc, AdbProtocolError):
+        return AdbTransportListWatchProtocolFailure(str(exc) or None)
+    return None
 
 
 def _raise_normalized_watch_error(exc: BaseException) -> None:
-    if isinstance(exc, AdbTransportListWatchError):
-        raise exc
     if isinstance(exc, AdbTransportListWatchCancelledError):
         raise exc
-    if isinstance(exc, AdbServerConnectionError):
-        raise AdbTransportListWatchError(
-            AdbTransportListWatchServerConnectionFailure(str(exc) or None)
-        ) from exc
-    if isinstance(exc, AdbServiceError):
-        raise AdbTransportListWatchError(
-            AdbTransportListWatchServiceFailure(str(exc) or None)
-        ) from exc
-    if isinstance(exc, AdbProtocolError):
-        raise AdbTransportListWatchError(
-            AdbTransportListWatchProtocolFailure(str(exc) or None)
-        ) from exc
+    failure = _watch_failure_from_exception(exc)
+    if failure is not None:
+        if isinstance(exc, AdbTransportListWatchError):
+            raise exc
+        raise AdbTransportListWatchError(failure) from exc
     raise exc
 
 
 __all__ = [
+    "AdbTransportListWatchOpenCancelled",
+    "AdbTransportListWatchOpenFailed",
+    "AdbTransportListWatchOpened",
+    "AdbTransportListWatchOpenResult",
     "AdbTransportListWatcher",
     "open_transport_list_watch",
 ]

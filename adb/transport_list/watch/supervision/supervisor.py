@@ -15,11 +15,11 @@ from adb.transport_list.identity import AdbTransportListIdentityIssuer
 from adb.transport_list.state import AdbTransportListStateStore
 from adb.transport_list.watch.controller import (
     AdbTransportListWatchController,
+    AdbTransportListWatchStartCancelled,
+    AdbTransportListWatchStartFailed,
+    AdbTransportListWatchStartSucceeded,
+    AdbTransportListWatchStartSuperseded,
     ThreadedAdbTransportListWatchController,
-)
-from adb.transport_list.watch.error import (
-    AdbTransportListWatchCancelledError,
-    AdbTransportListWatchError,
 )
 from adb.transport_list.watch.failure import (
     AdbTransportListWatchFailure,
@@ -349,17 +349,7 @@ class AdbTransportListWatchSupervisor:
 
     def _attempt_start(self, controller: AdbTransportListWatchController) -> bool:
         try:
-            controller.start()
-        except AdbTransportListWatchError as exc:
-            return self._complete_start_attempt(
-                controller,
-                started=False,
-                failure=exc.failure,
-            )
-        except AdbTransportListWatchCancelledError:
-            return self._complete_start_attempt(controller, started=False)
-        except RuntimeError:
-            return self._complete_start_attempt(controller, started=False)
+            result = controller.start()
         except BaseException:
             controller_to_stop: AdbTransportListWatchController | None = None
             with self._lock:
@@ -368,7 +358,31 @@ class AdbTransportListWatchSupervisor:
             if controller_to_stop is not None:
                 controller_to_stop.stop()
             raise
-        return self._complete_start_attempt(controller, started=True)
+
+        if isinstance(result, AdbTransportListWatchStartSucceeded):
+            return self._complete_start_attempt(controller, started=True)
+        if isinstance(result, AdbTransportListWatchStartFailed):
+            return self._complete_start_attempt(
+                controller,
+                started=False,
+                failure=result.failure,
+            )
+        if isinstance(
+            result,
+            (
+                AdbTransportListWatchStartCancelled,
+                AdbTransportListWatchStartSuperseded,
+            ),
+        ):
+            return self._complete_start_attempt(controller, started=False)
+
+        controller_to_stop: AdbTransportListWatchController | None = None
+        with self._lock:
+            if self._controller is controller:
+                controller_to_stop = self._detach_controller_locked()
+        if controller_to_stop is not None:
+            controller_to_stop.stop()
+        raise TypeError("transport-list watch controller start() returned an unsupported result")
 
     def _complete_start_attempt(
         self,

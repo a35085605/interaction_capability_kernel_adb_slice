@@ -1,7 +1,12 @@
-"""ADB transport-list watch protocols, lifecycle control, and signals."""
+"""ADB transport-list watch protocols, lifecycle control, results, and signals."""
 
 from adb.transport_list.watch.controller import (
     AdbTransportListWatchController,
+    AdbTransportListWatchStartCancelled,
+    AdbTransportListWatchStartFailed,
+    AdbTransportListWatchStartResult,
+    AdbTransportListWatchStartSucceeded,
+    AdbTransportListWatchStartSuperseded,
     ThreadedAdbTransportListWatchController,
 )
 from adb.transport_list.watch.session import AdbTransportListWatchSession
@@ -16,6 +21,10 @@ from adb.transport_list.watch.failure import (
     AdbTransportListWatchServiceFailure,
 )
 from adb.transport_list.watch.watcher import (
+    AdbTransportListWatchOpenCancelled,
+    AdbTransportListWatchOpenFailed,
+    AdbTransportListWatchOpened,
+    AdbTransportListWatchOpenResult,
     AdbTransportListWatcher,
     open_transport_list_watch,
 )
@@ -28,19 +37,27 @@ from adb.transport_list.watch.signal import (
 
 __all__ = [
     "AdbTransportListWatchCancelledError",
+    "AdbTransportListWatchController",
     "AdbTransportListWatchError",
+    "AdbTransportListWatchFailed",
     "AdbTransportListWatchFailure",
+    "AdbTransportListWatchOpenCancelled",
+    "AdbTransportListWatchOpenFailed",
+    "AdbTransportListWatchOpened",
+    "AdbTransportListWatchOpenResult",
     "AdbTransportListWatchProtocolFailure",
     "AdbTransportListWatchServerConnectionFailure",
     "AdbTransportListWatchServiceFailure",
     "AdbTransportListWatchSession",
-    "AdbTransportListWatchController",
-    "AdbTransportListWatchFailed",
-    "AdbTransportListWatchFailure",
-    "AdbTransportListWatcher",
     "AdbTransportListWatchSignal",
+    "AdbTransportListWatchStartCancelled",
+    "AdbTransportListWatchStartFailed",
+    "AdbTransportListWatchStartResult",
+    "AdbTransportListWatchStartSucceeded",
+    "AdbTransportListWatchStartSuperseded",
     "AdbTransportListWatchStarted",
     "AdbTransportListWatchStopped",
+    "AdbTransportListWatcher",
     "ThreadedAdbTransportListWatchController",
     "open_transport_list_watch",
 ]
