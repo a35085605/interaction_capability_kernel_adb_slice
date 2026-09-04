@@ -6,7 +6,6 @@ from threading import RLock
 from adb.runtime.managed import AdbManagedRuntime
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.availability import AdbServerUnavailableError
 from adb.server.identity import AdbServerIdentityIssuer
 from adb.server.lifecycle.backend import (
     AdbServerBackend,
@@ -35,10 +34,9 @@ from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport_list.coordinator import (
     AdbTransportListCoordinatedObservationResult,
-    AdbTransportListObservationCoordinator,
+    AdbTransportListCoordinator,
 )
 from adb.transport_list.identity import AdbTransportListIdentityIssuer
-from adb.transport_list.model import AdbTransportList
 from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.state import AdbTransportListStateView
 from adb.transport_list.watch.supervision.policy import (
@@ -170,13 +168,15 @@ class AdbRuntime(AdbManagedRuntime):
             publisher=event_bus,
             authority_lock=self._authority_lock,
         )
-        self._transport_list_observation = AdbTransportListObservationCoordinator(
+        self._transport_list_coordinator = AdbTransportListCoordinator(
             state.transport_list,
             state.server,
             self._transport_list_identity_issuer,
             publisher=event_bus,
             authority_lock=self._authority_lock,
         )
+        # Preserve the former private name while the coordinator grows beyond observation-only use.
+        self._transport_list_observation = self._transport_list_coordinator
         if _bootstrap_server:
             self._bootstrap_initial_server()
 
@@ -208,42 +208,12 @@ class AdbRuntime(AdbManagedRuntime):
         self,
         reader: AdbTransportListReader,
     ) -> AdbTransportListCoordinatedObservationResult:
-        """Read and conditionally commit one authoritative transport-list refresh.
+        """Delegate one authoritative one-shot refresh to the transport-list domain."""
 
-        The reader remains a pure I/O capability. This method captures the current server and
-        transport-list state before blocking I/O, then commits through the shared observation
-        coordinator. A watch observation committed while the read is in flight therefore wins the
-        state fence instead of being overwritten by stale read evidence.
-        """
-
-        if not callable(getattr(reader, "read", None)):
-            raise TypeError("reader must satisfy AdbTransportListReader")
         with self._runtime_lock:
             if self._closed:
                 raise RuntimeError("ADB runtime is closed")
-
-        with self._authority_lock:
-            server_state = self._state.server.snapshot()
-            server = server_state.server
-            endpoint = server_state.endpoint
-            if server is None or endpoint is None:
-                raise AdbServerUnavailableError(
-                    "no authoritative ADB server is available for transport-list refresh"
-                )
-            if not self._transport_list_observation.prepare_server(server):
-                raise RuntimeError(
-                    "authoritative ADB server changed while preparing transport-list refresh"
-                )
-            expected = self._state.transport_list.snapshot()
-
-        transport_list = reader.read(endpoint)
-        if not isinstance(transport_list, AdbTransportList):
-            raise TypeError("transport-list reader must return AdbTransportList")
-        return self._transport_list_observation.observe(
-            server,
-            transport_list,
-            expected=expected,
-        )
+        return self._transport_list_coordinator.refresh(reader)
 
     def _build_transport_list_watch_supervisor(
         self,
@@ -270,7 +240,7 @@ class AdbRuntime(AdbManagedRuntime):
             event_bus,
             policy,
             server_state=self._state.server,
-            transport_list_observation_coordinator=self._transport_list_observation,
+            transport_list_observation_coordinator=self._transport_list_coordinator,
             _watcher_factory=_watcher_factory,
         )
 

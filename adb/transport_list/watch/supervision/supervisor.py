@@ -10,7 +10,7 @@ from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.transport_list.watch.supervision.policy import AdbTransportListWatchSupervisionPolicy
 from adb.server.signal import AdbServerReconciliationRequested
-from adb.transport_list.coordinator import AdbTransportListObservationCoordinator
+from adb.transport_list.coordinator import AdbTransportListCoordinator
 from adb.transport_list.identity import AdbTransportListIdentityIssuer
 from adb.transport_list.state import AdbTransportListStateStore
 from adb.transport_list.watch.controller import (
@@ -41,7 +41,7 @@ _ControllerFactory = Callable[
         AdbServerIdentity,
         AdbServerEndpoint,
         EventPublisher,
-        AdbTransportListObservationCoordinator,
+        AdbTransportListCoordinator,
     ],
     AdbTransportListWatchController,
 ]
@@ -68,7 +68,7 @@ class AdbTransportListWatchSupervisor:
         server_state: AdbServerStateView,
         transport_list_identity_issuer: AdbTransportListIdentityIssuer | None = None,
         transport_list_state: AdbTransportListStateStore | None = None,
-        transport_list_observation_coordinator: AdbTransportListObservationCoordinator
+        transport_list_observation_coordinator: AdbTransportListCoordinator
         | None = None,
         _watcher_factory: _TransportListWatcherFactory | None = None,
         _controller_factory: _ControllerFactory | None = None,
@@ -103,7 +103,7 @@ class AdbTransportListWatchSupervisor:
                 raise TypeError(
                     "transport_list_state must be AdbTransportListStateStore or None"
                 )
-            transport_list_observation_coordinator = AdbTransportListObservationCoordinator(
+            transport_list_observation_coordinator = AdbTransportListCoordinator(
                 transport_list_state,
                 server_state,
                 transport_list_identity_issuer,
@@ -112,11 +112,11 @@ class AdbTransportListWatchSupervisor:
         else:
             if not isinstance(
                 transport_list_observation_coordinator,
-                AdbTransportListObservationCoordinator,
+                AdbTransportListCoordinator,
             ):
                 raise TypeError(
                     "transport_list_observation_coordinator must be "
-                    "AdbTransportListObservationCoordinator or None"
+                    "AdbTransportListCoordinator or None"
                 )
             if transport_list_observation_coordinator.server_state is not server_state:
                 raise ValueError(
@@ -187,7 +187,7 @@ class AdbTransportListWatchSupervisor:
     @property
     def transport_list_observation_coordinator(
         self,
-    ) -> AdbTransportListObservationCoordinator:
+    ) -> AdbTransportListCoordinator:
         """Shared authority boundary used to commit and publish watch observations."""
 
         return self._transport_list_observation_coordinator

@@ -45,6 +45,7 @@ from adb.server import (
     AdbServerUnavailableError,
 )
 from adb.transport_list import (
+    AdbTransportListCoordinator,
     AdbTransportListCoordinatedObservationResult,
     AdbTransportListIdentity,
     AdbTransportListIdentityIssuer,
@@ -87,6 +88,7 @@ __all__ = [
     "AdbDeviceSerial",
     "AdbTransportListIdentity",
     "AdbTransportListIdentityIssuer",
+    "AdbTransportListCoordinator",
     "AdbTransportListCoordinatedObservationResult",
     "AdbTransportListInvalidated",
     "AdbTransportListInvalidationResult",

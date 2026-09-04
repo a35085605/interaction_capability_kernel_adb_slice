@@ -10,7 +10,7 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
 from adb.transport.model import AdbTransport
 from adb.transport_list.coordinator import (
-    AdbTransportListObservationCoordinator,
+    AdbTransportListCoordinator,
     AdbTransportListObservationServerConflict,
 )
 from adb.transport_list.model import AdbTransportList
@@ -128,7 +128,7 @@ class ThreadedAdbTransportListWatchController:
         server: AdbServerIdentity,
         endpoint: AdbServerEndpoint,
         publisher: EventPublisher,
-        observation_coordinator: AdbTransportListObservationCoordinator,
+        observation_coordinator: AdbTransportListCoordinator,
         startup_timeout_seconds: float = 5.0,
         *,
         _watcher_factory: _TransportListWatcherFactory,
@@ -140,9 +140,9 @@ class ThreadedAdbTransportListWatchController:
             raise TypeError("endpoint must be TcpAddress")
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
-        if not isinstance(observation_coordinator, AdbTransportListObservationCoordinator):
+        if not isinstance(observation_coordinator, AdbTransportListCoordinator):
             raise TypeError(
-                "observation_coordinator must be AdbTransportListObservationCoordinator"
+                "observation_coordinator must be AdbTransportListCoordinator"
             )
         if not callable(_watcher_factory):
             raise TypeError("_watcher_factory must be callable")

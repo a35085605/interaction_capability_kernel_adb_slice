@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Protocol, TypeAlias, runtime_checkable
 
+from adb.server.availability import AdbServerUnavailableError
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.transport_list.identity import AdbTransportListIdentityIssuer
 from adb.transport_list.model import AdbTransportList
+from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.revision import AdbTransportListRevision
 from adb.transport_list.state import (
     AdbTransportListInvalidated,
@@ -61,12 +63,12 @@ AdbTransportListCoordinatedObservationResult: TypeAlias = (
 )
 
 
-class AdbTransportListObservationCoordinator:
-    """Coordinate authoritative transport-list observations against server lifetime authority.
+class AdbTransportListCoordinator:
+    """Coordinate authoritative transport-list evidence against runtime authority.
 
     Readers and watchers may produce transport-list evidence independently. This coordinator is the
-    shared authority boundary that validates server provenance, issues revision identities, and
-    commits accepted observations into runtime transport-list state.
+    shared domain authority boundary that validates server provenance, fences competing evidence,
+    issues revision identities, and commits accepted observations into transport-list state.
     """
 
     def __init__(
@@ -110,6 +112,39 @@ class AdbTransportListObservationCoordinator:
 
         return self._transport_list_state
 
+    def refresh(
+        self,
+        reader: AdbTransportListReader,
+    ) -> AdbTransportListCoordinatedObservationResult:
+        """Read and conditionally commit one authoritative transport-list refresh.
+
+        Server provenance and the transport-list state fence are captured before blocking I/O. If a
+        watch observation commits while the read is in flight, that newer observation wins and the
+        stale read returns state-conflict evidence instead of overwriting authoritative state.
+        """
+
+        if not callable(getattr(reader, "read", None)):
+            raise TypeError("reader must satisfy AdbTransportListReader")
+
+        with self._lock:
+            server_state = self._server_state.snapshot()
+            server = server_state.server
+            endpoint = server_state.endpoint
+            if server is None or endpoint is None:
+                raise AdbServerUnavailableError(
+                    "no authoritative ADB server is available for transport-list refresh"
+                )
+            if not self._prepare_server_locked(server):
+                raise RuntimeError(
+                    "authoritative ADB server changed while preparing transport-list refresh"
+                )
+            expected = self._transport_list_state.snapshot()
+
+        transport_list = reader.read(endpoint)
+        if not isinstance(transport_list, AdbTransportList):
+            raise TypeError("transport-list reader must return AdbTransportList")
+        return self.observe(server, transport_list, expected=expected)
+
     def prepare_server(self, server: AdbServerIdentity) -> bool:
         """Prepare visibility for ``server``, invalidating evidence from another lifetime.
 
@@ -120,15 +155,18 @@ class AdbTransportListObservationCoordinator:
 
         self._require_server(server)
         with self._lock:
-            if self._server_state.current != server:
-                return False
-            state = self._transport_list_state.snapshot()
-            if state.current is None or self._committed_server == server:
-                return True
-            identity = state.current_identity
-            assert identity is not None
-            invalidation = self._transport_list_state.invalidate(identity)
-            return isinstance(invalidation, AdbTransportListInvalidated)
+            return self._prepare_server_locked(server)
+
+    def _prepare_server_locked(self, server: AdbServerIdentity) -> bool:
+        if self._server_state.current != server:
+            return False
+        state = self._transport_list_state.snapshot()
+        if state.current is None or self._committed_server == server:
+            return True
+        identity = state.current_identity
+        assert identity is not None
+        invalidation = self._transport_list_state.invalidate(identity)
+        return isinstance(invalidation, AdbTransportListInvalidated)
 
     def observe(
         self,
@@ -140,7 +178,7 @@ class AdbTransportListObservationCoordinator:
         """Commit one complete observation when server and transport-list fences still hold.
 
         ``expected`` is optional for stream observations that should linearize at commit time. A
-        read-based refresh should pass the state captured before its blocking I/O so a watch update
+        read-based refresh passes the state captured before its blocking I/O so a watch update
         committed during that read wins instead of being overwritten by stale read evidence.
         """
 
@@ -179,7 +217,12 @@ class AdbTransportListObservationCoordinator:
             raise TypeError("server must be AdbServerIdentity")
 
 
+# Compatibility name for callers that imported the narrower pre-refresh coordinator name.
+AdbTransportListObservationCoordinator = AdbTransportListCoordinator
+
+
 __all__ = [
+    "AdbTransportListCoordinator",
     "AdbTransportListCoordinatedObservationResult",
     "AdbTransportListObservationCoordinator",
     "AdbTransportListObservationServerConflict",

@@ -1,6 +1,7 @@
 """ADB transport-list values, state, identities, readers, and queries."""
 
 from adb.transport_list.coordinator import (
+    AdbTransportListCoordinator,
     AdbTransportListCoordinatedObservationResult,
     AdbTransportListObservationCoordinator,
     AdbTransportListObservationServerConflict,
@@ -39,6 +40,7 @@ __all__ = [
     "AdbObservedTransportCompatibility",
     "AdbTransportLookup",
     "AdbTransportList",
+    "AdbTransportListCoordinator",
     "AdbTransportListCoordinatedObservationResult",
     "AdbTransportListIdentity",
     "AdbTransportListIdentityIssuer",
