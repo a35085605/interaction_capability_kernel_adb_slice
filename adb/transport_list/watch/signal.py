@@ -1,35 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import TypeAlias
 
 from adb.server.identity import AdbServerIdentity
+from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 
 
 def _require_server(value: object) -> AdbServerIdentity:
     if not isinstance(value, AdbServerIdentity):
         raise TypeError("server must be AdbServerIdentity")
     return value
-
-
-def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise TypeError(f"{field_name} must be a string or None")
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{field_name} cannot be empty")
-    return normalized
-
-
-class AdbTransportListWatchFailure(str, Enum):
-    """Reason a transport-list watch terminated abnormally."""
-
-    SERVER_CONNECTION = "server_connection"
-    SERVICE = "service"
-    PROTOCOL = "protocol"
 
 
 class _TransportListWatchServerSignalProjection:
@@ -68,20 +49,11 @@ class AdbTransportListWatchFailed(_TransportListWatchServerSignalProjection):
 
     server: AdbServerIdentity
     failure: AdbTransportListWatchFailure
-    diagnostic: str | None = None
 
     def __post_init__(self) -> None:
         _require_server(self.server)
         if not isinstance(self.failure, AdbTransportListWatchFailure):
             raise TypeError("failure must be AdbTransportListWatchFailure")
-        object.__setattr__(
-            self,
-            "diagnostic",
-            _normalize_optional_text(
-                self.diagnostic,
-                field_name="ADB transport-list watch diagnostic",
-            ),
-        )
 
 
 AdbTransportListWatchSignal: TypeAlias = (

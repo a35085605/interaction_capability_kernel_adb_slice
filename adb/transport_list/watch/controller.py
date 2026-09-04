@@ -4,11 +4,6 @@ from collections.abc import Callable
 from threading import Event, Lock, Thread, current_thread
 from typing import Protocol, runtime_checkable
 
-from adb.errors import (
-    AdbProtocolError,
-    AdbServerConnectionError,
-    AdbServiceError,
-)
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
@@ -20,11 +15,14 @@ from adb.transport_list.coordinator import (
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.state import AdbTransportListObserved
 from adb.transport_list.watch.session import AdbTransportListWatchSession
-from adb.transport_list.watch.watcher import AdbTransportListWatcher
+from adb.transport_list.watch.error import AdbTransportListWatchError
+from adb.transport_list.watch.watcher import (
+    AdbTransportListWatcher,
+    open_transport_list_watch,
+)
 from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
 from adb.transport_list.watch.signal import (
     AdbTransportListWatchFailed,
-    AdbTransportListWatchFailure,
     AdbTransportListWatchStarted,
     AdbTransportListWatchStopped,
 )
@@ -136,17 +134,10 @@ class ThreadedAdbTransportListWatchController:
             self._active_watcher = watcher
 
         try:
-            session = watcher.open()
+            session = open_transport_list_watch(watcher)
         except BaseException:
             self._abort_start(watcher)
             raise
-
-        if session is None:
-            self._abort_start(watcher)
-            raise RuntimeError(
-                "ADB transport-list watch controller was stopped before its initial transport list "
-                "was established"
-            )
 
         startup_complete = Event()
         startup_transport_lists: list[AdbTransportList] = []
@@ -284,31 +275,9 @@ class ThreadedAdbTransportListWatchController:
                 if not self._commit_observation(watcher, normalized):
                     break
             terminal = AdbTransportListWatchStopped(server)
-        except AdbServerConnectionError as exc:
+        except AdbTransportListWatchError as exc:
             if startup_succeeded:
-                terminal = AdbTransportListWatchFailed(
-                    server,
-                    AdbTransportListWatchFailure.SERVER_CONNECTION,
-                    str(exc),
-                )
-            else:
-                startup_errors.append(exc)
-        except AdbServiceError as exc:
-            if startup_succeeded:
-                terminal = AdbTransportListWatchFailed(
-                    server,
-                    AdbTransportListWatchFailure.SERVICE,
-                    str(exc),
-                )
-            else:
-                startup_errors.append(exc)
-        except AdbProtocolError as exc:
-            if startup_succeeded:
-                terminal = AdbTransportListWatchFailed(
-                    server,
-                    AdbTransportListWatchFailure.PROTOCOL,
-                    str(exc),
-                )
+                terminal = AdbTransportListWatchFailed(server, exc.failure)
             else:
                 startup_errors.append(exc)
         except BaseException as exc:

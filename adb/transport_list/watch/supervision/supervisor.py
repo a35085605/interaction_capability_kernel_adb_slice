@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 
-from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from adb.server.failure import AdbServerConnectionFailure
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
@@ -18,9 +17,16 @@ from adb.transport_list.watch.controller import (
     AdbTransportListWatchController,
     ThreadedAdbTransportListWatchController,
 )
+from adb.transport_list.watch.error import (
+    AdbTransportListWatchCancelledError,
+    AdbTransportListWatchError,
+)
+from adb.transport_list.watch.failure import (
+    AdbTransportListWatchFailure,
+    AdbTransportListWatchServerConnectionFailure,
+)
 from adb.transport_list.watch.signal import (
     AdbTransportListWatchFailed,
-    AdbTransportListWatchFailure,
     AdbTransportListWatchStarted,
     AdbTransportListWatchStopped,
 )
@@ -301,7 +307,7 @@ class AdbTransportListWatchSupervisor:
                 return
             failed_server = current.server
             controller = self._detach_controller_locked()
-            if event.failure is AdbTransportListWatchFailure.SERVER_CONNECTION:
+            if isinstance(event.failure, AdbTransportListWatchServerConnectionFailure):
                 request_server_reconciliation = (
                     self._watch_requested
                     and self._server_state.current == failed_server
@@ -313,7 +319,7 @@ class AdbTransportListWatchSupervisor:
             self._bus.publish(
                 AdbServerReconciliationRequested(
                     failed_server,
-                    AdbServerConnectionFailure(event.diagnostic),
+                    AdbServerConnectionFailure(event.failure.diagnostic),
                 )
             )
 
@@ -344,27 +350,14 @@ class AdbTransportListWatchSupervisor:
     def _attempt_start(self, controller: AdbTransportListWatchController) -> bool:
         try:
             controller.start()
-        except AdbServerConnectionError as exc:
+        except AdbTransportListWatchError as exc:
             return self._complete_start_attempt(
                 controller,
                 started=False,
-                failure=AdbTransportListWatchFailure.SERVER_CONNECTION,
-                diagnostic=str(exc),
+                failure=exc.failure,
             )
-        except AdbServiceError as exc:
-            return self._complete_start_attempt(
-                controller,
-                started=False,
-                failure=AdbTransportListWatchFailure.SERVICE,
-                diagnostic=str(exc),
-            )
-        except AdbProtocolError as exc:
-            return self._complete_start_attempt(
-                controller,
-                started=False,
-                failure=AdbTransportListWatchFailure.PROTOCOL,
-                diagnostic=str(exc),
-            )
+        except AdbTransportListWatchCancelledError:
+            return self._complete_start_attempt(controller, started=False)
         except RuntimeError:
             return self._complete_start_attempt(controller, started=False)
         except BaseException:
@@ -383,7 +376,6 @@ class AdbTransportListWatchSupervisor:
         *,
         started: bool,
         failure: AdbTransportListWatchFailure | None = None,
-        diagnostic: str | None = None,
     ) -> bool:
         request_server_reconciliation = False
         reconciliation_server: AdbServerIdentity | None = None
@@ -406,7 +398,7 @@ class AdbTransportListWatchSupervisor:
             else:
                 controller_to_stop = self._detach_controller_locked()
                 publish_failure = failure is not None
-                if failure is AdbTransportListWatchFailure.SERVER_CONNECTION:
+                if isinstance(failure, AdbTransportListWatchServerConnectionFailure):
                     reconciliation_server = controller.server
                     request_server_reconciliation = (
                         self._watch_requested
@@ -418,18 +410,14 @@ class AdbTransportListWatchSupervisor:
         if publish_failure:
             assert failure is not None
             self._bus.publish(
-                AdbTransportListWatchFailed(
-                    controller.server,
-                    failure,
-                    diagnostic,
-                )
+                AdbTransportListWatchFailed(controller.server, failure)
             )
         if request_server_reconciliation:
             assert reconciliation_server is not None
             self._bus.publish(
                 AdbServerReconciliationRequested(
                     reconciliation_server,
-                    AdbServerConnectionFailure(diagnostic),
+                    AdbServerConnectionFailure(failure.diagnostic),
                 )
             )
         return keep_controller
