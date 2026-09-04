@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from numbers import Integral
 
-from adb.aosp.errors import AdbProtocolError
+from adb.errors import AdbProtocolError
 from adb.aosp.protocol.protobuf import ProtoReader
 
 

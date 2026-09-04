@@ -22,7 +22,6 @@ from adb.api import (
     AdbServerEndpoint,
 )
 from adb.runtime import AdbManagedRuntime
-from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server import (
     AdbServerActivated,
     AdbServerActivationStateConflict,
@@ -153,5 +152,4 @@ __all__ = [
     "AdbTransportSelectionError",
     "AdbTransportSelector",
     "AdbTransportUnavailableError",
-    "SubprocessAdbServerBackend",
 ]

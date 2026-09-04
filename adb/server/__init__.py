@@ -37,7 +37,6 @@ from adb.server.state import (
     AdbServerStateWriter,
 )
 from adb.server.endpoint import AdbServerEndpoint
-from adb.aosp.model.server_status import AdbMdnsBackend, AdbServerStatus, AdbUsbBackend
 
 __all__ = [
     "AdbServerActivated",
@@ -47,7 +46,6 @@ __all__ = [
     "AdbServerDeactivated",
     "AdbServerDeactivationStateConflict",
     "AdbServerDeactivationResult",
-    "AdbMdnsBackend",
     "AdbServerConnectionFailure",
     "AdbServerBootstrapError",
     "AdbServerCandidate",
@@ -70,8 +68,6 @@ __all__ = [
     "AdbServerStateStore",
     "AdbServerStateView",
     "AdbServerStateWriter",
-    "AdbServerStatus",
     "AdbServerTimeoutFailure",
     "AdbServerUnavailableError",
-    "AdbUsbBackend",
 ]

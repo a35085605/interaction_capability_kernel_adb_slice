@@ -7,7 +7,7 @@ import socket
 from threading import Lock
 from time import monotonic
 
-from adb.aosp.errors import (
+from adb.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
     AdbServiceError,

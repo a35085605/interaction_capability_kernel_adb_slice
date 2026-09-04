@@ -7,7 +7,7 @@ import socket
 import struct
 from typing import Callable
 
-from adb.aosp.errors import (
+from adb.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
     AdbServiceError,
