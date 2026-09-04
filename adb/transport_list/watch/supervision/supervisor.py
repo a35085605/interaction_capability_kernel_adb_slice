@@ -21,6 +21,7 @@ from adb.transport_list.watch.controller import (
     AdbTransportListWatchStartSuperseded,
     ThreadedAdbTransportListWatchController,
 )
+from adb.transport_list.watch.watcher import AdbTransportListWatcher
 from adb.transport_list.watch.failure import (
     AdbTransportListWatchFailure,
     AdbTransportListWatchServerConnectionFailure,
@@ -34,6 +35,7 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 
 _ThreadFactory = Callable[..., Thread]
+_TransportListWatcherFactory = Callable[[TcpAddress, float], AdbTransportListWatcher]
 _ControllerFactory = Callable[
     [
         AdbServerIdentity,
@@ -68,6 +70,7 @@ class AdbTransportListWatchSupervisor:
         transport_list_state: AdbTransportListStateStore | None = None,
         transport_list_observation_coordinator: AdbTransportListObservationCoordinator
         | None = None,
+        _watcher_factory: _TransportListWatcherFactory | None = None,
         _controller_factory: _ControllerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
@@ -135,8 +138,12 @@ class AdbTransportListWatchSupervisor:
                     "transport_list_state must match observation coordinator state"
                 )
             transport_list_state = coordinator_state
+        if _watcher_factory is not None and not callable(_watcher_factory):
+            raise TypeError("_watcher_factory must be callable or None")
         if _controller_factory is not None and not callable(_controller_factory):
             raise TypeError("_controller_factory must be callable or None")
+        if _watcher_factory is None and _controller_factory is None:
+            raise ValueError("_watcher_factory is required when no controller factory is provided")
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
 
@@ -147,6 +154,7 @@ class AdbTransportListWatchSupervisor:
             transport_list_observation_coordinator
         )
         self._policy = policy
+        self._watcher_factory = _watcher_factory
         self._controller_factory = _controller_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
@@ -448,22 +456,25 @@ class AdbTransportListWatchSupervisor:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
         factory = self._controller_factory
-        controller = (
-            ThreadedAdbTransportListWatchController(
+        if factory is None:
+            watcher_factory = self._watcher_factory
+            if watcher_factory is None:
+                raise RuntimeError("transport-list watcher factory is unavailable")
+            controller = ThreadedAdbTransportListWatchController(
                 server,
                 endpoint,
                 self._bus,
                 self._transport_list_observation_coordinator,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
+                _watcher_factory=watcher_factory,
             )
-            if factory is None
-            else factory(
+        else:
+            controller = factory(
                 server,
                 endpoint,
                 self._bus,
                 self._transport_list_observation_coordinator,
             )
-        )
         if not isinstance(controller, AdbTransportListWatchController):
             raise TypeError("controller factory must return AdbTransportListWatchController")
         if controller.server != server or controller.endpoint != endpoint:

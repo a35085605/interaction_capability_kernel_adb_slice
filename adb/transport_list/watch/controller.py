@@ -28,7 +28,6 @@ from adb.transport_list.watch.watcher import (
     AdbTransportListWatcher,
     open_transport_list_watch,
 )
-from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
 from adb.transport_list.watch.signal import (
     AdbTransportListWatchFailed,
     AdbTransportListWatchStarted,
@@ -37,7 +36,7 @@ from adb.transport_list.watch.signal import (
 from eventing import EventPublisher
 
 
-_TransportListWatcherFactory = Callable[[TcpAddress], AdbTransportListWatcher]
+_TransportListWatcherFactory = Callable[[TcpAddress, float], AdbTransportListWatcher]
 _ThreadFactory = Callable[..., Thread]
 
 
@@ -120,8 +119,8 @@ class ThreadedAdbTransportListWatchController:
     """Single-use threaded controller for one transport-list watch.
 
     Authoritative observations are committed and published through the shared observation
-    coordinator. This controller publishes only watch-lifecycle signals. The default watcher uses
-    AOSP ``track-devices`` over smart socket.
+    coordinator. This controller publishes only watch-lifecycle signals. The low-level watcher
+    implementation is supplied by the composition root.
     """
 
     def __init__(
@@ -132,7 +131,7 @@ class ThreadedAdbTransportListWatchController:
         observation_coordinator: AdbTransportListObservationCoordinator,
         startup_timeout_seconds: float = 5.0,
         *,
-        _watcher_factory: _TransportListWatcherFactory | None = None,
+        _watcher_factory: _TransportListWatcherFactory,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(server, AdbServerIdentity):
@@ -145,8 +144,8 @@ class ThreadedAdbTransportListWatchController:
             raise TypeError(
                 "observation_coordinator must be AdbTransportListObservationCoordinator"
             )
-        if _watcher_factory is not None and not callable(_watcher_factory):
-            raise TypeError("_watcher_factory must be callable or None")
+        if not callable(_watcher_factory):
+            raise TypeError("_watcher_factory must be callable")
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
         self.server = server
@@ -283,14 +282,9 @@ class ThreadedAdbTransportListWatchController:
             thread.join()
 
     def _create_watcher(self) -> AdbTransportListWatcher:
-        factory = self._watcher_factory
-        watcher = (
-            SmartSocketAdbTransportListWatcher(
-                self.endpoint,
-                startup_timeout_seconds=self.startup_timeout_seconds,
-            )
-            if factory is None
-            else factory(self.endpoint)
+        watcher = self._watcher_factory(
+            self.endpoint,
+            self.startup_timeout_seconds,
         )
         if not isinstance(watcher, AdbTransportListWatcher):
             raise TypeError(
