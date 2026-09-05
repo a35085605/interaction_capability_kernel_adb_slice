@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from enum import Enum
 import os
 import socket
 import subprocess
-from threading import Condition, Lock
+from threading import Lock
 from time import monotonic, sleep
 from typing import Protocol
 
@@ -15,12 +14,8 @@ from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.backend import (
-    AdbServerBackendAcquireBlocked,
-    AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireInProgress,
-    AdbServerBackendAcquireResult,
-    AdbServerBackendAcquirePreexisting,
-    AdbServerBackendAcquireAchieved,
+    AdbServerBackendAcquireError,
+    AdbServerBackendBase,
 )
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
 
@@ -30,33 +25,6 @@ _Sleeper = Callable[[float], None]
 _PopenFactory = Callable[..., subprocess.Popen[bytes]]
 _Resolver = Callable[..., list[tuple[object, ...]]]
 _SocketFactory = Callable[[int, int, int], socket.socket]
-
-
-class _AdbServerBackendEndpointMismatchError(RuntimeError):
-    """Ownership error for a release endpoint different from the backend-owned endpoint."""
-
-
-def _require_owned_release_endpoint(
-    owned: AdbServerEndpoint,
-    requested: AdbServerEndpoint,
-) -> None:
-    """Reject release of an endpoint other than the exact backend-owned endpoint."""
-
-    if not isinstance(owned, TcpAddress):
-        raise TypeError("owned must be TcpAddress")
-    if not isinstance(requested, TcpAddress):
-        raise TypeError("requested must be TcpAddress")
-    if owned != requested:
-        raise _AdbServerBackendEndpointMismatchError(
-            "requested endpoint does not identify the backend-owned ADB server endpoint"
-        )
-
-
-class _AdbServerBackendOperation(str, Enum):
-    """One mutually exclusive subprocess-backend implementation operation."""
-
-    ACQUIRE = "acquire"
-    RELEASE = "release"
 
 
 class _ServerStatusReader(Protocol):
@@ -76,10 +44,8 @@ class _AdbServerSubprocessStartupCleanupUnconfirmed(_AdbServerSubprocessStartErr
 
     def __init__(
         self,
-        attachment: _OwnedAdbServerProcess,
         termination_error: _AdbServerSubprocessTerminationUnconfirmed,
     ) -> None:
-        self.attachment = attachment
         self.termination_error = termination_error
         super().__init__(
             "ADB server child startup failed and child-process cleanup could not be confirmed"
@@ -109,11 +75,6 @@ class _OwnedAdbServerProcess:
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._lock = Lock()
         self._closed = False
-
-    @property
-    def active(self) -> bool:
-        with self._lock:
-            return not self._closed and self._process.poll() is None
 
     def close(self) -> None:
         with self._lock:
@@ -220,8 +181,7 @@ class _AdbServerSubprocessFactory:
                 attachment.close()
             except _AdbServerSubprocessTerminationUnconfirmed as termination_error:
                 raise _AdbServerSubprocessStartupCleanupUnconfirmed(
-                    attachment,
-                    termination_error,
+                    termination_error
                 ) from termination_error
             raise
         return attachment
@@ -344,8 +304,9 @@ class _AdbServerSubprocessFactory:
                 )
             self._sleep(min(self.probe_interval_seconds, remaining))
 
-class SubprocessAdbServerBackend:
-    """Own foreground ADB server attachment acquisition and process cleanup convergence."""
+
+class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
+    """Own foreground ADB server process backing through the shared backend lifecycle base."""
 
     def __init__(
         self,
@@ -367,118 +328,35 @@ class SubprocessAdbServerBackend:
             raise TypeError("_factory must provide create()")
 
         self._factory = _factory
-        self._operation_state_lock = Lock()
-        self._operation_condition = Condition(self._operation_state_lock)
-        self._active_operation: _AdbServerBackendOperation | None = None
-        self._attachment: _OwnedAdbServerProcess | None = None
-        self._attachment_usable = False
+        super().__init__()
 
-    def _begin_operation(
+    def _obtain_backing(
         self,
-        operation: _AdbServerBackendOperation,
-    ) -> AdbServerBackendAcquireInProgress | AdbServerBackendAcquireBlocked | None:
-        with self._operation_condition:
-            active_operation = self._active_operation
-            if active_operation is operation:
-                return AdbServerBackendAcquireInProgress(
-                    f"ADB server backend {operation.value} is already in progress"
-                )
-            if active_operation is not None:
-                return AdbServerBackendAcquireBlocked(
-                    f"ADB server backend {operation.value} cannot begin while "
-                    f"{active_operation.value} is in progress"
-                )
-            self._active_operation = operation
-            return None
+        endpoint: AdbServerEndpoint | None,
+    ) -> _OwnedAdbServerProcess:
+        try:
+            return self._factory.create(endpoint)
+        except _AdbServerSubprocessStartupCleanupUnconfirmed as exc:
+            raise AdbServerBackendAcquireError(
+                "ADB subprocess backend acquire failed and child-process cleanup "
+                "could not be completed"
+            ) from exc
+        except _AdbServerSubprocessStartError as exc:
+            raise AdbServerBackendAcquireError(str(exc)) from exc
 
-    def _end_operation(self, operation: _AdbServerBackendOperation) -> None:
-        with self._operation_condition:
-            if self._active_operation is not operation:
-                raise RuntimeError("ADB server backend operation state is inconsistent")
-            self._active_operation = None
-            self._operation_condition.notify_all()
+    def _relinquish_backing(self, backing: _OwnedAdbServerProcess) -> None:
+        try:
+            backing.close()
+        except _AdbServerSubprocessTerminationUnconfirmed:
+            # Relinquishment already linearized in the base. Native cleanup is intentionally not
+            # represented as a second logical backing state.
+            return
 
-    def acquire(
+    def _backing_endpoint(
         self,
-        endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbServerBackendAcquireResult:
-        if endpoint is not None and not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress or None")
-
-        operation = _AdbServerBackendOperation.ACQUIRE
-        unavailable = self._begin_operation(operation)
-        if unavailable is not None:
-            return unavailable
-
-        try:
-            attachment = self._attachment
-            if attachment is not None:
-                if not attachment.active:
-                    # A prior unconfirmed cleanup can become provably complete later.  Once the
-                    # child is observed exited, the stale implementation attachment owns no resource.
-                    self._attachment = None
-                    self._attachment_usable = False
-                elif not self._attachment_usable:
-                    return AdbServerBackendAcquireBlocked(
-                        "a prior ADB server backend cleanup is still converging"
-                    )
-                elif endpoint is None or attachment.endpoint == endpoint:
-                    return AdbServerBackendAcquirePreexisting(attachment.endpoint)
-                else:
-                    return AdbServerBackendAcquireBlocked(
-                        "a different ADB server backend attachment is already staged"
-                    )
-
-            try:
-                attachment = self._factory.create(endpoint)
-            except _AdbServerSubprocessStartupCleanupUnconfirmed as exc:
-                self._attachment = exc.attachment
-                self._attachment_usable = False
-                return AdbServerBackendAcquireFailed(
-                    "ADB subprocess backend acquire failed and child-process cleanup "
-                    "could not be completed"
-                )
-            except _AdbServerSubprocessStartError as exc:
-                return AdbServerBackendAcquireFailed(str(exc))
-
-            self._attachment = attachment
-            self._attachment_usable = True
-            return AdbServerBackendAcquireAchieved(attachment.endpoint)
-        finally:
-            self._end_operation(operation)
-
-    def release(self, endpoint: AdbServerEndpoint) -> None:
-        if not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
-
-        operation = _AdbServerBackendOperation.RELEASE
-        # Release is a relinquishment command, not an observable lifecycle result. Wait until any
-        # in-flight backend operation has handed ownership back to the implementation, then accept
-        # responsibility for converging the requested attachment to physical termination.
-        with self._operation_condition:
-            while self._active_operation is not None:
-                self._operation_condition.wait()
-            self._active_operation = operation
-
-        try:
-            attachment = self._attachment
-            if attachment is None:
-                return
-            _require_owned_release_endpoint(attachment.endpoint, endpoint)
-
-            # From this point the attachment must never satisfy a future acquire, even if process
-            # termination cannot yet be confirmed.
-            self._attachment_usable = False
-            try:
-                attachment.close()
-            except _AdbServerSubprocessTerminationUnconfirmed:
-                # Keep implementation ownership until a later acquire observes the child exited.
-                # Runtime retirement is already complete and does not observe this convergence.
-                return
-
-            self._attachment = None
-        finally:
-            self._end_operation(operation)
+        backing: _OwnedAdbServerProcess,
+    ) -> AdbServerEndpoint:
+        return backing.endpoint
 
 
 __all__ = ["SubprocessAdbServerBackend"]
