@@ -182,7 +182,6 @@ class AdbServerStateWriter(Protocol):
     def activate(
         self,
         candidate: AdbServerCandidate,
-        expected: AdbServerState,
     ) -> AdbServerActivationResult: ...
 
     def deactivate(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult: ...
@@ -236,20 +235,19 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
     def activate(
         self,
         candidate: AdbServerCandidate,
-        expected: AdbServerState,
     ) -> AdbServerActivationResult:
-        """Make ``candidate`` authoritative iff ``expected`` is current and inactive.
+        """Make ``candidate`` authoritative iff its expected state is current and inactive.
 
-        Identity is materialized before this boundary. This store only arbitrates authority and
-        projects the accepted candidate into immutable authoritative state.
+        Identity and the pre-acquisition state fence are materialized before this boundary. This
+        store only arbitrates authority and projects the accepted candidate into immutable
+        authoritative state.
         """
 
         if not isinstance(candidate, AdbServerCandidate):
             raise TypeError("candidate must be AdbServerCandidate")
-        if not isinstance(expected, AdbServerState):
-            raise TypeError("expected must be AdbServerState")
+        expected = candidate.expected_state
         if expected.active:
-            raise ValueError("expected server state must be inactive")
+            raise ValueError("candidate expected state must be inactive")
 
         with self._lock:
             current = self._state

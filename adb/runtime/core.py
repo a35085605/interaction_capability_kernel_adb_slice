@@ -5,6 +5,7 @@ from threading import RLock
 
 from adb.runtime.managed import AdbManagedRuntime
 from networking import TcpAddress
+from adb.server.candidate import AdbServerCandidateFactory
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentityIssuer
 from adb.server.lifecycle.backend import (
@@ -156,7 +157,9 @@ class AdbRuntime(AdbManagedRuntime):
         super().__init__(state.server)
         self._state = state
         self._authority_lock = RLock()
-        self._server_identity_issuer = AdbServerIdentityIssuer(after=state.server.identity)
+        self._server_candidate_factory = AdbServerCandidateFactory(
+            AdbServerIdentityIssuer(after=state.server.identity)
+        )
         self._transport_list_identity_issuer = AdbTransportListIdentityIssuer(
             after=state.transport_list.identity
         )
@@ -164,7 +167,7 @@ class AdbRuntime(AdbManagedRuntime):
             state.server,
             backend=server_backend,
             endpoint_constraint=server_endpoint_constraint,
-            identity_issuer=self._server_identity_issuer,
+            candidate_factory=self._server_candidate_factory,
             publisher=event_bus,
             authority_lock=self._authority_lock,
         )
