@@ -138,7 +138,9 @@ class AdbRuntimeBootstrap:
         watch_transports: bool = True,
         configured_transports: bool = True,
     ) -> AdbRuntime:
-        """Build a runtime with server recovery and optional transport automation."""
+        """Build a managed runtime with configurable server recovery and optional
+        transport automation.
+        """
 
         if not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus")

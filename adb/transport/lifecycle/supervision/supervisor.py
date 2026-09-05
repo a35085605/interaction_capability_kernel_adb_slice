@@ -246,7 +246,9 @@ class AdbConfiguredTransportSupervisor:
         self,
         configuration: AdbConfiguredTransport | AdbDeviceSerial,
     ) -> bool:
-        """Remove one registration and wait for any active recovery attempt."""
+        """Remove one registration and join its active recovery worker unless
+        called from that worker.
+        """
 
         if not isinstance(configuration, (AdbConfiguredTransport, AdbDeviceSerial)):
             raise TypeError("configuration must be AdbConfiguredTransport or AdbDeviceSerial")
@@ -272,7 +274,9 @@ class AdbConfiguredTransportSupervisor:
             return None if registration is None else registration.projection
 
     def close(self) -> None:
-        """Stop supervision, drop registrations, and join active recovery workers."""
+        """Stop supervision, drop registrations, and join recovery workers other
+        than the caller.
+        """
 
         with self._lock:
             if self._closed:

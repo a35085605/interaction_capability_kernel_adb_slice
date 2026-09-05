@@ -111,7 +111,7 @@ class AdbTransportListWatchController(Protocol):
         ...
 
     def stop(self) -> None:
-        """Stop the watch and return after its worker has terminated."""
+        """Stop the watch and join its worker unless called by that worker."""
         ...
 
 
@@ -268,7 +268,7 @@ class ThreadedAdbTransportListWatchController:
             self._closed = True
 
     def stop(self) -> None:
-        """Stop the watch and return after its worker has terminated."""
+        """Stop the watch and join its worker unless called by that worker."""
 
         with self._lock:
             watcher = self._active_watcher

@@ -274,7 +274,9 @@ class AdbTransportListWatchSupervisor:
                 raise
 
     def close(self) -> None:
-        """Stop watch supervision and join in-flight startup attempts."""
+        """Stop watch supervision and join in-flight startup workers other than
+        the caller.
+        """
 
         with self._lock:
             if self._closed:

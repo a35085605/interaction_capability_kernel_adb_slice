@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from adb.errors import AdbTransportAmbiguousError
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.transport.model import AdbTransport
@@ -29,7 +30,10 @@ def find_transport(
     transport_list: AdbTransportList,
     selector: AdbTransportSelector,
 ) -> AdbTransport | None:
-    """Select a transport from a transport list."""
+    """Select at most one transport from an already-observed transport list.
+
+    Raise ``AdbTransportAmbiguousError`` when the selector matches multiple entries.
+    """
 
     if not isinstance(transport_list, AdbTransportList):
         raise TypeError("transport_list must be AdbTransportList")
@@ -49,7 +53,9 @@ def find_transport(
         raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")
 
     if len(matches) > 1:
-        raise ValueError("ADB transport selector matched multiple transports")
+        raise AdbTransportAmbiguousError(
+            "ADB transport selector matched more than one transport"
+        )
     return matches[0] if matches else None
 
 

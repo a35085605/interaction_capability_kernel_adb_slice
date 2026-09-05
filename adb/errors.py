@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 class AdbError(RuntimeError):
-    """Base error for low-level ADB protocol and service failures."""
+    """Base error for ADB capability, protocol, and service failures."""
 
 
 class AdbServerConnectionError(AdbError):
@@ -26,7 +26,7 @@ class AdbServiceError(AdbError):
         super().__init__(f"ADB service {service!r} failed: {detail}")
 
 
-class AdbTransportSelectionError(AdbServiceError):
+class AdbTransportSelectionError(AdbError):
     """Base error for deterministic transport selection failures."""
 
 

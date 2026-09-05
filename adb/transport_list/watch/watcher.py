@@ -29,7 +29,11 @@ class AdbTransportListWatcher(Protocol):
         ...
 
     def open(self) -> AdbTransportListWatchSession | None:
-        """Establish one watch session and synchronously obtain its initial complete list."""
+        """Attempt to establish one watch session and synchronously obtain its
+        initial complete list.
+
+        Return ``None`` when watcher closure cancels startup.
+        """
         ...
 
     def close(self) -> None:

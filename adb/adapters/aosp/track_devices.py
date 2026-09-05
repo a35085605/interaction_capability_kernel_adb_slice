@@ -152,7 +152,11 @@ class SmartSocketAdbTransportListWatcher:
                 pass
 
     def open(self) -> SmartSocketAdbTransportListWatch | None:
-        """Establish one watch and synchronously read its initial complete transport list."""
+        """Attempt to establish one watch and synchronously read its initial
+        complete list.
+
+        Return ``None`` when watcher closure cancels startup.
+        """
 
         if not self._acquire_watch():
             return None

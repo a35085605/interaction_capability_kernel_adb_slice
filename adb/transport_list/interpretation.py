@@ -20,7 +20,7 @@ def classify_observed_transport(
     configuration: AdbConfiguredTransport,
     transport: AdbTransport,
 ) -> AdbObservedTransportCompatibility:
-    """Classify an observed transport as matched, unspecified, or unrecognized."""
+    """Classify an observed transport as matched, mismatched, or unspecified."""
 
     from adb.transport.configuration import AdbConfiguredTransport
     from adb.transport.model import AdbTransport
