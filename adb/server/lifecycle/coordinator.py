@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import RLock
-from typing import TypeAlias
+from typing import Protocol, TypeAlias, runtime_checkable
 
 from eventing import EventPublisher
 
@@ -26,11 +26,21 @@ from adb.server.state import (
     AdbServerDeactivationResult,
     AdbServerDeactivationStateConflict,
     AdbServerState,
-    AdbServerStateStore,
+    AdbServerStateView,
+    AdbServerStateWriter,
 )
 
 
 _RLockType = type(RLock())
+
+
+@runtime_checkable
+class _AdbServerStateAccess(
+    AdbServerStateView,
+    AdbServerStateWriter,
+    Protocol,
+):
+    """Read and commit authoritative server state."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,15 +90,17 @@ class AdbServerLifecycleCoordinator:
 
     def __init__(
         self,
-        state: AdbServerStateStore,
+        state: _AdbServerStateAccess,
         *,
         backend: AdbServerBackend,
         endpoint_constraint: AdbServerEndpoint | None,
         publisher: EventPublisher | None = None,
         authority_lock: _RLockType | None = None,
     ) -> None:
-        if not isinstance(state, AdbServerStateStore):
-            raise TypeError("state must be AdbServerStateStore")
+        if not isinstance(state, _AdbServerStateAccess):
+            raise TypeError(
+                "state must satisfy AdbServerStateView and AdbServerStateWriter"
+            )
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("backend must satisfy AdbServerBackend")
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
@@ -116,7 +128,7 @@ class AdbServerLifecycleCoordinator:
             endpoint_constraint = self._endpoint_constraint
             t0 = self._state.snapshot()
             if t0.active:
-                server = t0.server
+                server = t0.current_identity
                 endpoint = t0.endpoint
                 assert server is not None
                 assert endpoint is not None
@@ -130,7 +142,7 @@ class AdbServerLifecycleCoordinator:
             with self._authority_lock:
                 activation = self._commit_activation(
                     acquisition.endpoint,
-                    expected=t0.last_identity,
+                    expected=t0.identity,
                 )
         except BaseException:
             self._rollback_acquisition(acquisition)
@@ -207,7 +219,7 @@ class AdbServerLifecycleCoordinator:
         with self._authority_lock:
             t0 = self._state.snapshot()
             if expected_server is None:
-                server = t0.server
+                server = t0.current_identity
                 if server is None:
                     return AdbServerAlreadyInactive(t0)
             else:

@@ -63,7 +63,7 @@ class AdbManagedRuntime:
     def server(self) -> AdbServerIdentity | None:
         """Authoritative current ADB server lifetime for this runtime."""
 
-        return self._server_state.current
+        return self._server_state.current_identity
 
     @property
     def server_state(self) -> AdbServerStateView:

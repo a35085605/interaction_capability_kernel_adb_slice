@@ -85,7 +85,7 @@ class AdbTransportListWatchSupervisor:
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
         initial_state = server_state.snapshot()
-        if initial_state.server != server or initial_state.endpoint != endpoint:
+        if initial_state.current_identity != server or initial_state.endpoint != endpoint:
             raise ValueError("server_state current server and endpoint must match")
         if transport_list_observation_coordinator is None:
             if transport_list_state is None:
@@ -160,7 +160,7 @@ class AdbTransportListWatchSupervisor:
     def server(self) -> AdbServerIdentity | None:
         """Current server lifetime from the runtime authoritative state."""
 
-        return self._server_state.current
+        return self._server_state.current_identity
 
     @property
     def server_state(self) -> AdbServerStateView:
@@ -293,7 +293,7 @@ class AdbTransportListWatchSupervisor:
                 or not self._watch_requested
                 or controller is None
                 or event.server != controller.server
-                or self._server_state.current != controller.server
+                or self._server_state.current_identity != controller.server
             ):
                 return
             self._watch_active = True
@@ -310,7 +310,7 @@ class AdbTransportListWatchSupervisor:
             if isinstance(event.failure, AdbTransportListWatchServerConnectionFailure):
                 request_server_reconciliation = (
                     self._watch_requested
-                    and self._server_state.current == failed_server
+                    and self._server_state.current_identity == failed_server
                 )
         assert controller is not None
         controller.stop()
@@ -404,7 +404,7 @@ class AdbTransportListWatchSupervisor:
                 started
                 and not self._closed
                 and self._watch_requested
-                and self._server_state.current == controller.server
+                and self._server_state.current_identity == controller.server
                 and controller.active
             )
             if keep_controller:
@@ -416,7 +416,7 @@ class AdbTransportListWatchSupervisor:
                     reconciliation_server = controller.server
                     request_server_reconciliation = (
                         self._watch_requested
-                        and self._server_state.current == reconciliation_server
+                        and self._server_state.current_identity == reconciliation_server
                     )
 
         if controller_to_stop is not None:

@@ -256,7 +256,7 @@ class AdbRuntime(AdbManagedRuntime):
     def _bootstrap_initial_server(self) -> None:
         """Provision the initial server through the runtime lifecycle authority."""
 
-        if self._state.server.current is not None:
+        if self._state.server.current_identity is not None:
             raise ValueError("bootstrap server provisioning requires empty runtime server state")
 
         outcome = classify_provision_result(self.provision_server())

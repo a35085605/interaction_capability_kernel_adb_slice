@@ -87,8 +87,8 @@ class AdbConfiguredTransportSupervisor:
             raise TypeError("tcp_ensurer must satisfy AdbTcpTransportEnsurer or be None")
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
-        if server_state.current != server:
-            raise ValueError("server_state current server must match server")
+        if server_state.current_identity != server:
+            raise ValueError("server_state current identity must match server")
         if not isinstance(transport_list_state, AdbTransportListStateView):
             raise TypeError("transport_list_state must satisfy AdbTransportListStateView")
         self._server_state = server_state
@@ -113,7 +113,7 @@ class AdbConfiguredTransportSupervisor:
     def server(self) -> AdbServerIdentity | None:
         """Current server lifetime from the runtime authoritative state."""
 
-        return self._server_state.current
+        return self._server_state.current_identity
 
     @property
     def server_state(self) -> AdbServerStateView:
@@ -140,7 +140,7 @@ class AdbConfiguredTransportSupervisor:
             self._subscriptions = (
                 self._bus.subscribe(AdbTransportListObserved, self._on_transport_list_observed),
             )
-            server = self._server_state.current
+            server = self._server_state.current_identity
             if server != self._projection_server:
                 self._projection_server = server
                 self._reset_server_lifetime_locked()
@@ -153,7 +153,7 @@ class AdbConfiguredTransportSupervisor:
         with self._lock:
             if self._closed:
                 raise RuntimeError("configured transport supervisor is closed")
-            server = self._server_state.current
+            server = self._server_state.current_identity
             if server == self._projection_server:
                 return
             self._projection_server = server
@@ -209,7 +209,7 @@ class AdbConfiguredTransportSupervisor:
             transport_list_state = self._transport_list_state.snapshot()
             transport_list = transport_list_state.current
             transport_list_identity = transport_list_state.current_identity
-            server = self._server_state.current
+            server = self._server_state.current_identity
             if (
                 transport_list is not None
                 and transport_list_identity is not None
@@ -283,7 +283,7 @@ class AdbConfiguredTransportSupervisor:
         publications: list[object] = []
         recovery_instructions: list[AdbConfiguredTransportRecoveryInstruction] = []
         with self._lock:
-            server = self._server_state.current
+            server = self._server_state.current_identity
             if (
                 self._closed
                 or server is None
@@ -438,7 +438,7 @@ class AdbConfiguredTransportSupervisor:
                 result_is_current = (
                     registration is not None
                     and not self._closed
-                    and self._server_state.current == server
+                    and self._server_state.current_identity == server
                     and self._projection_server == server
                     and registration.active_recovery_token is recovery_token
                 )

@@ -149,7 +149,7 @@ class AdbTransportListCoordinator:
             return self._prepare_server_locked(server)
 
     def _prepare_server_locked(self, server: AdbServerIdentity) -> bool:
-        if self._server_state.current != server:
+        if self._server_state.current_identity != server:
             return False
         state = self._transport_list_state.snapshot()
         if state.current is None or self._committed_server == server:
@@ -179,7 +179,7 @@ class AdbTransportListCoordinator:
             raise TypeError("expected must be AdbTransportListState or None")
 
         with self._lock:
-            current_server = self._server_state.current
+            current_server = self._server_state.current_identity
             if current_server != server:
                 return AdbTransportListObservationServerConflict(
                     server=server,

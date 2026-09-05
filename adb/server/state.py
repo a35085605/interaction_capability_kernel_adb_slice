@@ -25,15 +25,23 @@ class AdbServerState:
     """
 
     endpoint: AdbServerEndpoint | None = None
-    last_identity: AdbServerIdentity | None = None
+    identity: AdbServerIdentity | None = None
     status: AdbServerStateStatus = AdbServerStateStatus.INACTIVE
 
     def __init__(
         self,
         endpoint: AdbServerEndpoint | None = None,
-        last_identity: AdbServerIdentity | None = None,
+        identity: AdbServerIdentity | None = None,
         status: AdbServerStateStatus | None = None,
+        *,
+        last_identity: AdbServerIdentity | None = None,
     ) -> None:
+        if last_identity is not None:
+            if not isinstance(last_identity, AdbServerIdentity):
+                raise TypeError("last_identity must be AdbServerIdentity or None")
+            if identity is not None and identity != last_identity:
+                raise ValueError("identity and last_identity must match when both are provided")
+            identity = last_identity
         if status is None:
             status = (
                 AdbServerStateStatus.ACTIVE
@@ -41,25 +49,23 @@ class AdbServerState:
                 else AdbServerStateStatus.INACTIVE
             )
         object.__setattr__(self, "endpoint", endpoint)
-        object.__setattr__(self, "last_identity", last_identity)
+        object.__setattr__(self, "identity", identity)
         object.__setattr__(self, "status", status)
         self.__post_init__()
 
     def __post_init__(self) -> None:
         if self.endpoint is not None and not isinstance(self.endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress or None")
-        if self.last_identity is not None and not isinstance(
-            self.last_identity, AdbServerIdentity
+        if self.identity is not None and not isinstance(
+            self.identity, AdbServerIdentity
         ):
-            raise TypeError("last_identity must be AdbServerIdentity or None")
+            raise TypeError("identity must be AdbServerIdentity or None")
         if not isinstance(self.status, AdbServerStateStatus):
             raise TypeError("status must be AdbServerStateStatus")
-        if self.endpoint is not None and self.last_identity is None:
-            raise ValueError("server state with an endpoint must have a last_identity")
-        if self.status is AdbServerStateStatus.ACTIVE and (
-            self.endpoint is None or self.last_identity is None
-        ):
-            raise ValueError("active server state must have an endpoint and last_identity")
+        if (self.endpoint is None) != (self.identity is None):
+            raise ValueError("server endpoint and identity must be present together")
+        if self.status is AdbServerStateStatus.ACTIVE and self.endpoint is None:
+            raise ValueError("active server state must have an endpoint and identity")
 
     @property
     def active(self) -> bool:
@@ -68,10 +74,22 @@ class AdbServerState:
         return self.status is AdbServerStateStatus.ACTIVE
 
     @property
+    def current_identity(self) -> AdbServerIdentity | None:
+        """Return the current authoritative server identity, if visible."""
+
+        return self.identity if self.active else None
+
+    @property
+    def last_identity(self) -> AdbServerIdentity | None:
+        """Compatibility alias for the retained identity watermark."""
+
+        return self.identity
+
+    @property
     def server(self) -> AdbServerIdentity | None:
         """Return the active authoritative server identity, if present."""
 
-        return self.last_identity if self.active else None
+        return self.current_identity
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +108,7 @@ class AdbServerActivated:
     def server(self) -> AdbServerIdentity:
         """Return the server identity made authoritative by this activation."""
 
-        server = self.state.server
+        server = self.state.current_identity
         assert server is not None
         return server
 
@@ -122,16 +140,16 @@ class AdbServerDeactivated:
             raise TypeError("state must be AdbServerState")
         if self.state.active:
             raise ValueError("deactivated result requires inactive server state")
-        if self.state.endpoint is None or self.state.last_identity is None:
+        if self.state.endpoint is None or self.state.identity is None:
             raise ValueError(
-                "deactivated result requires preserved endpoint and last_identity metadata"
+                "deactivated result requires preserved endpoint and identity metadata"
             )
 
     @property
     def server(self) -> AdbServerIdentity:
         """Return the server identity retired by this deactivation."""
 
-        server = self.state.last_identity
+        server = self.state.identity
         assert server is not None
         return server
 
@@ -160,7 +178,7 @@ class AdbServerStateView(Protocol):
     def endpoint(self) -> AdbServerEndpoint | None: ...
 
     @property
-    def last_identity(self) -> AdbServerIdentity | None: ...
+    def identity(self) -> AdbServerIdentity | None: ...
 
     @property
     def status(self) -> AdbServerStateStatus: ...
@@ -169,7 +187,7 @@ class AdbServerStateView(Protocol):
     def active(self) -> bool: ...
 
     @property
-    def current(self) -> AdbServerIdentity | None: ...
+    def current_identity(self) -> AdbServerIdentity | None: ...
 
     def snapshot(self) -> AdbServerState: ...
 
@@ -200,7 +218,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
             raise TypeError("initial must be AdbServerState or None")
         self._lock = Lock()
         self._state = state
-        self._identity_issuer = AdbServerIdentityIssuer(after=state.last_identity)
+        self._identity_issuer = AdbServerIdentityIssuer(after=state.identity)
 
     @property
     def state(self) -> AdbServerState:
@@ -214,8 +232,8 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         return self.state.endpoint
 
     @property
-    def last_identity(self) -> AdbServerIdentity | None:
-        return self.state.last_identity
+    def identity(self) -> AdbServerIdentity | None:
+        return self.state.identity
 
     @property
     def status(self) -> AdbServerStateStatus:
@@ -226,8 +244,20 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         return self.state.active
 
     @property
+    def current_identity(self) -> AdbServerIdentity | None:
+        return self.state.current_identity
+
+    @property
+    def last_identity(self) -> AdbServerIdentity | None:
+        """Compatibility alias for :attr:`identity`."""
+
+        return self.identity
+
+    @property
     def current(self) -> AdbServerIdentity | None:
-        return self.state.server
+        """Compatibility alias for :attr:`current_identity`."""
+
+        return self.current_identity
 
     def snapshot(self) -> AdbServerState:
         """Atomically capture the current immutable authoritative state value."""
@@ -253,7 +283,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
 
         with self._lock:
             current = self._state
-            if current.active or current.last_identity != expected:
+            if current.active or current.identity != expected:
                 return AdbServerActivationStateConflict(current)
 
             identity = self._identity_issuer.issue()
@@ -273,11 +303,11 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
 
         with self._lock:
             current = self._state
-            if current.server != expected:
+            if current.current_identity != expected:
                 return AdbServerDeactivationStateConflict(current)
             next_state = AdbServerState(
                 endpoint=current.endpoint,
-                last_identity=current.last_identity,
+                identity=current.identity,
                 status=AdbServerStateStatus.INACTIVE,
             )
             self._state = next_state
