@@ -236,18 +236,18 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         self,
         candidate: AdbServerCandidate,
     ) -> AdbServerActivationResult:
-        """Make ``candidate`` authoritative iff its expected state is current and inactive.
+        """Make ``candidate`` authoritative iff its base state is current and inactive.
 
-        Identity and the pre-acquisition state fence are materialized before this boundary. This
-        store only arbitrates authority and projects the accepted candidate into immutable
-        authoritative state.
+        Identity and the candidate authority basis are materialized before this boundary. This
+        store interprets that basis as the expected current state, arbitrates authority, and
+        projects the accepted candidate into immutable authoritative state.
         """
 
         if not isinstance(candidate, AdbServerCandidate):
             raise TypeError("candidate must be AdbServerCandidate")
-        expected = candidate.expected_state
+        expected = candidate.base_state
         if expected.active:
-            raise ValueError("candidate expected state must be inactive")
+            raise ValueError("candidate base state must be inactive")
 
         with self._lock:
             current = self._state

@@ -17,7 +17,7 @@ class AdbServerCandidate:
 
     identity: AdbServerIdentity
     endpoint: AdbServerEndpoint
-    expected_state: AdbServerState
+    base_state: AdbServerState
 
     def __post_init__(self) -> None:
         if not isinstance(self.identity, AdbServerIdentity):
@@ -26,8 +26,8 @@ class AdbServerCandidate:
             raise TypeError("endpoint must be TcpAddress")
         from adb.server.state import AdbServerState
 
-        if not isinstance(self.expected_state, AdbServerState):
-            raise TypeError("expected_state must be AdbServerState")
+        if not isinstance(self.base_state, AdbServerState):
+            raise TypeError("base_state must be AdbServerState")
 
 
 class AdbServerCandidateFactory:
@@ -43,20 +43,20 @@ class AdbServerCandidateFactory:
     def create(
         self,
         endpoint: AdbServerEndpoint,
-        expected_state: AdbServerState,
+        base_state: AdbServerState,
     ) -> AdbServerCandidate:
-        """Create one candidate from a usable endpoint and its pre-acquisition state fence."""
+        """Create one candidate from a usable endpoint and the authority state it was based on."""
 
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
         from adb.server.state import AdbServerState
 
-        if not isinstance(expected_state, AdbServerState):
-            raise TypeError("expected_state must be AdbServerState")
+        if not isinstance(base_state, AdbServerState):
+            raise TypeError("base_state must be AdbServerState")
         return AdbServerCandidate(
             identity=self._identity_issuer.issue(),
             endpoint=endpoint,
-            expected_state=expected_state,
+            base_state=base_state,
         )
 
 
