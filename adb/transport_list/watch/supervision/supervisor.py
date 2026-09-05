@@ -11,7 +11,6 @@ from adb.server.state import AdbServerStateView
 from adb.transport_list.watch.supervision.policy import AdbTransportListWatchSupervisionPolicy
 from adb.server.signal import AdbServerReconciliationRequested
 from adb.transport_list.coordinator import AdbTransportListCoordinator
-from adb.transport_list.identity import AdbTransportListIdentityIssuer
 from adb.transport_list.state import AdbTransportListStateStore
 from adb.transport_list.watch.controller import (
     AdbTransportListWatchController,
@@ -66,7 +65,6 @@ class AdbTransportListWatchSupervisor:
         policy: AdbTransportListWatchSupervisionPolicy,
         *,
         server_state: AdbServerStateView,
-        transport_list_identity_issuer: AdbTransportListIdentityIssuer | None = None,
         transport_list_state: AdbTransportListStateStore | None = None,
         transport_list_observation_coordinator: AdbTransportListCoordinator
         | None = None,
@@ -90,13 +88,6 @@ class AdbTransportListWatchSupervisor:
         if initial_state.server != server or initial_state.endpoint != endpoint:
             raise ValueError("server_state current server and endpoint must match")
         if transport_list_observation_coordinator is None:
-            if not isinstance(
-                transport_list_identity_issuer, AdbTransportListIdentityIssuer
-            ):
-                raise TypeError(
-                    "transport_list_identity_issuer must be "
-                    "AdbTransportListIdentityIssuer when no observation coordinator is provided"
-                )
             if transport_list_state is None:
                 transport_list_state = AdbTransportListStateStore()
             if not isinstance(transport_list_state, AdbTransportListStateStore):
@@ -106,7 +97,6 @@ class AdbTransportListWatchSupervisor:
             transport_list_observation_coordinator = AdbTransportListCoordinator(
                 transport_list_state,
                 server_state,
-                transport_list_identity_issuer,
                 publisher=event_bus,
             )
         else:

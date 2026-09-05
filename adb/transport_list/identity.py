@@ -6,16 +6,16 @@ from adb.epoch import Epoch, EpochSequence
 
 
 class _AdbTransportListEpoch(Epoch):
-    """Internal ordinal backing one transport-list revision identity."""
+    """Internal ordinal backing one committed transport-list observation identity."""
 
     __slots__ = ()
 
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListIdentity:
-    """Runtime-scoped identity for a transport-list revision.
+    """Runtime-scoped identity for a committed transport-list observation.
 
-    Revision authority is tracked separately by transport-list state.
+    Observation authority is tracked separately by transport-list state.
     """
 
     _epoch: _AdbTransportListEpoch = field(repr=False)
@@ -40,7 +40,7 @@ class AdbTransportListIdentityIssuer:
         self._sequence = EpochSequence(_AdbTransportListEpoch, initial_value=initial_value)
 
     def issue(self) -> AdbTransportListIdentity:
-        """Issue a fresh transport-list revision identity."""
+        """Issue a fresh transport-list observation identity."""
 
         return AdbTransportListIdentity(self._sequence.issue())
 

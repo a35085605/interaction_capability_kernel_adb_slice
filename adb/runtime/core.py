@@ -36,7 +36,6 @@ from adb.transport_list.coordinator import (
     AdbTransportListCoordinatedObservationResult,
     AdbTransportListCoordinator,
 )
-from adb.transport_list.identity import AdbTransportListIdentityIssuer
 from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.state import AdbTransportListStateView
 from adb.transport_list.watch.supervision.policy import (
@@ -162,9 +161,6 @@ class AdbRuntime(AdbManagedRuntime):
         super().__init__(state.server)
         self._state = state
         self._authority_lock = RLock()
-        self._transport_list_identity_issuer = AdbTransportListIdentityIssuer(
-            after=state.transport_list.identity
-        )
         self._server_lifecycle = AdbServerLifecycleCoordinator(
             state.server,
             backend=server_backend,
@@ -175,7 +171,6 @@ class AdbRuntime(AdbManagedRuntime):
         self._transport_list_coordinator = AdbTransportListCoordinator(
             state.transport_list,
             state.server,
-            self._transport_list_identity_issuer,
             publisher=event_bus,
             authority_lock=self._authority_lock,
         )
@@ -225,7 +220,7 @@ class AdbRuntime(AdbManagedRuntime):
         *,
         _watcher_factory: _TransportListWatcherFactory,
     ) -> AdbTransportListWatchSupervisor:
-        """Build the runtime-bound transport-list watch from runtime-owned identity authority."""
+        """Build the runtime-bound transport-list watch from runtime-owned state authority."""
 
         if not isinstance(policy, AdbTransportListWatchSupervisionPolicy):
             raise TypeError("policy must be AdbTransportListWatchSupervisionPolicy")

@@ -5,9 +5,11 @@ from enum import Enum
 from threading import Lock
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb.transport_list.identity import AdbTransportListIdentity
+from adb.transport_list.identity import (
+    AdbTransportListIdentity,
+    AdbTransportListIdentityIssuer,
+)
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.revision import AdbTransportListRevision
 
 
 class AdbTransportListStateStatus(str, Enum):
@@ -198,13 +200,13 @@ class AdbTransportListStateWriter(Protocol):
 
     def observe(
         self,
-        revision: AdbTransportListRevision,
+        transport_list: AdbTransportList,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult: ...
 
 
 class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStateWriter):
-    """Thread-safe authority for one runtime's immutable :class:`AdbTransportListState` value."""
+    """Thread-safe authority for transport-list state transitions and identity issuance."""
 
     def __init__(self, initial: AdbTransportListState | None = None) -> None:
         if initial is None:
@@ -215,6 +217,7 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
             raise TypeError("initial must be AdbTransportListState or None")
         self._lock = Lock()
         self._state = state
+        self._identity_issuer = AdbTransportListIdentityIssuer(after=state.identity)
 
     @property
     def state(self) -> AdbTransportListState:
@@ -270,16 +273,17 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
 
     def observe(
         self,
-        revision: AdbTransportListRevision,
+        transport_list: AdbTransportList,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult:
-        """Commit a materialized revision when ``expected`` is authoritative.
+        """Commit ``transport_list`` when ``expected`` is authoritative.
 
-        The store arbitrates authority and projects accepted revisions into immutable state.
+        A fresh identity is issued only after the state fence succeeds, immediately before the
+        accepted observation is committed.
         """
 
-        if not isinstance(revision, AdbTransportListRevision):
-            raise TypeError("revision must be AdbTransportListRevision")
+        if not isinstance(transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
         if not isinstance(expected, AdbTransportListState):
             raise TypeError("expected must be AdbTransportListState")
 
@@ -287,9 +291,10 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
             current = self._state
             if current != expected:
                 return AdbTransportListObservationStateConflict(current)
+            identity = self._identity_issuer.issue()
             next_state = AdbTransportListState(
-                transport_list=revision.transport_list,
-                identity=revision.identity,
+                transport_list=transport_list,
+                identity=identity,
                 status=AdbTransportListStateStatus.CURRENT,
             )
             self._state = next_state

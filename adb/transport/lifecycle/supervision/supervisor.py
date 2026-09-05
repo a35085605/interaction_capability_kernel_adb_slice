@@ -26,13 +26,10 @@ from adb.transport.configuration import (
     AdbUsbTransportConfiguration,
 )
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.revision import AdbTransportListRevision
 from adb.transport_list.state import (
     AdbTransportListObserved,
     AdbTransportListState,
-    AdbTransportListStateStore,
     AdbTransportListStateView,
-    AdbTransportListStateWriter,
 )
 from adb.transport.resolution import (
     AdbConfiguredTransportProjection,
@@ -77,7 +74,7 @@ class AdbConfiguredTransportSupervisor:
         tcp_ensurer: AdbTcpTransportEnsurer | None,
         *,
         server_state: AdbServerStateView,
-        transport_list_state: AdbTransportListStateView | None = None,
+        transport_list_state: AdbTransportListStateView,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
         if not isinstance(server, AdbServerIdentity):
@@ -92,24 +89,13 @@ class AdbConfiguredTransportSupervisor:
             raise TypeError("server_state must satisfy AdbServerStateView")
         if server_state.current != server:
             raise ValueError("server_state current server must match server")
-        owns_transport_list_state = transport_list_state is None
-        if transport_list_state is None:
-            transport_list_state = AdbTransportListStateStore()
         if not isinstance(transport_list_state, AdbTransportListStateView):
-            raise TypeError(
-                "transport_list_state must satisfy AdbTransportListStateView or be None"
-            )
+            raise TypeError("transport_list_state must satisfy AdbTransportListStateView")
         self._server_state = server_state
         self._projection_server: AdbServerIdentity | None = server
         self._bus = event_bus
         self._tcp_ensurer = tcp_ensurer
         self._transport_list_state = transport_list_state
-        self._transport_list_writer: AdbTransportListStateWriter | None = (
-            transport_list_state
-            if owns_transport_list_state
-            and isinstance(transport_list_state, AdbTransportListStateWriter)
-            else None
-        )
         self._thread_factory = _thread_factory
         self._lock = Lock()
         self._registrations: dict[
@@ -304,25 +290,11 @@ class AdbConfiguredTransportSupervisor:
                 or self._projection_server != server
             ):
                 return
-            writer = self._transport_list_writer
-            if writer is not None:
-                if not self._crosses_transport_list_fence_locked(event.state):
-                    return
-                expected = self._transport_list_state.snapshot()
-                result = writer.observe(
-                    AdbTransportListRevision(event.identity, event.transport_list),
-                    expected,
-                )
-                if not isinstance(result, AdbTransportListObserved):
-                    return
-                transport_list = result.transport_list
-                transport_list_identity = result.identity
-            else:
-                state = self._transport_list_state.snapshot()
-                if state != event.state or not self._crosses_transport_list_fence_locked(state):
-                    return
-                transport_list = event.transport_list
-                transport_list_identity = event.identity
+            state = self._transport_list_state.snapshot()
+            if state != event.state or not self._crosses_transport_list_fence_locked(state):
+                return
+            transport_list = event.transport_list
+            transport_list_identity = event.identity
             for registration in self._registrations.values():
                 publication, recovery_instruction = self._project_registration_locked(
                     registration,

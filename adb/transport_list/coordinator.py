@@ -7,10 +7,8 @@ from typing import Protocol, TypeAlias, runtime_checkable
 from adb.server.availability import AdbServerUnavailableError
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
-from adb.transport_list.identity import AdbTransportListIdentityIssuer
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.reader import AdbTransportListReader
-from adb.transport_list.revision import AdbTransportListRevision
 from adb.transport_list.state import (
     AdbTransportListInvalidated,
     AdbTransportListObservationResult,
@@ -66,15 +64,14 @@ AdbTransportListCoordinatedObservationResult: TypeAlias = (
 class AdbTransportListCoordinator:
     """Coordinate transport-list observations with runtime server authority.
 
-    Validates server provenance, fences competing observations, issues revision
-    identities, and commits accepted transport lists.
+    Validates server provenance and coordinates accepted observations with the authoritative
+    transport-list state store.
     """
 
     def __init__(
         self,
         transport_list_state: _AdbTransportListStateAccess,
         server_state: AdbServerStateView,
-        identity_issuer: AdbTransportListIdentityIssuer,
         *,
         publisher: EventPublisher | None = None,
         authority_lock: _RLockType | None = None,
@@ -86,15 +83,12 @@ class AdbTransportListCoordinator:
             )
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
-        if not isinstance(identity_issuer, AdbTransportListIdentityIssuer):
-            raise TypeError("identity_issuer must be AdbTransportListIdentityIssuer")
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
         if authority_lock is not None and not isinstance(authority_lock, _RLockType):
             raise TypeError("authority_lock must be a reentrant lock or None")
         self._transport_list_state = transport_list_state
         self._server_state = server_state
-        self._identity_issuer = identity_issuer
         self._publisher = publisher
         self._lock = RLock() if authority_lock is None else authority_lock
         self._committed_server: AdbServerIdentity | None = None
@@ -195,11 +189,7 @@ class AdbTransportListCoordinator:
             commit_expected = (
                 self._transport_list_state.snapshot() if expected is None else expected
             )
-            revision = AdbTransportListRevision(
-                identity=self._identity_issuer.issue(),
-                transport_list=transport_list,
-            )
-            result = self._transport_list_state.observe(revision, commit_expected)
+            result = self._transport_list_state.observe(transport_list, commit_expected)
             if result:
                 self._committed_server = server
 
