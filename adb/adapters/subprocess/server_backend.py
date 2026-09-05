@@ -19,7 +19,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
     AdbServerBackendAcquireResult,
-    AdbServerBackendAcquireAlreadySatisfied,
+    AdbServerBackendAcquirePreexisting,
     AdbServerBackendAcquireAchieved,
 )
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
@@ -423,7 +423,7 @@ class SubprocessAdbServerBackend:
                         "a prior ADB server backend cleanup is still converging"
                     )
                 elif endpoint is None or attachment.endpoint == endpoint:
-                    return AdbServerBackendAcquireAlreadySatisfied(attachment.endpoint)
+                    return AdbServerBackendAcquirePreexisting(attachment.endpoint)
                 else:
                     return AdbServerBackendAcquireBlocked(
                         "a different ADB server backend attachment is already staged"

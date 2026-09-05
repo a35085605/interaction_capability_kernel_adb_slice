@@ -46,11 +46,6 @@ class AdbServerBackendAcquirePreexisting:
             raise TypeError("endpoint must be TcpAddress")
 
 
-# Compatibility alias for callers using the former result name. New code should use
-# ``AdbServerBackendAcquirePreexisting`` so the result is not mistaken for acquisition success.
-AdbServerBackendAcquireAlreadySatisfied = AdbServerBackendAcquirePreexisting
-
-
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquireInProgress:
     """Backend acquisition work is already in progress.
@@ -126,6 +121,5 @@ __all__ = [
     "AdbServerBackendAcquireInProgress",
     "AdbServerBackendAcquireResult",
     "AdbServerBackendAcquirePreexisting",
-    "AdbServerBackendAcquireAlreadySatisfied",
     "AdbServerBackendAcquireAchieved",
 ]
