@@ -18,10 +18,9 @@ def _normalize_diagnostic(value: object) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquired:
-    """Evidence that this call newly established backend acquisition ownership.
+    """Evidence that this call acquired usable ADB server access.
 
-    The backend retains the implementation-defined handle; ``endpoint`` identifies the usable
-    ADB server access associated with that current acquisition.
+    ``endpoint`` identifies the access retained by the backend.
     """
 
     endpoint: AdbServerEndpoint
@@ -33,10 +32,7 @@ class AdbServerBackendAcquired:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAlreadyAcquired:
-    """Evidence that the backend already owned an acquisition when this call linearized.
-
-    This call establishes no new backend ownership.
-    """
+    """Evidence that usable ADB server access was already acquired."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,11 +65,10 @@ AdbServerBackendAcquireResult: TypeAlias = (
 
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Own at most one runtime-scoped acquisition of usable ADB server access.
+    """Manage a single runtime-scoped acquisition of usable ADB server access.
 
-    ``acquire`` establishes or reports backend ownership; ``release`` ends ownership of the
-    current acquisition. Calls may overlap, so each operation must be concurrency-safe and
-    independently linearizable.
+    ``acquire`` and ``release`` are concurrency-safe, independently linearizable
+    ownership transitions.
     """
 
     def acquire(
@@ -82,8 +77,7 @@ class AdbServerBackend(Protocol):
     ) -> AdbServerBackendAcquireResult:
         """Acquire usable ADB server access, optionally constrained to ``endpoint_constraint``.
 
-        ``AdbServerBackendAcquired`` means this call established the current ownership;
-        ``AdbServerBackendAlreadyAcquired`` means that ownership predates this call.
+        Returns whether this call acquired access or found an existing acquisition.
         """
         ...
 

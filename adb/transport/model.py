@@ -9,7 +9,7 @@ from adb.transport.identity import AdbDeviceSerial, AdbTransportId
 
 
 class AdbTransportState(str, Enum):
-    """Domain states that are meaningful to ADB transport consumers."""
+    """ADB transport states exposed to transport consumers."""
 
     CONNECTING = "connecting"
     AUTHORIZING = "authorizing"
@@ -27,9 +27,7 @@ class AdbTransportState(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbObservedTransportKind:
-    """Open domain value for an observed ADB transport kind, carrying a recognized type, an
-    unspecified representation, or a retained native code.
-    """
+    """Observed ADB transport kind with recognized, unspecified, or unrecognized evidence."""
 
     transport_type: AdbTransportType | None = None
     native_code: int | None = None
@@ -73,9 +71,7 @@ class AdbObservedTransportKind:
 
 @dataclass(frozen=True, slots=True)
 class AdbObservedTransportState:
-    """Open domain value for an observed ADB transport state, carrying a recognized state, an
-    unspecified representation, or a retained native code.
-    """
+    """Observed ADB transport state with recognized, unspecified, or unrecognized evidence."""
 
     transport_state: AdbTransportState | None = None
     native_code: int | None = None
@@ -119,9 +115,7 @@ class AdbObservedTransportState:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransport:
-    """Domain transport preserving protocol serial text, open kind/state evidence, and validated
-    positive server-local transport identity.
-    """
+    """ADB transport with serial, kind/state evidence, and optional server-local identity."""
 
     serial_text: str
     transport_kind: AdbObservedTransportKind

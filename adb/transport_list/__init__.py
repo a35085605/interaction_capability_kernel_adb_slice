@@ -3,7 +3,6 @@
 from adb.transport_list.coordinator import (
     AdbTransportListCoordinator,
     AdbTransportListCoordinatedObservationResult,
-    AdbTransportListObservationCoordinator,
     AdbTransportListObservationServerConflict,
 )
 from adb.transport_list.identity import (
@@ -48,7 +47,6 @@ __all__ = [
     "AdbTransportListInvalidationResult",
     "AdbTransportListInvalidationStateConflict",
     "AdbTransportListObservationResult",
-    "AdbTransportListObservationCoordinator",
     "AdbTransportListObservationServerConflict",
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",

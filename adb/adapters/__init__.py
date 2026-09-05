@@ -1,3 +1,3 @@
-"""Adapters translating between domain contracts and native protocols."""
+"""Adapters between ADB capabilities and protocol or platform implementations."""
 
 __all__: list[str] = []

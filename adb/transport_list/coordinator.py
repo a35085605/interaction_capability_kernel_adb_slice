@@ -64,11 +64,10 @@ AdbTransportListCoordinatedObservationResult: TypeAlias = (
 
 
 class AdbTransportListCoordinator:
-    """Coordinate authoritative transport-list evidence against runtime authority.
+    """Coordinate transport-list observations with runtime server authority.
 
-    Readers and watchers may produce transport-list evidence independently. This coordinator is the
-    shared domain authority boundary that validates server provenance, fences competing evidence,
-    issues revision identities, and commits accepted observations into transport-list state.
+    Validates server provenance, fences competing observations, issues revision
+    identities, and commits accepted transport lists.
     """
 
     def __init__(
@@ -116,11 +115,10 @@ class AdbTransportListCoordinator:
         self,
         reader: AdbTransportListReader,
     ) -> AdbTransportListCoordinatedObservationResult:
-        """Read and conditionally commit one authoritative transport-list refresh.
+        """Read and conditionally commit a transport-list refresh.
 
-        Server provenance and the transport-list state fence are captured before blocking I/O. If a
-        watch observation commits while the read is in flight, that newer observation wins and the
-        stale read returns state-conflict evidence instead of overwriting authoritative state.
+        The refresh keeps its pre-read server and state fences, so newer watch observations
+        retain authority over an in-flight read.
         """
 
         if not callable(getattr(reader, "read", None)):
@@ -146,11 +144,10 @@ class AdbTransportListCoordinator:
         return self.observe(server, transport_list, expected=expected)
 
     def prepare_server(self, server: AdbServerIdentity) -> bool:
-        """Prepare visibility for ``server``, invalidating evidence from another lifetime.
+        """Align transport-list visibility with ``server``.
 
-        Returns ``False`` when ``server`` is no longer authoritative. A successful call does not
-        require that a transport list already exists; it only guarantees that any visible current
-        list is either known to belong to ``server`` or has been invalidated before return.
+        On success, any visible transport list belongs to ``server`` and stale lifetime
+        evidence has been invalidated. Returns ``False`` when ``server`` has lost authority.
         """
 
         self._require_server(server)
@@ -175,11 +172,10 @@ class AdbTransportListCoordinator:
         *,
         expected: AdbTransportListState | None = None,
     ) -> AdbTransportListCoordinatedObservationResult:
-        """Commit one complete observation when server and transport-list fences still hold.
+        """Commit a complete observation while its server and state fences remain valid.
 
-        ``expected`` is optional for stream observations that should linearize at commit time. A
-        read-based refresh passes the state captured before its blocking I/O so a watch update
-        committed during that read wins instead of being overwritten by stale read evidence.
+        ``expected`` preserves the state basis of a one-shot refresh; stream observations
+        may omit it to linearize against state at commit time.
         """
 
         self._require_server(server)
@@ -217,13 +213,8 @@ class AdbTransportListCoordinator:
             raise TypeError("server must be AdbServerIdentity")
 
 
-# Compatibility name for callers that imported the narrower pre-refresh coordinator name.
-AdbTransportListObservationCoordinator = AdbTransportListCoordinator
-
-
 __all__ = [
     "AdbTransportListCoordinator",
     "AdbTransportListCoordinatedObservationResult",
-    "AdbTransportListObservationCoordinator",
     "AdbTransportListObservationServerConflict",
 ]

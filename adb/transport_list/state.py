@@ -19,11 +19,9 @@ class AdbTransportListStateStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True, init=False)
 class AdbTransportListState:
-    """Immutable authoritative transport-list state for one runtime observation.
+    """Immutable authoritative transport-list state for one runtime.
 
-    ``transport_list`` and ``identity`` describe the last committed transport-list revision.
-    Invalidated states preserve both values so visibility does not depend on erasing evidence.
-    The preserved identity is the committed-revision watermark used to fence stale work.
+    Invalidated state retains the last committed list and identity for stale-work fencing.
     """
 
     transport_list: AdbTransportList | None = None
@@ -275,10 +273,9 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         revision: AdbTransportListRevision,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult:
-        """Commit one materialized revision iff ``expected`` is authoritative.
+        """Commit a materialized revision when ``expected`` is authoritative.
 
-        Identity is materialized before this boundary. This store only arbitrates authority
-        and projects the accepted revision into immutable authoritative state.
+        The store arbitrates authority and projects accepted revisions into immutable state.
         """
 
         if not isinstance(revision, AdbTransportListRevision):

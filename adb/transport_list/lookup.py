@@ -29,7 +29,7 @@ def find_transport(
     transport_list: AdbTransportList,
     selector: AdbTransportSelector,
 ) -> AdbTransport | None:
-    """Select one domain transport from a transport list."""
+    """Select a transport from a transport list."""
 
     if not isinstance(transport_list, AdbTransportList):
         raise TypeError("transport_list must be AdbTransportList")

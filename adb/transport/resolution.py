@@ -25,7 +25,7 @@ class AdbConfiguredTransportResolutionStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportResolution:
-    """Resolution of one configured transport against domain transport-list evidence."""
+    """Resolution of a configured transport against transport-list evidence."""
 
     configuration: AdbConfiguredTransport
     matches: tuple[AdbTransport, ...]

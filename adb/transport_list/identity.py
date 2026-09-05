@@ -13,9 +13,9 @@ class _AdbTransportListEpoch(Epoch):
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListIdentity:
-    """Runtime-scoped identity of one logical transport-list revision.
+    """Runtime-scoped identity for a transport-list revision.
 
-    Identity alone does not imply that the identified revision became authoritative.
+    Revision authority is tracked separately by transport-list state.
     """
 
     _epoch: _AdbTransportListEpoch = field(repr=False)
@@ -40,7 +40,7 @@ class AdbTransportListIdentityIssuer:
         self._sequence = EpochSequence(_AdbTransportListEpoch, initial_value=initial_value)
 
     def issue(self) -> AdbTransportListIdentity:
-        """Issue one fresh transport-list revision identity."""
+        """Issue a fresh transport-list revision identity."""
 
         return AdbTransportListIdentity(self._sequence.issue())
 

@@ -435,7 +435,7 @@ def _translate_transport_state(
 
 
 def to_transport(device: Device) -> AdbTransport:
-    """Translate one raw AOSP device row into the current domain transport value."""
+    """Translate an AOSP device row into an ``AdbTransport``."""
 
     if not isinstance(device, Device):
         raise TypeError("device must be AOSP Device")
@@ -449,7 +449,7 @@ def to_transport(device: Device) -> AdbTransport:
 
 
 def to_transport_list(devices: Devices) -> AdbTransportList:
-    """Translate one complete raw AOSP devices payload into a domain transport list."""
+    """Translate an AOSP devices payload into an ``AdbTransportList``."""
 
     if not isinstance(devices, Devices):
         raise TypeError("devices must be AOSP Devices")

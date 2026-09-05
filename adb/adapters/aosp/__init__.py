@@ -1,3 +1,3 @@
-"""Adapters between the ADB domain and AOSP protocol/I/O primitives."""
+"""Adapters between ADB capabilities and AOSP protocol primitives."""
 
 __all__: list[str] = []

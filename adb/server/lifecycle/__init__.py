@@ -1,4 +1,4 @@
-"""ADB server lifecycle contracts and bounded acquisition recovery."""
+"""ADB server lifecycle contracts, acquisition, and recovery."""
 
 from adb.server.lifecycle.errors import (
     AdbServerBootstrapError,

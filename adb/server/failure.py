@@ -39,7 +39,7 @@ class AdbServerConnectionFailure(_AdbServerFailure):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerTimeoutFailure(_AdbServerFailure):
-    """One bounded ADB server operation exceeded its timeout."""
+    """An ADB server operation exceeded its timeout."""
 
 
 @dataclass(frozen=True, slots=True)

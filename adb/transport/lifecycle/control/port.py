@@ -20,7 +20,7 @@ def _require_selector(value: object) -> AdbTransportSelector:
 
 @dataclass(frozen=True, slots=True)
 class AdbTcpConnect:
-    """Request one native attempt to connect one explicit TCP ADB address."""
+    """Request an ADB connection attempt to an explicit TCP address."""
 
     address: AdbConnectAddress
 
@@ -31,7 +31,7 @@ class AdbTcpConnect:
 
 @dataclass(frozen=True, slots=True)
 class AdbTcpDisconnect:
-    """Request one native attempt to disconnect one explicit TCP ADB address."""
+    """Request an ADB disconnection attempt from an explicit TCP address."""
 
     address: AdbConnectAddress
 

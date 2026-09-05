@@ -27,11 +27,9 @@ from scheduling import ScheduleToken, TemporalScheduler
 
 
 class AdbServerSupervisor:
-    """Execute reconcile-driven bounded ADB server recovery cycles.
+    """Run reconcile-driven ADB server recovery cycles.
 
-    The runtime owns the lifecycle coordinator and injects it into server supervision. This
-    supervisor owns reconciliation subscriptions, bounded recovery cycles, retry scheduling, and
-    recovery worker lifetime; it does not infer successor work from authoritative server state.
+    Owns reconciliation subscriptions, retry scheduling, and recovery worker lifetimes.
     """
 
     def __init__(
@@ -127,7 +125,7 @@ class AdbServerSupervisor:
             self._starting = False
 
     def close(self) -> None:
-        """Stop supervision without retiring the current healthy server lifetime."""
+        """Stop supervision while retaining the current healthy server."""
 
         with self._lock:
             if self._closed:
@@ -150,7 +148,7 @@ class AdbServerSupervisor:
         self,
         event: AdbServerReconciliationRequested,
     ) -> None:
-        """Commit one requested retirement, then start bounded recovery."""
+        """Commit a requested retirement, then start recovery."""
 
         with self._lock:
             if not self._running_locked():
@@ -163,7 +161,7 @@ class AdbServerSupervisor:
         self._request_recovery()
 
     def _request_recovery(self) -> None:
-        """Consume one committed reconciliation demand through bounded acquisition recovery."""
+        """Start recovery for a committed reconciliation request."""
 
         with self._lock:
             if (
@@ -308,7 +306,7 @@ class AdbServerSupervisor:
         recovery: AdbServerRecovery,
         recovery_id: AdbServerRecoveryId,
     ) -> None:
-        """Fail-stop one broken recovery cycle without reconciliation or automatic restart."""
+        """Terminate a broken recovery cycle and clear its scheduled work."""
 
         scheduler = self._scheduler
         with self._lock:

@@ -58,7 +58,7 @@ class AdbTransportListWatchOpenCancelled:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchOpenFailed:
-    """Opening completed with a known transport-list watch domain failure."""
+    """Opening completed with a known transport-list watch failure."""
 
     failure: AdbTransportListWatchFailure
 
@@ -75,7 +75,7 @@ AdbTransportListWatchOpenResult: TypeAlias = (
 
 
 class _FailureNormalizingAdbTransportListWatchSession:
-    """Translate raw ADB request errors from an established stream into watch-domain errors."""
+    """Translate ADB request errors from an established stream into typed watch errors."""
 
     def __init__(self, session: AdbTransportListWatchSession) -> None:
         if not isinstance(session, AdbTransportListWatchSession):
@@ -104,11 +104,10 @@ class _FailureNormalizingAdbTransportListWatchSession:
 def open_transport_list_watch(
     watcher: AdbTransportListWatcher,
 ) -> AdbTransportListWatchOpenResult:
-    """Open one watcher and materialize expected startup outcomes as domain results.
+    """Open a watcher and normalize expected startup outcomes.
 
-    Concrete watchers may surface low-level ADB request exceptions or use ``None`` to report that
-    closure interrupted startup. Known startup failures are translated into typed domain evidence;
-    contract violations and unexpected implementation exceptions still propagate.
+    Returns typed cancellation or failure evidence for known startup conditions while
+    preserving unexpected exceptions.
     """
 
     if not isinstance(watcher, AdbTransportListWatcher):

@@ -22,7 +22,7 @@ from native_attempt import NativeAttemptResult
 
 @dataclass(frozen=True, slots=True)
 class SubprocessAdbTransportController:
-    """Execute one endpoint-bound transport lifecycle command per bounded CLI attempt."""
+    """Execute transport lifecycle commands through the configured server endpoint."""
 
     endpoint: TcpAddress
     executable: str = "adb"

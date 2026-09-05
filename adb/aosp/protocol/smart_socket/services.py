@@ -23,7 +23,7 @@ def _require_transport_id(value: object) -> int:
 
 
 def transport_by_serial_service(serial: str) -> str:
-    """Build the native smart-socket service selecting one serial."""
+    """Build a smart-socket service that selects a transport by serial."""
 
     return _TRANSPORT_BY_SERIAL_PREFIX + _require_service_text(
         serial,
@@ -32,26 +32,26 @@ def transport_by_serial_service(serial: str) -> str:
 
 
 def transport_by_id_service(transport_id: int) -> str:
-    """Build the native smart-socket service selecting one transport id."""
+    """Build a smart-socket service that selects a transport by ID."""
 
     return f"{_TRANSPORT_BY_ID_PREFIX}{_require_transport_id(transport_id)}"
 
 
 def transport_features_by_serial_service(serial: str) -> str:
-    """Build the native host query for one serial-selected transport feature list."""
+    """Build a host query for features of a serial-selected transport."""
 
     normalized = _require_service_text(serial, field_name="ADB transport serial")
     return f"host-serial:{normalized}:features"
 
 
 def transport_features_by_id_service(transport_id: int) -> str:
-    """Build the native host query for one id-selected transport feature list."""
+    """Build a host query for features of an ID-selected transport."""
 
     return f"host-transport-id:{_require_transport_id(transport_id)}:features"
 
 
 def is_transport_selection_service(service: str) -> bool:
-    """Whether a service string is one of the native transport-selection services."""
+    """Return whether a service string selects an ADB transport."""
 
     if not isinstance(service, str):
         return False

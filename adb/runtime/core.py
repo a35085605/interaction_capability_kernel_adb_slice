@@ -212,7 +212,7 @@ class AdbRuntime(AdbManagedRuntime):
         self,
         reader: AdbTransportListReader,
     ) -> AdbTransportListCoordinatedObservationResult:
-        """Delegate one authoritative one-shot refresh to the transport-list domain."""
+        """Refresh the authoritative transport list through its coordinator."""
 
         with self._runtime_lock:
             if self._closed:

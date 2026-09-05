@@ -19,11 +19,9 @@ class AdbServerStateStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True, init=False)
 class AdbServerState:
-    """Immutable authoritative ADB server state for one runtime observation.
+    """Immutable authoritative ADB server state for one runtime.
 
-    ``endpoint`` and ``last_identity`` describe the last authoritative server. Inactive
-    states may preserve both values so lifecycle status does not depend on clearing endpoint
-    metadata. The preserved identity is the authoritative-server watermark used to fence stale work.
+    Inactive state retains the last endpoint and identity for stale-work fencing.
     """
 
     endpoint: AdbServerEndpoint | None = None
@@ -242,11 +240,10 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
         *,
         expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
-        """Activate ``endpoint`` iff its authority-identity basis is still current.
+        """Activate ``endpoint`` when its authority-identity basis is current.
 
-        Identity issuance belongs to this authoritative transition boundary. A fresh server identity
-        is issued only after the activation fence succeeds, immediately before the new active state
-        is committed. Conflicting activation attempts therefore do not consume server identities.
+        A fresh server identity is issued after the activation fence succeeds, immediately
+        before the active state is committed.
         """
 
         if not isinstance(endpoint, TcpAddress):

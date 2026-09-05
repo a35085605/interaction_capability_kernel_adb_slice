@@ -13,10 +13,9 @@ class _AdbServerEpoch(Epoch):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerIdentity:
-    """Runtime-scoped identity of one logical ADB server occurrence.
+    """Runtime-scoped identity for an ADB server occurrence.
 
-    Identity alone does not imply that the identified occurrence became authoritative, nor does it
-    identify a physical adb server process lifetime.
+    Server authority and process ownership are tracked separately.
     """
 
     _epoch: _AdbServerEpoch = field(repr=False)
@@ -41,7 +40,7 @@ class AdbServerIdentityIssuer:
         self._sequence = EpochSequence(_AdbServerEpoch, initial_value=initial_value)
 
     def issue(self) -> AdbServerIdentity:
-        """Issue one fresh logical server-occurrence identity."""
+        """Issue a fresh server identity."""
 
         return AdbServerIdentity(self._sequence.issue())
 

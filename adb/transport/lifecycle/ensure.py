@@ -69,9 +69,7 @@ def _normalize_optional_text(value: object, *, field_name: str) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class AdbTcpTransportEnsurePolicy:
-    """Configure one bounded transport-readiness polling episode with non-terminal states remaining
-    pending.
-    """
+    """Configure bounded polling for transport readiness."""
 
     timeout_seconds: float
     acceptable_states: frozenset[AdbTransportState]
@@ -113,7 +111,7 @@ class AdbTcpTransportEnsurePolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbTcpTransportEnsureReadiness:
-    """Request bounded readiness verification against one server lifetime."""
+    """Request readiness verification for a transport on one server lifetime."""
 
     server: AdbServerIdentity
     endpoint: AdbServerEndpoint
@@ -238,9 +236,7 @@ class AdbTcpTransportEnsureResult:
 
 @runtime_checkable
 class AdbTcpTransportEnsurer(Protocol):
-    """Ensure bounded readiness for configured TCP transports with concurrent episodes for distinct
-    transports.
-    """
+    """Ensure readiness for configured TCP transports with independent concurrent episodes."""
 
     def ensure(
         self,
@@ -294,12 +290,11 @@ AdbTcpTransportEnsureInstruction: TypeAlias = (
 
 @dataclass(slots=True)
 class AdbTcpTransportEnsureEpisode:
-    """Pure decision state for one bounded TCP transport-readiness episode.
+    """Decision state for one bounded TCP transport-readiness episode.
 
-    The episode owns readiness interpretation, connect-attempt eligibility, terminal status, and
-    result construction. It does not read transport lists, issue ADB commands, sleep, publish
-    signals, or observe a clock. The orchestrator executes the returned instructions and feeds
-    evidence back into this decision engine.
+    Interprets readiness evidence, selects connect attempts, and determines terminal
+    results. The orchestrator executes its instructions and feeds observations back
+    into the episode.
     """
 
     operation: AdbTcpTransportEnsureReadiness
@@ -469,8 +464,9 @@ class AdbTcpTransportEnsureEpisode:
 
 
 class AdbTcpTransportEnsureOrchestrator:
-    """Drive one configured TCP transport toward readiness before a deadline by probing
-    transport lists, issuing at most one ``adb connect``, and polling to a terminal state.
+    """Drive a configured TCP transport to a terminal readiness result before its deadline.
+
+    Probes transport lists and may issue one ``adb connect`` while polling.
     """
 
     def __init__(

@@ -20,9 +20,7 @@ class CalendarSchedule(Protocol):
 
 @runtime_checkable
 class TemporalScheduler(Protocol[ScheduledEventT]):
-    """Deliver scheduled data events efficiently through orchestration or event-queue
-    infrastructure while orchestration owns domain control effects.
-    """
+    """Deliver scheduled data events through orchestration or event-queue infrastructure."""
 
     def schedule_at(
         self,

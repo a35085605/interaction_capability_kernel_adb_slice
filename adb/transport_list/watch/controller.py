@@ -69,7 +69,7 @@ class AdbTransportListWatchStartSuperseded:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchStartFailed:
-    """Startup completed with a known transport-list watch domain failure."""
+    """Startup completed with a known transport-list watch failure."""
 
     failure: AdbTransportListWatchFailure
 
@@ -116,11 +116,9 @@ class AdbTransportListWatchController(Protocol):
 
 
 class ThreadedAdbTransportListWatchController:
-    """Single-use threaded controller for one transport-list watch.
+    """Single-use threaded controller for a transport-list watch.
 
-    Authoritative observations are committed and published through the shared observation
-    coordinator. This controller publishes only watch-lifecycle signals. The low-level watcher
-    implementation is supplied by the composition root.
+    Commits observations through the shared coordinator and publishes watch-lifecycle signals.
     """
 
     def __init__(

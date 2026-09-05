@@ -8,7 +8,7 @@ from adb.transport_list.model import AdbTransportList
 
 @runtime_checkable
 class AdbTransportListWatchSession(Protocol):
-    """Established watch session yielding complete domain transport lists."""
+    """Established watch session yielding complete transport lists."""
 
     @property
     def initial(self) -> AdbTransportList:

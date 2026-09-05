@@ -28,11 +28,10 @@ def _normalize_diagnostic(value: object) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendReleaseCleanupUnconfirmed:
-    """Signal that logical backend release completed without confirmed handle cleanup.
+    """Signal that backend ownership was released but handle cleanup remains unconfirmed.
 
-    ``handle`` is the detached implementation-defined acquisition handle. Consumers may retain it
-    for diagnostics or implementation-specific follow-up cleanup without restoring backend
-    ownership.
+    ``handle`` is detached from backend ownership and remains available for diagnostics
+    or implementation-specific cleanup.
     """
 
     handle: object
@@ -65,11 +64,10 @@ HandleT = TypeVar("HandleT")
 
 
 class AdbServerBackendTemplate(Generic[HandleT], ABC):
-    """Template implementation for serialized ownership of one backend acquisition.
+    """Template for serialized ownership of one backend acquisition.
 
-    The template owns at most one implementation-defined handle; a retained handle represents
-    the current acquisition. ``acquire`` and ``release`` define the shared ownership, concurrency,
-    and cleanup-signal semantics while subclasses provide only handle obtain/release mechanics.
+    The template defines ownership, concurrency, and cleanup signaling; subclasses
+    provide handle acquisition and release mechanics.
     """
 
     def __init__(self, *, publisher: EventPublisher | None = None) -> None:
@@ -80,9 +78,9 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
         self._publisher = publisher
 
     def bind_event_publisher(self, publisher: EventPublisher) -> None:
-        """Bind the publisher used for subsequent release-cleanup signals.
+        """Bind the publisher for subsequent release-cleanup signals.
 
-        Binding is an orchestration-time operation and cannot overlap acquisition or release.
+        Call during orchestration before acquisition or release begins.
         """
 
         if not isinstance(publisher, EventPublisher):
@@ -116,10 +114,9 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
         publisher: EventPublisher,
         signal: AdbServerBackendReleaseCleanupUnconfirmed,
     ) -> None:
-        """Best-effort publish after logical release has fully linearized.
+        """Publish cleanup evidence after backend release has linearized.
 
-        Publication is observational and must not turn a completed backend release back into a
-        caller-visible release failure.
+        Publication is best-effort; the completed release outcome remains authoritative.
         """
 
         try:

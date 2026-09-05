@@ -56,7 +56,7 @@ class ShellV2Result:
 
 
 class AdbServiceClient:
-    """Low-level ADB smart-socket client independent of domain endpoint types."""
+    """Low-level ADB smart-socket client using explicit host and port values."""
 
     def __init__(
         self,
@@ -92,7 +92,7 @@ class AdbServiceClient:
             self._close(sock)
 
     def raw_exec(self, transport_service: str, command: str) -> bytes:
-        """Private raw ``exec:`` primitive after one native transport selection service."""
+        """Execute a raw ``exec:`` command on the selected transport."""
 
         sock = self._connect()
         try:
@@ -103,7 +103,7 @@ class AdbServiceClient:
             self._close(sock)
 
     def shell_v2(self, transport_service: str, command: str) -> ShellV2Result:
-        """Private shell-v2 primitive after one native transport selection service."""
+        """Execute a shell-v2 command on the selected transport."""
 
         sock = self._connect()
         try:

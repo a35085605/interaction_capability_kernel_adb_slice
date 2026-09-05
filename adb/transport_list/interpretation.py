@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 
 class AdbObservedTransportCompatibility(str, Enum):
-    """Domain interpretation of one observed transport kind."""
+    """Compatibility of an observed transport with a configured transport."""
 
     MATCH = "match"
     MISMATCH = "mismatch"
@@ -20,9 +20,7 @@ def classify_observed_transport(
     configuration: AdbConfiguredTransport,
     transport: AdbTransport,
 ) -> AdbObservedTransportCompatibility:
-    """Classify one observed transport by recognized type match, unspecified fallback, or
-    unrecognized native-kind mismatch.
-    """
+    """Classify an observed transport as matched, unspecified, or unrecognized."""
 
     from adb.transport.configuration import AdbConfiguredTransport
     from adb.transport.model import AdbTransport

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True, init=False)
 class AdbTransportList:
-    """Immutable complete domain transport-list value observed from one ADB server."""
+    """Immutable complete transport list observed from one ADB server."""
 
     transports: tuple[AdbTransport, ...]
 
@@ -52,9 +52,7 @@ class AdbTransportList:
         self,
         configuration: AdbConfiguredTransport,
     ) -> AdbConfiguredTransportResolution:
-        """Resolve one configured transport using exact typed evidence first and unspecified
-        transport kinds as fallback evidence.
-        """
+        """Resolve a configured transport from exact evidence with unspecified-kind fallback."""
 
         from adb.transport.configuration import AdbConfiguredTransport
         from adb.transport.resolution import AdbConfiguredTransportResolution

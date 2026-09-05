@@ -1,4 +1,4 @@
-"""AOSP ADB native I/O primitives independent of domain models."""
+"""AOSP ADB I/O primitives."""
 
 from adb.aosp.io.smart_socket import AdbServiceClient, ShellV2Result
 from adb.aosp.io.server_status import (

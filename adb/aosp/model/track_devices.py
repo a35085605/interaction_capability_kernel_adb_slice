@@ -63,9 +63,7 @@ def _normalize_open_enum(
 
 @dataclass(frozen=True, slots=True)
 class Device:
-    """Protocol-level AOSP ``adb.proto.Device`` evidence preserving raw transport IDs and open enum
-    values for domain translation.
-    """
+    """Decoded AOSP ``adb.proto.Device`` record with transport and open-enum evidence."""
 
     serial: str = ""
     state: ConnectionState | int = ConnectionState.ANY

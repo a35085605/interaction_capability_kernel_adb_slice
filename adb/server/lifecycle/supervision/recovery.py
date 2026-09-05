@@ -76,12 +76,8 @@ AdbServerRecoveryDecision: TypeAlias = AdbServerRecoveryAttempt | AdbServerRecov
 class AdbServerRecovery:
     """Decision engine for one bounded ADB server recovery cycle.
 
-    Recovery owns acquisition-attempt progression plus retry-policy state: attempt numbering,
-    budget-consuming unsuccessful-attempt count, retry backoff, jitter, and exhaustion. It
-    deliberately has no knowledge of authoritative runtime server state, activation,
-    reconciliation, scheduling, threads, or the reason recovery was requested. Its supervisor
-    executes each selected attempt and feeds the raw backend acquisition result back into
-    :meth:`decide_after`.
+    Tracks retry budget, backoff, jitter, and exhaustion. The supervisor executes each
+    selected acquisition attempt and feeds its result back into :meth:`decide_after`.
     """
 
     def __init__(

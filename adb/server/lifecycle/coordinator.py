@@ -106,14 +106,10 @@ class AdbServerLifecycleCoordinator:
         self._authority_lock = RLock() if authority_lock is None else authority_lock
 
     def provision(self) -> AdbServerProvisionResult:
-        """Return ordered raw evidence produced by one provision operation.
+        """Acquire server access and commit it as the authoritative server.
 
-        Provisioning first snapshots its endpoint constraint and authoritative-state basis, then runs
-        backend acquisition without imposing total ordering on concurrent lifecycle effects. Only an
-        acquisition newly established by this invocation may proceed to authoritative activation.
-        Already-acquired, deferred, and failed results are terminal non-commit evidence for
-        this invocation. Activation remains fenced by the authoritative identity observed before the
-        backend effect; a newly acquired backend effect that loses that fence is relinquished.
+        Returns ordered acquisition and activation evidence. A newly acquired backend
+        handle is released when its activation fence is lost.
         """
 
         with self._authority_lock:
@@ -199,15 +195,10 @@ class AdbServerLifecycleCoordinator:
         *,
         expected_server: AdbServerIdentity | None = None,
     ) -> AdbServerRetireResult:
-        """Return typed evidence produced by one authoritative retirement operation.
+        """Retire the authoritative server and release its backend access.
 
-        An unfenced call against inactive authoritative state returns
-        :class:`AdbServerAlreadyInactive`. Fenced calls pass the requested server identity directly
-        to authoritative state so stale work is preserved as deactivation-conflict evidence. A
-        committed deactivation is published only after its corresponding backend release has been
-        requested; concurrent provision calls may observe the interval between those independent
-        linearization points and must not treat already-acquired backend ownership as a newly
-        committable effect.
+        ``expected_server`` fences stale retirement requests. A committed deactivation is
+        published after backend release is requested.
         """
 
         if expected_server is not None and not isinstance(expected_server, AdbServerIdentity):

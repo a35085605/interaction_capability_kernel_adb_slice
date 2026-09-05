@@ -15,7 +15,7 @@ from native_attempt import NativeAttemptResult
 
 @dataclass(frozen=True, slots=True)
 class SubprocessAdbPairing:
-    """Execute one endpoint-bound ADB pairing command per bounded CLI attempt."""
+    """Execute ADB pairing through the configured server endpoint."""
 
     endpoint: TcpAddress
     executable: str = "adb"

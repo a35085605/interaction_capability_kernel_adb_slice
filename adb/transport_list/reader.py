@@ -7,7 +7,7 @@ from networking import TcpAddress
 
 
 class AdbTransportListReader(Protocol):
-    """Read one complete current domain transport list."""
+    """Read a complete transport list."""
 
     def read(self, endpoint: TcpAddress) -> AdbTransportList:
         ...

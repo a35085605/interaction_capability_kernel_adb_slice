@@ -9,7 +9,7 @@ from adb.transport.identity import AdbDeviceSerial
 
 
 class AdbTransportType(str, Enum):
-    """Domain transport kinds supported by configured ADB transports."""
+    """Transport kinds supported by configured ADB transports."""
 
     USB = "usb"
     TCP = "tcp"
@@ -76,7 +76,7 @@ class AdbConfiguredTransport:
 
     @property
     def type(self) -> AdbTransportType:
-        """Domain transport kind for this configuration."""
+        """Transport kind for this configuration."""
 
         if isinstance(self.transport, AdbUsbTransportConfiguration):
             return AdbTransportType.USB

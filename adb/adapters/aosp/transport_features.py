@@ -25,7 +25,7 @@ def _default_client_factory(endpoint: TcpAddress) -> AdbServiceClient:
 
 
 def parse_transport_features(payload: bytes) -> AdbTransportFeatures:
-    """Translate one native comma-separated feature payload into a domain value."""
+    """Parse an ADB feature payload into ``AdbTransportFeatures``."""
 
     if not isinstance(payload, bytes):
         raise TypeError("ADB transport feature payload must be bytes")
@@ -45,7 +45,7 @@ def _feature_service(selector: AdbTransportSelector) -> str:
 
 
 class SmartSocketAdbTransportFeaturesReader:
-    """Adapt a domain transport selector to one native feature query."""
+    """Read transport features through an ADB smart-socket query."""
 
     def __init__(self, *, _client_factory: _ClientFactory = _default_client_factory) -> None:
         self._client_factory = _client_factory
