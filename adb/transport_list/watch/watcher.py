@@ -17,7 +17,7 @@ from adb.transport_list.watch.failure import (
     AdbTransportListWatchServerConnectionFailure,
     AdbTransportListWatchServiceFailure,
 )
-from adb.transport_list.watch.session import AdbTransportListWatchSession
+from adb.transport_list.watch.session import AdbTransportListWatchStream
 
 
 @runtime_checkable
@@ -28,8 +28,8 @@ class AdbTransportListWatcher(Protocol):
     def address(self) -> TcpAddress:
         ...
 
-    def open(self) -> AdbTransportListWatchSession | None:
-        """Attempt to establish one watch session and synchronously obtain its
+    def open(self) -> AdbTransportListWatchStream | None:
+        """Attempt to establish one raw watch stream and synchronously obtain its
         initial complete list.
 
         Return ``None`` when watcher closure cancels startup.
@@ -43,16 +43,22 @@ class AdbTransportListWatcher(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchOpened:
-    """A watch session and its initial complete transport list were established."""
+    """A raw watch stream and its initial complete transport list were established."""
 
-    session: AdbTransportListWatchSession
+    session: AdbTransportListWatchStream
     initial: AdbTransportList
 
     def __post_init__(self) -> None:
-        if not isinstance(self.session, AdbTransportListWatchSession):
-            raise TypeError("session must satisfy AdbTransportListWatchSession")
+        if not isinstance(self.session, AdbTransportListWatchStream):
+            raise TypeError("session must satisfy AdbTransportListWatchStream")
         if not isinstance(self.initial, AdbTransportList):
             raise TypeError("initial must be AdbTransportList")
+
+    @property
+    def stream(self) -> AdbTransportListWatchStream:
+        """Return the raw stream; the ``session`` field is retained for compatibility."""
+
+        return self.session
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,47 +84,47 @@ AdbTransportListWatchOpenResult: TypeAlias = (
 )
 
 
-class _FailureNormalizingAdbTransportListWatchSession:
+class _FailureNormalizingAdbTransportListWatchStream:
     """Translate ADB request errors from an established stream into typed watch errors."""
 
-    def __init__(self, session: AdbTransportListWatchSession) -> None:
-        if not isinstance(session, AdbTransportListWatchSession):
-            raise TypeError("session must satisfy AdbTransportListWatchSession")
-        self._session = session
+    def __init__(self, stream: AdbTransportListWatchStream) -> None:
+        if not isinstance(stream, AdbTransportListWatchStream):
+            raise TypeError("stream must satisfy AdbTransportListWatchStream")
+        self._stream = stream
 
     @property
     def initial(self) -> AdbTransportList:
         try:
-            return self._session.initial
+            return self._stream.initial
         except BaseException as exc:
             _raise_normalized_watch_error(exc)
             raise AssertionError("unreachable")
 
     def updates(self) -> Iterator[AdbTransportList]:
         try:
-            yield from self._session.updates()
+            yield from self._stream.updates()
         except BaseException as exc:
             _raise_normalized_watch_error(exc)
             raise AssertionError("unreachable")
 
     def close(self) -> None:
-        self._session.close()
+        self._stream.close()
 
 
 def open_transport_list_watch(
     watcher: AdbTransportListWatcher,
 ) -> AdbTransportListWatchOpenResult:
-    """Open a watcher and normalize expected startup outcomes.
+    """Open a raw watcher stream and normalize expected startup outcomes.
 
     Returns typed cancellation or failure evidence for known startup conditions while
-    preserving unexpected exceptions.
+    preserving unexpected exceptions. Server-lifetime binding remains a controller concern.
     """
 
     if not isinstance(watcher, AdbTransportListWatcher):
         raise TypeError("watcher must satisfy AdbTransportListWatcher")
 
     try:
-        session = watcher.open()
+        stream = watcher.open()
     except AdbTransportListWatchCancelledError:
         return AdbTransportListWatchOpenCancelled()
     except BaseException as exc:
@@ -127,28 +133,28 @@ def open_transport_list_watch(
             raise
         return AdbTransportListWatchOpenFailed(failure)
 
-    if session is None:
+    if stream is None:
         return AdbTransportListWatchOpenCancelled()
-    if not isinstance(session, AdbTransportListWatchSession):
-        raise TypeError("transport-list watcher must return AdbTransportListWatchSession or None")
+    if not isinstance(stream, AdbTransportListWatchStream):
+        raise TypeError("transport-list watcher must return AdbTransportListWatchStream or None")
 
-    normalized_session = _FailureNormalizingAdbTransportListWatchSession(session)
+    normalized_stream = _FailureNormalizingAdbTransportListWatchStream(stream)
     try:
-        initial = normalized_session.initial
+        initial = normalized_stream.initial
     except AdbTransportListWatchCancelledError:
-        normalized_session.close()
+        normalized_stream.close()
         return AdbTransportListWatchOpenCancelled()
     except AdbTransportListWatchError as exc:
-        normalized_session.close()
+        normalized_stream.close()
         return AdbTransportListWatchOpenFailed(exc.failure)
     except BaseException:
-        normalized_session.close()
+        normalized_stream.close()
         raise
 
     if not isinstance(initial, AdbTransportList):
-        normalized_session.close()
-        raise TypeError("transport-list watch session initial must be AdbTransportList")
-    return AdbTransportListWatchOpened(normalized_session, initial)
+        normalized_stream.close()
+        raise TypeError("transport-list watch stream initial must be AdbTransportList")
+    return AdbTransportListWatchOpened(normalized_stream, initial)
 
 
 def _watch_failure_from_exception(

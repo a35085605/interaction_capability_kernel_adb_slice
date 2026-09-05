@@ -18,7 +18,10 @@ from adb.transport_list.state import (
     AdbTransportListObservationStateConflict,
     AdbTransportListObserved,
 )
-from adb.transport_list.watch.session import AdbTransportListWatchSession
+from adb.transport_list.watch.session import (
+    AdbTransportListWatchSession,
+    bind_transport_list_watch_session,
+)
 from adb.transport_list.watch.error import AdbTransportListWatchError
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 from adb.transport_list.watch.watcher import (
@@ -194,8 +197,11 @@ class ThreadedAdbTransportListWatchController:
             self._abort_start(watcher)
             raise TypeError("open_transport_list_watch() returned an unsupported result")
 
-        session = open_result.session
-        initial_transport_list = open_result.initial
+        session = bind_transport_list_watch_session(
+            self.server,
+            open_result.stream,
+            open_result.initial,
+        )
         startup_complete = Event()
         startup_results: list[AdbTransportListWatchStartResult] = []
         startup_errors: list[BaseException] = []
@@ -205,7 +211,6 @@ class ThreadedAdbTransportListWatchController:
                 args=(
                     watcher,
                     session,
-                    initial_transport_list,
                     startup_complete,
                     startup_results,
                     startup_errors,
@@ -306,21 +311,24 @@ class ThreadedAdbTransportListWatchController:
         self,
         watcher: AdbTransportListWatcher,
         session: AdbTransportListWatchSession,
-        initial_transport_list: AdbTransportList,
         startup_complete: Event,
         startup_results: list[AdbTransportListWatchStartResult],
         startup_errors: list[BaseException],
     ) -> None:
-        server = self.server
+        server = session.server
         terminal: object | None = None
         startup_succeeded = False
         try:
-            initial_transport_list = self._normalize_transport_list(initial_transport_list)
-            if not self._prepare_watch(watcher):
+            initial_transport_list = self._normalize_transport_list(session.initial)
+            if session.server != self.server:
+                raise ValueError(
+                    "transport-list watch session belongs to a different server lifetime"
+                )
+            if not self._prepare_watch(watcher, session):
                 startup_results.append(AdbTransportListWatchStartSuperseded())
                 return
 
-            if not self._commit_observation(watcher, initial_transport_list):
+            if not self._commit_observation(watcher, session, initial_transport_list):
                 startup_results.append(AdbTransportListWatchStartSuperseded())
                 return
 
@@ -333,7 +341,7 @@ class ThreadedAdbTransportListWatchController:
 
             for transport_list in session.updates():
                 normalized = self._normalize_transport_list(transport_list)
-                if not self._commit_observation(watcher, normalized):
+                if not self._commit_observation(watcher, session, normalized):
                     break
             terminal = AdbTransportListWatchStopped(server)
         except AdbTransportListWatchError as exc:
@@ -359,24 +367,33 @@ class ThreadedAdbTransportListWatchController:
     ) -> AdbTransportList:
         return AdbTransportList(transports)
 
-    def _prepare_watch(self, watcher: AdbTransportListWatcher) -> bool:
+    def _prepare_watch(
+        self,
+        watcher: AdbTransportListWatcher,
+        session: AdbTransportListWatchSession,
+    ) -> bool:
         with self._lock:
             if self._closed or self._active_watcher is not watcher:
                 return False
-            return self._observation_coordinator.prepare_server(self.server)
+            return self._observation_coordinator.prepare_server(session.server)
 
     def _commit_observation(
         self,
         watcher: AdbTransportListWatcher,
+        session: AdbTransportListWatchSession,
         transport_list: AdbTransportList,
     ) -> bool:
         with self._lock:
             if self._closed or self._active_watcher is not watcher:
                 return False
-            return self._commit_observation_locked(transport_list)
+            return self._commit_observation_locked(session, transport_list)
 
-    def _commit_observation_locked(self, transport_list: AdbTransportList) -> bool:
-        result = self._observation_coordinator.observe(self.server, transport_list)
+    def _commit_observation_locked(
+        self,
+        session: AdbTransportListWatchSession,
+        transport_list: AdbTransportList,
+    ) -> bool:
+        result = self._observation_coordinator.observe(session.server, transport_list)
         if isinstance(result, AdbTransportListObserved):
             return True
         if isinstance(
