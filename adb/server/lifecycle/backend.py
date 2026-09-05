@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
-from threading import Condition, Lock
+from threading import Lock
 from typing import Generic, Protocol, TypeAlias, TypeVar, runtime_checkable
 
 from eventing import EventPublisher
@@ -37,19 +36,8 @@ class AdbServerBackendAcquirePreexisting:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireInProgress:
-    """Backend acquisition is already in progress."""
-
-    diagnostic: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.diagnostic is not None:
-            object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireBlocked:
-    """Backend acquisition is currently unable to satisfy the request."""
+class AdbServerBackendAcquireDeferred:
+    """Backend acquisition could not begin because another backend operation is active."""
 
     diagnostic: str
 
@@ -70,8 +58,7 @@ class AdbServerBackendAcquireFailed:
 AdbServerBackendAcquireResult: TypeAlias = (
     AdbServerBackendAcquireAchieved
     | AdbServerBackendAcquirePreexisting
-    | AdbServerBackendAcquireInProgress
-    | AdbServerBackendAcquireBlocked
+    | AdbServerBackendAcquireDeferred
     | AdbServerBackendAcquireFailed
 )
 
@@ -134,11 +121,6 @@ class AdbServerBackendAcquireError(RuntimeError):
         super().__init__(self.diagnostic)
 
 
-class _AdbServerBackendOperation(str, Enum):
-    ACQUIRE = "acquire"
-    RELEASE = "release"
-
-
 HandleT = TypeVar("HandleT")
 
 
@@ -151,9 +133,7 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
     def __init__(self, *, publisher: EventPublisher | None = None) -> None:
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
-        self._operation_state_lock = Lock()
-        self._operation_condition = Condition(self._operation_state_lock)
-        self._active_operation: _AdbServerBackendOperation | None = None
+        self._operation_lock = Lock()
         self._handle: HandleT | None = None
         self._publisher = publisher
 
@@ -165,10 +145,12 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
 
         if not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher")
-        with self._operation_condition:
-            if self._active_operation is not None:
-                raise RuntimeError("cannot bind an event publisher during a backend operation")
+        if not self._operation_lock.acquire(blocking=False):
+            raise RuntimeError("cannot bind an event publisher during a backend operation")
+        try:
             self._publisher = publisher
+        finally:
+            self._operation_lock.release()
 
     @abstractmethod
     def _obtain_handle(
@@ -203,31 +185,6 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
         except Exception:
             return
 
-    def _begin_operation(
-        self,
-        operation: _AdbServerBackendOperation,
-    ) -> AdbServerBackendAcquireInProgress | AdbServerBackendAcquireBlocked | None:
-        with self._operation_condition:
-            active_operation = self._active_operation
-            if active_operation is operation:
-                return AdbServerBackendAcquireInProgress(
-                    f"ADB server backend {operation.value} is already in progress"
-                )
-            if active_operation is not None:
-                return AdbServerBackendAcquireBlocked(
-                    f"ADB server backend {operation.value} cannot begin while "
-                    f"{active_operation.value} is in progress"
-                )
-            self._active_operation = operation
-            return None
-
-    def _end_operation(self, operation: _AdbServerBackendOperation) -> None:
-        with self._operation_condition:
-            if self._active_operation is not operation:
-                raise RuntimeError("ADB server backend operation state is inconsistent")
-            self._active_operation = None
-            self._operation_condition.notify_all()
-
     def acquire(
         self,
         endpoint_constraint: AdbServerEndpoint | None = None,
@@ -235,10 +192,10 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
             raise TypeError("endpoint_constraint must be TcpAddress or None")
 
-        operation = _AdbServerBackendOperation.ACQUIRE
-        unavailable = self._begin_operation(operation)
-        if unavailable is not None:
-            return unavailable
+        if not self._operation_lock.acquire(blocking=False):
+            return AdbServerBackendAcquireDeferred(
+                "ADB server backend is busy with another operation"
+            )
 
         release_signal: AdbServerBackendReleaseCleanupUnconfirmed | None = None
         publisher: EventPublisher | None = None
@@ -263,21 +220,16 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
             self._handle = handle
             return acquisition
         finally:
-            self._end_operation(operation)
+            self._operation_lock.release()
             if release_signal is not None and publisher is not None:
                 self._publish_release_signal(publisher, release_signal)
 
     def release(self) -> None:
-        operation = _AdbServerBackendOperation.RELEASE
-        # Wait for any active operation, then linearize this release.
-        with self._operation_condition:
-            while self._active_operation is not None:
-                self._operation_condition.wait()
-            self._active_operation = operation
-
         release_signal: AdbServerBackendReleaseCleanupUnconfirmed | None = None
         publisher: EventPublisher | None = None
-        try:
+        # Release waits for any active backend operation, then remains busy until logical release
+        # has fully linearized.
+        with self._operation_lock:
             handle = self._handle
             if handle is not None:
                 release_signal = self._release_handle(handle)
@@ -287,11 +239,9 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
                 self._handle = None
                 if release_signal is not None:
                     publisher = self._publisher
-        finally:
-            self._end_operation(operation)
 
-        # Publish only after RELEASE is no longer the active operation so synchronous subscribers
-        # can safely re-enter backend operations without waiting on the publisher's own call stack.
+        # Publish only after the backend is no longer busy so synchronous subscribers can safely
+        # re-enter backend operations without waiting on the publisher's own call stack.
         if release_signal is not None and publisher is not None:
             self._publish_release_signal(publisher, release_signal)
 
@@ -299,10 +249,9 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
 __all__ = [
     "AdbServerBackend",
     "AdbServerBackendAcquireAchieved",
-    "AdbServerBackendAcquireBlocked",
+    "AdbServerBackendAcquireDeferred",
     "AdbServerBackendAcquireError",
     "AdbServerBackendAcquireFailed",
-    "AdbServerBackendAcquireInProgress",
     "AdbServerBackendAcquirePreexisting",
     "AdbServerBackendAcquireResult",
     "AdbServerBackendBase",

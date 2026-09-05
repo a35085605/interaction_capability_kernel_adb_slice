@@ -5,9 +5,8 @@ from typing import TypeAlias
 
 from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireAchieved,
-    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireInProgress,
     AdbServerBackendAcquirePreexisting,
 )
 from adb.server.lifecycle.coordinator import (
@@ -56,8 +55,7 @@ class AdbServerProvisionActivationConflict:
 AdbServerProvisionOutcome: TypeAlias = (
     AdbServerAlreadyActive
     | AdbServerBackendAcquirePreexisting
-    | AdbServerBackendAcquireInProgress
-    | AdbServerBackendAcquireBlocked
+    | AdbServerBackendAcquireDeferred
     | AdbServerBackendAcquireFailed
     | AdbServerProvisionActivated
     | AdbServerProvisionActivationConflict
@@ -80,8 +78,7 @@ def classify_provision_result(
             first,
             (
                 AdbServerBackendAcquirePreexisting,
-                AdbServerBackendAcquireInProgress,
-                AdbServerBackendAcquireBlocked,
+                AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
             ),
         ):
@@ -102,8 +99,7 @@ def classify_provision_result(
                 (
                     AdbServerAlreadyActive,
                     AdbServerBackendAcquirePreexisting,
-                    AdbServerBackendAcquireInProgress,
-                    AdbServerBackendAcquireBlocked,
+                    AdbServerBackendAcquireDeferred,
                     AdbServerBackendAcquireFailed,
                 ),
             ):

@@ -12,9 +12,8 @@ from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.backend import (
     AdbServerBackend,
     AdbServerBackendAcquireAchieved,
-    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireInProgress,
     AdbServerBackendAcquirePreexisting,
     AdbServerBackendAcquireResult,
 )
@@ -65,8 +64,7 @@ AdbServerProvisionResult: TypeAlias = (
     tuple[AdbServerAlreadyActive]
     | tuple[
         AdbServerBackendAcquirePreexisting
-        | AdbServerBackendAcquireInProgress
-        | AdbServerBackendAcquireBlocked
+        | AdbServerBackendAcquireDeferred
         | AdbServerBackendAcquireFailed
     ]
     | tuple[
@@ -113,7 +111,7 @@ class AdbServerLifecycleCoordinator:
         Provisioning first snapshots its endpoint constraint and authoritative-state basis, then runs
         backend acquisition without imposing total ordering on concurrent lifecycle effects. Only an
         acquisition newly established by this invocation may proceed to authoritative activation.
-        Preexisting, deferred, blocked, and failed acquisitions are terminal non-commit evidence for
+        Preexisting, deferred, and failed acquisitions are terminal non-commit evidence for
         this invocation. Activation remains fenced by the authoritative identity observed before the
         backend effect; a newly achieved acquisition that loses that fence is relinquished.
         """
@@ -164,8 +162,7 @@ class AdbServerLifecycleCoordinator:
             acquisition,
             (
                 AdbServerBackendAcquirePreexisting,
-                AdbServerBackendAcquireInProgress,
-                AdbServerBackendAcquireBlocked,
+                AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
             ),
         ):

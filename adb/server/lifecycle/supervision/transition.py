@@ -4,9 +4,8 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from adb.server.lifecycle.backend import (
-    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireInProgress,
     AdbServerBackendAcquirePreexisting,
 )
 from adb.server.lifecycle.coordinator import AdbServerAlreadyActive
@@ -54,8 +53,7 @@ def decide_recovery_after_provision(
         outcome,
         (
             AdbServerBackendAcquirePreexisting,
-            AdbServerBackendAcquireInProgress,
-            AdbServerBackendAcquireBlocked,
+            AdbServerBackendAcquireDeferred,
             AdbServerBackendAcquireFailed,
         ),
     ):

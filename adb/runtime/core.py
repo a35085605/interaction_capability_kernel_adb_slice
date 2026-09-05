@@ -8,9 +8,8 @@ from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.backend import (
     AdbServerBackend,
-    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireInProgress,
     AdbServerBackendAcquirePreexisting,
     AdbServerBackendEventPublisherBinding,
 )
@@ -274,10 +273,7 @@ class AdbRuntime(AdbManagedRuntime):
             raise AdbServerBootstrapError(
                 "initial ADB server provisioning found a preexisting backend acquisition"
             )
-        if isinstance(outcome, AdbServerBackendAcquireInProgress):
-            detail = outcome.diagnostic or "ADB server backend acquire is already in progress"
-            raise AdbServerBootstrapError(f"initial ADB server provisioning deferred: {detail}")
-        if isinstance(outcome, AdbServerBackendAcquireBlocked):
+        if isinstance(outcome, AdbServerBackendAcquireDeferred):
             raise AdbServerBootstrapError(
                 f"initial ADB server provisioning deferred: {outcome.diagnostic}"
             )

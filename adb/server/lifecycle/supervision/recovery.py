@@ -9,9 +9,8 @@ from typing import TypeAlias
 
 from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireAchieved,
-    AdbServerBackendAcquireBlocked,
+    AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireInProgress,
     AdbServerBackendAcquirePreexisting,
     AdbServerBackendAcquireResult,
 )
@@ -126,8 +125,7 @@ class AdbServerRecovery:
             (
                 AdbServerBackendAcquireAchieved,
                 AdbServerBackendAcquirePreexisting,
-                AdbServerBackendAcquireInProgress,
-                AdbServerBackendAcquireBlocked,
+                AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
             ),
         ):
@@ -136,7 +134,7 @@ class AdbServerRecovery:
         if isinstance(result, AdbServerBackendAcquireAchieved):
             return AdbServerRecoveryAcquired()
 
-        if isinstance(result, (AdbServerBackendAcquireInProgress, AdbServerBackendAcquireBlocked)):
+        if isinstance(result, AdbServerBackendAcquireDeferred):
             return self._next_attempt(self._policy.deferred_retry_seconds)
 
         if not isinstance(result, (AdbServerBackendAcquirePreexisting, AdbServerBackendAcquireFailed)):
