@@ -112,7 +112,7 @@ class AdbServerBackend(Protocol):
 
 
 class AdbServerBackendAcquireError(RuntimeError):
-    """Implementation-side signal that obtaining a new backend backing failed."""
+    """Implementation-side signal that obtaining a new backend handle failed."""
 
     def __init__(self, diagnostic: str) -> None:
         self.diagnostic = _normalize_diagnostic(diagnostic)
@@ -124,38 +124,38 @@ class _AdbServerBackendOperation(str, Enum):
     RELEASE = "release"
 
 
-BackingT = TypeVar("BackingT")
+HandleT = TypeVar("HandleT")
 
 
-class AdbServerBackendBase(Generic[BackingT], ABC):
-    """Serialize backend ownership effects around one implementation-defined backing.
+class AdbServerBackendBase(Generic[HandleT], ABC):
+    """Serialize backend ownership effects around one implementation-defined handle.
 
-    The base persists only backing ownership and operation concurrency state. Endpoint evidence is
-    produced only when a new backing is obtained and is not retained by the backend. Existing backing
-    ownership is therefore reported as preexisting without endpoint evidence; endpoint consistency
-    remains a lifecycle/domain concern.
+    The base persists only the implementation-defined handle and operation concurrency state.
+    Endpoint evidence is produced only when a new handle is obtained and is not retained separately by
+    the backend. A retained handle therefore makes later acquisitions preexisting without endpoint
+    evidence; endpoint consistency remains a lifecycle/domain concern.
     """
 
     def __init__(self) -> None:
         self._operation_state_lock = Lock()
         self._operation_condition = Condition(self._operation_state_lock)
         self._active_operation: _AdbServerBackendOperation | None = None
-        self._backing: BackingT | None = None
+        self._handle: HandleT | None = None
 
     @abstractmethod
-    def _obtain_backing(
+    def _obtain_handle(
         self,
         endpoint_constraint: AdbServerEndpoint | None,
-    ) -> tuple[BackingT, AdbServerEndpoint]:
-        """Create one backing and return its one-shot endpoint evidence.
+    ) -> tuple[HandleT, AdbServerEndpoint]:
+        """Obtain one handle and return its one-shot endpoint evidence.
 
         Raise ``AdbServerBackendAcquireError`` on expected acquisition failure. The returned endpoint
         is surfaced in ``AdbServerBackendAcquireAchieved`` and is not retained by this base.
         """
 
     @abstractmethod
-    def _relinquish_backing(self, backing: BackingT) -> None:
-        """Accept responsibility for relinquishing one previously acquired backing."""
+    def _release_handle(self, handle: HandleT) -> None:
+        """Accept responsibility for releasing one previously obtained handle."""
 
     def _begin_operation(
         self,
@@ -195,22 +195,22 @@ class AdbServerBackendBase(Generic[BackingT], ABC):
             return unavailable
 
         try:
-            backing = self._backing
-            if backing is not None:
+            handle = self._handle
+            if handle is not None:
                 return AdbServerBackendAcquirePreexisting()
 
             try:
-                backing, endpoint = self._obtain_backing(endpoint_constraint)
+                handle, endpoint = self._obtain_handle(endpoint_constraint)
             except AdbServerBackendAcquireError as exc:
                 return AdbServerBackendAcquireFailed(exc.diagnostic)
 
             try:
                 acquisition = AdbServerBackendAcquireAchieved(endpoint)
             except BaseException:
-                self._relinquish_backing(backing)
+                self._release_handle(handle)
                 raise
 
-            self._backing = backing
+            self._handle = handle
             return acquisition
         finally:
             self._end_operation(operation)
@@ -225,14 +225,14 @@ class AdbServerBackendBase(Generic[BackingT], ABC):
             self._active_operation = operation
 
         try:
-            backing = self._backing
-            if backing is None:
+            handle = self._handle
+            if handle is None:
                 return
 
             # Logical backend ownership ends before adapter-specific cleanup. From this point a
-            # backing is never retained merely to represent cleanup convergence.
-            self._backing = None
-            self._relinquish_backing(backing)
+            # a handle is never retained merely to represent cleanup convergence.
+            self._handle = None
+            self._release_handle(handle)
         finally:
             self._end_operation(operation)
 

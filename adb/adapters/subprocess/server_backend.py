@@ -302,7 +302,7 @@ class _AdbServerSubprocessFactory:
 
 
 class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
-    """Own foreground ADB server process backing through the shared backend lifecycle base."""
+    """Own a foreground ADB server process handle through the shared backend lifecycle base."""
 
     def __init__(
         self,
@@ -326,7 +326,7 @@ class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
         self._factory = _factory
         super().__init__()
 
-    def _obtain_backing(
+    def _obtain_handle(
         self,
         endpoint_constraint: AdbServerEndpoint | None,
     ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
@@ -340,12 +340,12 @@ class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
         except _AdbServerSubprocessStartError as exc:
             raise AdbServerBackendAcquireError(str(exc)) from exc
 
-    def _relinquish_backing(self, backing: _OwnedAdbServerProcess) -> None:
+    def _release_handle(self, handle: _OwnedAdbServerProcess) -> None:
         try:
-            backing.close()
+            handle.close()
         except _AdbServerSubprocessTerminationUnconfirmed:
             # Relinquishment already linearized in the base. Native cleanup is intentionally not
-            # represented as a second logical backing state.
+            # represented as a second logical backend acquisition state.
             return
 
 
