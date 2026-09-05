@@ -6,9 +6,8 @@ from threading import Lock
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
-from adb.server.candidate import AdbServerCandidate
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServerIdentity
+from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
 
 
 class AdbServerStateStatus(str, Enum):
@@ -183,14 +182,16 @@ class AdbServerStateWriter(Protocol):
 
     def activate(
         self,
-        candidate: AdbServerCandidate,
+        endpoint: AdbServerEndpoint,
+        *,
+        expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult: ...
 
     def deactivate(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult: ...
 
 
 class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
-    """Thread-safe authority for one runtime's immutable :class:`AdbServerState` value."""
+    """Thread-safe authority for server state transitions and activation identity issuance."""
 
     def __init__(self, initial: AdbServerState | None = None) -> None:
         if initial is None:
@@ -201,6 +202,7 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
             raise TypeError("initial must be AdbServerState or None")
         self._lock = Lock()
         self._state = state
+        self._identity_issuer = AdbServerIdentityIssuer(after=state.last_identity)
 
     @property
     def state(self) -> AdbServerState:
@@ -236,26 +238,31 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
 
     def activate(
         self,
-        candidate: AdbServerCandidate,
+        endpoint: AdbServerEndpoint,
+        *,
+        expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
-        """Make ``candidate`` authoritative iff its identity basis is current and inactive.
+        """Activate ``endpoint`` iff its authority-identity basis is still current.
 
-        Candidate identity and its authority-identity basis are materialized before this boundary.
-        This store arbitrates authority by requiring the current state to remain inactive and at the
-        same last-authoritative identity watermark before projecting the candidate into state.
+        Identity issuance belongs to this authoritative transition boundary. A fresh server identity
+        is issued only after the activation fence succeeds, immediately before the new active state
+        is committed. Conflicting activation attempts therefore do not consume server identities.
         """
 
-        if not isinstance(candidate, AdbServerCandidate):
-            raise TypeError("candidate must be AdbServerCandidate")
+        if not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
+        if expected is not None and not isinstance(expected, AdbServerIdentity):
+            raise TypeError("expected must be AdbServerIdentity or None")
 
         with self._lock:
             current = self._state
-            if current.active or current.last_identity != candidate.base_identity:
+            if current.active or current.last_identity != expected:
                 return AdbServerActivationStateConflict(current)
 
+            identity = self._identity_issuer.issue()
             next_state = AdbServerState(
-                candidate.endpoint,
-                candidate.identity,
+                endpoint,
+                identity,
                 AdbServerStateStatus.ACTIVE,
             )
             self._state = next_state

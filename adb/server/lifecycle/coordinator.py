@@ -7,7 +7,6 @@ from typing import TypeAlias
 from eventing import EventPublisher
 
 from networking import TcpAddress
-from adb.server.candidate import AdbServerCandidate, AdbServerCandidateFactory
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.backend import (
@@ -86,7 +85,6 @@ class AdbServerLifecycleCoordinator:
         *,
         backend: AdbServerBackend,
         endpoint_constraint: AdbServerEndpoint | None,
-        candidate_factory: AdbServerCandidateFactory,
         publisher: EventPublisher | None = None,
         authority_lock: _RLockType | None = None,
     ) -> None:
@@ -96,8 +94,6 @@ class AdbServerLifecycleCoordinator:
             raise TypeError("backend must satisfy AdbServerBackend")
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
             raise TypeError("endpoint_constraint must be TcpAddress or None")
-        if not isinstance(candidate_factory, AdbServerCandidateFactory):
-            raise TypeError("candidate_factory must be AdbServerCandidateFactory")
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
         if authority_lock is not None and not isinstance(authority_lock, _RLockType):
@@ -105,7 +101,6 @@ class AdbServerLifecycleCoordinator:
         self._state = state
         self._backend = backend
         self._endpoint_constraint = endpoint_constraint
-        self._candidate_factory = candidate_factory
         self._publisher = publisher
         # Serialize backend ownership transfer through commit/rollback or deactivate/release.
         self._operation_lock = RLock()
@@ -116,9 +111,9 @@ class AdbServerLifecycleCoordinator:
         """Return ordered raw evidence produced by one provision operation.
 
         Provisioning executes in two phases: backend acquisition first satisfies the requested
-        acquisition, then authoritative state activation commits a candidate materialized from the
-        usable acquisition as the runtime server. The full acquire-to-commit/rollback interval is
-        serialized as one backend-ownership transaction. The shared authority lock is held only for
+        acquisition, then authoritative state activation commits the usable endpoint as the runtime
+        server. The full acquire-to-commit/rollback interval is serialized as one backend-ownership
+        transaction. The shared authority lock is held only for
         the pre-acquisition state fence and final activation commit. Backend acquisition and state
         activation results are returned unchanged and in execution order. Already-active state is
         represented by
@@ -149,12 +144,11 @@ class AdbServerLifecycleCoordinator:
                 return (acquisition,)
 
             try:
-                candidate = self._candidate_factory.create(
-                    acquisition.endpoint,
-                    t0.last_identity,
-                )
                 with self._authority_lock:
-                    activation = self._commit_candidate(candidate)
+                    activation = self._commit_activation(
+                        acquisition.endpoint,
+                        expected=t0.last_identity,
+                    )
             except BaseException:
                 self._rollback_acquisition(acquisition)
                 raise
@@ -197,13 +191,15 @@ class AdbServerLifecycleCoordinator:
             )
         return acquisition
 
-    def _commit_candidate(
+    def _commit_activation(
         self,
-        candidate: AdbServerCandidate,
+        endpoint: AdbServerEndpoint,
+        *,
+        expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
-        """Commit one materialized candidate at the shared authority boundary."""
+        """Commit one acquired endpoint at the shared authority boundary."""
 
-        return self._state.activate(candidate)
+        return self._state.activate(endpoint, expected=expected)
 
     def _rollback_acquisition(
         self,
