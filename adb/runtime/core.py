@@ -158,7 +158,7 @@ class AdbRuntime(AdbManagedRuntime):
         self._state = state
         self._authority_lock = RLock()
         self._server_candidate_factory = AdbServerCandidateFactory(
-            AdbServerIdentityIssuer(after=state.server.identity)
+            AdbServerIdentityIssuer(after=state.server.last_identity)
         )
         self._transport_list_identity_issuer = AdbTransportListIdentityIssuer(
             after=state.transport_list.identity

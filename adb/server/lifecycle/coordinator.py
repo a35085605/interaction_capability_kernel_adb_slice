@@ -151,7 +151,7 @@ class AdbServerLifecycleCoordinator:
             try:
                 candidate = self._candidate_factory.create(
                     acquisition.endpoint,
-                    t0,
+                    t0.last_identity,
                 )
                 with self._authority_lock:
                     activation = self._commit_candidate(candidate)
