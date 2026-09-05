@@ -265,8 +265,7 @@ class AdbRuntime(AdbManagedRuntime):
             )
         if isinstance(outcome, AdbServerBackendAcquirePreexisting):
             raise AdbServerBootstrapError(
-                "initial ADB server provisioning did not establish a new backend acquisition "
-                f"for {outcome.endpoint!r}"
+                "initial ADB server provisioning found a preexisting backend acquisition"
             )
         if isinstance(outcome, AdbServerBackendAcquireInProgress):
             detail = outcome.diagnostic or "ADB server backend acquire is already in progress"

@@ -163,22 +163,18 @@ class AdbServerLifecycleCoordinator:
         if isinstance(
             acquisition,
             (
+                AdbServerBackendAcquirePreexisting,
                 AdbServerBackendAcquireInProgress,
                 AdbServerBackendAcquireBlocked,
                 AdbServerBackendAcquireFailed,
             ),
         ):
             return acquisition
-        if not isinstance(
-            acquisition,
-            (AdbServerBackendAcquireAchieved, AdbServerBackendAcquirePreexisting),
-        ):
+        if not isinstance(acquisition, AdbServerBackendAcquireAchieved):
             raise TypeError("server backend acquire() returned an unsupported result")
 
-        endpoint = acquisition.endpoint
-        if endpoint_constraint is not None and endpoint != endpoint_constraint:
-            if isinstance(acquisition, AdbServerBackendAcquireAchieved):
-                self._rollback_acquisition(acquisition)
+        if endpoint_constraint is not None and acquisition.endpoint != endpoint_constraint:
+            self._rollback_acquisition(acquisition)
             raise AdbServerLifecycleConsistencyError(
                 "endpoint-constrained ADB server backend acquisition returned a different endpoint"
             )
@@ -199,7 +195,7 @@ class AdbServerLifecycleCoordinator:
 
         if not isinstance(acquisition, AdbServerBackendAcquireAchieved):
             raise TypeError("acquisition must be AdbServerBackendAcquireAchieved")
-        self._backend.release(acquisition.endpoint)
+        self._backend.release()
 
     def retire(
         self,
@@ -232,7 +228,7 @@ class AdbServerLifecycleCoordinator:
         if isinstance(deactivation, AdbServerDeactivationStateConflict):
             return deactivation
 
-        self._release_deactivated_server(deactivation)
+        self._release_deactivated_server()
 
         if self._publisher is not None:
             self._publisher.publish(deactivation)
@@ -251,12 +247,10 @@ class AdbServerLifecycleCoordinator:
             raise TypeError("server state deactivate() returned an unsupported result")
         return deactivation
 
-    def _release_deactivated_server(self, deactivation: AdbServerDeactivated) -> None:
-        """Relinquish the backend acquisition associated with one committed deactivation."""
+    def _release_deactivated_server(self) -> None:
+        """Relinquish the backend acquisition after one committed deactivation."""
 
-        committed_endpoint = deactivation.state.endpoint
-        assert committed_endpoint is not None
-        self._backend.release(committed_endpoint)
+        self._backend.release()
 
     def configure_endpoint_constraint(self, endpoint_constraint: AdbServerEndpoint | None) -> None:
         """Replace the endpoint constraint captured by subsequent acquisition attempts."""

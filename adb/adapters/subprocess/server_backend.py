@@ -64,13 +64,9 @@ class _OwnedAdbServerProcess:
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
         process: subprocess.Popen[bytes],
         shutdown_timeout_seconds: float,
     ) -> None:
-        if not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
-        self.endpoint = endpoint
         self._process = process
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._lock = Lock()
@@ -89,8 +85,7 @@ class _OwnedAdbServerProcess:
             except OSError as exc:
                 if self._process.poll() is None:
                     raise _AdbServerSubprocessTerminationUnconfirmed(
-                        f"failed to terminate ADB server child process at {self.endpoint.host}:"
-                        f"{self.endpoint.port}: {exc}"
+                        f"failed to terminate owned ADB server child process: {exc}"
                     ) from exc
 
             try:
@@ -101,8 +96,7 @@ class _OwnedAdbServerProcess:
                 except OSError as exc:
                     if self._process.poll() is None:
                         raise _AdbServerSubprocessTerminationUnconfirmed(
-                            f"failed to kill ADB server child process at {self.endpoint.host}:"
-                            f"{self.endpoint.port}: {exc}"
+                            f"failed to kill owned ADB server child process: {exc}"
                         ) from exc
                 try:
                     self._process.wait(timeout=self._shutdown_timeout_seconds)
@@ -166,16 +160,16 @@ class _AdbServerSubprocessFactory:
     def create(
         self,
         endpoint: AdbServerEndpoint | None,
-    ) -> _OwnedAdbServerProcess:
+    ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
         if not self._socket_activation_supported:
             raise _AdbServerSubprocessStartError(
                 "ADB acceptfd socket activation is unavailable on this platform; "
                 "a platform-specific server backend is required"
             )
 
-        attachment = self._launch(endpoint)
+        attachment, resolved_endpoint = self._launch(endpoint)
         try:
-            self._wait_until_ready(attachment.endpoint, attachment._process)
+            self._wait_until_ready(resolved_endpoint, attachment._process)
         except BaseException:
             try:
                 attachment.close()
@@ -184,12 +178,12 @@ class _AdbServerSubprocessFactory:
                     termination_error
                 ) from termination_error
             raise
-        return attachment
+        return attachment, resolved_endpoint
 
     def _launch(
         self,
         endpoint: AdbServerEndpoint | None,
-    ) -> _OwnedAdbServerProcess:
+    ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
         reservation, resolved_endpoint = self._reserve_listener(endpoint)
         try:
             fd = reservation.fileno()
@@ -212,10 +206,12 @@ class _AdbServerSubprocessFactory:
                 raise _AdbServerSubprocessStartError(
                     f"failed to launch ADB server child process: {exc}"
                 ) from exc
-            return _OwnedAdbServerProcess(
+            return (
+                _OwnedAdbServerProcess(
+                    process,
+                    self.shutdown_timeout_seconds,
+                ),
                 resolved_endpoint,
-                process,
-                self.shutdown_timeout_seconds,
             )
         finally:
             reservation.close()
@@ -332,10 +328,10 @@ class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
 
     def _obtain_backing(
         self,
-        endpoint: AdbServerEndpoint | None,
-    ) -> _OwnedAdbServerProcess:
+        endpoint_constraint: AdbServerEndpoint | None,
+    ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
         try:
-            return self._factory.create(endpoint)
+            return self._factory.create(endpoint_constraint)
         except _AdbServerSubprocessStartupCleanupUnconfirmed as exc:
             raise AdbServerBackendAcquireError(
                 "ADB subprocess backend acquire failed and child-process cleanup "
@@ -351,12 +347,6 @@ class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
             # Relinquishment already linearized in the base. Native cleanup is intentionally not
             # represented as a second logical backing state.
             return
-
-    def _backing_endpoint(
-        self,
-        backing: _OwnedAdbServerProcess,
-    ) -> AdbServerEndpoint:
-        return backing.endpoint
 
 
 __all__ = ["SubprocessAdbServerBackend"]

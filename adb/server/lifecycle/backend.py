@@ -38,16 +38,9 @@ class AdbServerBackendAcquireAchieved:
 class AdbServerBackendAcquirePreexisting:
     """A backend acquisition existed before this call linearized.
 
-    The result reports the existing acquisition's endpoint without deciding whether it satisfies
-    this invocation's endpoint constraint. This call did not establish a new acquisition and
-    therefore does not authorize a corresponding authoritative-state activation.
+    This call did not establish a new acquisition and therefore does not authorize a corresponding
+    authoritative-state activation. Endpoint evidence belongs only to newly achieved acquisitions.
     """
-
-    endpoint: AdbServerEndpoint
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,13 +97,13 @@ class AdbServerBackend(Protocol):
 
     def acquire(
         self,
-        endpoint: AdbServerEndpoint | None = None,
+        endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> AdbServerBackendAcquireResult:
-        """Acquire usable ADB server access, optionally constrained to ``endpoint``."""
+        """Acquire usable ADB server access, optionally constrained to ``endpoint_constraint``."""
         ...
 
-    def release(self, endpoint: AdbServerEndpoint) -> None:
-        """Relinquish the backend acquisition for ``endpoint``.
+    def release(self) -> None:
+        """Relinquish the current backend acquisition.
 
         Relinquishment is complete at this boundary when the backend accepts responsibility for release;
         implementation-specific cleanup may continue afterward and is not part of the lifecycle result.
@@ -137,10 +130,10 @@ BackingT = TypeVar("BackingT")
 class AdbServerBackendBase(Generic[BackingT], ABC):
     """Serialize backend ownership effects around one implementation-defined backing.
 
-    The base owns only acquisition bookkeeping and operation concurrency. An existing backing is
-    reported as preexisting without interpreting the endpoint requested by the caller; endpoint
-    consistency remains a lifecycle/domain concern. Concrete adapters provide backing creation,
-    relinquishment, and the endpoint evidence required by the current acquire-result contract.
+    The base persists only backing ownership and operation concurrency state. Endpoint evidence is
+    produced only when a new backing is obtained and is not retained by the backend. Existing backing
+    ownership is therefore reported as preexisting without endpoint evidence; endpoint consistency
+    remains a lifecycle/domain concern.
     """
 
     def __init__(self) -> None:
@@ -150,16 +143,19 @@ class AdbServerBackendBase(Generic[BackingT], ABC):
         self._backing: BackingT | None = None
 
     @abstractmethod
-    def _obtain_backing(self, endpoint: AdbServerEndpoint | None) -> BackingT:
-        """Create one backing, raising ``AdbServerBackendAcquireError`` on expected failure."""
+    def _obtain_backing(
+        self,
+        endpoint_constraint: AdbServerEndpoint | None,
+    ) -> tuple[BackingT, AdbServerEndpoint]:
+        """Create one backing and return its one-shot endpoint evidence.
+
+        Raise ``AdbServerBackendAcquireError`` on expected acquisition failure. The returned endpoint
+        is surfaced in ``AdbServerBackendAcquireAchieved`` and is not retained by this base.
+        """
 
     @abstractmethod
     def _relinquish_backing(self, backing: BackingT) -> None:
         """Accept responsibility for relinquishing one previously acquired backing."""
-
-    @abstractmethod
-    def _backing_endpoint(self, backing: BackingT) -> AdbServerEndpoint:
-        """Project endpoint evidence from a backing for the current acquire-result contract."""
 
     def _begin_operation(
         self,
@@ -188,10 +184,10 @@ class AdbServerBackendBase(Generic[BackingT], ABC):
 
     def acquire(
         self,
-        endpoint: AdbServerEndpoint | None = None,
+        endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> AdbServerBackendAcquireResult:
-        if endpoint is not None and not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress or None")
+        if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
+            raise TypeError("endpoint_constraint must be TcpAddress or None")
 
         operation = _AdbServerBackendOperation.ACQUIRE
         unavailable = self._begin_operation(operation)
@@ -201,26 +197,25 @@ class AdbServerBackendBase(Generic[BackingT], ABC):
         try:
             backing = self._backing
             if backing is not None:
-                return AdbServerBackendAcquirePreexisting(
-                    self._backing_endpoint(backing)
-                )
+                return AdbServerBackendAcquirePreexisting()
 
             try:
-                backing = self._obtain_backing(endpoint)
+                backing, endpoint = self._obtain_backing(endpoint_constraint)
             except AdbServerBackendAcquireError as exc:
                 return AdbServerBackendAcquireFailed(exc.diagnostic)
 
+            try:
+                acquisition = AdbServerBackendAcquireAchieved(endpoint)
+            except BaseException:
+                self._relinquish_backing(backing)
+                raise
+
             self._backing = backing
-            return AdbServerBackendAcquireAchieved(
-                self._backing_endpoint(backing)
-            )
+            return acquisition
         finally:
             self._end_operation(operation)
 
-    def release(self, endpoint: AdbServerEndpoint) -> None:
-        if not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
-
+    def release(self) -> None:
         operation = _AdbServerBackendOperation.RELEASE
         # Release is a command rather than an observable acquisition result. Wait for any earlier
         # operation to hand ownership back before this invocation linearizes relinquishment.
