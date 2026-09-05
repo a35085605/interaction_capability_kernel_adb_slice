@@ -7,6 +7,7 @@ from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecoveryAttempt,
     AdbServerRecoveryDecision,
     AdbServerRecoveryFailed,
+    AdbServerRecoveryFailureCause,
     AdbServerRecoveryResult,
 )
 
@@ -24,6 +25,7 @@ __all__ = [
     "AdbServerRecoveryCompleted",
     "AdbServerRecoveryDecision",
     "AdbServerRecoveryFailed",
+    "AdbServerRecoveryFailureCause",
     "AdbServerRecoveryInstruction",
     "AdbServerRecoveryResult",
     "AdbServerRecoveryPolicy",

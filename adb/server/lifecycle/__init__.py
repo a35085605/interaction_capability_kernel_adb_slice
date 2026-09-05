@@ -14,23 +14,19 @@ from adb.server.lifecycle.coordinator import (
     AdbServerRetireResult,
 )
 from adb.server.lifecycle.provision import (
-    AdbServerNonUsableAcquireResult,
     AdbServerProvisionActivated,
     AdbServerProvisionActivationConflict,
     AdbServerProvisionOutcome,
-    AdbServerUsableAcquireResult,
     classify_provision_result,
 )
 
 __all__ = [
     "AdbServerAlreadyActive",
     "AdbServerAlreadyInactive",
-    "AdbServerNonUsableAcquireResult",
     "AdbServerProvisionActivated",
     "AdbServerProvisionActivationConflict",
     "AdbServerProvisionOutcome",
     "AdbServerProvisionResult",
-    "AdbServerUsableAcquireResult",
     "AdbServerRetireResult",
     "AdbServerBackend",
     "AdbServerLifecycleCoordinator",

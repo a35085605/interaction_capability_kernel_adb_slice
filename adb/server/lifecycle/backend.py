@@ -20,7 +20,8 @@ def _normalize_diagnostic(value: object) -> str:
 class AdbServerBackendAcquireAchieved:
     """The requested acquisition became satisfied during this call.
 
-    This call established a new acquisition for ``endpoint``.
+    This call established a new acquisition for ``endpoint``. Only this result authorizes the
+    lifecycle coordinator to attempt a corresponding authoritative-state activation.
     """
 
     endpoint: AdbServerEndpoint
@@ -31,10 +32,11 @@ class AdbServerBackendAcquireAchieved:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireAlreadySatisfied:
-    """The requested acquisition was already satisfied before this call.
+class AdbServerBackendAcquirePreexisting:
+    """The requested acquisition existed before this call.
 
-    This call did not establish a new acquisition.
+    This call did not establish a new acquisition and therefore does not authorize a corresponding
+    authoritative-state activation.
     """
 
     endpoint: AdbServerEndpoint
@@ -42,6 +44,11 @@ class AdbServerBackendAcquireAlreadySatisfied:
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
+
+
+# Compatibility alias for callers using the former result name. New code should use
+# ``AdbServerBackendAcquirePreexisting`` so the result is not mistaken for acquisition success.
+AdbServerBackendAcquireAlreadySatisfied = AdbServerBackendAcquirePreexisting
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +87,7 @@ class AdbServerBackendAcquireFailed:
 
 AdbServerBackendAcquireResult: TypeAlias = (
     AdbServerBackendAcquireAchieved
-    | AdbServerBackendAcquireAlreadySatisfied
+    | AdbServerBackendAcquirePreexisting
     | AdbServerBackendAcquireInProgress
     | AdbServerBackendAcquireBlocked
     | AdbServerBackendAcquireFailed
@@ -89,7 +96,12 @@ AdbServerBackendAcquireResult: TypeAlias = (
 
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Provide acquisition and relinquishment of usable ADB server access."""
+    """Provide acquisition and relinquishment of usable ADB server access.
+
+    Lifecycle coordination does not impose total ordering across backend effects. Calls may overlap;
+    implementations must make each acquire/release effect concurrency-safe and independently
+    linearizable.
+    """
 
     def acquire(
         self,
@@ -113,6 +125,7 @@ __all__ = [
     "AdbServerBackendAcquireFailed",
     "AdbServerBackendAcquireInProgress",
     "AdbServerBackendAcquireResult",
+    "AdbServerBackendAcquirePreexisting",
     "AdbServerBackendAcquireAlreadySatisfied",
     "AdbServerBackendAcquireAchieved",
 ]

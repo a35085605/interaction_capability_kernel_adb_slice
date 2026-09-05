@@ -7,6 +7,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
+    AdbServerBackendAcquirePreexisting,
 )
 from adb.server.lifecycle.coordinator import AdbServerAlreadyActive
 from adb.server.lifecycle.provision import (
@@ -52,6 +53,7 @@ def decide_recovery_after_provision(
     if isinstance(
         outcome,
         (
+            AdbServerBackendAcquirePreexisting,
             AdbServerBackendAcquireInProgress,
             AdbServerBackendAcquireBlocked,
             AdbServerBackendAcquireFailed,
@@ -61,7 +63,7 @@ def decide_recovery_after_provision(
         if isinstance(decision, (AdbServerRecoveryAttempt, AdbServerRecoveryFailed)):
             return decision
         if isinstance(decision, AdbServerRecoveryAcquired):
-            raise TypeError("recovery acquired a non-usable backend provision outcome")
+            raise TypeError("recovery acquired a non-committable backend provision outcome")
         raise TypeError("recovery returned an unsupported decision")
 
     raise TypeError("outcome must be AdbServerProvisionOutcome")

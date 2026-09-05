@@ -11,6 +11,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
+    AdbServerBackendAcquirePreexisting,
 )
 from adb.server.lifecycle.errors import (
     AdbServerBootstrapError,
@@ -261,6 +262,11 @@ class AdbRuntime(AdbManagedRuntime):
         if isinstance(outcome, AdbServerAlreadyActive):
             raise AdbServerLifecycleConsistencyError(
                 "initial ADB server provisioning unexpectedly found an active server"
+            )
+        if isinstance(outcome, AdbServerBackendAcquirePreexisting):
+            raise AdbServerBootstrapError(
+                "initial ADB server provisioning did not establish a new backend acquisition "
+                f"for {outcome.endpoint!r}"
             )
         if isinstance(outcome, AdbServerBackendAcquireInProgress):
             detail = outcome.diagnostic or "ADB server backend acquire is already in progress"
