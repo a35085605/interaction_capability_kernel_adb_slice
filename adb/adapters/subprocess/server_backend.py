@@ -15,7 +15,7 @@ from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireError,
-    AdbServerBackendBase,
+    AdbServerBackendTemplate,
     AdbServerBackendReleaseCleanupUnconfirmed,
 )
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
@@ -303,7 +303,7 @@ class _AdbServerSubprocessFactory:
             self._sleep(min(self.probe_interval_seconds, remaining))
 
 
-class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
+class SubprocessAdbServerBackend(AdbServerBackendTemplate[_OwnedAdbServerProcess]):
     """Provide ADB server access through an owned foreground subprocess."""
 
     def __init__(

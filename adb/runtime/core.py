@@ -10,7 +10,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackend,
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquirePreexisting,
+    AdbServerBackendAlreadyAcquired,
     AdbServerBackendEventPublisherBinding,
 )
 from adb.server.lifecycle.errors import (
@@ -269,9 +269,9 @@ class AdbRuntime(AdbManagedRuntime):
             raise AdbServerLifecycleConsistencyError(
                 "initial ADB server provisioning unexpectedly found an active server"
             )
-        if isinstance(outcome, AdbServerBackendAcquirePreexisting):
+        if isinstance(outcome, AdbServerBackendAlreadyAcquired):
             raise AdbServerBootstrapError(
-                "initial ADB server provisioning found a preexisting backend acquisition"
+                "initial ADB server provisioning found an already-acquired backend acquisition"
             )
         if isinstance(outcome, AdbServerBackendAcquireDeferred):
             raise AdbServerBootstrapError(

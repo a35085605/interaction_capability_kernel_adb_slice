@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from adb.server.lifecycle.backend import (
-    AdbServerBackendAcquireAchieved,
+    AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquirePreexisting,
+    AdbServerBackendAlreadyAcquired,
 )
 from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
@@ -24,12 +24,12 @@ from adb.server.state import (
 class AdbServerProvisionActivated:
     """Validated provision outcome that committed a newly authoritative server."""
 
-    acquisition: AdbServerBackendAcquireAchieved
+    acquisition: AdbServerBackendAcquired
     activation: AdbServerActivated
 
     def __post_init__(self) -> None:
-        if not isinstance(self.acquisition, AdbServerBackendAcquireAchieved):
-            raise TypeError("acquisition must be AdbServerBackendAcquireAchieved")
+        if not isinstance(self.acquisition, AdbServerBackendAcquired):
+            raise TypeError("acquisition must be AdbServerBackendAcquired")
         if not isinstance(self.activation, AdbServerActivated):
             raise TypeError("activation must be AdbServerActivated")
         if self.acquisition.endpoint != self.activation.state.endpoint:
@@ -40,21 +40,21 @@ class AdbServerProvisionActivated:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerProvisionActivationConflict:
-    """Validated provision outcome whose newly achieved effect lost the activation fence."""
+    """Validated provision outcome whose newly acquired effect lost the activation fence."""
 
-    acquisition: AdbServerBackendAcquireAchieved
+    acquisition: AdbServerBackendAcquired
     activation: AdbServerActivationStateConflict
 
     def __post_init__(self) -> None:
-        if not isinstance(self.acquisition, AdbServerBackendAcquireAchieved):
-            raise TypeError("acquisition must be AdbServerBackendAcquireAchieved")
+        if not isinstance(self.acquisition, AdbServerBackendAcquired):
+            raise TypeError("acquisition must be AdbServerBackendAcquired")
         if not isinstance(self.activation, AdbServerActivationStateConflict):
             raise TypeError("activation must be AdbServerActivationStateConflict")
 
 
 AdbServerProvisionOutcome: TypeAlias = (
     AdbServerAlreadyActive
-    | AdbServerBackendAcquirePreexisting
+    | AdbServerBackendAlreadyAcquired
     | AdbServerBackendAcquireDeferred
     | AdbServerBackendAcquireFailed
     | AdbServerProvisionActivated
@@ -77,15 +77,15 @@ def classify_provision_result(
         if isinstance(
             first,
             (
-                AdbServerBackendAcquirePreexisting,
+                AdbServerBackendAlreadyAcquired,
                 AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
             ),
         ):
             return first
-        if isinstance(first, AdbServerBackendAcquireAchieved):
+        if isinstance(first, AdbServerBackendAcquired):
             raise TypeError(
-                "newly achieved backend acquire evidence must be followed by activation evidence"
+                "newly acquired backend evidence must be followed by activation evidence"
             )
         raise TypeError(
             "provision evidence must begin with already-active or backend acquire evidence"
@@ -93,12 +93,12 @@ def classify_provision_result(
 
     if len(evidence) == 2:
         acquisition, activation = evidence
-        if not isinstance(acquisition, AdbServerBackendAcquireAchieved):
+        if not isinstance(acquisition, AdbServerBackendAcquired):
             if isinstance(
                 acquisition,
                 (
                     AdbServerAlreadyActive,
-                    AdbServerBackendAcquirePreexisting,
+                    AdbServerBackendAlreadyAcquired,
                     AdbServerBackendAcquireDeferred,
                     AdbServerBackendAcquireFailed,
                 ),
@@ -113,7 +113,7 @@ def classify_provision_result(
         if isinstance(activation, AdbServerActivationStateConflict):
             return AdbServerProvisionActivationConflict(acquisition, activation)
         raise TypeError(
-            "newly achieved backend acquire evidence must be followed by activation evidence"
+            "newly acquired backend evidence must be followed by activation evidence"
         )
 
     raise TypeError("server lifecycle provision() returned unsupported evidence shape")

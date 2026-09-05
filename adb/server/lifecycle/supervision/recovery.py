@@ -8,10 +8,10 @@ from random import random
 from typing import TypeAlias
 
 from adb.server.lifecycle.backend import (
-    AdbServerBackendAcquireAchieved,
+    AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquirePreexisting,
+    AdbServerBackendAlreadyAcquired,
     AdbServerBackendAcquireResult,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
@@ -46,7 +46,7 @@ class AdbServerRecoveryAcquired:
 
 
 AdbServerRecoveryFailureCause: TypeAlias = (
-    AdbServerBackendAcquirePreexisting | AdbServerBackendAcquireFailed
+    AdbServerBackendAlreadyAcquired | AdbServerBackendAcquireFailed
 )
 
 
@@ -64,7 +64,7 @@ class AdbServerRecoveryFailed:
             raise ValueError("attempts must be greater than zero")
         if not isinstance(
             self.cause,
-            (AdbServerBackendAcquirePreexisting, AdbServerBackendAcquireFailed),
+            (AdbServerBackendAlreadyAcquired, AdbServerBackendAcquireFailed),
         ):
             raise TypeError("cause must be a budget-consuming backend acquire outcome")
 
@@ -123,21 +123,24 @@ class AdbServerRecovery:
         if not isinstance(
             result,
             (
-                AdbServerBackendAcquireAchieved,
-                AdbServerBackendAcquirePreexisting,
+                AdbServerBackendAcquired,
+                AdbServerBackendAlreadyAcquired,
                 AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
             ),
         ):
             raise TypeError("result must be AdbServerBackendAcquireResult")
 
-        if isinstance(result, AdbServerBackendAcquireAchieved):
+        if isinstance(result, AdbServerBackendAcquired):
             return AdbServerRecoveryAcquired()
 
         if isinstance(result, AdbServerBackendAcquireDeferred):
             return self._next_attempt(self._policy.deferred_retry_seconds)
 
-        if not isinstance(result, (AdbServerBackendAcquirePreexisting, AdbServerBackendAcquireFailed)):
+        if not isinstance(
+            result,
+            (AdbServerBackendAlreadyAcquired, AdbServerBackendAcquireFailed),
+        ):
             raise TypeError("unsupported budget-consuming backend acquire outcome")
 
         self._failed_attempts += 1

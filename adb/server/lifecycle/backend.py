@@ -20,8 +20,12 @@ def _normalize_diagnostic(value: object) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireAchieved:
-    """A backend acquisition newly established by this call."""
+class AdbServerBackendAcquired:
+    """Evidence that this call newly established backend acquisition ownership.
+
+    The backend retains the implementation-defined handle; ``endpoint`` identifies the usable
+    ADB server access associated with that current acquisition.
+    """
 
     endpoint: AdbServerEndpoint
 
@@ -31,8 +35,11 @@ class AdbServerBackendAcquireAchieved:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquirePreexisting:
-    """A backend acquisition already existed when this call linearized."""
+class AdbServerBackendAlreadyAcquired:
+    """Evidence that the backend already owned an acquisition when this call linearized.
+
+    This call establishes no new backend ownership.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,8 +63,8 @@ class AdbServerBackendAcquireFailed:
 
 
 AdbServerBackendAcquireResult: TypeAlias = (
-    AdbServerBackendAcquireAchieved
-    | AdbServerBackendAcquirePreexisting
+    AdbServerBackendAcquired
+    | AdbServerBackendAlreadyAcquired
     | AdbServerBackendAcquireDeferred
     | AdbServerBackendAcquireFailed
 )
@@ -83,16 +90,22 @@ class AdbServerBackendReleaseCleanupUnconfirmed:
 
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Acquire and release usable ADB server access.
+    """Own at most one runtime-scoped acquisition of usable ADB server access.
 
-    Calls may overlap; each operation must be concurrency-safe and independently linearizable.
+    ``acquire`` establishes or reports backend ownership; ``release`` ends ownership of the
+    current acquisition. Calls may overlap, so each operation must be concurrency-safe and
+    independently linearizable.
     """
 
     def acquire(
         self,
         endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> AdbServerBackendAcquireResult:
-        """Acquire usable ADB server access, optionally constrained to ``endpoint_constraint``."""
+        """Acquire usable ADB server access, optionally constrained to ``endpoint_constraint``.
+
+        ``AdbServerBackendAcquired`` means this call established the current ownership;
+        ``AdbServerBackendAlreadyAcquired`` means that ownership predates this call.
+        """
         ...
 
     def release(self) -> None:
@@ -124,10 +137,12 @@ class AdbServerBackendAcquireError(RuntimeError):
 HandleT = TypeVar("HandleT")
 
 
-class AdbServerBackendBase(Generic[HandleT], ABC):
-    """Serialize backend acquisition ownership around one implementation-defined handle.
+class AdbServerBackendTemplate(Generic[HandleT], ABC):
+    """Template implementation for serialized ownership of one backend acquisition.
 
-    A retained handle represents the current backend acquisition.
+    The template owns at most one implementation-defined handle; a retained handle represents
+    the current acquisition. ``acquire`` and ``release`` define the shared ownership, concurrency,
+    and cleanup-signal semantics while subclasses provide only handle obtain/release mechanics.
     """
 
     def __init__(self, *, publisher: EventPublisher | None = None) -> None:
@@ -202,7 +217,7 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
         try:
             handle = self._handle
             if handle is not None:
-                return AdbServerBackendAcquirePreexisting()
+                return AdbServerBackendAlreadyAcquired()
 
             try:
                 handle, endpoint = self._obtain_handle(endpoint_constraint)
@@ -210,7 +225,7 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
                 return AdbServerBackendAcquireFailed(exc.diagnostic)
 
             try:
-                acquisition = AdbServerBackendAcquireAchieved(endpoint)
+                acquisition = AdbServerBackendAcquired(endpoint)
             except BaseException:
                 release_signal = self._release_handle(handle)
                 if release_signal is not None:
@@ -248,13 +263,13 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
 
 __all__ = [
     "AdbServerBackend",
-    "AdbServerBackendAcquireAchieved",
+    "AdbServerBackendAcquired",
     "AdbServerBackendAcquireDeferred",
     "AdbServerBackendAcquireError",
     "AdbServerBackendAcquireFailed",
-    "AdbServerBackendAcquirePreexisting",
+    "AdbServerBackendAlreadyAcquired",
     "AdbServerBackendAcquireResult",
-    "AdbServerBackendBase",
+    "AdbServerBackendTemplate",
     "AdbServerBackendEventPublisherBinding",
     "AdbServerBackendReleaseCleanupUnconfirmed",
 ]

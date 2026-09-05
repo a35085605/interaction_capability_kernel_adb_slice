@@ -11,10 +11,10 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.backend import (
     AdbServerBackend,
-    AdbServerBackendAcquireAchieved,
+    AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquirePreexisting,
+    AdbServerBackendAlreadyAcquired,
     AdbServerBackendAcquireResult,
 )
 from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
@@ -63,12 +63,12 @@ class AdbServerAlreadyInactive:
 AdbServerProvisionResult: TypeAlias = (
     tuple[AdbServerAlreadyActive]
     | tuple[
-        AdbServerBackendAcquirePreexisting
+        AdbServerBackendAlreadyAcquired
         | AdbServerBackendAcquireDeferred
         | AdbServerBackendAcquireFailed
     ]
     | tuple[
-        AdbServerBackendAcquireAchieved,
+        AdbServerBackendAcquired,
         AdbServerActivationResult,
     ]
 )
@@ -111,9 +111,9 @@ class AdbServerLifecycleCoordinator:
         Provisioning first snapshots its endpoint constraint and authoritative-state basis, then runs
         backend acquisition without imposing total ordering on concurrent lifecycle effects. Only an
         acquisition newly established by this invocation may proceed to authoritative activation.
-        Preexisting, deferred, and failed acquisitions are terminal non-commit evidence for
+        Already-acquired, deferred, and failed results are terminal non-commit evidence for
         this invocation. Activation remains fenced by the authoritative identity observed before the
-        backend effect; a newly achieved acquisition that loses that fence is relinquished.
+        backend effect; a newly acquired backend effect that loses that fence is relinquished.
         """
 
         with self._authority_lock:
@@ -127,7 +127,7 @@ class AdbServerLifecycleCoordinator:
                 return (AdbServerAlreadyActive(server, endpoint),)
 
         acquisition = self._acquire_backend(endpoint_constraint)
-        if not isinstance(acquisition, AdbServerBackendAcquireAchieved):
+        if not isinstance(acquisition, AdbServerBackendAcquired):
             return (acquisition,)
 
         try:
@@ -161,13 +161,13 @@ class AdbServerLifecycleCoordinator:
         if isinstance(
             acquisition,
             (
-                AdbServerBackendAcquirePreexisting,
+                AdbServerBackendAlreadyAcquired,
                 AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
             ),
         ):
             return acquisition
-        if not isinstance(acquisition, AdbServerBackendAcquireAchieved):
+        if not isinstance(acquisition, AdbServerBackendAcquired):
             raise TypeError("server backend acquire() returned an unsupported result")
 
         if endpoint_constraint is not None and acquisition.endpoint != endpoint_constraint:
@@ -183,15 +183,15 @@ class AdbServerLifecycleCoordinator:
         *,
         expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
-        """Commit one newly achieved endpoint at the shared authority boundary."""
+        """Commit one newly acquired endpoint at the shared authority boundary."""
 
         return self._state.activate(endpoint, expected=expected)
 
-    def _rollback_acquisition(self, acquisition: AdbServerBackendAcquireAchieved) -> None:
+    def _rollback_acquisition(self, acquisition: AdbServerBackendAcquired) -> None:
         """Relinquish an acquisition established by the current provision invocation."""
 
-        if not isinstance(acquisition, AdbServerBackendAcquireAchieved):
-            raise TypeError("acquisition must be AdbServerBackendAcquireAchieved")
+        if not isinstance(acquisition, AdbServerBackendAcquired):
+            raise TypeError("acquisition must be AdbServerBackendAcquired")
         self._backend.release()
 
     def retire(
@@ -206,7 +206,8 @@ class AdbServerLifecycleCoordinator:
         to authoritative state so stale work is preserved as deactivation-conflict evidence. A
         committed deactivation is published only after its corresponding backend release has been
         requested; concurrent provision calls may observe the interval between those independent
-        linearization points and must not adopt a preexisting acquisition from it.
+        linearization points and must not treat already-acquired backend ownership as a newly
+        committable effect.
         """
 
         if expected_server is not None and not isinstance(expected_server, AdbServerIdentity):
