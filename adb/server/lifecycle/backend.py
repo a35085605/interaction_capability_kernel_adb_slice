@@ -21,11 +21,7 @@ def _normalize_diagnostic(value: object) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquireAchieved:
-    """A new backend acquisition was established during this call.
-
-    Only this result authorizes the lifecycle coordinator to attempt a corresponding
-    authoritative-state activation for the reported ``endpoint``.
-    """
+    """A backend acquisition newly established by this call."""
 
     endpoint: AdbServerEndpoint
 
@@ -36,19 +32,12 @@ class AdbServerBackendAcquireAchieved:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquirePreexisting:
-    """A backend acquisition existed before this call linearized.
-
-    This call did not establish a new acquisition and therefore does not authorize a corresponding
-    authoritative-state activation. Endpoint evidence belongs only to newly achieved acquisitions.
-    """
+    """A backend acquisition already existed when this call linearized."""
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquireInProgress:
-    """Backend acquisition work is already in progress.
-
-    This call did not establish a new acquisition.
-    """
+    """Backend acquisition is already in progress."""
 
     diagnostic: str | None = None
 
@@ -88,11 +77,9 @@ AdbServerBackendAcquireResult: TypeAlias = (
 
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Provide acquisition and relinquishment of usable ADB server access.
+    """Acquire and release usable ADB server access.
 
-    Lifecycle coordination does not impose total ordering across backend effects. Calls may overlap;
-    implementations must make each acquire/release effect concurrency-safe and independently
-    linearizable.
+    Calls may overlap; each operation must be concurrency-safe and independently linearizable.
     """
 
     def acquire(
@@ -103,16 +90,15 @@ class AdbServerBackend(Protocol):
         ...
 
     def release(self) -> None:
-        """Relinquish the current backend acquisition.
+        """Release the current backend acquisition.
 
-        Relinquishment is complete at this boundary when the backend accepts responsibility for release;
-        implementation-specific cleanup may continue afterward and is not part of the lifecycle result.
+        Completion marks the end of backend ownership; teardown may continue afterward.
         """
         ...
 
 
 class AdbServerBackendAcquireError(RuntimeError):
-    """Implementation-side signal that obtaining a new backend handle failed."""
+    """Expected failure while obtaining a backend acquisition handle."""
 
     def __init__(self, diagnostic: str) -> None:
         self.diagnostic = _normalize_diagnostic(diagnostic)
@@ -128,12 +114,9 @@ HandleT = TypeVar("HandleT")
 
 
 class AdbServerBackendBase(Generic[HandleT], ABC):
-    """Serialize backend ownership effects around one implementation-defined handle.
+    """Serialize backend acquisition ownership around one implementation-defined handle.
 
-    The base persists only the implementation-defined handle and operation concurrency state.
-    Endpoint evidence is produced only when a new handle is obtained and is not retained separately by
-    the backend. A retained handle therefore makes later acquisitions preexisting without endpoint
-    evidence; endpoint consistency remains a lifecycle/domain concern.
+    A retained handle represents the current backend acquisition.
     """
 
     def __init__(self) -> None:
@@ -147,15 +130,14 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
         self,
         endpoint_constraint: AdbServerEndpoint | None,
     ) -> tuple[HandleT, AdbServerEndpoint]:
-        """Obtain one handle and return its one-shot endpoint evidence.
+        """Obtain an acquisition handle and its usable endpoint.
 
-        Raise ``AdbServerBackendAcquireError`` on expected acquisition failure. The returned endpoint
-        is surfaced in ``AdbServerBackendAcquireAchieved`` and is not retained by this base.
+        Raise ``AdbServerBackendAcquireError`` for expected acquisition failures.
         """
 
     @abstractmethod
     def _release_handle(self, handle: HandleT) -> None:
-        """Accept responsibility for releasing one previously obtained handle."""
+        """Release a previously obtained acquisition handle."""
 
     def _begin_operation(
         self,
@@ -217,8 +199,7 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
 
     def release(self) -> None:
         operation = _AdbServerBackendOperation.RELEASE
-        # Release is a command rather than an observable acquisition result. Wait for any earlier
-        # operation to hand ownership back before this invocation linearizes relinquishment.
+        # Wait for any active operation, then linearize this release.
         with self._operation_condition:
             while self._active_operation is not None:
                 self._operation_condition.wait()
@@ -229,8 +210,7 @@ class AdbServerBackendBase(Generic[HandleT], ABC):
             if handle is None:
                 return
 
-            # Logical backend ownership ends before adapter-specific cleanup. From this point a
-            # a handle is never retained merely to represent cleanup convergence.
+            # Clear the handle at the logical release point before implementation-specific teardown.
             self._handle = None
             self._release_handle(handle)
         finally:

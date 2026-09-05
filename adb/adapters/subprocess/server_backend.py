@@ -302,7 +302,7 @@ class _AdbServerSubprocessFactory:
 
 
 class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
-    """Own a foreground ADB server process handle through the shared backend lifecycle base."""
+    """Provide ADB server access through an owned foreground subprocess."""
 
     def __init__(
         self,
@@ -344,8 +344,7 @@ class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
         try:
             handle.close()
         except _AdbServerSubprocessTerminationUnconfirmed:
-            # Relinquishment already linearized in the base. Native cleanup is intentionally not
-            # represented as a second logical backend acquisition state.
+            # Preserve the completed logical release if process termination cannot be confirmed.
             return
 
 
