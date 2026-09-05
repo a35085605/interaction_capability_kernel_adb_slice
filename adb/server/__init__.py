@@ -6,7 +6,11 @@ from adb.server.lifecycle.errors import (
     AdbServerLifecycleConsistencyError,
     AdbServerLifecycleError,
 )
-from adb.server.lifecycle.backend import AdbServerBackend
+from adb.server.lifecycle.backend import (
+    AdbServerBackend,
+    AdbServerBackendEventPublisherBinding,
+    AdbServerBackendReleaseCleanupUnconfirmed,
+)
 from adb.server.lifecycle.coordinator import AdbServerLifecycleCoordinator
 from adb.server.failure import (
     AdbServerConnectionFailure,
@@ -41,6 +45,8 @@ __all__ = [
     "AdbServerActivationStateConflict",
     "AdbServerActivationResult",
     "AdbServerBackend",
+    "AdbServerBackendEventPublisherBinding",
+    "AdbServerBackendReleaseCleanupUnconfirmed",
     "AdbServerDeactivated",
     "AdbServerDeactivationStateConflict",
     "AdbServerDeactivationResult",

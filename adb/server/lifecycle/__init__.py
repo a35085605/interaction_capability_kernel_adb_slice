@@ -5,7 +5,11 @@ from adb.server.lifecycle.errors import (
     AdbServerLifecycleConsistencyError,
     AdbServerLifecycleError,
 )
-from adb.server.lifecycle.backend import AdbServerBackend
+from adb.server.lifecycle.backend import (
+    AdbServerBackend,
+    AdbServerBackendEventPublisherBinding,
+    AdbServerBackendReleaseCleanupUnconfirmed,
+)
 from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
     AdbServerAlreadyInactive,
@@ -29,6 +33,8 @@ __all__ = [
     "AdbServerProvisionResult",
     "AdbServerRetireResult",
     "AdbServerBackend",
+    "AdbServerBackendEventPublisherBinding",
+    "AdbServerBackendReleaseCleanupUnconfirmed",
     "AdbServerLifecycleCoordinator",
     "AdbServerBootstrapError",
     "AdbServerLifecycleConsistencyError",

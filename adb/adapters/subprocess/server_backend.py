@@ -16,8 +16,10 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireError,
     AdbServerBackendBase,
+    AdbServerBackendReleaseCleanupUnconfirmed,
 )
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
+from eventing import EventPublisher
 
 
 _MonotonicClock = Callable[[], float]
@@ -311,6 +313,7 @@ class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
         probe_interval_seconds: float = 0.05,
+        publisher: EventPublisher | None = None,
         _factory: _AdbServerSubprocessFactory | None = None,
     ) -> None:
         if _factory is None:
@@ -324,7 +327,7 @@ class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
             raise TypeError("_factory must provide create()")
 
         self._factory = _factory
-        super().__init__()
+        super().__init__(publisher=publisher)
 
     def _obtain_handle(
         self,
@@ -340,12 +343,18 @@ class SubprocessAdbServerBackend(AdbServerBackendBase[_OwnedAdbServerProcess]):
         except _AdbServerSubprocessStartError as exc:
             raise AdbServerBackendAcquireError(str(exc)) from exc
 
-    def _release_handle(self, handle: _OwnedAdbServerProcess) -> None:
+    def _release_handle(
+        self,
+        handle: _OwnedAdbServerProcess,
+    ) -> AdbServerBackendReleaseCleanupUnconfirmed | None:
         try:
             handle.close()
-        except _AdbServerSubprocessTerminationUnconfirmed:
-            # Preserve the completed logical release if process termination cannot be confirmed.
-            return
+        except Exception as exc:
+            return AdbServerBackendReleaseCleanupUnconfirmed(
+                handle=handle,
+                diagnostic=str(exc).strip() or type(exc).__name__,
+            )
+        return None
 
 
 __all__ = ["SubprocessAdbServerBackend"]

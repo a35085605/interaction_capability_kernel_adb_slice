@@ -12,6 +12,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireInProgress,
     AdbServerBackendAcquirePreexisting,
+    AdbServerBackendEventPublisherBinding,
 )
 from adb.server.lifecycle.errors import (
     AdbServerBootstrapError,
@@ -152,6 +153,12 @@ class AdbRuntime(AdbManagedRuntime):
             and transport_supervisor.transport_list_state is not state.transport_list
         ):
             raise ValueError("transport supervisor must share the runtime transport-list state")
+
+        if event_bus is not None and isinstance(
+            server_backend,
+            AdbServerBackendEventPublisherBinding,
+        ):
+            server_backend.bind_event_publisher(event_bus)
 
         super().__init__(state.server)
         self._state = state
