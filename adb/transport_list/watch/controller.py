@@ -324,10 +324,6 @@ class ThreadedAdbTransportListWatchController:
                 raise ValueError(
                     "transport-list watch session belongs to a different server lifetime"
                 )
-            if not self._prepare_watch(watcher, session):
-                startup_results.append(AdbTransportListWatchStartSuperseded())
-                return
-
             if not self._commit_observation(watcher, session, initial_transport_list):
                 startup_results.append(AdbTransportListWatchStartSuperseded())
                 return
@@ -367,16 +363,6 @@ class ThreadedAdbTransportListWatchController:
     ) -> AdbTransportList:
         return AdbTransportList(transports)
 
-    def _prepare_watch(
-        self,
-        watcher: AdbTransportListWatcher,
-        session: AdbTransportListWatchSession,
-    ) -> bool:
-        with self._lock:
-            if self._closed or self._active_watcher is not watcher:
-                return False
-            return self._observation_coordinator.prepare_server(session.server)
-
     def _commit_observation(
         self,
         watcher: AdbTransportListWatcher,
@@ -386,14 +372,10 @@ class ThreadedAdbTransportListWatchController:
         with self._lock:
             if self._closed or self._active_watcher is not watcher:
                 return False
-            return self._commit_observation_locked(session, transport_list)
-
-    def _commit_observation_locked(
-        self,
-        session: AdbTransportListWatchSession,
-        transport_list: AdbTransportList,
-    ) -> bool:
-        result = self._observation_coordinator.observe(session.server, transport_list)
+            result = self._observation_coordinator.observe(
+                session.server,
+                transport_list,
+            )
         if isinstance(result, AdbTransportListObserved):
             return True
         if isinstance(

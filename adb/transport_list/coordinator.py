@@ -10,7 +10,6 @@ from adb.server.state import AdbServerStateView
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.state import (
-    AdbTransportListInvalidated,
     AdbTransportListObservationResult,
     AdbTransportListObserved,
     AdbTransportListState,
@@ -91,7 +90,6 @@ class AdbTransportListCoordinator:
         self._server_state = server_state
         self._publisher = publisher
         self._lock = RLock() if authority_lock is None else authority_lock
-        self._committed_server: AdbServerIdentity | None = None
 
     @property
     def server_state(self) -> AdbServerStateView:
@@ -126,38 +124,12 @@ class AdbTransportListCoordinator:
                 raise AdbServerUnavailableError(
                     "no authoritative ADB server is available for transport-list refresh"
                 )
-            if not self._prepare_server_locked(server):
-                raise RuntimeError(
-                    "authoritative ADB server changed while preparing transport-list refresh"
-                )
             expected = self._transport_list_state.snapshot()
 
         transport_list = reader.read(endpoint)
         if not isinstance(transport_list, AdbTransportList):
             raise TypeError("transport-list reader must return AdbTransportList")
         return self.observe(server, transport_list, expected=expected)
-
-    def prepare_server(self, server: AdbServerIdentity) -> bool:
-        """Align transport-list visibility with ``server``.
-
-        On success, any visible transport list belongs to ``server`` and stale lifetime
-        evidence has been invalidated. Returns ``False`` when ``server`` has lost authority.
-        """
-
-        self._require_server(server)
-        with self._lock:
-            return self._prepare_server_locked(server)
-
-    def _prepare_server_locked(self, server: AdbServerIdentity) -> bool:
-        if self._server_state.current_identity != server:
-            return False
-        state = self._transport_list_state.snapshot()
-        if state.current is None or self._committed_server == server:
-            return True
-        identity = state.current_identity
-        assert identity is not None
-        invalidation = self._transport_list_state.invalidate(identity)
-        return isinstance(invalidation, AdbTransportListInvalidated)
 
     def observe(
         self,
@@ -190,8 +162,6 @@ class AdbTransportListCoordinator:
                 self._transport_list_state.snapshot() if expected is None else expected
             )
             result = self._transport_list_state.observe(transport_list, commit_expected)
-            if result:
-                self._committed_server = server
 
         if isinstance(result, AdbTransportListObserved) and self._publisher is not None:
             self._publisher.publish(result)
