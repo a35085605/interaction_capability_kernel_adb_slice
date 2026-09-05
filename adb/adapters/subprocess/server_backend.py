@@ -13,10 +13,10 @@ from adb.errors import AdbError
 from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.backend import (
+from adb.server.lifecycle.backend_template import (
     AdbServerBackendAcquireError,
-    AdbServerBackendTemplate,
     AdbServerBackendReleaseCleanupUnconfirmed,
+    AdbServerBackendTemplate,
 )
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
 from eventing import EventPublisher

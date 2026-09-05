@@ -11,8 +11,8 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAlreadyAcquired,
-    AdbServerBackendEventPublisherBinding,
 )
+from adb.server.lifecycle.backend_template import AdbServerBackendEventPublisherBinding
 from adb.server.lifecycle.errors import (
     AdbServerBootstrapError,
     AdbServerLifecycleConsistencyError,
