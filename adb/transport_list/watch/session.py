@@ -9,21 +9,7 @@ from adb.transport_list.observation import (
     AdbTransportListObservation,
     AdbTransportListObservationIdentifier,
 )
-
-
-@runtime_checkable
-class AdbTransportListWatchStream(Protocol):
-    """Established low-level watch stream yielding complete raw transport lists."""
-
-    @property
-    def initial(self) -> AdbTransportList:
-        ...
-
-    def updates(self) -> Iterator[AdbTransportList]:
-        ...
-
-    def close(self) -> None:
-        ...
+from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 
 @runtime_checkable

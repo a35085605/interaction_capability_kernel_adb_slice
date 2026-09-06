@@ -11,9 +11,9 @@ from adb.transport_list.watch.controller import (
 )
 from adb.transport_list.watch.session import (
     AdbTransportListWatchSession,
-    AdbTransportListWatchStream,
     bind_transport_list_watch_session,
 )
+from adb.transport_list.watch.stream import AdbTransportListWatchStream
 from adb.transport_list.watch.error import (
     AdbTransportListWatchCancelledError,
     AdbTransportListWatchError,

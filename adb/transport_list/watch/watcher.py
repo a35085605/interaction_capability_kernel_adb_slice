@@ -17,7 +17,7 @@ from adb.transport_list.watch.failure import (
     AdbTransportListWatchServerConnectionFailure,
     AdbTransportListWatchServiceFailure,
 )
-from adb.transport_list.watch.session import AdbTransportListWatchStream
+from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 
 @runtime_checkable
