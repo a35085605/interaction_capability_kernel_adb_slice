@@ -17,7 +17,7 @@ from adb.transport_list.state import AdbTransportListStateStore
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
 )
-from adb.transport_list.watch.watcher import AdbTransportListWatcher
+from adb.transport_list.watch.watcher import AdbTransportListWatchAttachment
 from adb.transport.lifecycle.ensure import AdbTcpTransportEnsurer
 from adb.transport.lifecycle.supervision.policy import (
     AdbConfiguredTransportSupervisionPolicy,
@@ -39,7 +39,7 @@ def _default_server_backend_factory() -> AdbServerBackend:
 def _default_transport_list_watcher_factory(
     endpoint: TcpAddress,
     startup_timeout_seconds: float,
-) -> AdbTransportListWatcher:
+) -> AdbTransportListWatchAttachment:
     return SmartSocketAdbTransportListWatcher(
         endpoint,
         startup_timeout_seconds=startup_timeout_seconds,

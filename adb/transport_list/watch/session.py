@@ -14,7 +14,7 @@ from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 @runtime_checkable
 class AdbTransportListWatchSession(Protocol):
-    """Server-bound identified watch session for one authoritative ADB server lifetime."""
+    """Short-lived server-bound watch session for one authoritative ADB server lifetime."""
 
     @property
     def server(self) -> AdbServerIdentity:
@@ -32,7 +32,7 @@ class AdbTransportListWatchSession(Protocol):
 
 
 class _ServerBoundAdbTransportListWatchSession:
-    """Bind one raw watch stream to runtime-issued observation identities and server provenance."""
+    """Bind one short-lived raw stream to runtime-issued identities and server provenance."""
 
     __slots__ = ("_server", "_stream", "_initial", "_observation_identifier")
 

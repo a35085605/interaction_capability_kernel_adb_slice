@@ -20,7 +20,7 @@ from adb.transport_list.watch.controller import (
     AdbTransportListWatchStartSuperseded,
     ThreadedAdbTransportListWatchController,
 )
-from adb.transport_list.watch.watcher import AdbTransportListWatcher
+from adb.transport_list.watch.watcher import AdbTransportListWatchAttachment
 from adb.transport_list.watch.failure import (
     AdbTransportListWatchFailure,
     AdbTransportListWatchServerConnectionFailure,
@@ -34,7 +34,9 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 
 _ThreadFactory = Callable[..., Thread]
-_TransportListWatcherFactory = Callable[[TcpAddress, float], AdbTransportListWatcher]
+_TransportListWatcherFactory = Callable[
+    [TcpAddress, float], AdbTransportListWatchAttachment
+]
 _ControllerFactory = Callable[
     [
         AdbServerIdentity,
@@ -53,8 +55,10 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 
 class AdbTransportListWatchSupervisor:
-    """Maintain the requested transport-list watch across server lifetimes by reconciling fresh
-    single-use controllers.
+    """Maintain one long-lived watch controller across authoritative server lifetimes.
+
+    Reconciliation replaces only the controller's short-lived watch session. Controller and
+    watcher ownership remain stable until this supervisor is closed.
     """
 
     def __init__(
@@ -153,6 +157,7 @@ class AdbTransportListWatchSupervisor:
         self._controller: AdbTransportListWatchController | None = None
         self._watch_active = False
         self._start_in_progress = False
+        self._start_token: object | None = None
         self._attempt_threads: set[Thread] = set()
         self._closed = False
 
@@ -193,7 +198,7 @@ class AdbTransportListWatchSupervisor:
             return self._watch_active
 
     def start(self) -> bool:
-        """Request a transport-list watch and establish a controller for the current server."""
+        """Request transport-list watching and start the first short-lived session."""
 
         with self._lock:
             self._require_open()
@@ -206,81 +211,102 @@ class AdbTransportListWatchSupervisor:
             endpoint = state.endpoint
             if server is None or endpoint is None:
                 return False
-            controller = self._create_controller_locked(server, endpoint)
-            self._start_in_progress = True
+            controller = self._ensure_controller_locked(server, endpoint)
+            token = self._begin_start_locked()
 
-        return self._attempt_start(controller)
+        return self._attempt_start(controller, server, endpoint, token)
 
     def reconcile(self) -> None:
-        """Reconcile the watch request against the authoritative current server."""
+        """Reconcile the current short-lived session against authoritative server state."""
 
         controller_to_stop: AdbTransportListWatchController | None = None
-        launch: tuple[Thread, AdbTransportListWatchController] | None = None
+        launch: tuple[
+            Thread,
+            AdbTransportListWatchController,
+            AdbServerIdentity,
+            AdbServerEndpoint,
+            object,
+        ] | None = None
 
         with self._lock:
             self._require_open()
             if not self._watch_requested:
                 return
+
             state = self._server_state.snapshot()
             server = state.server
             endpoint = state.endpoint
             controller = self._controller
+
             if server is None:
-                controller_to_stop = self._detach_controller_locked()
-            elif controller is not None and controller.server != server:
-                controller_to_stop = self._detach_controller_locked()
-            if (
-                server is not None
-                and self._controller is None
-                and not self._start_in_progress
-            ):
+                if controller is not None and (controller.active or self._start_in_progress):
+                    self._cancel_start_locked()
+                    self._watch_active = False
+                    controller_to_stop = controller
+            else:
                 if endpoint is None:
                     raise RuntimeError("active ADB server state has no endpoint")
-                controller = self._create_controller_locked(server, endpoint)
-                thread = self._thread_factory(
-                    target=self._run_start_attempt,
-                    args=(controller,),
-                    name=(
-                        "adb-transport-list-watch-reconciliation-"
-                        f"{endpoint.host}-{endpoint.port}-{server}"
-                    ),
+                if controller is None:
+                    controller = self._create_controller_locked(server, endpoint)
+
+                binding_changed = (
+                    controller.server != server or controller.endpoint != endpoint
                 )
-                self._start_in_progress = True
-                self._attempt_threads.add(thread)
-                launch = (thread, controller)
+                if binding_changed and (controller.active or self._start_in_progress):
+                    self._cancel_start_locked()
+                    self._watch_active = False
+                    controller_to_stop = controller
+
+                if not self._start_in_progress and (
+                    binding_changed or not controller.active
+                ):
+                    token = self._begin_start_locked()
+                    thread = self._thread_factory(
+                        target=self._run_start_attempt,
+                        args=(controller, server, endpoint, token),
+                        name=(
+                            "adb-transport-list-watch-reconciliation-"
+                            f"{endpoint.host}-{endpoint.port}-{server}"
+                        ),
+                    )
+                    self._attempt_threads.add(thread)
+                    launch = (thread, controller, server, endpoint, token)
 
         if controller_to_stop is not None:
             controller_to_stop.stop()
+
         if launch is not None:
-            thread, controller = launch
+            thread, controller, server, endpoint, token = launch
             try:
                 thread.start()
             except BaseException:
                 with self._lock:
                     self._attempt_threads.discard(thread)
-                    if self._controller is controller:
-                        self._detach_controller_locked()
+                    if self._start_token is token:
+                        self._cancel_start_locked()
                 controller.stop()
                 raise
 
     def close(self) -> None:
-        """Stop watch supervision and join in-flight startup workers other than
-        the caller.
-        """
+        """Close long-lived controller/watcher ownership and join startup workers."""
 
         with self._lock:
             if self._closed:
                 return
             self._closed = True
             self._watch_requested = False
+            self._watch_active = False
+            self._cancel_start_locked()
             subscriptions = self._subscriptions
             self._subscriptions = ()
-            controller = self._detach_controller_locked()
+            controller = self._controller
+            self._controller = None
             attempt_threads = tuple(self._attempt_threads)
+
         for token in subscriptions:
             self._bus.unsubscribe(token)
         if controller is not None:
-            controller.stop()
+            controller.close()
         for thread in attempt_threads:
             if thread is not current_thread():
                 thread.join()
@@ -293,46 +319,57 @@ class AdbTransportListWatchSupervisor:
                 or not self._watch_requested
                 or controller is None
                 or event.server != controller.server
-                or self._server_state.current_identity != controller.server
+                or self._server_state.current_identity != event.server
             ):
                 return
             self._watch_active = True
 
     def _on_watch_failed(self, event: AdbTransportListWatchFailed) -> None:
         request_server_reconciliation = False
-        failed_server: AdbServerIdentity | None = None
         with self._lock:
-            current = self._controller
-            if self._closed or current is None or event.server != current.server:
+            controller = self._controller
+            if (
+                self._closed
+                or controller is None
+                or event.server != controller.server
+            ):
                 return
-            failed_server = current.server
-            controller = self._detach_controller_locked()
-            if isinstance(event.failure, AdbTransportListWatchServerConnectionFailure):
-                request_server_reconciliation = (
-                    self._watch_requested
-                    and self._server_state.current_identity == failed_server
+            self._watch_active = False
+            request_server_reconciliation = (
+                self._watch_requested
+                and self._server_state.current_identity == event.server
+                and isinstance(
+                    event.failure,
+                    AdbTransportListWatchServerConnectionFailure,
                 )
-        assert controller is not None
-        controller.stop()
+            )
+
         if request_server_reconciliation:
-            assert failed_server is not None
             self._bus.publish(
                 AdbServerReconciliationRequested(
-                    failed_server,
+                    event.server,
                     AdbServerConnectionFailure(event.failure.diagnostic),
                 )
             )
 
     def _on_watch_stopped(self, event: AdbTransportListWatchStopped) -> None:
         with self._lock:
-            current = self._controller
-            if self._closed or current is None or event.server != current.server:
+            controller = self._controller
+            if (
+                self._closed
+                or controller is None
+                or event.server != controller.server
+            ):
                 return
-            controller = self._detach_controller_locked()
-        assert controller is not None
-        controller.stop()
+            self._watch_active = False
 
-    def _run_start_attempt(self, controller: AdbTransportListWatchController) -> None:
+    def _run_start_attempt(
+        self,
+        controller: AdbTransportListWatchController,
+        server: AdbServerIdentity,
+        endpoint: AdbServerEndpoint,
+        token: object,
+    ) -> None:
         active_thread = current_thread()
         try:
             with self._lock:
@@ -340,30 +377,43 @@ class AdbTransportListWatchSupervisor:
                     self._closed
                     or not self._watch_requested
                     or self._controller is not controller
+                    or self._start_token is not token
                 ):
                     return
-            self._attempt_start(controller)
+            self._attempt_start(controller, server, endpoint, token)
         finally:
             with self._lock:
                 self._attempt_threads.discard(active_thread)
 
-    def _attempt_start(self, controller: AdbTransportListWatchController) -> bool:
+    def _attempt_start(
+        self,
+        controller: AdbTransportListWatchController,
+        server: AdbServerIdentity,
+        endpoint: AdbServerEndpoint,
+        token: object,
+    ) -> bool:
         try:
-            result = controller.start()
+            result = controller.start(server, endpoint)
         except BaseException:
-            controller_to_stop: AdbTransportListWatchController | None = None
             with self._lock:
-                if self._controller is controller:
-                    controller_to_stop = self._detach_controller_locked()
-            if controller_to_stop is not None:
-                controller_to_stop.stop()
+                if self._start_token is token:
+                    self._cancel_start_locked()
             raise
 
         if isinstance(result, AdbTransportListWatchStartSucceeded):
-            return self._complete_start_attempt(controller, started=True)
+            return self._complete_start_attempt(
+                controller,
+                server,
+                endpoint,
+                token,
+                started=True,
+            )
         if isinstance(result, AdbTransportListWatchStartFailed):
             return self._complete_start_attempt(
                 controller,
+                server,
+                endpoint,
+                token,
                 started=False,
                 failure=result.failure,
             )
@@ -374,67 +424,68 @@ class AdbTransportListWatchSupervisor:
                 AdbTransportListWatchStartSuperseded,
             ),
         ):
-            return self._complete_start_attempt(controller, started=False)
+            return self._complete_start_attempt(
+                controller,
+                server,
+                endpoint,
+                token,
+                started=False,
+            )
 
-        controller_to_stop: AdbTransportListWatchController | None = None
         with self._lock:
-            if self._controller is controller:
-                controller_to_stop = self._detach_controller_locked()
-        if controller_to_stop is not None:
-            controller_to_stop.stop()
+            if self._start_token is token:
+                self._cancel_start_locked()
+        controller.stop()
         raise TypeError("transport-list watch controller start() returned an unsupported result")
 
     def _complete_start_attempt(
         self,
         controller: AdbTransportListWatchController,
+        server: AdbServerIdentity,
+        endpoint: AdbServerEndpoint,
+        token: object,
         *,
         started: bool,
         failure: AdbTransportListWatchFailure | None = None,
     ) -> bool:
-        request_server_reconciliation = False
-        reconciliation_server: AdbServerIdentity | None = None
-        controller_to_stop: AdbTransportListWatchController | None = None
+        stop_superseded_session = False
         publish_failure = False
 
         with self._lock:
-            if self._controller is not controller:
+            if self._controller is not controller or self._start_token is not token:
                 return False
-            self._start_in_progress = False
-            keep_controller = (
-                started
-                and not self._closed
-                and self._watch_requested
-                and self._server_state.current_identity == controller.server
-                and controller.active
-            )
-            if keep_controller:
-                self._watch_active = True
-            else:
-                controller_to_stop = self._detach_controller_locked()
-                publish_failure = failure is not None
-                if isinstance(failure, AdbTransportListWatchServerConnectionFailure):
-                    reconciliation_server = controller.server
-                    request_server_reconciliation = (
-                        self._watch_requested
-                        and self._server_state.current_identity == reconciliation_server
-                    )
 
-        if controller_to_stop is not None:
-            controller_to_stop.stop()
+            self._cancel_start_locked()
+            state = self._server_state.snapshot()
+            target_is_current = (
+                not self._closed
+                and self._watch_requested
+                and state.server == server
+                and state.endpoint == endpoint
+                and controller.server == server
+                and controller.endpoint == endpoint
+            )
+            watch_active = started and target_is_current and controller.active
+            self._watch_active = watch_active
+            stop_superseded_session = started and not watch_active
+            publish_failure = failure is not None and target_is_current
+
+        if stop_superseded_session:
+            controller.stop()
         if publish_failure:
             assert failure is not None
-            self._bus.publish(
-                AdbTransportListWatchFailed(controller.server, failure)
-            )
-        if request_server_reconciliation:
-            assert reconciliation_server is not None
-            self._bus.publish(
-                AdbServerReconciliationRequested(
-                    reconciliation_server,
-                    AdbServerConnectionFailure(failure.diagnostic),
-                )
-            )
-        return keep_controller
+            self._bus.publish(AdbTransportListWatchFailed(server, failure))
+        return watch_active
+
+    def _ensure_controller_locked(
+        self,
+        server: AdbServerIdentity,
+        endpoint: AdbServerEndpoint,
+    ) -> AdbTransportListWatchController:
+        controller = self._controller
+        if controller is not None:
+            return controller
+        return self._create_controller_locked(server, endpoint)
 
     def _create_controller_locked(
         self,
@@ -470,19 +521,22 @@ class AdbTransportListWatchSupervisor:
         if not isinstance(controller, AdbTransportListWatchController):
             raise TypeError("controller factory must return AdbTransportListWatchController")
         if controller.server != server or controller.endpoint != endpoint:
-            raise ValueError("controller factory returned a mismatched server binding")
+            raise ValueError("controller factory returned a mismatched initial server binding")
         self._controller = controller
         self._watch_active = False
         return controller
 
-    def _detach_controller_locked(self) -> AdbTransportListWatchController | None:
-        controller = self._controller
-        if controller is not None:
-            controller.revoke()
-        self._controller = None
-        self._watch_active = False
+    def _begin_start_locked(self) -> object:
+        if self._start_in_progress:
+            raise RuntimeError("transport-list watch startup is already in progress")
+        token = object()
+        self._start_in_progress = True
+        self._start_token = token
+        return token
+
+    def _cancel_start_locked(self) -> None:
         self._start_in_progress = False
-        return controller
+        self._start_token = None
 
     def _ensure_subscriptions_locked(self) -> None:
         if self._subscriptions:

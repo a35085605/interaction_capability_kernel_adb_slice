@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from threading import Event, Lock, Thread, current_thread
+from threading import Condition, Event, Lock, Thread, current_thread
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
@@ -25,10 +25,11 @@ from adb.transport_list.watch.session import (
 from adb.transport_list.watch.error import AdbTransportListWatchError
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 from adb.transport_list.watch.watcher import (
+    AdbTransportListWatchAttachment,
     AdbTransportListWatchOpenCancelled,
     AdbTransportListWatchOpenFailed,
     AdbTransportListWatchOpened,
-    AdbTransportListWatcher,
+    ReusableAdbTransportListWatcher,
     open_transport_list_watch,
 )
 from adb.transport_list.watch.signal import (
@@ -39,7 +40,9 @@ from adb.transport_list.watch.signal import (
 from eventing import EventPublisher
 
 
-_TransportListWatcherFactory = Callable[[TcpAddress, float], AdbTransportListWatcher]
+_TransportListWatcherFactory = Callable[
+    [TcpAddress, float], AdbTransportListWatchAttachment
+]
 _ThreadFactory = Callable[..., Thread]
 
 
@@ -91,37 +94,49 @@ AdbTransportListWatchStartResult: TypeAlias = (
 
 @runtime_checkable
 class AdbTransportListWatchController(Protocol):
-    """Control one transport-list watch lifetime for one ADB server lifetime."""
+    """Long-lived controller that runs one short-lived watch session at a time."""
 
     @property
     def server(self) -> AdbServerIdentity:
+        """Server binding requested for the current or most recent session."""
         ...
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
+        """Endpoint binding requested for the current or most recent session."""
         ...
 
     @property
     def active(self) -> bool:
         ...
 
-    def start(self) -> AdbTransportListWatchStartResult:
-        """Attempt startup and return typed evidence of the startup outcome."""
+    def start(
+        self,
+        server: AdbServerIdentity | None = None,
+        endpoint: AdbServerEndpoint | None = None,
+    ) -> AdbTransportListWatchStartResult:
+        """Start one session, optionally replacing the retained server binding."""
         ...
 
     def revoke(self) -> None:
-        """Synchronously prevent further authoritative watch commits."""
+        """Synchronously fence and cancel the current session without closing the controller."""
         ...
 
     def stop(self) -> None:
-        """Stop the watch and join its worker unless called by that worker."""
+        """Stop the current session and join its worker while keeping the controller reusable."""
+        ...
+
+    def close(self) -> None:
+        """Permanently close the controller and its long-lived watcher."""
         ...
 
 
 class ThreadedAdbTransportListWatchController:
-    """Single-use threaded controller for a transport-list watch.
+    """Reusable threaded controller for sequential transport-list watch sessions.
 
-    Commits observations through the shared coordinator and publishes watch-lifecycle signals.
+    The controller and watcher live across ADB server lifetimes. Each ``start`` creates one
+    server-bound :class:`AdbTransportListWatchSession`; session identity is the authoritative
+    stale-work fence for observations produced by its worker.
     """
 
     def __init__(
@@ -149,56 +164,100 @@ class ThreadedAdbTransportListWatchController:
             raise TypeError("_watcher_factory must be callable")
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
-        self.server = server
-        self.endpoint = endpoint
+
         self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
         self._observation_coordinator = observation_coordinator
-        self._watcher_factory = _watcher_factory
+        self._watcher = ReusableAdbTransportListWatcher(
+            _watcher_factory,
+            startup_timeout_seconds=startup_timeout_seconds,
+        )
         self._thread_factory = _thread_factory
-        self._lock = Lock()
-        self._started = False
-        self._active_watcher: AdbTransportListWatcher | None = None
+        self._condition = Condition(Lock())
+        self._server = server
+        self._endpoint = endpoint
+        self._starting = False
+        self._starting_thread: Thread | None = None
+        self._start_token: object | None = None
+        self._active_session: AdbTransportListWatchSession | None = None
         self._active_thread: Thread | None = None
         self._closed = False
 
     @property
+    def server(self) -> AdbServerIdentity:
+        with self._condition:
+            return self._server
+
+    @property
+    def endpoint(self) -> AdbServerEndpoint:
+        with self._condition:
+            return self._endpoint
+
+    @property
     def active(self) -> bool:
-        with self._lock:
-            return not self._closed and self._active_thread is not None
+        with self._condition:
+            return (
+                not self._closed
+                and self._active_session is not None
+                and self._active_thread is not None
+            )
 
-    def start(self) -> AdbTransportListWatchStartResult:
-        """Attempt startup and return typed evidence of the startup outcome."""
+    def start(
+        self,
+        server: AdbServerIdentity | None = None,
+        endpoint: AdbServerEndpoint | None = None,
+    ) -> AdbTransportListWatchStartResult:
+        """Start one short-lived session on this reusable controller and watcher."""
 
-        with self._lock:
+        if (server is None) != (endpoint is None):
+            raise ValueError("server and endpoint must be provided together")
+
+        with self._condition:
             if self._closed:
-                raise RuntimeError("ADB transport-list watch controller is stopped")
-            if self._started:
-                raise RuntimeError(
-                    "ADB transport-list watch controller is single-use and already started"
-                )
-            watcher = self._create_watcher()
-            self._started = True
-            self._active_watcher = watcher
+                raise RuntimeError("ADB transport-list watch controller is closed")
+            if self._starting:
+                raise RuntimeError("ADB transport-list watch controller startup is already active")
+            if self._active_session is not None or self._active_thread is not None:
+                raise RuntimeError("ADB transport-list watch controller already has an active session")
+
+            target_server = self._server if server is None else server
+            target_endpoint = self._endpoint if endpoint is None else endpoint
+            if not isinstance(target_server, AdbServerIdentity):
+                raise TypeError("server must be AdbServerIdentity")
+            if not isinstance(target_endpoint, TcpAddress):
+                raise TypeError("endpoint must be TcpAddress")
+
+            self._server = target_server
+            self._endpoint = target_endpoint
+            token = object()
+            self._starting = True
+            self._starting_thread = current_thread()
+            self._start_token = token
 
         try:
-            open_result = open_transport_list_watch(watcher)
+            open_result = open_transport_list_watch(self._watcher, target_endpoint)
         except BaseException:
-            self._abort_start(watcher)
+            self._finish_start(token)
             raise
 
+        if not self._start_is_authorized(token):
+            if isinstance(open_result, AdbTransportListWatchOpened):
+                open_result.stream.close()
+            self._finish_start(token)
+            return AdbTransportListWatchStartCancelled()
+
         if isinstance(open_result, AdbTransportListWatchOpenCancelled):
-            self._abort_start(watcher)
+            self._finish_start(token)
             return AdbTransportListWatchStartCancelled()
         if isinstance(open_result, AdbTransportListWatchOpenFailed):
-            self._abort_start(watcher)
+            self._finish_start(token)
             return AdbTransportListWatchStartFailed(open_result.failure)
         if not isinstance(open_result, AdbTransportListWatchOpened):
-            self._abort_start(watcher)
+            self._finish_start(token)
             raise TypeError("open_transport_list_watch() returned an unsupported result")
 
         session = bind_transport_list_watch_session(
-            self.server,
+            target_server,
             open_result.stream,
             open_result.initial,
             self._observation_coordinator.observation_identifier,
@@ -210,7 +269,6 @@ class ThreadedAdbTransportListWatchController:
             thread = self._thread_factory(
                 target=self._run,
                 args=(
-                    watcher,
                     session,
                     startup_complete,
                     startup_results,
@@ -218,39 +276,34 @@ class ThreadedAdbTransportListWatchController:
                 ),
                 name=(
                     "adb-transport-list-watch-"
-                    f"{self.endpoint.host}-{self.endpoint.port}-{self.server}"
+                    f"{target_endpoint.host}-{target_endpoint.port}-{target_server}"
                 ),
             )
         except BaseException:
             session.close()
-            self._abort_start(watcher)
+            self._finish_start(token)
             raise
 
         startup_error: BaseException | None = None
-        with self._lock:
-            if self._closed:
-                if self._active_watcher is watcher:
-                    self._active_watcher = None
+        cancelled_before_start = False
+        with self._condition:
+            if self._closed or self._start_token is not token:
                 cancelled_before_start = True
-            elif self._active_watcher is not watcher:
-                cancelled_before_start = False
-                startup_error = RuntimeError(
-                    "ADB transport-list watch controller active watcher changed during startup"
-                )
+                self._finish_start_locked(token)
             else:
-                cancelled_before_start = False
+                self._active_session = session
                 self._active_thread = thread
+                self._finish_start_locked(token)
                 try:
                     thread.start()
                 except BaseException as exc:
+                    self._active_session = None
                     self._active_thread = None
-                    self._active_watcher = None
-                    self._closed = True
+                    self._condition.notify_all()
                     startup_error = exc
 
         if cancelled_before_start or startup_error is not None:
             session.close()
-            watcher.close()
         if startup_error is not None:
             raise startup_error
         if cancelled_before_start:
@@ -268,49 +321,114 @@ class ThreadedAdbTransportListWatchController:
         return startup_results[0]
 
     def revoke(self) -> None:
-        """Synchronously prevent further authoritative commits from this controller."""
+        """Fence current session authority immediately without retiring the controller."""
 
-        with self._lock:
-            self._closed = True
+        with self._condition:
+            session = self._active_session
+            starting = self._starting
+            self._active_session = None
+            self._start_token = None
+            self._condition.notify_all()
+
+        if session is not None:
+            session.close()
+        elif starting:
+            self._watcher.cancel()
 
     def stop(self) -> None:
-        """Stop the watch and join its worker unless called by that worker."""
+        """Synchronously stop current startup/session while preserving reusable ownership."""
 
-        with self._lock:
-            watcher = self._active_watcher
-            thread = self._active_thread
+        with self._condition:
+            session = self._active_session
+            worker = self._active_thread
+            starting = self._starting
+            starting_thread = self._starting_thread
+            self._active_session = None
+            self._start_token = None
+            self._condition.notify_all()
+
+        first_error: BaseException | None = None
+        try:
+            if session is not None:
+                session.close()
+            elif starting:
+                self._watcher.cancel()
+        except BaseException as exc:
+            first_error = exc
+
+        with self._condition:
+            while self._starting and starting_thread is not current_thread():
+                self._condition.wait()
+
+        if worker is not None and worker is not current_thread():
+            try:
+                worker.join()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+
+        if first_error is not None:
+            raise first_error
+
+    def close(self) -> None:
+        """Permanently close controller/watcher ownership after stopping the active session."""
+
+        with self._condition:
+            if self._closed:
+                return
             self._closed = True
-        if watcher is not None:
-            watcher.close()
-        if thread is not None and thread is not current_thread():
-            thread.join()
+            session = self._active_session
+            worker = self._active_thread
+            starting_thread = self._starting_thread
+            self._active_session = None
+            self._start_token = None
+            self._condition.notify_all()
 
-    def _create_watcher(self) -> AdbTransportListWatcher:
-        watcher = self._watcher_factory(
-            self.endpoint,
-            self.startup_timeout_seconds,
-        )
-        if not isinstance(watcher, AdbTransportListWatcher):
-            raise TypeError(
-                "transport-list watcher factory must return AdbTransportListWatcher"
-            )
-        if watcher.address != self.endpoint:
-            raise ValueError(
-                "transport-list watcher factory returned a mismatched server endpoint"
-            )
-        return watcher
+        first_error: BaseException | None = None
+        if session is not None:
+            try:
+                session.close()
+            except BaseException as exc:
+                first_error = exc
+        try:
+            self._watcher.close()
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
 
-    def _abort_start(self, watcher: AdbTransportListWatcher) -> None:
-        with self._lock:
-            if self._active_watcher is watcher:
-                self._active_watcher = None
-            self._active_thread = None
-            self._closed = True
-        watcher.close()
+        with self._condition:
+            while self._starting and starting_thread is not current_thread():
+                self._condition.wait()
+
+        if worker is not None and worker is not current_thread():
+            try:
+                worker.join()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+
+        if first_error is not None:
+            raise first_error
+
+    def _start_is_authorized(self, token: object) -> bool:
+        with self._condition:
+            return not self._closed and self._start_token is token
+
+    def _finish_start(self, token: object) -> None:
+        with self._condition:
+            self._finish_start_locked(token)
+
+    def _finish_start_locked(self, token: object) -> None:
+        if not self._starting:
+            return
+        if self._start_token is token:
+            self._start_token = None
+        self._starting = False
+        self._starting_thread = None
+        self._condition.notify_all()
 
     def _run(
         self,
-        watcher: AdbTransportListWatcher,
         session: AdbTransportListWatchSession,
         startup_complete: Event,
         startup_results: list[AdbTransportListWatchStartResult],
@@ -321,11 +439,11 @@ class ThreadedAdbTransportListWatchController:
         startup_succeeded = False
         try:
             initial_observation = session.initial
-            if session.server != self.server or initial_observation.server != self.server:
+            if initial_observation.server != server:
                 raise ValueError(
-                    "transport-list watch session belongs to a different server lifetime"
+                    "transport-list watch session initial observation has mismatched server provenance"
                 )
-            if not self._commit_observation(watcher, initial_observation):
+            if not self._commit_observation(session, initial_observation):
                 startup_results.append(AdbTransportListWatchStartSuperseded())
                 return
 
@@ -337,7 +455,7 @@ class ThreadedAdbTransportListWatchController:
             startup_complete.set()
 
             for observation in session.updates():
-                if not self._commit_observation(watcher, observation):
+                if not self._commit_observation(session, observation):
                     break
             terminal = AdbTransportListWatchStopped(server)
         except AdbTransportListWatchError as exc:
@@ -351,21 +469,31 @@ class ThreadedAdbTransportListWatchController:
             startup_errors.append(exc)
         finally:
             startup_complete.set()
-            session.close()
-            publish_terminal = self._mark_terminal(watcher)
+            close_error: BaseException | None = None
+            try:
+                session.close()
+            except BaseException as exc:
+                close_error = exc
+            finally:
+                publish_terminal = self._mark_terminal(session)
+
+            if close_error is not None:
+                if startup_succeeded:
+                    raise close_error
+                startup_errors.append(close_error)
 
         if startup_succeeded and terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
     def _commit_observation(
         self,
-        watcher: AdbTransportListWatcher,
+        session: AdbTransportListWatchSession,
         observation: AdbTransportListObservation,
     ) -> bool:
         if not isinstance(observation, AdbTransportListObservation):
             raise TypeError("observation must be AdbTransportListObservation")
-        with self._lock:
-            if self._closed or self._active_watcher is not watcher:
+        with self._condition:
+            if self._closed or self._active_session is not session:
                 return False
             result = self._observation_coordinator.observe(observation)
         if isinstance(result, AdbTransportListObserved):
@@ -380,15 +508,15 @@ class ThreadedAdbTransportListWatchController:
             return False
         raise TypeError("transport-list observation coordinator returned an unsupported result")
 
-    def _mark_terminal(self, watcher: AdbTransportListWatcher) -> bool:
-        with self._lock:
-            publish_terminal = (
-                not self._closed and self._active_watcher is watcher
-            )
-            if self._active_watcher is watcher:
-                self._active_watcher = None
+    def _mark_terminal(self, session: AdbTransportListWatchSession) -> bool:
+        active_thread = current_thread()
+        with self._condition:
+            publish_terminal = not self._closed and self._active_session is session
+            if self._active_session is session:
+                self._active_session = None
+            if self._active_thread is active_thread:
                 self._active_thread = None
-            self._closed = True
+            self._condition.notify_all()
             return publish_terminal
 
 

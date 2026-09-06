@@ -42,7 +42,7 @@ from adb.transport_list.state import AdbTransportListStateView
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
 )
-from adb.transport_list.watch.watcher import AdbTransportListWatcher
+from adb.transport_list.watch.watcher import AdbTransportListWatchAttachment
 from adb.transport_list.watch.supervision.supervisor import AdbTransportListWatchSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
@@ -50,7 +50,7 @@ from eventing import EventBus, EventSubscriptionToken
 from scheduling import TemporalScheduler
 
 
-_TransportListWatcherFactory = Callable[[TcpAddress, float], AdbTransportListWatcher]
+_TransportListWatcherFactory = Callable[[TcpAddress, float], AdbTransportListWatchAttachment]
 
 
 class AdbRuntime(AdbManagedRuntime):
