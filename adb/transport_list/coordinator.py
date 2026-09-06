@@ -10,8 +10,6 @@ from adb.transport_list.observation import (
     AdbTransportListObservation,
     AdbTransportListObservationIdentifier,
 )
-from adb.transport_list.reader import AdbTransportListReader
-from adb.transport_list.reading import AdbTransportListReaderFacade
 from adb.transport_list.state import (
     AdbTransportListObservationResult,
     AdbTransportListObserved,
@@ -68,7 +66,7 @@ AdbTransportListCoordinatedObservationResult: TypeAlias = (
 
 
 class AdbTransportListCoordinator:
-    """Coordinate identified transport-list observations with runtime server authority."""
+    """Commit the ordered authoritative transport-list watch observation stream."""
 
     def __init__(
         self,
@@ -121,48 +119,20 @@ class AdbTransportListCoordinator:
 
     @property
     def observation_identifier(self) -> AdbTransportListObservationIdentifier:
-        """Runtime-scoped identifier shared by all transport-list observation producers."""
+        """Runtime-scoped identifier used by the authoritative watch observation stream."""
 
         return self._observation_identifier
-
-    def refresh(
-        self,
-        reader: AdbTransportListReader,
-    ) -> AdbTransportListCoordinatedObservationResult:
-        """Read, identify, and conditionally commit a transport-list refresh.
-
-        The refresh keeps its pre-read server and state fences, so newer watch observations
-        retain authority over an in-flight read.
-        """
-
-        facade = AdbTransportListReaderFacade(
-            reader,
-            server_state=self._server_state,
-            transport_list_state=self._transport_list_state,
-            observation_identifier=self._observation_identifier,
-            authority_lock=self._lock,
-        )
-        observation, state_fence = facade._read_with_state_fence()
-        return self.observe(observation, expected=state_fence)
 
     def observe(
         self,
         observation: AdbTransportListObservation,
-        *,
-        expected: AdbTransportListState | None = None,
     ) -> AdbTransportListCoordinatedObservationResult:
-        """Commit an identified observation while its server and state fences remain valid.
-
-        ``expected`` preserves the full-state fence captured by one-shot refreshes. Stream
-        observations continue to linearize against state at commit time.
-        """
+        """Commit the next identified watch observation when its authority fences hold."""
 
         if not isinstance(observation, AdbTransportListObservation):
             raise TypeError("observation must be AdbTransportListObservation")
         if not self._observation_identifier.owns(observation):
             raise ValueError("observation identity belongs to a different runtime scope")
-        if expected is not None and not isinstance(expected, AdbTransportListState):
-            raise TypeError("expected must be AdbTransportListState or None")
 
         with self._lock:
             current_server = self._server_state.current_identity
@@ -172,10 +142,8 @@ class AdbTransportListCoordinator:
                     current_server=current_server,
                     state=self._transport_list_state.snapshot(),
                 )
-            commit_expected = (
-                self._transport_list_state.snapshot() if expected is None else expected
-            )
-            result = self._transport_list_state.observe(observation, commit_expected)
+            expected = self._transport_list_state.snapshot()
+            result = self._transport_list_state.observe(observation, expected)
 
         if isinstance(result, AdbTransportListObserved) and self._publisher is not None:
             self._publisher.publish(result)

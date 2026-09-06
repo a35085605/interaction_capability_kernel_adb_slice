@@ -260,7 +260,7 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         observation: AdbTransportListObservation,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult:
-        """Commit an already-identified observation when ``expected`` is authoritative."""
+        """Commit the next observation when ``expected`` is authoritative and matches its basis."""
 
         if not isinstance(observation, AdbTransportListObservation):
             raise TypeError("observation must be AdbTransportListObservation")
@@ -269,7 +269,10 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
 
         with self._lock:
             current = self._state
-            if current != expected:
+            if (
+                current != expected
+                or observation.basis.transport_list_identity != current.identity
+            ):
                 return AdbTransportListObservationStateConflict(observation, current)
             next_state = AdbTransportListState(
                 identity=observation.identity,

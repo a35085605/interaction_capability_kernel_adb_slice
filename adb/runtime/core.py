@@ -32,12 +32,8 @@ from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerActivated, AdbServerDeactivated
 from adb.runtime.state import AdbRuntimeState
 from adb.transport.configuration import AdbConfiguredTransport
-from adb.transport_list.coordinator import (
-    AdbTransportListCoordinatedObservationResult,
-    AdbTransportListCoordinator,
-)
+from adb.transport_list.coordinator import AdbTransportListCoordinator
 from adb.transport_list.observation import AdbTransportListObservationIdentifier
-from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.state import AdbTransportListStateView
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
@@ -193,8 +189,6 @@ class AdbRuntime(AdbManagedRuntime):
             publisher=event_bus,
             authority_lock=self._authority_lock,
         )
-        # Preserve the former private name while the coordinator grows beyond observation-only use.
-        self._transport_list_observation = self._transport_list_coordinator
         if _bootstrap_server:
             self._bootstrap_initial_server()
 
@@ -221,17 +215,6 @@ class AdbRuntime(AdbManagedRuntime):
         """Current server-bound transport-list observation exposed by this runtime."""
 
         return self._state.transport_list
-
-    def refresh_transport_list(
-        self,
-        reader: AdbTransportListReader,
-    ) -> AdbTransportListCoordinatedObservationResult:
-        """Refresh the authoritative transport list through its coordinator."""
-
-        with self._runtime_lock:
-            if self._closed:
-                raise RuntimeError("ADB runtime is closed")
-        return self._transport_list_coordinator.refresh(reader)
 
     def _build_transport_list_watch_supervisor(
         self,
