@@ -24,16 +24,7 @@ from adb.transport_list.watch.failure import (
     AdbTransportListWatchServerConnectionFailure,
     AdbTransportListWatchServiceFailure,
 )
-from adb.transport_list.watch.watcher import (
-    AdbTransportListWatchAttachment,
-    AdbTransportListWatchOpenCancelled,
-    AdbTransportListWatchOpenFailed,
-    AdbTransportListWatchOpened,
-    AdbTransportListWatchOpenResult,
-    AdbTransportListWatcher,
-    ReusableAdbTransportListWatcher,
-    open_transport_list_watch,
-)
+from adb.transport_list.watch.attachment import AdbTransportListWatchAttachment
 from adb.transport_list.watch.signal import (
     AdbTransportListWatchFailed,
     AdbTransportListWatchSignal,
@@ -48,10 +39,6 @@ __all__ = [
     "AdbTransportListWatchError",
     "AdbTransportListWatchFailed",
     "AdbTransportListWatchFailure",
-    "AdbTransportListWatchOpenCancelled",
-    "AdbTransportListWatchOpenFailed",
-    "AdbTransportListWatchOpened",
-    "AdbTransportListWatchOpenResult",
     "AdbTransportListWatchProtocolFailure",
     "AdbTransportListWatchServerConnectionFailure",
     "AdbTransportListWatchServiceFailure",
@@ -65,9 +52,6 @@ __all__ = [
     "AdbTransportListWatchStartSuperseded",
     "AdbTransportListWatchStarted",
     "AdbTransportListWatchStopped",
-    "AdbTransportListWatcher",
-    "ReusableAdbTransportListWatcher",
     "ThreadedAdbTransportListWatchController",
     "bind_transport_list_watch_session",
-    "open_transport_list_watch",
 ]

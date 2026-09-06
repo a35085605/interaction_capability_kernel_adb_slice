@@ -42,7 +42,7 @@ from adb.transport_list.state import AdbTransportListStateView
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
 )
-from adb.transport_list.watch.watcher import AdbTransportListWatchAttachment
+from adb.transport_list.watch.attachment import AdbTransportListWatchAttachment
 from adb.transport_list.watch.supervision.supervisor import AdbTransportListWatchSupervisor
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
@@ -50,7 +50,9 @@ from eventing import EventBus, EventSubscriptionToken
 from scheduling import TemporalScheduler
 
 
-_TransportListWatcherFactory = Callable[[TcpAddress, float], AdbTransportListWatchAttachment]
+_TransportListWatchAttachmentFactory = Callable[
+    [TcpAddress, float], AdbTransportListWatchAttachment
+]
 
 
 class AdbRuntime(AdbManagedRuntime):
@@ -235,14 +237,14 @@ class AdbRuntime(AdbManagedRuntime):
         self,
         policy: AdbTransportListWatchSupervisionPolicy,
         *,
-        _watcher_factory: _TransportListWatcherFactory,
+        _attachment_factory: _TransportListWatchAttachmentFactory,
     ) -> AdbTransportListWatchSupervisor:
         """Build the runtime-bound transport-list watch from runtime-owned state authority."""
 
         if not isinstance(policy, AdbTransportListWatchSupervisionPolicy):
             raise TypeError("policy must be AdbTransportListWatchSupervisionPolicy")
-        if not callable(_watcher_factory):
-            raise TypeError("_watcher_factory must be callable")
+        if not callable(_attachment_factory):
+            raise TypeError("_attachment_factory must be callable")
         event_bus = self._event_bus
         if event_bus is None:
             raise RuntimeError("transport-list watch requires an event bus")
@@ -257,7 +259,7 @@ class AdbRuntime(AdbManagedRuntime):
             policy,
             server_state=self._state.server,
             transport_list_observation_coordinator=self._transport_list_coordinator,
-            _watcher_factory=_watcher_factory,
+            _attachment_factory=_attachment_factory,
         )
 
     def provision_server(self) -> AdbServerProvisionResult:

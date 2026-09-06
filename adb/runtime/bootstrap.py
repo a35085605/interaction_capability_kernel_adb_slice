@@ -5,7 +5,9 @@ from dataclasses import dataclass
 
 from adb.runtime.core import AdbRuntime
 from networking import TcpAddress
-from adb.adapters.aosp.track_devices import SmartSocketAdbTransportListWatcher
+from adb.adapters.aosp.track_devices import (
+    SmartSocketAdbTransportListWatcher as SmartSocketAdbTransportListWatchAttachment,
+)
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.backend import AdbServerBackend
 from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
@@ -17,7 +19,7 @@ from adb.transport_list.state import AdbTransportListStateStore
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
 )
-from adb.transport_list.watch.watcher import AdbTransportListWatchAttachment
+from adb.transport_list.watch.attachment import AdbTransportListWatchAttachment
 from adb.transport.lifecycle.ensure import AdbTcpTransportEnsurer
 from adb.transport.lifecycle.supervision.policy import (
     AdbConfiguredTransportSupervisionPolicy,
@@ -36,11 +38,11 @@ def _default_server_backend_factory() -> AdbServerBackend:
     return SubprocessAdbServerBackend()
 
 
-def _default_transport_list_watcher_factory(
+def _default_transport_list_watch_attachment_factory(
     endpoint: TcpAddress,
     startup_timeout_seconds: float,
 ) -> AdbTransportListWatchAttachment:
-    return SmartSocketAdbTransportListWatcher(
+    return SmartSocketAdbTransportListWatchAttachment(
         endpoint,
         startup_timeout_seconds=startup_timeout_seconds,
     )
@@ -190,7 +192,7 @@ class AdbRuntimeBootstrap:
             transport_list_watch_supervisor = (
                 runtime._build_transport_list_watch_supervisor(
                     self._transport_list_watch_supervision_policy,
-                    _watcher_factory=_default_transport_list_watcher_factory,
+                    _attachment_factory=_default_transport_list_watch_attachment_factory,
                 )
                 if watch_transports
                 else None

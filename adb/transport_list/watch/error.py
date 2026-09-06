@@ -5,7 +5,7 @@ from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 
 
 class AdbTransportListWatchError(AdbError):
-    """Typed transport-list watch failure surfaced by the watcher boundary."""
+    """Typed transport-list watch failure surfaced by the watch boundary."""
 
     def __init__(self, failure: AdbTransportListWatchFailure) -> None:
         if not isinstance(failure, AdbTransportListWatchFailure):
@@ -19,7 +19,7 @@ class AdbTransportListWatchError(AdbError):
 
 
 class AdbTransportListWatchCancelledError(RuntimeError):
-    """The watcher attachment was closed before a watch session became established."""
+    """The watch attachment was closed before a watch session became established."""
 
 
 __all__ = [

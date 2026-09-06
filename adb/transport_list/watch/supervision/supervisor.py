@@ -20,7 +20,7 @@ from adb.transport_list.watch.controller import (
     AdbTransportListWatchStartSuperseded,
     ThreadedAdbTransportListWatchController,
 )
-from adb.transport_list.watch.watcher import AdbTransportListWatchAttachment
+from adb.transport_list.watch.attachment import AdbTransportListWatchAttachment
 from adb.transport_list.watch.failure import (
     AdbTransportListWatchFailure,
     AdbTransportListWatchServerConnectionFailure,
@@ -34,7 +34,7 @@ from eventing import EventBus, EventPublisher, EventSubscriptionToken
 
 
 _ThreadFactory = Callable[..., Thread]
-_TransportListWatcherFactory = Callable[
+_TransportListWatchAttachmentFactory = Callable[
     [TcpAddress, float], AdbTransportListWatchAttachment
 ]
 _ControllerFactory = Callable[
@@ -58,7 +58,7 @@ class AdbTransportListWatchSupervisor:
     """Maintain one long-lived watch controller across authoritative server lifetimes.
 
     Reconciliation replaces only the controller's short-lived watch session. Controller and
-    watcher ownership remain stable until this supervisor is closed.
+    attachment ownership is scoped to each session and remains controller-owned while opening.
     """
 
     def __init__(
@@ -72,7 +72,7 @@ class AdbTransportListWatchSupervisor:
         transport_list_state: AdbTransportListStateStore | None = None,
         transport_list_observation_coordinator: AdbTransportListCoordinator
         | None = None,
-        _watcher_factory: _TransportListWatcherFactory | None = None,
+        _attachment_factory: _TransportListWatchAttachmentFactory | None = None,
         _controller_factory: _ControllerFactory | None = None,
         _thread_factory: _ThreadFactory = _default_thread_factory,
     ) -> None:
@@ -132,12 +132,14 @@ class AdbTransportListWatchSupervisor:
                     "transport_list_state must match observation coordinator state"
                 )
             transport_list_state = coordinator_state
-        if _watcher_factory is not None and not callable(_watcher_factory):
-            raise TypeError("_watcher_factory must be callable or None")
+        if _attachment_factory is not None and not callable(_attachment_factory):
+            raise TypeError("_attachment_factory must be callable or None")
         if _controller_factory is not None and not callable(_controller_factory):
             raise TypeError("_controller_factory must be callable or None")
-        if _watcher_factory is None and _controller_factory is None:
-            raise ValueError("_watcher_factory is required when no controller factory is provided")
+        if _attachment_factory is None and _controller_factory is None:
+            raise ValueError(
+                "_attachment_factory is required when no controller factory is provided"
+            )
         if not callable(_thread_factory):
             raise TypeError("_thread_factory must be callable")
 
@@ -148,7 +150,7 @@ class AdbTransportListWatchSupervisor:
             transport_list_observation_coordinator
         )
         self._policy = policy
-        self._watcher_factory = _watcher_factory
+        self._attachment_factory = _attachment_factory
         self._controller_factory = _controller_factory
         self._thread_factory = _thread_factory
         self._lock = Lock()
@@ -288,7 +290,7 @@ class AdbTransportListWatchSupervisor:
                 raise
 
     def close(self) -> None:
-        """Close long-lived controller/watcher ownership and join startup workers."""
+        """Close long-lived controller ownership and join startup workers."""
 
         with self._lock:
             if self._closed:
@@ -500,16 +502,16 @@ class AdbTransportListWatchSupervisor:
             raise TypeError("endpoint must be TcpAddress")
         factory = self._controller_factory
         if factory is None:
-            watcher_factory = self._watcher_factory
-            if watcher_factory is None:
-                raise RuntimeError("transport-list watcher factory is unavailable")
+            attachment_factory = self._attachment_factory
+            if attachment_factory is None:
+                raise RuntimeError("transport-list watch attachment factory is unavailable")
             controller = ThreadedAdbTransportListWatchController(
                 server,
                 endpoint,
                 self._bus,
                 self._transport_list_observation_coordinator,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
-                _watcher_factory=watcher_factory,
+                _attachment_factory=attachment_factory,
             )
         else:
             controller = factory(
