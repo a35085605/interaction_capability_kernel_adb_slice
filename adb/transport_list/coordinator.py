@@ -1,24 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from threading import RLock
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import AdbTransportListObservationBasis
 from adb.transport_list.state import (
-    AdbTransportListObservationResult,
+    AdbTransportListCoordinatedObservationResult,
+    AdbTransportListObservationServerConflict,
     AdbTransportListObserved,
-    AdbTransportListState,
     AdbTransportListStateView,
     AdbTransportListStateWriter,
 )
 from eventing import EventPublisher
-
-
-_RLockType = type(RLock())
 
 
 @runtime_checkable
@@ -30,80 +26,135 @@ class _AdbTransportListStateAccess(
     """Read and commit authoritative transport-list state."""
 
 
-@dataclass(frozen=True, slots=True)
-class AdbTransportListObservationServerConflict:
-    """Evidence that raw transport-list data belongs to a non-authoritative server lifetime."""
-
-    basis: AdbTransportListObservationBasis
-    transport_list: AdbTransportList
-    current_server: AdbServerIdentity | None
-    state: AdbTransportListState
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.basis, AdbTransportListObservationBasis):
-            raise TypeError("basis must be AdbTransportListObservationBasis")
-        if not isinstance(self.transport_list, AdbTransportList):
-            raise TypeError("transport_list must be AdbTransportList")
-        if self.current_server is not None and not isinstance(
-            self.current_server, AdbServerIdentity
-        ):
-            raise TypeError("current_server must be AdbServerIdentity or None")
-        if not isinstance(self.state, AdbTransportListState):
-            raise TypeError("state must be AdbTransportListState")
-        if self.current_server == self.basis.server:
-            raise ValueError("server conflict requires a different authoritative server")
+@runtime_checkable
+class _AdbTransportListAuthority(Protocol):
+    """Runtime authority needed to fence server-bound transport-list observations."""
 
     @property
-    def server(self) -> AdbServerIdentity:
-        return self.basis.server
+    def server(self) -> AdbServerStateView: ...
 
-    def __bool__(self) -> bool:
-        return False
+    @property
+    def transport_list(self) -> _AdbTransportListStateAccess: ...
+
+    def capture_transport_list_basis(
+        self,
+        server: AdbServerIdentity,
+    ) -> AdbTransportListObservationBasis | None: ...
+
+    def observe_transport_list(
+        self,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
+    ) -> AdbTransportListCoordinatedObservationResult: ...
 
 
-AdbTransportListCoordinatedObservationResult: TypeAlias = (
-    AdbTransportListObservationResult | AdbTransportListObservationServerConflict
-)
-
-
-class AdbTransportListCoordinator:
-    """Capture observation authority and commit the ordered transport-list watch stream."""
+class _AdbTransportListStorePairAuthority:
+    """Standalone authority adapter for callers that compose the two state stores directly."""
 
     def __init__(
         self,
-        transport_list_state: _AdbTransportListStateAccess,
-        server_state: AdbServerStateView,
+        transport_list: _AdbTransportListStateAccess,
+        server: AdbServerStateView,
+    ) -> None:
+        self._transport_list = transport_list
+        self._server = server
+        self._lock = RLock()
+
+    @property
+    def server(self) -> AdbServerStateView:
+        return self._server
+
+    @property
+    def transport_list(self) -> _AdbTransportListStateAccess:
+        return self._transport_list
+
+    def capture_transport_list_basis(
+        self,
+        server: AdbServerIdentity,
+    ) -> AdbTransportListObservationBasis | None:
+        with self._lock:
+            if self._server.current_identity != server:
+                return None
+            state = self._transport_list.snapshot()
+            return AdbTransportListObservationBasis(
+                server=server,
+                transport_list_identity=state.identity,
+            )
+
+    def observe_transport_list(
+        self,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
+    ) -> AdbTransportListCoordinatedObservationResult:
+        with self._lock:
+            current_server = self._server.current_identity
+            if current_server != basis.server:
+                return AdbTransportListObservationServerConflict(
+                    basis=basis,
+                    transport_list=transport_list,
+                    current_server=current_server,
+                    state=self._transport_list.snapshot(),
+                )
+            expected = self._transport_list.snapshot()
+            return self._transport_list.observe(
+                basis,
+                transport_list,
+                expected,
+            )
+
+
+class AdbTransportListCoordinator:
+    """Orchestrate ordered transport-list observations through one authority boundary."""
+
+    def __init__(
+        self,
+        authority_or_transport_list_state: _AdbTransportListAuthority
+        | _AdbTransportListStateAccess,
+        server_state: AdbServerStateView | None = None,
         *,
         publisher: EventPublisher | None = None,
-        authority_lock: _RLockType | None = None,
     ) -> None:
-        if not isinstance(transport_list_state, _AdbTransportListStateAccess):
-            raise TypeError(
-                "transport_list_state must satisfy AdbTransportListStateView and "
-                "AdbTransportListStateWriter"
+        if isinstance(authority_or_transport_list_state, _AdbTransportListAuthority):
+            if server_state is not None:
+                raise ValueError(
+                    "server_state must be omitted when a transport-list authority is provided"
+                )
+            authority = authority_or_transport_list_state
+        else:
+            if not isinstance(
+                authority_or_transport_list_state,
+                _AdbTransportListStateAccess,
+            ):
+                raise TypeError(
+                    "authority_or_transport_list_state must satisfy the runtime transport-list "
+                    "authority contract or AdbTransportListStateView and "
+                    "AdbTransportListStateWriter"
+                )
+            if not isinstance(server_state, AdbServerStateView):
+                raise TypeError(
+                    "server_state must satisfy AdbServerStateView when composing state stores"
+                )
+            authority = _AdbTransportListStorePairAuthority(
+                authority_or_transport_list_state,
+                server_state,
             )
-        if not isinstance(server_state, AdbServerStateView):
-            raise TypeError("server_state must satisfy AdbServerStateView")
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
-        if authority_lock is not None and not isinstance(authority_lock, _RLockType):
-            raise TypeError("authority_lock must be a reentrant lock or None")
-        self._transport_list_state = transport_list_state
-        self._server_state = server_state
+
+        self._authority = authority
         self._publisher = publisher
-        self._lock = RLock() if authority_lock is None else authority_lock
 
     @property
     def server_state(self) -> AdbServerStateView:
         """Server authority used to fence transport-list observations."""
 
-        return self._server_state
+        return self._authority.server
 
     @property
     def transport_list_state(self) -> _AdbTransportListStateAccess:
         """Authoritative transport-list state committed by this coordinator."""
 
-        return self._transport_list_state
+        return self._authority.transport_list
 
     def capture_basis(
         self,
@@ -117,15 +168,7 @@ class AdbTransportListCoordinator:
 
         if not isinstance(server, AdbServerIdentity):
             raise TypeError("server must be AdbServerIdentity")
-
-        with self._lock:
-            if self._server_state.current_identity != server:
-                return None
-            transport_list_state = self._transport_list_state.snapshot()
-            return AdbTransportListObservationBasis(
-                server=server,
-                transport_list_identity=transport_list_state.identity,
-            )
+        return self._authority.capture_transport_list_basis(server)
 
     def observe(
         self,
@@ -139,22 +182,7 @@ class AdbTransportListCoordinator:
         if not isinstance(transport_list, AdbTransportList):
             raise TypeError("transport_list must be AdbTransportList")
 
-        with self._lock:
-            current_server = self._server_state.current_identity
-            if current_server != basis.server:
-                return AdbTransportListObservationServerConflict(
-                    basis=basis,
-                    transport_list=transport_list,
-                    current_server=current_server,
-                    state=self._transport_list_state.snapshot(),
-                )
-            expected = self._transport_list_state.snapshot()
-            result = self._transport_list_state.observe(
-                basis,
-                transport_list,
-                expected,
-            )
-
+        result = self._authority.observe_transport_list(basis, transport_list)
         if isinstance(result, AdbTransportListObserved) and self._publisher is not None:
             self._publisher.publish(result)
         return result

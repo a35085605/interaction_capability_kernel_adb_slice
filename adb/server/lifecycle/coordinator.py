@@ -31,9 +31,6 @@ from adb.server.state import (
 )
 
 
-_RLockType = type(RLock())
-
-
 @runtime_checkable
 class _AdbServerStateAccess(
     AdbServerStateView,
@@ -95,7 +92,6 @@ class AdbServerLifecycleCoordinator:
         backend: AdbServerBackend,
         endpoint_constraint: AdbServerEndpoint | None,
         publisher: EventPublisher | None = None,
-        authority_lock: _RLockType | None = None,
     ) -> None:
         if not isinstance(state, _AdbServerStateAccess):
             raise TypeError(
@@ -107,15 +103,13 @@ class AdbServerLifecycleCoordinator:
             raise TypeError("endpoint_constraint must be TcpAddress or None")
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
-        if authority_lock is not None and not isinstance(authority_lock, _RLockType):
-            raise TypeError("authority_lock must be a reentrant lock or None")
         self._state = state
         self._backend = backend
         self._endpoint_constraint = endpoint_constraint
         self._publisher = publisher
-        # Share only the short cross-aggregate authority check/transition boundary. Backend effects
-        # are independently linearizable and intentionally execute outside this lock.
-        self._authority_lock = RLock() if authority_lock is None else authority_lock
+        # Protect coordinator-local endpoint configuration only. Cross-aggregate authority
+        # serialization belongs to the injected state authority.
+        self._lock = RLock()
 
     def provision(self) -> AdbServerProvisionResult:
         """Acquire server access and commit it as the authoritative server.
@@ -124,7 +118,7 @@ class AdbServerLifecycleCoordinator:
         handle is released when its activation fence is lost.
         """
 
-        with self._authority_lock:
+        with self._lock:
             endpoint_constraint = self._endpoint_constraint
             t0 = self._state.snapshot()
             if t0.active:
@@ -139,11 +133,10 @@ class AdbServerLifecycleCoordinator:
             return (acquisition,)
 
         try:
-            with self._authority_lock:
-                activation = self._commit_activation(
-                    acquisition.endpoint,
-                    expected=t0.identity,
-                )
+            activation = self._commit_activation(
+                acquisition.endpoint,
+                expected=t0.identity,
+            )
         except BaseException:
             self._rollback_acquisition(acquisition)
             raise
@@ -216,16 +209,15 @@ class AdbServerLifecycleCoordinator:
         if expected_server is not None and not isinstance(expected_server, AdbServerIdentity):
             raise TypeError("expected_server must be AdbServerIdentity or None")
 
-        with self._authority_lock:
-            t0 = self._state.snapshot()
-            if expected_server is None:
-                server = t0.current_identity
-                if server is None:
-                    return AdbServerAlreadyInactive(t0)
-            else:
-                server = expected_server
+        t0 = self._state.snapshot()
+        if expected_server is None:
+            server = t0.current_identity
+            if server is None:
+                return AdbServerAlreadyInactive(t0)
+        else:
+            server = expected_server
 
-            deactivation = self._commit_retirement(server)
+        deactivation = self._commit_retirement(server)
         if isinstance(deactivation, AdbServerDeactivationStateConflict):
             return deactivation
 
@@ -258,7 +250,7 @@ class AdbServerLifecycleCoordinator:
 
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
             raise TypeError("endpoint_constraint must be TcpAddress or None")
-        with self._authority_lock:
+        with self._lock:
             self._endpoint_constraint = endpoint_constraint
 
 

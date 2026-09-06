@@ -30,7 +30,7 @@ from adb.server.lifecycle.provision import (
 )
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
 from adb.server.state import AdbServerActivated, AdbServerDeactivated
-from adb.runtime.state import AdbRuntimeState
+from adb.runtime.state import AdbRuntimeAuthorityStateStore
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport_list.coordinator import AdbTransportListCoordinator
 from adb.transport_list.state import AdbTransportListStateView
@@ -57,7 +57,7 @@ class AdbRuntime(AdbManagedRuntime):
 
     def __init__(
         self,
-        state: AdbRuntimeState,
+        state: AdbRuntimeAuthorityStateStore,
         *,
         server_backend: AdbServerBackend,
         server_endpoint_constraint: AdbServerEndpoint | None = None,
@@ -70,8 +70,8 @@ class AdbRuntime(AdbManagedRuntime):
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
         _bootstrap_server: bool = False,
     ) -> None:
-        if not isinstance(state, AdbRuntimeState):
-            raise TypeError("state must be AdbRuntimeState")
+        if not isinstance(state, AdbRuntimeAuthorityStateStore):
+            raise TypeError("state must be AdbRuntimeAuthorityStateStore")
         if not isinstance(server_backend, AdbServerBackend):
             raise TypeError("server_backend must satisfy AdbServerBackend")
         if server_endpoint_constraint is not None and not isinstance(
@@ -158,19 +158,15 @@ class AdbRuntime(AdbManagedRuntime):
 
         super().__init__(state.server)
         self._state = state
-        self._authority_lock = RLock()
         self._server_lifecycle = AdbServerLifecycleCoordinator(
-            state.server,
+            state,
             backend=server_backend,
             endpoint_constraint=server_endpoint_constraint,
             publisher=event_bus,
-            authority_lock=self._authority_lock,
         )
         self._transport_list_coordinator = AdbTransportListCoordinator(
-            state.transport_list,
-            state.server,
+            state,
             publisher=event_bus,
-            authority_lock=self._authority_lock,
         )
         if _bootstrap_server:
             self._bootstrap_initial_server()

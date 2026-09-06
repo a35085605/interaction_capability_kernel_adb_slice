@@ -5,6 +5,7 @@ from enum import Enum
 from threading import Lock
 from typing import Protocol, TypeAlias, runtime_checkable
 
+from adb.server.identity import AdbServerIdentity
 from adb.transport_list.identity import (
     AdbTransportListIdentity,
     AdbTransportListIdentityIssuer,
@@ -131,6 +132,42 @@ class AdbTransportListObservationStateConflict:
 
 AdbTransportListObservationResult: TypeAlias = (
     AdbTransportListObserved | AdbTransportListObservationStateConflict
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListObservationServerConflict:
+    """Evidence that raw transport-list data belongs to a non-authoritative server lifetime."""
+
+    basis: AdbTransportListObservationBasis
+    transport_list: AdbTransportList
+    current_server: AdbServerIdentity | None
+    state: AdbTransportListState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.basis, AdbTransportListObservationBasis):
+            raise TypeError("basis must be AdbTransportListObservationBasis")
+        if not isinstance(self.transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
+        if self.current_server is not None and not isinstance(
+            self.current_server, AdbServerIdentity
+        ):
+            raise TypeError("current_server must be AdbServerIdentity or None")
+        if not isinstance(self.state, AdbTransportListState):
+            raise TypeError("state must be AdbTransportListState")
+        if self.current_server == self.basis.server:
+            raise ValueError("server conflict requires a different authoritative server")
+
+    @property
+    def server(self) -> AdbServerIdentity:
+        return self.basis.server
+
+    def __bool__(self) -> bool:
+        return False
+
+
+AdbTransportListCoordinatedObservationResult: TypeAlias = (
+    AdbTransportListObservationResult | AdbTransportListObservationServerConflict
 )
 
 
@@ -316,10 +353,12 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
 
 
 __all__ = [
+    "AdbTransportListCoordinatedObservationResult",
     "AdbTransportListInvalidated",
     "AdbTransportListInvalidationResult",
     "AdbTransportListInvalidationStateConflict",
     "AdbTransportListObservationResult",
+    "AdbTransportListObservationServerConflict",
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",
     "AdbTransportListState",

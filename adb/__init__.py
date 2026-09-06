@@ -21,7 +21,7 @@ from adb.api import (
     AdbRuntimeBootstrap,
     AdbServerEndpoint,
 )
-from adb.runtime import AdbManagedRuntime
+from adb.runtime import AdbManagedRuntime, AdbRuntimeAuthorityStateStore
 from adb.server import (
     AdbServerActivated,
     AdbServerActivationStateConflict,
@@ -113,6 +113,7 @@ __all__ = [
     "EpochSequence",
     "AdbError",
     "AdbManagedRuntime",
+    "AdbRuntimeAuthorityStateStore",
     "AdbServerLifecycleCoordinator",
     "AdbRuntimeBootstrap",
     "AdbRuntime",

@@ -12,9 +12,7 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.lifecycle.backend import AdbServerBackend
 from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
-from adb.server.state import AdbServerStateStore
-from adb.runtime.state import AdbRuntimeState
-from adb.transport_list.state import AdbTransportListStateStore
+from adb.runtime.state import AdbRuntimeAuthorityStateStore
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
 )
@@ -50,7 +48,7 @@ def _default_transport_list_watch_attachment_factory(
 @dataclass(frozen=True, slots=True)
 class _BootstrapCore:
     server_backend: AdbServerBackend
-    runtime_state: AdbRuntimeState
+    runtime_state: AdbRuntimeAuthorityStateStore
 
 
 class AdbRuntimeBootstrap:
@@ -220,10 +218,7 @@ class AdbRuntimeBootstrap:
 
         return _BootstrapCore(
             server_backend=backend,
-            runtime_state=AdbRuntimeState(
-                server=AdbServerStateStore(),
-                transport_list=AdbTransportListStateStore(),
-            ),
+            runtime_state=AdbRuntimeAuthorityStateStore(),
         )
 
     def _configure_recovery_endpoint(
