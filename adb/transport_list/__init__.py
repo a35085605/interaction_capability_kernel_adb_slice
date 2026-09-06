@@ -21,14 +21,11 @@ from adb.transport_list.lookup import (
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import (
     AdbTransportListObservation,
+    AdbTransportListObservationBasis,
     AdbTransportListObservationIdentifier,
 )
 from adb.transport_list.reader import AdbTransportListReader
-from adb.transport_list.reading import (
-    AdbTransportListRead,
-    AdbTransportListReadBasis,
-    AdbTransportListReaderFacade,
-)
+from adb.transport_list.reading import AdbTransportListReaderFacade
 from adb.transport_list.state import (
     AdbTransportListInvalidated,
     AdbTransportListInvalidationResult,
@@ -55,13 +52,12 @@ __all__ = [
     "AdbTransportListInvalidationResult",
     "AdbTransportListInvalidationStateConflict",
     "AdbTransportListObservation",
+    "AdbTransportListObservationBasis",
     "AdbTransportListObservationIdentifier",
     "AdbTransportListObservationResult",
     "AdbTransportListObservationServerConflict",
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",
-    "AdbTransportListRead",
-    "AdbTransportListReadBasis",
     "AdbTransportListReader",
     "AdbTransportListReaderFacade",
     "AdbTransportListState",

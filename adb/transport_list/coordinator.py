@@ -132,21 +132,19 @@ class AdbTransportListCoordinator:
         """Read, identify, and conditionally commit a transport-list refresh.
 
         The refresh keeps its pre-read server and state fences, so newer watch observations
-        retain authority over an in-flight read. Identity issuance happens after the raw read
-        completes and before the observation crosses the runtime authority boundary.
+        retain authority over an in-flight read. The returned observation also carries the
+        corresponding public identity basis for the phase-one object model.
         """
 
-        read = AdbTransportListReaderFacade(
+        facade = AdbTransportListReaderFacade(
             reader,
             server_state=self._server_state,
             transport_list_state=self._transport_list_state,
             observation_identifier=self._observation_identifier,
             authority_lock=self._lock,
-        ).read()
-        return self.observe(
-            read.observation,
-            expected=read.basis.transport_list_state,
         )
+        observation, state_fence = facade._read_with_state_fence()
+        return self.observe(observation, expected=state_fence)
 
     def observe(
         self,
@@ -156,8 +154,8 @@ class AdbTransportListCoordinator:
     ) -> AdbTransportListCoordinatedObservationResult:
         """Commit an identified observation while its server and state fences remain valid.
 
-        ``expected`` preserves the state basis of a one-shot refresh; stream observations
-        may omit it to linearize against state at commit time.
+        ``expected`` temporarily preserves the full-state fence for one-shot refreshes during
+        phase one. Stream observations continue to linearize against state at commit time.
         """
 
         if not isinstance(observation, AdbTransportListObservation):

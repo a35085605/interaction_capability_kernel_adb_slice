@@ -5,9 +5,11 @@ from threading import Lock
 from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServerIdentity
+from adb.transport_list.identity import AdbTransportListIdentity
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import (
     AdbTransportListObservation,
+    AdbTransportListObservationBasis,
     AdbTransportListObservationIdentifier,
 )
 from adb.transport_list.watch.attachment import AdbTransportListWatchAttachment
@@ -42,6 +44,7 @@ class _ServerBoundAdbTransportListWatchSession:
         "_attachment",
         "_initial",
         "_observation_identifier",
+        "_previous_identity",
         "_close_lock",
         "_closed",
     )
@@ -53,6 +56,7 @@ class _ServerBoundAdbTransportListWatchSession:
         initial: AdbTransportList,
         observation_identifier: AdbTransportListObservationIdentifier,
         *,
+        basis_transport_list_identity: AdbTransportListIdentity | None,
         attachment: AdbTransportListWatchAttachment | None = None,
     ) -> None:
         if not isinstance(server, AdbServerIdentity):
@@ -73,11 +77,24 @@ class _ServerBoundAdbTransportListWatchSession:
             raise TypeError(
                 "observation_identifier must be AdbTransportListObservationIdentifier"
             )
+        if basis_transport_list_identity is not None and not isinstance(
+            basis_transport_list_identity, AdbTransportListIdentity
+        ):
+            raise TypeError(
+                "basis_transport_list_identity must be AdbTransportListIdentity or None"
+            )
         self._server = server
         self._stream = stream
         self._attachment = attachment
         self._observation_identifier = observation_identifier
-        self._initial = observation_identifier.identify(server, initial)
+        self._initial = observation_identifier.identify(
+            AdbTransportListObservationBasis(
+                server=server,
+                transport_list_identity=basis_transport_list_identity,
+            ),
+            initial,
+        )
+        self._previous_identity = self._initial.identity
         self._close_lock = Lock()
         self._closed = False
 
@@ -93,7 +110,15 @@ class _ServerBoundAdbTransportListWatchSession:
         for transport_list in self._stream.updates():
             if not isinstance(transport_list, AdbTransportList):
                 raise TypeError("transport-list watch stream must yield AdbTransportList")
-            yield self._observation_identifier.identify(self._server, transport_list)
+            observation = self._observation_identifier.identify(
+                AdbTransportListObservationBasis(
+                    server=self._server,
+                    transport_list_identity=self._previous_identity,
+                ),
+                transport_list,
+            )
+            self._previous_identity = observation.identity
+            yield observation
 
     def close(self) -> None:
         with self._close_lock:
@@ -123,6 +148,7 @@ def bind_transport_list_watch_session(
     initial: AdbTransportList,
     observation_identifier: AdbTransportListObservationIdentifier,
     *,
+    basis_transport_list_identity: AdbTransportListIdentity | None,
     attachment: AdbTransportListWatchAttachment | None = None,
 ) -> AdbTransportListWatchSession:
     """Bind one raw stream to a runtime/server observation boundary.
@@ -135,6 +161,7 @@ def bind_transport_list_watch_session(
         stream,
         initial,
         observation_identifier,
+        basis_transport_list_identity=basis_transport_list_identity,
         attachment=attachment,
     )
 
