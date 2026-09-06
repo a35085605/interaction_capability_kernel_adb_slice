@@ -19,6 +19,10 @@ from adb.transport_list.lookup import (
     find_transport,
 )
 from adb.transport_list.model import AdbTransportList
+from adb.transport_list.observation import (
+    AdbTransportListObservation,
+    AdbTransportListObservationIdentifier,
+)
 from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.state import (
     AdbTransportListInvalidated,
@@ -45,6 +49,8 @@ __all__ = [
     "AdbTransportListInvalidated",
     "AdbTransportListInvalidationResult",
     "AdbTransportListInvalidationStateConflict",
+    "AdbTransportListObservation",
+    "AdbTransportListObservationIdentifier",
     "AdbTransportListObservationResult",
     "AdbTransportListObservationServerConflict",
     "AdbTransportListObservationStateConflict",

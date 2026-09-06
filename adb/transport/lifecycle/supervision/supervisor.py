@@ -288,6 +288,7 @@ class AdbConfiguredTransportSupervisor:
                 self._closed
                 or server is None
                 or self._projection_server != server
+                or event.server != server
             ):
                 return
             state = self._transport_list_state.snapshot()
@@ -474,10 +475,9 @@ class AdbConfiguredTransportSupervisor:
         raise TypeError("instruction must be AdbConfiguredTransportRecoveryInstruction")
 
     def _reset_server_lifetime_locked(self) -> None:
-        # ``AdbTransportListObserved`` intentionally carries no server identity. Record the
-        # authoritative transport-list state visible at the lifetime transition so a delayed
-        # publication from the retired server cannot be projected onto its successor. The first
-        # observation committed for the successor necessarily produces a different state identity.
+        # Record the authoritative transport-list state visible at the lifetime transition.
+        # Event server provenance rejects retired-lifetime publications directly; this fence also
+        # prevents retained pre-transition evidence from seeding successor projections.
         self._transport_list_fence = self._transport_list_state.snapshot()
         for registration in self._registrations.values():
             registration.projection = None

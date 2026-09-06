@@ -8,12 +8,12 @@ from typing import Protocol, TypeAlias, runtime_checkable
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
-from adb.transport.model import AdbTransport
 from adb.transport_list.coordinator import (
     AdbTransportListCoordinator,
     AdbTransportListObservationServerConflict,
 )
 from adb.transport_list.model import AdbTransportList
+from adb.transport_list.observation import AdbTransportListObservation
 from adb.transport_list.state import (
     AdbTransportListObservationStateConflict,
     AdbTransportListObserved,
@@ -201,6 +201,7 @@ class ThreadedAdbTransportListWatchController:
             self.server,
             open_result.stream,
             open_result.initial,
+            self._observation_coordinator.observation_identifier,
         )
         startup_complete = Event()
         startup_results: list[AdbTransportListWatchStartResult] = []
@@ -319,25 +320,24 @@ class ThreadedAdbTransportListWatchController:
         terminal: object | None = None
         startup_succeeded = False
         try:
-            initial_transport_list = self._normalize_transport_list(session.initial)
-            if session.server != self.server:
+            initial_observation = session.initial
+            if session.server != self.server or initial_observation.server != self.server:
                 raise ValueError(
                     "transport-list watch session belongs to a different server lifetime"
                 )
-            if not self._commit_observation(watcher, session, initial_transport_list):
+            if not self._commit_observation(watcher, initial_observation):
                 startup_results.append(AdbTransportListWatchStartSuperseded())
                 return
 
             self._publisher.publish(AdbTransportListWatchStarted(server))
             startup_results.append(
-                AdbTransportListWatchStartSucceeded(initial_transport_list)
+                AdbTransportListWatchStartSucceeded(initial_observation.transport_list)
             )
             startup_succeeded = True
             startup_complete.set()
 
-            for transport_list in session.updates():
-                normalized = self._normalize_transport_list(transport_list)
-                if not self._commit_observation(watcher, session, normalized):
+            for observation in session.updates():
+                if not self._commit_observation(watcher, observation):
                     break
             terminal = AdbTransportListWatchStopped(server)
         except AdbTransportListWatchError as exc:
@@ -357,25 +357,17 @@ class ThreadedAdbTransportListWatchController:
         if startup_succeeded and terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
-    def _normalize_transport_list(
-        self,
-        transports: AdbTransportList | tuple[AdbTransport, ...],
-    ) -> AdbTransportList:
-        return AdbTransportList(transports)
-
     def _commit_observation(
         self,
         watcher: AdbTransportListWatcher,
-        session: AdbTransportListWatchSession,
-        transport_list: AdbTransportList,
+        observation: AdbTransportListObservation,
     ) -> bool:
+        if not isinstance(observation, AdbTransportListObservation):
+            raise TypeError("observation must be AdbTransportListObservation")
         with self._lock:
             if self._closed or self._active_watcher is not watcher:
                 return False
-            result = self._observation_coordinator.observe(
-                session.server,
-                transport_list,
-            )
+            result = self._observation_coordinator.observe(observation)
         if isinstance(result, AdbTransportListObserved):
             return True
         if isinstance(

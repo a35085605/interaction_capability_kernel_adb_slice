@@ -5,11 +5,15 @@ from typing import Protocol, runtime_checkable
 
 from adb.server.identity import AdbServerIdentity
 from adb.transport_list.model import AdbTransportList
+from adb.transport_list.observation import (
+    AdbTransportListObservation,
+    AdbTransportListObservationIdentifier,
+)
 
 
 @runtime_checkable
 class AdbTransportListWatchStream(Protocol):
-    """Established low-level watch stream yielding complete transport lists."""
+    """Established low-level watch stream yielding complete raw transport lists."""
 
     @property
     def initial(self) -> AdbTransportList:
@@ -23,24 +27,35 @@ class AdbTransportListWatchStream(Protocol):
 
 
 @runtime_checkable
-class AdbTransportListWatchSession(AdbTransportListWatchStream, Protocol):
-    """Server-bound watch session for one authoritative ADB server lifetime."""
+class AdbTransportListWatchSession(Protocol):
+    """Server-bound identified watch session for one authoritative ADB server lifetime."""
 
     @property
     def server(self) -> AdbServerIdentity:
         ...
 
+    @property
+    def initial(self) -> AdbTransportListObservation:
+        ...
+
+    def updates(self) -> Iterator[AdbTransportListObservation]:
+        ...
+
+    def close(self) -> None:
+        ...
+
 
 class _ServerBoundAdbTransportListWatchSession:
-    """Bind one low-level watch stream to one runtime-scoped server identity."""
+    """Bind one raw watch stream to runtime-issued observation identities and server provenance."""
 
-    __slots__ = ("_server", "_stream", "_initial")
+    __slots__ = ("_server", "_stream", "_initial", "_observation_identifier")
 
     def __init__(
         self,
         server: AdbServerIdentity,
         stream: AdbTransportListWatchStream,
         initial: AdbTransportList,
+        observation_identifier: AdbTransportListObservationIdentifier,
     ) -> None:
         if not isinstance(server, AdbServerIdentity):
             raise TypeError("server must be AdbServerIdentity")
@@ -48,20 +63,30 @@ class _ServerBoundAdbTransportListWatchSession:
             raise TypeError("stream must satisfy AdbTransportListWatchStream")
         if not isinstance(initial, AdbTransportList):
             raise TypeError("initial must be AdbTransportList")
+        if not isinstance(
+            observation_identifier, AdbTransportListObservationIdentifier
+        ):
+            raise TypeError(
+                "observation_identifier must be AdbTransportListObservationIdentifier"
+            )
         self._server = server
         self._stream = stream
-        self._initial = initial
+        self._observation_identifier = observation_identifier
+        self._initial = observation_identifier.identify(server, initial)
 
     @property
     def server(self) -> AdbServerIdentity:
         return self._server
 
     @property
-    def initial(self) -> AdbTransportList:
+    def initial(self) -> AdbTransportListObservation:
         return self._initial
 
-    def updates(self) -> Iterator[AdbTransportList]:
-        yield from self._stream.updates()
+    def updates(self) -> Iterator[AdbTransportListObservation]:
+        for transport_list in self._stream.updates():
+            if not isinstance(transport_list, AdbTransportList):
+                raise TypeError("transport-list watch stream must yield AdbTransportList")
+            yield self._observation_identifier.identify(self._server, transport_list)
 
     def close(self) -> None:
         self._stream.close()
@@ -71,10 +96,16 @@ def bind_transport_list_watch_session(
     server: AdbServerIdentity,
     stream: AdbTransportListWatchStream,
     initial: AdbTransportList,
+    observation_identifier: AdbTransportListObservationIdentifier,
 ) -> AdbTransportListWatchSession:
-    """Bind an established raw stream and initial snapshot to one server lifetime."""
+    """Bind a raw stream to one runtime/server observation boundary."""
 
-    return _ServerBoundAdbTransportListWatchSession(server, stream, initial)
+    return _ServerBoundAdbTransportListWatchSession(
+        server,
+        stream,
+        initial,
+        observation_identifier,
+    )
 
 
 __all__ = [

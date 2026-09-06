@@ -36,6 +36,7 @@ from adb.transport_list.coordinator import (
     AdbTransportListCoordinatedObservationResult,
     AdbTransportListCoordinator,
 )
+from adb.transport_list.observation import AdbTransportListObservationIdentifier
 from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.state import AdbTransportListStateView
 from adb.transport_list.watch.supervision.policy import (
@@ -67,6 +68,7 @@ class AdbRuntime(AdbManagedRuntime):
         server_supervision_scheduler: TemporalScheduler[object] | None = None,
         server_supervision_policy: AdbServerRecoveryPolicy | None = None,
         server_recovery_enabled: bool = True,
+        transport_list_observation_identifier: AdbTransportListObservationIdentifier | None = None,
         transport_list_watch_supervisor: AdbTransportListWatchSupervisor | None = None,
         transport_supervisor: AdbConfiguredTransportSupervisor | None = None,
         transport_supervision_policy: AdbConfiguredTransportSupervisionPolicy | None = None,
@@ -96,6 +98,17 @@ class AdbRuntime(AdbManagedRuntime):
             )
         if not isinstance(server_recovery_enabled, bool):
             raise TypeError("server_recovery_enabled must be bool")
+        if transport_list_observation_identifier is None:
+            transport_list_observation_identifier = AdbTransportListObservationIdentifier(
+                after=state.transport_list.identity
+            )
+        if not isinstance(
+            transport_list_observation_identifier, AdbTransportListObservationIdentifier
+        ):
+            raise TypeError(
+                "transport_list_observation_identifier must be "
+                "AdbTransportListObservationIdentifier or None"
+            )
         if not isinstance(_bootstrap_server, bool):
             raise TypeError("_bootstrap_server must be bool")
         if transport_list_watch_supervisor is not None and not isinstance(
@@ -160,6 +173,9 @@ class AdbRuntime(AdbManagedRuntime):
 
         super().__init__(state.server)
         self._state = state
+        self._transport_list_observation_identifier = (
+            transport_list_observation_identifier
+        )
         self._authority_lock = RLock()
         self._server_lifecycle = AdbServerLifecycleCoordinator(
             state.server,
@@ -171,6 +187,7 @@ class AdbRuntime(AdbManagedRuntime):
         self._transport_list_coordinator = AdbTransportListCoordinator(
             state.transport_list,
             state.server,
+            observation_identifier=self._transport_list_observation_identifier,
             publisher=event_bus,
             authority_lock=self._authority_lock,
         )
