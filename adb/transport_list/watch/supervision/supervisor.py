@@ -55,10 +55,11 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 
 class AdbTransportListWatchSupervisor:
-    """Maintain one long-lived watch controller across authoritative server lifetimes.
+    """Maintain transport-list watching across authoritative server lifetimes.
 
-    Reconciliation replaces only the controller's short-lived watch session. Controller and
-    attachment ownership is scoped to each session and remains controller-owned while opening.
+    Each controller is bound to exactly one server identity and endpoint. Reconciliation owns
+    cross-lifetime replacement: when the authoritative binding changes, the old controller is
+    closed and a fresh controller is created for the new binding.
     """
 
     def __init__(
@@ -216,69 +217,67 @@ class AdbTransportListWatchSupervisor:
             controller = self._ensure_controller_locked(server, endpoint)
             token = self._begin_start_locked()
 
-        return self._attempt_start(controller, server, endpoint, token)
+        return self._attempt_start(controller, token)
 
     def reconcile(self) -> None:
-        """Reconcile the current short-lived session against authoritative server state."""
+        """Reconcile controller ownership against authoritative server state."""
 
-        controller_to_stop: AdbTransportListWatchController | None = None
-        launch: tuple[
-            Thread,
-            AdbTransportListWatchController,
-            AdbServerIdentity,
-            AdbServerEndpoint,
-            object,
-        ] | None = None
+        launch: tuple[Thread, AdbTransportListWatchController, object] | None = None
 
-        with self._lock:
-            self._require_open()
-            if not self._watch_requested:
-                return
+        while True:
+            controller_to_close: AdbTransportListWatchController | None = None
 
-            state = self._server_state.snapshot()
-            server = state.server
-            endpoint = state.endpoint
-            controller = self._controller
+            with self._lock:
+                self._require_open()
+                if not self._watch_requested:
+                    return
 
-            if server is None:
-                if controller is not None and (controller.active or self._start_in_progress):
+                state = self._server_state.snapshot()
+                server = state.server
+                endpoint = state.endpoint
+                controller = self._controller
+
+                if server is None:
+                    if controller is None:
+                        return
                     self._cancel_start_locked()
                     self._watch_active = False
-                    controller_to_stop = controller
-            else:
-                if endpoint is None:
-                    raise RuntimeError("active ADB server state has no endpoint")
-                if controller is None:
-                    controller = self._create_controller_locked(server, endpoint)
+                    self._controller = None
+                    controller_to_close = controller
+                else:
+                    if endpoint is None:
+                        raise RuntimeError("active ADB server state has no endpoint")
 
-                binding_changed = (
-                    controller.server != server or controller.endpoint != endpoint
-                )
-                if binding_changed and (controller.active or self._start_in_progress):
-                    self._cancel_start_locked()
-                    self._watch_active = False
-                    controller_to_stop = controller
+                    if controller is not None and (
+                        controller.server != server or controller.endpoint != endpoint
+                    ):
+                        self._cancel_start_locked()
+                        self._watch_active = False
+                        self._controller = None
+                        controller_to_close = controller
+                    else:
+                        if controller is None:
+                            controller = self._create_controller_locked(server, endpoint)
 
-                if not self._start_in_progress and (
-                    binding_changed or not controller.active
-                ):
-                    token = self._begin_start_locked()
-                    thread = self._thread_factory(
-                        target=self._run_start_attempt,
-                        args=(controller, server, endpoint, token),
-                        name=(
-                            "adb-transport-list-watch-reconciliation-"
-                            f"{endpoint.host}-{endpoint.port}-{server}"
-                        ),
-                    )
-                    self._attempt_threads.add(thread)
-                    launch = (thread, controller, server, endpoint, token)
+                        if not self._start_in_progress and not controller.active:
+                            token = self._begin_start_locked()
+                            thread = self._thread_factory(
+                                target=self._run_start_attempt,
+                                args=(controller, token),
+                                name=(
+                                    "adb-transport-list-watch-reconciliation-"
+                                    f"{endpoint.host}-{endpoint.port}-{server}"
+                                ),
+                            )
+                            self._attempt_threads.add(thread)
+                            launch = (thread, controller, token)
+                        break
 
-        if controller_to_stop is not None:
-            controller_to_stop.stop()
+            assert controller_to_close is not None
+            controller_to_close.close()
 
         if launch is not None:
-            thread, controller, server, endpoint, token = launch
+            thread, controller, token = launch
             try:
                 thread.start()
             except BaseException:
@@ -368,8 +367,6 @@ class AdbTransportListWatchSupervisor:
     def _run_start_attempt(
         self,
         controller: AdbTransportListWatchController,
-        server: AdbServerIdentity,
-        endpoint: AdbServerEndpoint,
         token: object,
     ) -> None:
         active_thread = current_thread()
@@ -382,7 +379,7 @@ class AdbTransportListWatchSupervisor:
                     or self._start_token is not token
                 ):
                     return
-            self._attempt_start(controller, server, endpoint, token)
+            self._attempt_start(controller, token)
         finally:
             with self._lock:
                 self._attempt_threads.discard(active_thread)
@@ -390,12 +387,12 @@ class AdbTransportListWatchSupervisor:
     def _attempt_start(
         self,
         controller: AdbTransportListWatchController,
-        server: AdbServerIdentity,
-        endpoint: AdbServerEndpoint,
         token: object,
     ) -> bool:
+        server = controller.server
+        endpoint = controller.endpoint
         try:
-            result = controller.start(server, endpoint)
+            result = controller.start()
         except BaseException:
             with self._lock:
                 if self._start_token is token:

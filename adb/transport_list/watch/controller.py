@@ -256,28 +256,28 @@ def _raise_normalized_watch_error(exc: BaseException) -> None:
 
 @runtime_checkable
 class AdbTransportListWatchController(Protocol):
-    """Long-lived controller that runs one short-lived watch session at a time."""
+    """Controller bound to one ADB server lifetime and endpoint.
+
+    The binding is immutable for the controller lifetime. A supervisor that follows
+    authoritative server changes must replace the controller instead of rebinding it.
+    """
 
     @property
     def server(self) -> AdbServerIdentity:
-        """Server binding requested for the current or most recent session."""
+        """Immutable server lifetime owned by this controller."""
         ...
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
-        """Endpoint binding requested for the current or most recent session."""
+        """Immutable endpoint bound to :attr:`server`."""
         ...
 
     @property
     def active(self) -> bool:
         ...
 
-    def start(
-        self,
-        server: AdbServerIdentity | None = None,
-        endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbTransportListWatchStartResult:
-        """Start one session, optionally replacing the retained server binding."""
+    def start(self) -> AdbTransportListWatchStartResult:
+        """Start one session for this controller's fixed server binding."""
         ...
 
     def revoke(self) -> None:
@@ -285,7 +285,7 @@ class AdbTransportListWatchController(Protocol):
         ...
 
     def stop(self) -> None:
-        """Stop the current session and join its worker while keeping the controller reusable."""
+        """Stop the current session while preserving this controller's fixed binding."""
         ...
 
     def close(self) -> None:
@@ -294,11 +294,12 @@ class AdbTransportListWatchController(Protocol):
 
 
 class ThreadedAdbTransportListWatchController:
-    """Reusable threaded controller for sequential transport-list watch sessions.
+    """Threaded controller for one immutable ADB server lifetime and endpoint.
 
-    The controller lives across ADB server lifetimes. Each ``start`` creates one endpoint
-    attachment and one server-bound :class:`AdbTransportListWatchSession`; session identity is
-    the authoritative stale-work fence for observations produced by its worker.
+    Each ``start`` creates a new attachment and server-bound
+    :class:`AdbTransportListWatchSession` for the fixed binding. The owning supervisor replaces
+    this controller when authoritative server identity or endpoint changes. Session identity
+    remains the stale-work fence for observations produced by its worker.
     """
 
     def __init__(
@@ -362,15 +363,8 @@ class ThreadedAdbTransportListWatchController:
                 and self._active_thread is not None
             )
 
-    def start(
-        self,
-        server: AdbServerIdentity | None = None,
-        endpoint: AdbServerEndpoint | None = None,
-    ) -> AdbTransportListWatchStartResult:
-        """Start one short-lived server-bound session on this reusable controller."""
-
-        if (server is None) != (endpoint is None):
-            raise ValueError("server and endpoint must be provided together")
+    def start(self) -> AdbTransportListWatchStartResult:
+        """Start one short-lived session for this controller's fixed server binding."""
 
         with self._condition:
             if self._closed:
@@ -382,15 +376,8 @@ class ThreadedAdbTransportListWatchController:
                     "ADB transport-list watch controller already has an active session"
                 )
 
-            target_server = self._server if server is None else server
-            target_endpoint = self._endpoint if endpoint is None else endpoint
-            if not isinstance(target_server, AdbServerIdentity):
-                raise TypeError("server must be AdbServerIdentity")
-            if not isinstance(target_endpoint, TcpAddress):
-                raise TypeError("endpoint must be TcpAddress")
-
-            self._server = target_server
-            self._endpoint = target_endpoint
+            target_server = self._server
+            target_endpoint = self._endpoint
             token = object()
             self._starting = True
             self._starting_thread = current_thread()
@@ -513,7 +500,7 @@ class ThreadedAdbTransportListWatchController:
         return startup_results[0]
 
     def revoke(self) -> None:
-        """Fence current session authority immediately without retiring the controller."""
+        """Fence current session authority without changing this controller's binding."""
 
         with self._condition:
             session = self._active_session
@@ -529,7 +516,7 @@ class ThreadedAdbTransportListWatchController:
             attachment.close()
 
     def stop(self) -> None:
-        """Synchronously stop current startup/session while preserving reusable ownership."""
+        """Synchronously stop current startup/session while preserving the fixed binding."""
 
         with self._condition:
             session = self._active_session
