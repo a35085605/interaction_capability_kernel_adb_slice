@@ -132,8 +132,7 @@ class AdbTransportListCoordinator:
         """Read, identify, and conditionally commit a transport-list refresh.
 
         The refresh keeps its pre-read server and state fences, so newer watch observations
-        retain authority over an in-flight read. The returned observation also carries the
-        corresponding public identity basis for the phase-one object model.
+        retain authority over an in-flight read.
         """
 
         facade = AdbTransportListReaderFacade(
@@ -154,8 +153,8 @@ class AdbTransportListCoordinator:
     ) -> AdbTransportListCoordinatedObservationResult:
         """Commit an identified observation while its server and state fences remain valid.
 
-        ``expected`` temporarily preserves the full-state fence for one-shot refreshes during
-        phase one. Stream observations continue to linearize against state at commit time.
+        ``expected`` preserves the full-state fence captured by one-shot refreshes. Stream
+        observations continue to linearize against state at commit time.
         """
 
         if not isinstance(observation, AdbTransportListObservation):
