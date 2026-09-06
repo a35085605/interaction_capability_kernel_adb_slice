@@ -4,15 +4,14 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb.server.availability import AdbServerUnavailableError
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
-from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import (
     AdbTransportListObservation,
     AdbTransportListObservationIdentifier,
 )
 from adb.transport_list.reader import AdbTransportListReader
+from adb.transport_list.reading import AdbTransportListReaderFacade
 from adb.transport_list.state import (
     AdbTransportListObservationResult,
     AdbTransportListObserved,
@@ -137,24 +136,17 @@ class AdbTransportListCoordinator:
         completes and before the observation crosses the runtime authority boundary.
         """
 
-        if not callable(getattr(reader, "read", None)):
-            raise TypeError("reader must satisfy AdbTransportListReader")
-
-        with self._lock:
-            server_state = self._server_state.snapshot()
-            server = server_state.server
-            endpoint = server_state.endpoint
-            if server is None or endpoint is None:
-                raise AdbServerUnavailableError(
-                    "no authoritative ADB server is available for transport-list refresh"
-                )
-            expected = self._transport_list_state.snapshot()
-
-        transport_list = reader.read(endpoint)
-        if not isinstance(transport_list, AdbTransportList):
-            raise TypeError("transport-list reader must return AdbTransportList")
-        observation = self._observation_identifier.identify(server, transport_list)
-        return self.observe(observation, expected=expected)
+        read = AdbTransportListReaderFacade(
+            reader,
+            server_state=self._server_state,
+            transport_list_state=self._transport_list_state,
+            observation_identifier=self._observation_identifier,
+            authority_lock=self._lock,
+        ).read()
+        return self.observe(
+            read.observation,
+            expected=read.basis.transport_list_state,
+        )
 
     def observe(
         self,
