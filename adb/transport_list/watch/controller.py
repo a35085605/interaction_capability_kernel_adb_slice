@@ -378,9 +378,8 @@ class ThreadedAdbTransportListWatchController:
 
             target_server = self._server
             target_endpoint = self._endpoint
-            target_transport_list_identity = (
-                self._observation_coordinator.transport_list_state.identity
-            )
+            transport_list_state = self._observation_coordinator.transport_list_state
+            target_transport_list_identity = transport_list_state.snapshot().identity
             token = object()
             self._starting = True
             self._starting_thread = current_thread()
@@ -436,6 +435,7 @@ class ThreadedAdbTransportListWatchController:
             open_result.stream,
             open_result.initial,
             self._observation_coordinator.observation_identifier,
+            transport_list_state=transport_list_state,
             basis_transport_list_identity=target_transport_list_identity,
             attachment=attachment,
         )

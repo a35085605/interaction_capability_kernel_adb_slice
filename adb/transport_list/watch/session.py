@@ -12,6 +12,7 @@ from adb.transport_list.observation import (
     AdbTransportListObservationBasis,
     AdbTransportListObservationIdentifier,
 )
+from adb.transport_list.state import AdbTransportListStateView
 from adb.transport_list.watch.attachment import AdbTransportListWatchAttachment
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
@@ -44,7 +45,7 @@ class _ServerBoundAdbTransportListWatchSession:
         "_attachment",
         "_initial",
         "_observation_identifier",
-        "_previous_identity",
+        "_transport_list_state",
         "_close_lock",
         "_closed",
     )
@@ -56,6 +57,7 @@ class _ServerBoundAdbTransportListWatchSession:
         initial: AdbTransportList,
         observation_identifier: AdbTransportListObservationIdentifier,
         *,
+        transport_list_state: AdbTransportListStateView,
         basis_transport_list_identity: AdbTransportListIdentity | None,
         attachment: AdbTransportListWatchAttachment | None = None,
     ) -> None:
@@ -77,6 +79,8 @@ class _ServerBoundAdbTransportListWatchSession:
             raise TypeError(
                 "observation_identifier must be AdbTransportListObservationIdentifier"
             )
+        if not isinstance(transport_list_state, AdbTransportListStateView):
+            raise TypeError("transport_list_state must satisfy AdbTransportListStateView")
         if basis_transport_list_identity is not None and not isinstance(
             basis_transport_list_identity, AdbTransportListIdentity
         ):
@@ -87,6 +91,7 @@ class _ServerBoundAdbTransportListWatchSession:
         self._stream = stream
         self._attachment = attachment
         self._observation_identifier = observation_identifier
+        self._transport_list_state = transport_list_state
         self._initial = observation_identifier.identify(
             AdbTransportListObservationBasis(
                 server=server,
@@ -94,7 +99,6 @@ class _ServerBoundAdbTransportListWatchSession:
             ),
             initial,
         )
-        self._previous_identity = self._initial.identity
         self._close_lock = Lock()
         self._closed = False
 
@@ -107,18 +111,23 @@ class _ServerBoundAdbTransportListWatchSession:
         return self._initial
 
     def updates(self) -> Iterator[AdbTransportListObservation]:
-        for transport_list in self._stream.updates():
+        basis_state = self._transport_list_state.snapshot()
+        updates = iter(self._stream.updates())
+        while True:
+            try:
+                transport_list = next(updates)
+            except StopIteration:
+                return
             if not isinstance(transport_list, AdbTransportList):
                 raise TypeError("transport-list watch stream must yield AdbTransportList")
-            observation = self._observation_identifier.identify(
+            yield self._observation_identifier.identify(
                 AdbTransportListObservationBasis(
                     server=self._server,
-                    transport_list_identity=self._previous_identity,
+                    transport_list_identity=basis_state.identity,
                 ),
                 transport_list,
             )
-            self._previous_identity = observation.identity
-            yield observation
+            basis_state = self._transport_list_state.snapshot()
 
     def close(self) -> None:
         with self._close_lock:
@@ -148,6 +157,7 @@ def bind_transport_list_watch_session(
     initial: AdbTransportList,
     observation_identifier: AdbTransportListObservationIdentifier,
     *,
+    transport_list_state: AdbTransportListStateView,
     basis_transport_list_identity: AdbTransportListIdentity | None,
     attachment: AdbTransportListWatchAttachment | None = None,
 ) -> AdbTransportListWatchSession:
@@ -161,6 +171,7 @@ def bind_transport_list_watch_session(
         stream,
         initial,
         observation_identifier,
+        transport_list_state=transport_list_state,
         basis_transport_list_identity=basis_transport_list_identity,
         attachment=attachment,
     )

@@ -12,7 +12,7 @@ from adb.transport_list.model import AdbTransportList
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListObservationBasis:
-    """Authoritative identities that one transport-list observation was produced from."""
+    """Authoritative identities captured before one transport-list observation was read."""
 
     server: AdbServerIdentity
     transport_list_identity: AdbTransportListIdentity | None
