@@ -129,16 +129,9 @@ class AdbRuntime(AdbManagedRuntime):
             raise ValueError("supervised runtime components require an event bus")
         if (
             transport_list_watch_supervisor is not None
-            and transport_list_watch_supervisor.server_state is not state.server
+            and transport_list_watch_supervisor.authority is not state
         ):
-            raise ValueError("transport-list watch supervisor must share the runtime server state")
-        if (
-            transport_list_watch_supervisor is not None
-            and transport_list_watch_supervisor.transport_list_state is not state.transport_list
-        ):
-            raise ValueError(
-                "transport-list watch supervisor must share the runtime transport-list state"
-            )
+            raise ValueError("transport-list watch supervisor must share runtime authority")
         if (
             transport_supervisor is not None
             and transport_supervisor.server_state is not state.server
@@ -219,7 +212,7 @@ class AdbRuntime(AdbManagedRuntime):
             endpoint,
             event_bus,
             policy,
-            server_state=self._state.server,
+            authority=self._state,
             transport_list_observation_coordinator=self._transport_list_coordinator,
             _attachment_factory=_attachment_factory,
         )
@@ -303,16 +296,9 @@ class AdbRuntime(AdbManagedRuntime):
             )
         if (
             transport_list_watch_supervisor is not None
-            and transport_list_watch_supervisor.server_state is not self._state.server
+            and transport_list_watch_supervisor.authority is not self._state
         ):
-            raise ValueError("transport-list watch supervisor must share the runtime server state")
-        if (
-            transport_list_watch_supervisor is not None
-            and transport_list_watch_supervisor.transport_list_state is not self._state.transport_list
-        ):
-            raise ValueError(
-                "transport-list watch supervisor must share the runtime transport-list state"
-            )
+            raise ValueError("transport-list watch supervisor must share runtime authority")
         if (
             transport_supervisor is not None
             and transport_supervisor.server_state is not self._state.server

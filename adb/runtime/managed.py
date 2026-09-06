@@ -4,7 +4,7 @@ from threading import RLock
 
 from networking import TcpAddress
 from adb.server.identity import AdbServerIdentity
-from adb.server.state import AdbServerStateStore, AdbServerStateView
+from adb.server.state import AdbServerStateView
 from adb.transport.configuration import AdbConfiguredTransport
 from adb.transport.lifecycle.supervision.policy import (
     AdbConfiguredTransportSupervisionPolicy,
@@ -51,10 +51,10 @@ class AdbManagedRuntime:
 
     def __init__(
         self,
-        server: AdbServerStateStore,
+        server: AdbServerStateView,
     ) -> None:
-        if not isinstance(server, AdbServerStateStore):
-            raise TypeError("server must be AdbServerStateStore")
+        if not isinstance(server, AdbServerStateView):
+            raise TypeError("server must satisfy AdbServerStateView")
         self._server_state = server
         self._registration_lock = RLock()
         self._registrations: dict[AdbConfiguredTransport, RegisteredTransport] = {}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from threading import RLock
 
+from adb.authority import AdbRuntimeAuthoritySnapshot
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
@@ -11,59 +12,29 @@ from adb.server.state import (
     AdbServerState,
     AdbServerStateStatus,
     AdbServerStateStore,
+    AdbServerStateView,
 )
+from adb.transport_list.identity import AdbTransportListIdentity
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import AdbTransportListObservationBasis
 from adb.transport_list.state import (
     AdbTransportListCoordinatedObservationResult,
+    AdbTransportListInvalidationResult,
     AdbTransportListObservationServerConflict,
+    AdbTransportListState,
+    AdbTransportListStateStatus,
     AdbTransportListStateStore,
+    AdbTransportListStateView,
 )
 
 
-class AdbRuntimeAuthorityStateStore:
-    """Own the runtime-wide linearization boundary for authoritative ADB state.
+class _AdbServerAuthorityView:
+    """Read-only server-state facade backed by the runtime authority lock."""
 
-    Server state is the authority root and transport-list state is a server-lifetime-bound
-    projection.  Their individual stores remain independently thread-safe, while this store
-    serializes transitions whose correctness spans both aggregates.
-    """
+    __slots__ = ("_authority",)
 
-    def __init__(
-        self,
-        server: AdbServerStateStore | None = None,
-        transport_list: AdbTransportListStateStore | None = None,
-    ) -> None:
-        if server is None:
-            server = AdbServerStateStore()
-        elif not isinstance(server, AdbServerStateStore):
-            raise TypeError("server must be AdbServerStateStore or None")
-        if transport_list is None:
-            transport_list = AdbTransportListStateStore()
-        elif not isinstance(transport_list, AdbTransportListStateStore):
-            raise TypeError(
-                "transport_list must be AdbTransportListStateStore or None"
-            )
-
-        self._server = server
-        self._transport_list = transport_list
-        self._lock = RLock()
-
-    @property
-    def server(self) -> AdbServerStateStore:
-        """Runtime-owned authoritative server store exposed to server-only readers."""
-
-        return self._server
-
-    @property
-    def transport_list(self) -> AdbTransportListStateStore:
-        """Runtime-owned authoritative transport-list store exposed to list-only readers."""
-
-        return self._transport_list
-
-    # ------------------------------------------------------------------
-    # Server authority surface
-    # ------------------------------------------------------------------
+    def __init__(self, authority: AdbRuntimeAuthorityStateStore) -> None:
+        self._authority = authority
 
     @property
     def endpoint(self) -> AdbServerEndpoint | None:
@@ -86,18 +57,111 @@ class AdbRuntimeAuthorityStateStore:
         return self.snapshot().current_identity
 
     def snapshot(self) -> AdbServerState:
+        return self._authority.snapshot_server()
+
+
+class _AdbTransportListAuthorityView:
+    """Read-only transport-list facade backed by the runtime authority lock."""
+
+    __slots__ = ("_authority",)
+
+    def __init__(self, authority: AdbRuntimeAuthorityStateStore) -> None:
+        self._authority = authority
+
+    @property
+    def identity(self) -> AdbTransportListIdentity | None:
+        return self.snapshot().identity
+
+    @property
+    def status(self) -> AdbTransportListStateStatus:
+        return self.snapshot().status
+
+    @property
+    def current(self) -> AdbTransportList | None:
+        return self.snapshot().current
+
+    @property
+    def current_identity(self) -> AdbTransportListIdentity | None:
+        return self.snapshot().current_identity
+
+    def snapshot(self) -> AdbTransportListState:
+        return self._authority.snapshot_transport_list()
+
+
+class AdbRuntimeAuthorityStateStore:
+    """Own the runtime-wide linearization boundary for authoritative ADB state.
+
+    Server state is the authority root and transport-list state is a server-lifetime-bound
+    projection. Their underlying stores remain private implementation details; all authoritative
+    writes and all cross-aggregate reads enter through this store's lock.
+    """
+
+    def __init__(
+        self,
+        server: AdbServerStateStore | None = None,
+        transport_list: AdbTransportListStateStore | None = None,
+    ) -> None:
+        if server is None:
+            server = AdbServerStateStore()
+        elif not isinstance(server, AdbServerStateStore):
+            raise TypeError("server must be AdbServerStateStore or None")
+        if transport_list is None:
+            transport_list = AdbTransportListStateStore()
+        elif not isinstance(transport_list, AdbTransportListStateStore):
+            raise TypeError(
+                "transport_list must be AdbTransportListStateStore or None"
+            )
+
+        self._server = server
+        self._transport_list = transport_list
+        self._lock = RLock()
+        self._server_view: AdbServerStateView = _AdbServerAuthorityView(self)
+        self._transport_list_view: AdbTransportListStateView = (
+            _AdbTransportListAuthorityView(self)
+        )
+
+    @property
+    def server(self) -> AdbServerStateView:
+        """Read-only authoritative server-state view."""
+
+        return self._server_view
+
+    @property
+    def transport_list(self) -> AdbTransportListStateView:
+        """Read-only authoritative transport-list state view."""
+
+        return self._transport_list_view
+
+    # ------------------------------------------------------------------
+    # Combined authority snapshot
+    # ------------------------------------------------------------------
+
+    def snapshot(self) -> AdbRuntimeAuthoritySnapshot:
+        """Atomically capture server and transport-list state at one authority boundary."""
+
+        with self._lock:
+            return AdbRuntimeAuthoritySnapshot(
+                server=self._server.snapshot(),
+                transport_list=self._transport_list.snapshot(),
+            )
+
+    # ------------------------------------------------------------------
+    # Server authority surface
+    # ------------------------------------------------------------------
+
+    def snapshot_server(self) -> AdbServerState:
         """Atomically capture server state at the runtime authority boundary."""
 
         with self._lock:
             return self._server.snapshot()
 
-    def activate(
+    def activate_server(
         self,
         endpoint: AdbServerEndpoint,
         *,
         expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
-        """Commit a server activation while excluding cross-aggregate observation commits."""
+        """Commit server activation while excluding cross-aggregate commits."""
 
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
@@ -106,17 +170,38 @@ class AdbRuntimeAuthorityStateStore:
         with self._lock:
             return self._server.activate(endpoint, expected=expected)
 
-    def deactivate(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult:
-        """Commit a server deactivation at the runtime authority boundary."""
+    def deactivate_server(
+        self,
+        expected: AdbServerIdentity,
+    ) -> AdbServerDeactivationResult:
+        """Commit server deactivation at the runtime authority boundary."""
 
         if not isinstance(expected, AdbServerIdentity):
             raise TypeError("expected must be AdbServerIdentity")
         with self._lock:
             return self._server.deactivate(expected)
 
+    # Compatibility aliases retain the old direct authority API without exposing child writers.
+    def activate(
+        self,
+        endpoint: AdbServerEndpoint,
+        *,
+        expected: AdbServerIdentity | None,
+    ) -> AdbServerActivationResult:
+        return self.activate_server(endpoint, expected=expected)
+
+    def deactivate(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult:
+        return self.deactivate_server(expected)
+
     # ------------------------------------------------------------------
     # Server-bound transport-list authority surface
     # ------------------------------------------------------------------
+
+    def snapshot_transport_list(self) -> AdbTransportListState:
+        """Atomically capture transport-list state at the runtime authority boundary."""
+
+        with self._lock:
+            return self._transport_list.snapshot()
 
     def capture_transport_list_basis(
         self,
@@ -164,10 +249,25 @@ class AdbRuntimeAuthorityStateStore:
                 expected,
             )
 
+    def invalidate_transport_list(
+        self,
+        expected: AdbTransportListIdentity,
+    ) -> AdbTransportListInvalidationResult:
+        """Invalidate one transport-list identity through the runtime authority boundary."""
+
+        if not isinstance(expected, AdbTransportListIdentity):
+            raise TypeError("expected must be AdbTransportListIdentity")
+        with self._lock:
+            return self._transport_list.invalidate(expected)
+
 
 # Compatibility name retained for callers that previously treated runtime state as a
-# two-store value object.  The runtime state is now the authority store itself.
+# two-store value object. The runtime state is now the authority store itself.
 AdbRuntimeState = AdbRuntimeAuthorityStateStore
 
 
-__all__ = ["AdbRuntimeAuthorityStateStore", "AdbRuntimeState"]
+__all__ = [
+    "AdbRuntimeAuthoritySnapshot",
+    "AdbRuntimeAuthorityStateStore",
+    "AdbRuntimeState",
+]
