@@ -6,10 +6,8 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from adb.server.identity import AdbServerIdentity
 from adb.server.state import AdbServerStateView
-from adb.transport_list.observation import (
-    AdbTransportListObservation,
-    AdbTransportListObservationIdentifier,
-)
+from adb.transport_list.model import AdbTransportList
+from adb.transport_list.observation import AdbTransportListObservationBasis
 from adb.transport_list.state import (
     AdbTransportListObservationResult,
     AdbTransportListObserved,
@@ -34,27 +32,30 @@ class _AdbTransportListStateAccess(
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListObservationServerConflict:
-    """Evidence that an observation belongs to a non-authoritative server lifetime."""
+    """Evidence that raw transport-list data belongs to a non-authoritative server lifetime."""
 
-    observation: AdbTransportListObservation
+    basis: AdbTransportListObservationBasis
+    transport_list: AdbTransportList
     current_server: AdbServerIdentity | None
     state: AdbTransportListState
 
     def __post_init__(self) -> None:
-        if not isinstance(self.observation, AdbTransportListObservation):
-            raise TypeError("observation must be AdbTransportListObservation")
+        if not isinstance(self.basis, AdbTransportListObservationBasis):
+            raise TypeError("basis must be AdbTransportListObservationBasis")
+        if not isinstance(self.transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
         if self.current_server is not None and not isinstance(
             self.current_server, AdbServerIdentity
         ):
             raise TypeError("current_server must be AdbServerIdentity or None")
         if not isinstance(self.state, AdbTransportListState):
             raise TypeError("state must be AdbTransportListState")
-        if self.current_server == self.observation.server:
+        if self.current_server == self.basis.server:
             raise ValueError("server conflict requires a different authoritative server")
 
     @property
     def server(self) -> AdbServerIdentity:
-        return self.observation.server
+        return self.basis.server
 
     def __bool__(self) -> bool:
         return False
@@ -66,14 +67,13 @@ AdbTransportListCoordinatedObservationResult: TypeAlias = (
 
 
 class AdbTransportListCoordinator:
-    """Commit the ordered authoritative transport-list watch observation stream."""
+    """Capture observation authority and commit the ordered transport-list watch stream."""
 
     def __init__(
         self,
         transport_list_state: _AdbTransportListStateAccess,
         server_state: AdbServerStateView,
         *,
-        observation_identifier: AdbTransportListObservationIdentifier | None = None,
         publisher: EventPublisher | None = None,
         authority_lock: _RLockType | None = None,
     ) -> None:
@@ -84,24 +84,12 @@ class AdbTransportListCoordinator:
             )
         if not isinstance(server_state, AdbServerStateView):
             raise TypeError("server_state must satisfy AdbServerStateView")
-        if observation_identifier is None:
-            observation_identifier = AdbTransportListObservationIdentifier(
-                after=transport_list_state.identity
-            )
-        if not isinstance(
-            observation_identifier, AdbTransportListObservationIdentifier
-        ):
-            raise TypeError(
-                "observation_identifier must be "
-                "AdbTransportListObservationIdentifier or None"
-            )
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
         if authority_lock is not None and not isinstance(authority_lock, _RLockType):
             raise TypeError("authority_lock must be a reentrant lock or None")
         self._transport_list_state = transport_list_state
         self._server_state = server_state
-        self._observation_identifier = observation_identifier
         self._publisher = publisher
         self._lock = RLock() if authority_lock is None else authority_lock
 
@@ -117,33 +105,55 @@ class AdbTransportListCoordinator:
 
         return self._transport_list_state
 
-    @property
-    def observation_identifier(self) -> AdbTransportListObservationIdentifier:
-        """Runtime-scoped identifier used by the authoritative watch observation stream."""
+    def capture_basis(
+        self,
+        server: AdbServerIdentity,
+    ) -> AdbTransportListObservationBasis | None:
+        """Capture the authority basis immediately before a raw observation is read.
 
-        return self._observation_identifier
+        ``None`` means ``server`` is no longer the authoritative active server lifetime and the
+        caller must not start another read for that binding.
+        """
+
+        if not isinstance(server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+
+        with self._lock:
+            if self._server_state.current_identity != server:
+                return None
+            transport_list_state = self._transport_list_state.snapshot()
+            return AdbTransportListObservationBasis(
+                server=server,
+                transport_list_identity=transport_list_state.identity,
+            )
 
     def observe(
         self,
-        observation: AdbTransportListObservation,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
     ) -> AdbTransportListCoordinatedObservationResult:
-        """Commit the next identified watch observation when its authority fences hold."""
+        """Commit raw transport-list data when the captured authority fences still hold."""
 
-        if not isinstance(observation, AdbTransportListObservation):
-            raise TypeError("observation must be AdbTransportListObservation")
-        if not self._observation_identifier.owns(observation):
-            raise ValueError("observation identity belongs to a different runtime scope")
+        if not isinstance(basis, AdbTransportListObservationBasis):
+            raise TypeError("basis must be AdbTransportListObservationBasis")
+        if not isinstance(transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
 
         with self._lock:
             current_server = self._server_state.current_identity
-            if current_server != observation.server:
+            if current_server != basis.server:
                 return AdbTransportListObservationServerConflict(
-                    observation=observation,
+                    basis=basis,
+                    transport_list=transport_list,
                     current_server=current_server,
                     state=self._transport_list_state.snapshot(),
                 )
             expected = self._transport_list_state.snapshot()
-            result = self._transport_list_state.observe(observation, expected)
+            result = self._transport_list_state.observe(
+                basis,
+                transport_list,
+                expected,
+            )
 
         if isinstance(result, AdbTransportListObserved) and self._publisher is not None:
             self._publisher.publish(result)

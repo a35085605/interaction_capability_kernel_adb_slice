@@ -5,9 +5,15 @@ from enum import Enum
 from threading import Lock
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb.transport_list.identity import AdbTransportListIdentity
+from adb.transport_list.identity import (
+    AdbTransportListIdentity,
+    AdbTransportListIdentityIssuer,
+)
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.observation import AdbTransportListObservation
+from adb.transport_list.observation import (
+    AdbTransportListObservation,
+    AdbTransportListObservationBasis,
+)
 
 
 class AdbTransportListStateStatus(str, Enum):
@@ -85,13 +91,19 @@ class AdbTransportListState:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListObserved:
-    """Signal that one transport-list identity committed as authoritative."""
+    """Signal that one transport-list observation committed as authoritative."""
 
-    identity: AdbTransportListIdentity
+    observation: AdbTransportListObservation
 
     def __post_init__(self) -> None:
-        if not isinstance(self.identity, AdbTransportListIdentity):
-            raise TypeError("identity must be AdbTransportListIdentity")
+        if not isinstance(self.observation, AdbTransportListObservation):
+            raise TypeError("observation must be AdbTransportListObservation")
+
+    @property
+    def identity(self) -> AdbTransportListIdentity:
+        """Identity issued by the state authority for the committed observation."""
+
+        return self.observation.identity
 
     def __bool__(self) -> bool:
         return True
@@ -99,14 +111,17 @@ class AdbTransportListObserved:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListObservationStateConflict:
-    """Evidence that an observation lost its expected authoritative-state fence."""
+    """Evidence that a raw observation lost its authoritative transport-list-state fence."""
 
-    observation: AdbTransportListObservation
+    basis: AdbTransportListObservationBasis
+    transport_list: AdbTransportList
     state: AdbTransportListState
 
     def __post_init__(self) -> None:
-        if not isinstance(self.observation, AdbTransportListObservation):
-            raise TypeError("observation must be AdbTransportListObservation")
+        if not isinstance(self.basis, AdbTransportListObservationBasis):
+            raise TypeError("basis must be AdbTransportListObservationBasis")
+        if not isinstance(self.transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
         if not isinstance(self.state, AdbTransportListState):
             raise TypeError("state must be AdbTransportListState")
 
@@ -182,13 +197,14 @@ class AdbTransportListStateWriter(Protocol):
 
     def observe(
         self,
-        observation: AdbTransportListObservation,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult: ...
 
 
 class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStateWriter):
-    """Thread-safe authority for transport-list state transitions."""
+    """Thread-safe authority for transport-list state transitions and identity issuance."""
 
     def __init__(self, initial: AdbTransportListState | None = None) -> None:
         if initial is None:
@@ -199,6 +215,7 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
             raise TypeError("initial must be AdbTransportListState or None")
         self._lock = Lock()
         self._state = state
+        self._identity_issuer = AdbTransportListIdentityIssuer(after=state.identity)
 
     @property
     def state(self) -> AdbTransportListState:
@@ -257,30 +274,45 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
 
     def observe(
         self,
-        observation: AdbTransportListObservation,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult:
-        """Commit the next observation when ``expected`` is authoritative and matches its basis."""
+        """Commit raw transport-list data when ``expected`` is authoritative and basis-matched.
 
-        if not isinstance(observation, AdbTransportListObservation):
-            raise TypeError("observation must be AdbTransportListObservation")
+        The fresh transport-list identity is issued only after both state fences succeed and
+        immediately before the new authoritative state is committed.
+        """
+
+        if not isinstance(basis, AdbTransportListObservationBasis):
+            raise TypeError("basis must be AdbTransportListObservationBasis")
+        if not isinstance(transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
         if not isinstance(expected, AdbTransportListState):
             raise TypeError("expected must be AdbTransportListState")
 
         with self._lock:
             current = self._state
-            if (
-                current != expected
-                or observation.basis.transport_list_identity != current.identity
-            ):
-                return AdbTransportListObservationStateConflict(observation, current)
+            if current != expected or basis.transport_list_identity != current.identity:
+                return AdbTransportListObservationStateConflict(
+                    basis=basis,
+                    transport_list=transport_list,
+                    state=current,
+                )
+
+            identity = self._identity_issuer.issue()
+            observation = AdbTransportListObservation(
+                basis=basis,
+                identity=identity,
+                transport_list=transport_list,
+            )
             next_state = AdbTransportListState(
-                identity=observation.identity,
-                transport_list=observation.transport_list,
+                identity=identity,
+                transport_list=transport_list,
                 status=AdbTransportListStateStatus.CURRENT,
             )
             self._state = next_state
-            return AdbTransportListObserved(observation.identity)
+            return AdbTransportListObserved(observation)
 
 
 __all__ = [

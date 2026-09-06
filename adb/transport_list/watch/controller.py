@@ -14,7 +14,7 @@ from adb.transport_list.coordinator import (
     AdbTransportListObservationServerConflict,
 )
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.observation import AdbTransportListObservation
+from adb.transport_list.observation import AdbTransportListObservationBasis
 from adb.transport_list.state import (
     AdbTransportListObservationStateConflict,
     AdbTransportListObserved,
@@ -378,8 +378,6 @@ class ThreadedAdbTransportListWatchController:
 
             target_server = self._server
             target_endpoint = self._endpoint
-            transport_list_state = self._observation_coordinator.transport_list_state
-            target_transport_list_identity = transport_list_state.snapshot().identity
             token = object()
             self._starting = True
             self._starting_thread = current_thread()
@@ -402,6 +400,13 @@ class ThreadedAdbTransportListWatchController:
             attachment.close()
             self._finish_start(token)
             return AdbTransportListWatchStartCancelled()
+
+        initial_basis = self._observation_coordinator.capture_basis(target_server)
+        if initial_basis is None:
+            self._clear_opening_attachment(attachment)
+            attachment.close()
+            self._finish_start(token)
+            return AdbTransportListWatchStartSuperseded()
 
         try:
             open_result = _open_transport_list_watch_attachment(attachment)
@@ -434,9 +439,6 @@ class ThreadedAdbTransportListWatchController:
             target_server,
             open_result.stream,
             open_result.initial,
-            self._observation_coordinator.observation_identifier,
-            transport_list_state=transport_list_state,
-            basis_transport_list_identity=target_transport_list_identity,
             attachment=attachment,
         )
         startup_complete = Event()
@@ -447,6 +449,7 @@ class ThreadedAdbTransportListWatchController:
                 target=self._run,
                 args=(
                     session,
+                    initial_basis,
                     startup_complete,
                     startup_results,
                     startup_errors,
@@ -642,6 +645,7 @@ class ThreadedAdbTransportListWatchController:
     def _run(
         self,
         session: AdbTransportListWatchSession,
+        initial_basis: AdbTransportListObservationBasis,
         startup_complete: Event,
         startup_results: list[AdbTransportListWatchStartResult],
         startup_errors: list[BaseException],
@@ -650,24 +654,30 @@ class ThreadedAdbTransportListWatchController:
         terminal: object | None = None
         startup_succeeded = False
         try:
-            initial_observation = session.initial
-            if initial_observation.server != server:
+            if initial_basis.server != server:
                 raise ValueError(
-                    "transport-list watch session initial observation has mismatched server provenance"
+                    "transport-list watch initial basis has mismatched server provenance"
                 )
-            if not self._commit_observation(session, initial_observation):
+            initial = session.initial
+            if not self._commit_observation(session, initial_basis, initial):
                 startup_results.append(AdbTransportListWatchStartSuperseded())
                 return
 
             self._publisher.publish(AdbTransportListWatchStarted(server))
-            startup_results.append(
-                AdbTransportListWatchStartSucceeded(initial_observation.transport_list)
-            )
+            startup_results.append(AdbTransportListWatchStartSucceeded(initial))
             startup_succeeded = True
             startup_complete.set()
 
-            for observation in session.updates():
-                if not self._commit_observation(session, observation):
+            updates = iter(session.updates())
+            while True:
+                basis = self._capture_observation_basis(session, server)
+                if basis is None:
+                    break
+                try:
+                    transport_list = next(updates)
+                except StopIteration:
+                    break
+                if not self._commit_observation(session, basis, transport_list):
                     break
             terminal = AdbTransportListWatchStopped(server)
         except AdbTransportListWatchError as exc:
@@ -697,17 +707,30 @@ class ThreadedAdbTransportListWatchController:
         if startup_succeeded and terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
+    def _capture_observation_basis(
+        self,
+        session: AdbTransportListWatchSession,
+        server: AdbServerIdentity,
+    ) -> AdbTransportListObservationBasis | None:
+        with self._condition:
+            if self._closed or self._active_session is not session:
+                return None
+            return self._observation_coordinator.capture_basis(server)
+
     def _commit_observation(
         self,
         session: AdbTransportListWatchSession,
-        observation: AdbTransportListObservation,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
     ) -> bool:
-        if not isinstance(observation, AdbTransportListObservation):
-            raise TypeError("observation must be AdbTransportListObservation")
+        if not isinstance(basis, AdbTransportListObservationBasis):
+            raise TypeError("basis must be AdbTransportListObservationBasis")
+        if not isinstance(transport_list, AdbTransportList):
+            raise TypeError("transport_list must be AdbTransportList")
         with self._condition:
             if self._closed or self._active_session is not session:
                 return False
-            result = self._observation_coordinator.observe(observation)
+            result = self._observation_coordinator.observe(basis, transport_list)
         if isinstance(result, AdbTransportListObserved):
             return True
         if isinstance(

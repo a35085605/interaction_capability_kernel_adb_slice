@@ -14,7 +14,6 @@ from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.state import AdbServerStateStore
 from adb.runtime.state import AdbRuntimeState
-from adb.transport_list.observation import AdbTransportListObservationIdentifier
 from adb.transport_list.state import AdbTransportListStateStore
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
@@ -52,7 +51,6 @@ def _default_transport_list_watch_attachment_factory(
 class _BootstrapCore:
     server_backend: AdbServerBackend
     runtime_state: AdbRuntimeState
-    transport_list_observation_identifier: AdbTransportListObservationIdentifier
 
 
 class AdbRuntimeBootstrap:
@@ -123,9 +121,6 @@ class AdbRuntimeBootstrap:
                 core.runtime_state,
                 server_backend=core.server_backend,
                 server_endpoint_constraint=self._endpoint,
-                transport_list_observation_identifier=(
-                    core.transport_list_observation_identifier
-                ),
                 transport_supervision_policy=self._transport_supervision_policy,
                 _bootstrap_server=True,
             )
@@ -177,9 +172,6 @@ class AdbRuntimeBootstrap:
                 server_supervision_scheduler=scheduler,
                 server_supervision_policy=self._server_recovery_policy,
                 server_recovery_enabled=self._server_recovery_enabled,
-                transport_list_observation_identifier=(
-                    core.transport_list_observation_identifier
-                ),
                 transport_supervision_policy=self._transport_supervision_policy,
                 _bootstrap_server=True,
             )
@@ -226,15 +218,11 @@ class AdbRuntimeBootstrap:
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("server backend factory must return AdbServerBackend")
 
-        transport_list_state = AdbTransportListStateStore()
         return _BootstrapCore(
             server_backend=backend,
             runtime_state=AdbRuntimeState(
                 server=AdbServerStateStore(),
-                transport_list=transport_list_state,
-            ),
-            transport_list_observation_identifier=(
-                AdbTransportListObservationIdentifier(after=transport_list_state.identity)
+                transport_list=AdbTransportListStateStore(),
             ),
         )
 
