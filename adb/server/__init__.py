@@ -1,20 +1,26 @@
-"""ADB server endpoint, identity, lifecycle, failure, and status contracts."""
+"""ADB server endpoint, identity, lifecycle, failure, and availability contracts."""
 
 from adb.server.availability import AdbServerUnavailableError
-from adb.server.lifecycle.errors import (
+from adb.server.lifecycle import (
+    AdbServerActivated,
+    AdbServerBackend,
+    AdbServerBackendAcquired,
+    AdbServerBackendAcquireDeferred,
+    AdbServerBackendAcquireFailed,
+    AdbServerBackendAlreadyAcquired,
+    AdbServerBackendAcquireResult,
+    AdbServerBackendEventPublisherBinding,
+    AdbServerBackendFactory,
+    AdbServerBackendReleased,
+    AdbServerBackendReleaseCleanupUnconfirmed,
+    AdbServerBackendReleaseMismatch,
+    AdbServerBackendReleaseResult,
     AdbServerBootstrapError,
+    AdbServerDeactivated,
     AdbServerLifecycleConsistencyError,
+    AdbServerLifecycleCoordinator,
     AdbServerLifecycleError,
 )
-from adb.server.lifecycle.backend import (
-    AdbServerBackend,
-    AdbServerBackendFactory,
-)
-from adb.server.lifecycle.backend_template import (
-    AdbServerBackendEventPublisherBinding,
-    AdbServerBackendReleaseCleanupUnconfirmed,
-)
-from adb.server.lifecycle.coordinator import AdbServerLifecycleCoordinator
 from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerFailure,
@@ -28,53 +34,39 @@ from adb.server.failure import (
     AdbServerTimeoutFailure,
 )
 from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
-from adb.server.state import (
-    AdbServerActivated,
-    AdbServerActivationStateConflict,
-    AdbServerActivationResult,
-    AdbServerDeactivated,
-    AdbServerDeactivationStateConflict,
-    AdbServerDeactivationResult,
-    AdbServerState,
-    AdbServerStateStatus,
-    AdbServerStateStore,
-    AdbServerStateView,
-    AdbServerStateWriter,
-)
 from adb.server.endpoint import AdbServerEndpoint
 
 __all__ = [
     "AdbServerActivated",
-    "AdbServerActivationStateConflict",
-    "AdbServerActivationResult",
     "AdbServerBackend",
-    "AdbServerBackendFactory",
+    "AdbServerBackendAcquired",
+    "AdbServerBackendAcquireDeferred",
+    "AdbServerBackendAcquireFailed",
+    "AdbServerBackendAlreadyAcquired",
+    "AdbServerBackendAcquireResult",
     "AdbServerBackendEventPublisherBinding",
+    "AdbServerBackendFactory",
+    "AdbServerBackendReleased",
     "AdbServerBackendReleaseCleanupUnconfirmed",
-    "AdbServerDeactivated",
-    "AdbServerDeactivationStateConflict",
-    "AdbServerDeactivationResult",
-    "AdbServerConnectionFailure",
+    "AdbServerBackendReleaseMismatch",
+    "AdbServerBackendReleaseResult",
     "AdbServerBootstrapError",
+    "AdbServerConnectionFailure",
+    "AdbServerDeactivated",
+    "AdbServerEndpoint",
+    "AdbServerFailure",
+    "AdbServerIdentity",
+    "AdbServerIdentityIssuer",
+    "AdbServerLaunchFailure",
     "AdbServerLifecycleConsistencyError",
     "AdbServerLifecycleCoordinator",
     "AdbServerLifecycleError",
-    "AdbServerEndpoint",
-    "AdbServerIdentity",
-    "AdbServerIdentityIssuer",
-    "AdbServerFailure",
-    "AdbServerLaunchFailure",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",
     "AdbServerRequestFailure",
     "AdbServerServiceFailure",
-    "AdbServerState",
-    "AdbServerStateStatus",
-    "AdbServerStateStore",
-    "AdbServerStateView",
-    "AdbServerStateWriter",
     "AdbServerTimeoutFailure",
     "AdbServerUnavailableError",
 ]

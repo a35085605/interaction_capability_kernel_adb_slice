@@ -6,12 +6,10 @@ from typing import TypeAlias
 from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAlreadyAcquired,
 )
 from adb.server.lifecycle.coordinator import AdbServerAlreadyActive
 from adb.server.lifecycle.provision import (
     AdbServerProvisionActivated,
-    AdbServerProvisionActivationConflict,
     AdbServerProvisionOutcome,
 )
 from adb.server.lifecycle.supervision.recovery import (
@@ -44,15 +42,9 @@ def decide_recovery_after_provision(
     if isinstance(outcome, (AdbServerAlreadyActive, AdbServerProvisionActivated)):
         return AdbServerRecoveryCompleted()
 
-    if isinstance(outcome, AdbServerProvisionActivationConflict):
-        # Authority changed after this provision began. This cycle is terminal; any successor
-        # recovery must be driven by a distinct reconciliation demand.
-        return AdbServerRecoveryCompleted()
-
     if isinstance(
         outcome,
         (
-            AdbServerBackendAlreadyAcquired,
             AdbServerBackendAcquireDeferred,
             AdbServerBackendAcquireFailed,
         ),

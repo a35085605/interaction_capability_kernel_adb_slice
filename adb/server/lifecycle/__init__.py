@@ -7,12 +7,21 @@ from adb.server.lifecycle.errors import (
 )
 from adb.server.lifecycle.backend import (
     AdbServerBackend,
+    AdbServerBackendAcquired,
+    AdbServerBackendAcquireDeferred,
+    AdbServerBackendAcquireFailed,
+    AdbServerBackendAlreadyAcquired,
+    AdbServerBackendAcquireResult,
     AdbServerBackendFactory,
+    AdbServerBackendReleased,
+    AdbServerBackendReleaseMismatch,
+    AdbServerBackendReleaseResult,
 )
 from adb.server.lifecycle.backend_template import (
     AdbServerBackendEventPublisherBinding,
     AdbServerBackendReleaseCleanupUnconfirmed,
 )
+from adb.server.lifecycle.events import AdbServerActivated, AdbServerDeactivated
 from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
     AdbServerAlreadyInactive,
@@ -22,26 +31,34 @@ from adb.server.lifecycle.coordinator import (
 )
 from adb.server.lifecycle.provision import (
     AdbServerProvisionActivated,
-    AdbServerProvisionActivationConflict,
     AdbServerProvisionOutcome,
     classify_provision_result,
 )
 
 __all__ = [
+    "AdbServerActivated",
     "AdbServerAlreadyActive",
     "AdbServerAlreadyInactive",
+    "AdbServerBackend",
+    "AdbServerBackendAcquired",
+    "AdbServerBackendAcquireDeferred",
+    "AdbServerBackendAcquireFailed",
+    "AdbServerBackendAlreadyAcquired",
+    "AdbServerBackendAcquireResult",
+    "AdbServerBackendEventPublisherBinding",
+    "AdbServerBackendFactory",
+    "AdbServerBackendReleased",
+    "AdbServerBackendReleaseCleanupUnconfirmed",
+    "AdbServerBackendReleaseMismatch",
+    "AdbServerBackendReleaseResult",
+    "AdbServerBootstrapError",
+    "AdbServerDeactivated",
+    "AdbServerLifecycleConsistencyError",
+    "AdbServerLifecycleCoordinator",
+    "AdbServerLifecycleError",
     "AdbServerProvisionActivated",
-    "AdbServerProvisionActivationConflict",
     "AdbServerProvisionOutcome",
     "AdbServerProvisionResult",
     "AdbServerRetireResult",
-    "AdbServerBackend",
-    "AdbServerBackendFactory",
-    "AdbServerBackendEventPublisherBinding",
-    "AdbServerBackendReleaseCleanupUnconfirmed",
-    "AdbServerLifecycleCoordinator",
-    "AdbServerBootstrapError",
-    "AdbServerLifecycleConsistencyError",
-    "AdbServerLifecycleError",
     "classify_provision_result",
 ]

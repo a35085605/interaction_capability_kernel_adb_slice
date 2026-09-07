@@ -19,10 +19,7 @@ def _normalize_diagnostic(value: object) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquired:
-    """Evidence that this call acquired usable ADB server access.
-
-    ``endpoint`` and ``identity`` identify the server occurrence retained by the backend.
-    """
+    """One runtime-scoped usable ADB server acquisition retained by the backend."""
 
     endpoint: AdbServerEndpoint
     identity: AdbServerIdentity
@@ -36,7 +33,13 @@ class AdbServerBackendAcquired:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAlreadyAcquired:
-    """Evidence that usable ADB server access was already acquired."""
+    """Evidence that the backend already retains this usable server acquisition."""
+
+    acquisition: AdbServerBackendAcquired
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.acquisition, AdbServerBackendAcquired):
+            raise TypeError("acquisition must be AdbServerBackendAcquired")
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,30 +70,55 @@ AdbServerBackendAcquireResult: TypeAlias = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class AdbServerBackendReleased:
+    """Evidence that matching backend ownership was released."""
+
+    acquisition: AdbServerBackendAcquired
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.acquisition, AdbServerBackendAcquired):
+            raise TypeError("acquisition must be AdbServerBackendAcquired")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerBackendReleaseMismatch:
+    """Evidence that release did not match the backend's current acquisition."""
+
+    current: AdbServerBackendAcquired | None
+
+    def __post_init__(self) -> None:
+        if self.current is not None and not isinstance(self.current, AdbServerBackendAcquired):
+            raise TypeError("current must be AdbServerBackendAcquired or None")
+
+
+AdbServerBackendReleaseResult: TypeAlias = (
+    AdbServerBackendReleased | AdbServerBackendReleaseMismatch
+)
+
+
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Manage a single runtime-scoped acquisition of usable ADB server access.
+    """Sole authority for one runtime-scoped usable ADB server acquisition.
 
-    ``acquire`` and ``release`` are concurrency-safe, independently linearizable
-    ownership transitions.
+    ``current``, ``acquire`` and ``release`` are concurrency-safe, linearizable views or
+    ownership transitions. The current acquisition's identity fences stale lifecycle work.
     """
+
+    @property
+    def current(self) -> AdbServerBackendAcquired | None:
+        """Return the currently owned usable server acquisition, if any."""
+        ...
 
     def acquire(
         self,
         endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> AdbServerBackendAcquireResult:
-        """Acquire usable ADB server access, optionally constrained to ``endpoint_constraint``.
-
-        Returns whether this call acquired access or found an existing acquisition.
-        """
+        """Acquire usable ADB server access, optionally constrained to ``endpoint_constraint``."""
         ...
 
-    def release(self, expected: AdbServerIdentity) -> bool:
-        """Release the current backend acquisition when its identity matches ``expected``.
-
-        Returns whether matching backend ownership was released. A missing or different
-        acquisition is left untouched.
-        """
+    def release(self, expected: AdbServerIdentity) -> AdbServerBackendReleaseResult:
+        """Release current ownership only when its identity matches ``expected``."""
         ...
 
 
@@ -113,4 +141,7 @@ __all__ = [
     "AdbServerBackendAlreadyAcquired",
     "AdbServerBackendAcquireResult",
     "AdbServerBackendFactory",
+    "AdbServerBackendReleased",
+    "AdbServerBackendReleaseMismatch",
+    "AdbServerBackendReleaseResult",
 ]

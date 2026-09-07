@@ -21,7 +21,7 @@ from adb.server.signal import (
     AdbServerRecoveryId,
     AdbServerRecoveryRetryDue,
 )
-from adb.server.state import AdbServerDeactivated
+from adb.server.lifecycle.events import AdbServerDeactivated
 from eventing import EventBus, EventSubscriptionToken
 from scheduling import ScheduleToken, TemporalScheduler
 
