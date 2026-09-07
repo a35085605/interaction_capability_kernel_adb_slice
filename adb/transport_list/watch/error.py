@@ -19,7 +19,7 @@ class AdbTransportListWatchError(AdbError):
 
 
 class AdbTransportListWatchCancelledError(RuntimeError):
-    """The watch attachment was closed before a watch session became established."""
+    """The watch attachment was closed before a watch became established."""
 
 
 __all__ = [

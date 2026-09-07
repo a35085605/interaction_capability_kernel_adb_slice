@@ -8,11 +8,6 @@ from adb.transport_list.watch.state import (
     AdbTransportListWatchState,
     AdbTransportListWatchStateView,
 )
-from adb.transport_list.watch.backend_template import (
-    AdbTransportListWatchBackendAcquireError,
-    AdbTransportListWatchBackendAcquireInterruptedError,
-    AdbTransportListWatchBackendTemplate,
-)
 from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackend,
     AdbTransportListWatchBackendAcquired,
@@ -36,7 +31,6 @@ from adb.transport_list.watch.controller import (
     AdbTransportListWatchStartSuperseded,
     ThreadedAdbTransportListWatchController,
 )
-from adb.transport_list.watch.session import AdbTransportListWatchSession
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 from adb.transport_list.watch.error import (
     AdbTransportListWatchCancelledError,
@@ -61,9 +55,7 @@ __all__ = [
     "AdbTransportListWatchBackend",
     "AdbTransportListWatchBackendAcquired",
     "AdbTransportListWatchBackendAcquireDeferred",
-    "AdbTransportListWatchBackendAcquireError",
     "AdbTransportListWatchBackendAcquireFailed",
-    "AdbTransportListWatchBackendAcquireInterruptedError",
     "AdbTransportListWatchBackendAcquireRevoked",
     "AdbTransportListWatchBackendAcquireResult",
     "AdbTransportListWatchBackendAlreadyAcquired",
@@ -71,7 +63,6 @@ __all__ = [
     "AdbTransportListWatchBackendReleaseInactive",
     "AdbTransportListWatchBackendReleaseMismatch",
     "AdbTransportListWatchBackendReleaseResult",
-    "AdbTransportListWatchBackendTemplate",
     "AdbTransportListWatchGeneration",
     "AdbTransportListWatchGenerationIssuer",
     "AdbTransportListWatchState",
@@ -85,7 +76,6 @@ __all__ = [
     "AdbTransportListWatchProtocolFailure",
     "AdbTransportListWatchServerConnectionFailure",
     "AdbTransportListWatchServiceFailure",
-    "AdbTransportListWatchSession",
     "AdbTransportListWatchStream",
     "AdbTransportListWatchSignal",
     "AdbTransportListWatchStartCancelled",

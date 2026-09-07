@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from threading import Event, Lock
+from typing import Protocol
 
 from networking import TcpAddress
 
+from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackendAcquired,
     AdbTransportListWatchBackendAcquireDeferred,
@@ -24,12 +26,12 @@ from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,
 )
-from adb.transport_list.watch.session import AdbTransportListWatchSession
 from adb.transport_list.watch.state import AdbTransportListWatchState
+from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 
 class AdbTransportListWatchBackendAcquireError(RuntimeError):
-    """Expected failure while obtaining a usable transport-list watch session."""
+    """Expected failure while obtaining a usable transport-list watch handle."""
 
     def __init__(self, failure: AdbTransportListWatchFailure) -> None:
         if not isinstance(failure, AdbTransportListWatchFailure):
@@ -42,6 +44,38 @@ class AdbTransportListWatchBackendAcquireInterruptedError(RuntimeError):
     """Cooperative interruption after the captured watch generation was released."""
 
 
+class _AdbTransportListWatchHandle(AdbTransportListWatchStream, Protocol):
+    """Backend-private physical watch handle.
+
+    Implementations also provide the producer data plane, but cancellation and cleanup remain
+    exclusively under backend ownership.
+    """
+
+    def cancel(self) -> None:
+        """Request non-blocking retirement and interrupt active blocking I/O."""
+        ...
+
+    def close(self) -> None:
+        """Perform idempotent final physical cleanup."""
+        ...
+
+
+class _AdbTransportListWatchStreamView:
+    """Narrow producer capability over a backend-owned physical handle."""
+
+    __slots__ = ("__handle",)
+
+    def __init__(self, handle: _AdbTransportListWatchHandle) -> None:
+        self.__handle = handle
+
+    @property
+    def initial(self) -> AdbTransportList:
+        return self.__handle.initial
+
+    def updates(self) -> Iterator[AdbTransportList]:
+        return self.__handle.updates()
+
+
 @dataclass(frozen=True, slots=True)
 class _AdbTransportListWatchBackendPendingAcquire:
     generation: AdbTransportListWatchGeneration
@@ -50,23 +84,22 @@ class _AdbTransportListWatchBackendPendingAcquire:
 
 @dataclass(frozen=True, slots=True)
 class _AdbTransportListWatchBackendOwnership:
-    """Backend-private binding of logical acquisition evidence to its physical session."""
+    """Backend-private physical ownership plus producer-facing data capability."""
 
-    session: AdbTransportListWatchSession
+    handle: _AdbTransportListWatchHandle
+    stream: AdbTransportListWatchStream
     acquisition: AdbTransportListWatchBackendAcquired
 
 
 class AdbTransportListWatchBackendTemplate(ABC):
-    """Template for one current watch generation and its optional usable session.
+    """Template for one current watch generation and its optional physical handle.
 
-    The current generation exists before acquisition starts. Failed/retried acquisitions
-    retain it. Matching release advances the generation at the logical revocation point
-    before cancellation of pending startup or retirement of a committed physical session.
+    The current generation exists before acquisition starts. Failed/retried acquisitions retain
+    it. Matching release advances the generation at the logical revocation point before
+    cancellation of pending startup or retirement of a committed physical handle.
 
-    The backend owns session lifetime, while producers only execute reads through an acquired
-    session. Physical retirement is deliberately not a lifecycle state: release detaches the
-    old ownership, requests non-blocking session cancellation, and may immediately admit an
-    acquisition for the new generation.
+    Physical lifetime is entirely backend-owned. Producers receive only a narrow stream view for
+    ``initial``/``updates()``; they never receive cancellation or cleanup authority.
     """
 
     def __init__(
@@ -84,7 +117,7 @@ class AdbTransportListWatchBackendTemplate(ABC):
         self._ownership: _AdbTransportListWatchBackendOwnership | None = None
 
     def read(self) -> AdbTransportListWatchState:
-        """Atomically return current generation and usable session metadata, if any."""
+        """Atomically return current generation and usable endpoint metadata, if any."""
 
         with self._state_lock:
             ownership = self._ownership
@@ -94,13 +127,12 @@ class AdbTransportListWatchBackendTemplate(ABC):
             )
 
     @abstractmethod
-    def _obtain_session(
+    def _obtain_handle(
         self,
         endpoint: TcpAddress,
-        startup_timeout_seconds: float,
         cancellation: Event,
-    ) -> AdbTransportListWatchSession:
-        """Obtain a fully usable session.
+    ) -> _AdbTransportListWatchHandle:
+        """Obtain a fully usable backend-owned physical watch handle.
 
         Implementations should observe ``cancellation`` while startup blocks and raise
         ``AdbTransportListWatchBackendAcquireInterruptedError`` when cancellation wins.
@@ -109,37 +141,61 @@ class AdbTransportListWatchBackendTemplate(ABC):
         """
 
     @staticmethod
-    def _cleanup_uncommitted_session(session: AdbTransportListWatchSession) -> None:
-        """Best-effort final cleanup for a session that never transferred to a producer."""
+    def _cleanup_uncommitted_handle(handle: _AdbTransportListWatchHandle) -> None:
+        """Best-effort final cleanup for a handle that never became authoritative."""
 
         try:
-            session.close()
+            handle.close()
         except Exception:
             # Cleanup diagnostics are non-authoritative and must not replace the primary
             # acquisition outcome or a programming exception already in flight.
             return
 
     @staticmethod
-    def _retire_committed_session(session: AdbTransportListWatchSession) -> None:
-        """Request non-blocking retirement of a detached committed session."""
+    def _retire_committed_handle(handle: _AdbTransportListWatchHandle) -> None:
+        """Request non-blocking retirement of a detached committed handle."""
 
         try:
-            session.cancel()
+            handle.cancel()
         except Exception:
             # Logical release already linearized. Retirement failure is housekeeping evidence,
             # not a different lifecycle outcome. Adapters should make cancel() best-effort.
             return
 
-    def run_if_current(
+    def _borrow_stream(
+        self,
+        expected: AdbTransportListWatchGeneration,
+    ) -> AdbTransportListWatchStream | None:
+        """Return the narrow producer stream while matching watch authority is current.
+
+        This is package-internal orchestration plumbing, not part of
+        ``AdbTransportListWatchBackend``. The returned stream does not own the physical handle;
+        matching release may retire that handle concurrently after this method returns.
+        """
+
+        if not isinstance(expected, AdbTransportListWatchGeneration):
+            raise TypeError("expected must be AdbTransportListWatchGeneration")
+
+        with self._state_lock:
+            ownership = self._ownership
+            if (
+                expected != self._generation
+                or ownership is None
+                or ownership.acquisition.generation != expected
+            ):
+                return None
+            return ownership.stream
+
+    def _run_if_current(
         self,
         expected: AdbTransportListWatchGeneration,
         operation: Callable[[], None],
     ) -> bool:
         """Run one projection mutation while matching usable authority is current.
 
-        The backend lock remains held for the operation, so a matching ``release()`` cannot
-        advance the generation until the mutation finishes. Callers must not invoke backend
-        lifecycle methods from ``operation``.
+        This is package-internal coordination plumbing, deliberately excluded from the public
+        backend protocol. The backend lock remains held for ``operation`` so matching release
+        cannot advance the generation until the projection mutation finishes.
         """
 
         if not isinstance(expected, AdbTransportListWatchGeneration):
@@ -161,8 +217,6 @@ class AdbTransportListWatchBackendTemplate(ABC):
     def acquire(
         self,
         endpoint: TcpAddress,
-        *,
-        startup_timeout_seconds: float = 5.0,
     ) -> AdbTransportListWatchBackendAcquireResult:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
@@ -182,11 +236,7 @@ class AdbTransportListWatchBackendTemplate(ABC):
             self._pending = pending
 
         try:
-            session = self._obtain_session(
-                endpoint,
-                startup_timeout_seconds,
-                pending.cancellation,
-            )
+            handle = self._obtain_handle(endpoint, pending.cancellation)
         except AdbTransportListWatchBackendAcquireInterruptedError:
             with self._state_lock:
                 revoked = self._generation != pending.generation
@@ -215,14 +265,17 @@ class AdbTransportListWatchBackendTemplate(ABC):
             acquisition = AdbTransportListWatchBackendAcquired(
                 endpoint=endpoint,
                 generation=pending.generation,
-                session=session,
             )
-            ownership = _AdbTransportListWatchBackendOwnership(session, acquisition)
+            ownership = _AdbTransportListWatchBackendOwnership(
+                handle=handle,
+                stream=_AdbTransportListWatchStreamView(handle),
+                acquisition=acquisition,
+            )
         except BaseException:
             with self._state_lock:
                 if self._pending is pending:
                     self._pending = None
-            self._cleanup_uncommitted_session(session)
+            self._cleanup_uncommitted_handle(handle)
             raise
 
         committed = False
@@ -237,9 +290,9 @@ class AdbTransportListWatchBackendTemplate(ABC):
         if committed:
             return acquisition
 
-        # Matching release advanced the generation before this session could commit. No producer
-        # received it, so final cleanup can happen directly without entering retirement state.
-        self._cleanup_uncommitted_session(session)
+        # Matching release advanced the generation before this handle could commit. No producer
+        # received its stream, so final cleanup can happen directly.
+        self._cleanup_uncommitted_handle(handle)
         return AdbTransportListWatchBackendAcquireRevoked(pending.generation)
 
     def release(
@@ -268,8 +321,8 @@ class AdbTransportListWatchBackendTemplate(ABC):
             if current_pending is None and ownership is None:
                 return AdbTransportListWatchBackendReleaseInactive(expected)
 
-            # Logical revocation linearizes here. Once the generation advances, stale producers
-            # cannot commit through run_if_current(), regardless of when physical I/O unwinds.
+            # Logical revocation linearizes here. Once the generation advances, stale producer
+            # commits are fenced by _run_if_current() regardless of when physical I/O unwinds.
             released_generation = self._generation
             self._generation = self._generation_issuer.issue()
 
@@ -285,9 +338,9 @@ class AdbTransportListWatchBackendTemplate(ABC):
             self._ownership = None
             ownership_to_retire = ownership
 
-        # Retirement is deliberately outside authoritative backend state. cancel() must only
-        # interrupt/retire the old physical session and must not delay the next generation.
-        self._retire_committed_session(ownership_to_retire.session)
+        # Physical retirement is deliberately outside authoritative backend state. cancel() only
+        # interrupts the detached old handle and must not delay admission of the new generation.
+        self._retire_committed_handle(ownership_to_retire.handle)
         return AdbTransportListWatchBackendReleased(
             generation=released_generation,
             acquisition=ownership_to_retire.acquisition,

@@ -49,7 +49,11 @@ class AdbTransportListCoordinator:
             raise TypeError("authority must satisfy AdbTransportListStateAuthority")
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
+        run_if_current = getattr(backend, "_run_if_current", None)
+        if not callable(run_if_current):
+            raise TypeError("backend must provide the internal watch coordination fence")
         self._backend = backend
+        self._run_if_current = run_if_current
         self._authority = authority
         self._publisher = publisher
 
@@ -122,7 +126,7 @@ class AdbTransportListCoordinator:
                 else self._authority.observe_update(generation, transport_list)
             )
 
-        current = self._backend.run_if_current(generation, commit)
+        current = self._run_if_current(generation, commit)
         if not current or committed_state is None:
             return AdbTransportListObservationStateConflict(
                 generation,

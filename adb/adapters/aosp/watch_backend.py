@@ -31,7 +31,6 @@ from adb.transport_list.watch.failure import (
     AdbTransportListWatchServiceFailure,
 )
 from adb.transport_list.watch.generation import AdbTransportListWatchGenerationIssuer
-from adb.transport_list.watch.session import AdbTransportListWatchSession
 from networking import TcpAddress
 
 
@@ -129,12 +128,11 @@ def _handshake(sock: socket.socket, deadline: float, clock: _Clock) -> None:
     raise AdbProtocolError(f"unexpected ADB service status: {status!r}")
 
 
-class _SmartSocketWatchSession:
-    """Backend-owned smart-socket session borrowed by one producer.
+class _SmartSocketWatchHandle:
+    """Backend-owned smart-socket physical handle and transport-list data source.
 
-    ``cancel()`` is the cross-thread retirement operation used after generation revocation.
-    It interrupts blocking socket I/O and suppresses teardown errors because logical release
-    is already authoritative. ``close()`` remains the idempotent final-cleanup operation.
+    Producers only receive a narrow stream view exposing ``initial``/``updates()``. ``cancel()``
+    and ``close()`` remain backend-only physical lifecycle operations.
     """
 
     __slots__ = (
@@ -245,8 +243,8 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
     """Generation-fenced transport-list watch authority over AOSP track-devices I/O.
 
     Lifecycle authority and resource ownership are linearized by the shared backend
-    template. The adapter establishes a fully usable smart-socket session, translates expected
-    I/O failures, and provides non-blocking cancellation that interrupts a retired session
+    template. The adapter establishes a fully usable smart-socket handle, translates expected
+    I/O failures, and provides non-blocking cancellation that interrupts a retired handle
     without making physical teardown part of the public release lifecycle.
 
     DNS resolution itself remains synchronous. Cancellation is observed before and after
@@ -258,6 +256,7 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
         *,
+        startup_timeout_seconds: float = 5.0,
         _resolver: Callable[..., list[tuple]] = socket.getaddrinfo,
         _socket_factory: Callable[..., socket.socket] = socket.socket,
         _clock: _Clock = monotonic,
@@ -267,6 +266,7 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
         if not callable(_resolver) or not callable(_socket_factory) or not callable(_clock):
             raise TypeError("resolver, socket factory, and clock must be callable")
         super().__init__(generation_issuer)
+        self._startup_timeout_seconds = _normalize_timeout(startup_timeout_seconds)
         self._resolver = _resolver
         self._socket_factory = _socket_factory
         self._clock = _clock
@@ -276,13 +276,12 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
         if cancellation.is_set():
             raise AdbTransportListWatchBackendAcquireInterruptedError
 
-    def _obtain_session(
+    def _obtain_handle(
         self,
         endpoint: TcpAddress,
-        startup_timeout_seconds: float,
         cancellation: Event,
-    ) -> AdbTransportListWatchSession:
-        timeout = _normalize_timeout(startup_timeout_seconds)
+    ) -> _SmartSocketWatchHandle:
+        timeout = self._startup_timeout_seconds
         self._check_cancelled(cancellation)
 
         sock: socket.socket | None = None
@@ -298,7 +297,7 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
             sock.settimeout(None)
             self._check_cancelled(cancellation)
 
-            return _SmartSocketWatchSession(sock, initial)
+            return _SmartSocketWatchHandle(sock, initial)
         except AdbTransportListWatchBackendAcquireInterruptedError:
             if sock is not None:
                 _close_after_failure(sock)
