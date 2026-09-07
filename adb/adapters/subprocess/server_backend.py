@@ -13,6 +13,7 @@ from adb.errors import AdbError
 from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.identity import AdbServerIdentityIssuer
 from adb.server.lifecycle.backend_template import (
     AdbServerBackendAcquireError,
     AdbServerBackendReleaseCleanupUnconfirmed,
@@ -308,6 +309,7 @@ class SubprocessAdbServerBackend(AdbServerBackendTemplate[_OwnedAdbServerProcess
 
     def __init__(
         self,
+        identity_issuer: AdbServerIdentityIssuer,
         *,
         executable: str = "adb",
         startup_timeout_seconds: float = 5.0,
@@ -327,7 +329,7 @@ class SubprocessAdbServerBackend(AdbServerBackendTemplate[_OwnedAdbServerProcess
             raise TypeError("_factory must provide create()")
 
         self._factory = _factory
-        super().__init__(publisher=publisher)
+        super().__init__(identity_issuer, publisher=publisher)
 
     def _obtain_handle(
         self,

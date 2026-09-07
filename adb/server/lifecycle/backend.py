@@ -5,7 +5,7 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServerIdentity
+from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
 
 
 def _normalize_diagnostic(value: object) -> str:
@@ -94,6 +94,17 @@ class AdbServerBackend(Protocol):
         ...
 
 
+class AdbServerBackendFactory(Protocol):
+    """Construct one runtime-scoped ADB server backend."""
+
+    def __call__(
+        self,
+        identity_issuer: AdbServerIdentityIssuer,
+    ) -> AdbServerBackend:
+        """Construct a backend using the runtime-scoped server identity issuer."""
+        ...
+
+
 __all__ = [
     "AdbServerBackend",
     "AdbServerBackendAcquired",
@@ -101,4 +112,5 @@ __all__ = [
     "AdbServerBackendAcquireFailed",
     "AdbServerBackendAlreadyAcquired",
     "AdbServerBackendAcquireResult",
+    "AdbServerBackendFactory",
 ]

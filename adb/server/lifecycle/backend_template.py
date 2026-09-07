@@ -73,8 +73,8 @@ class _AdbServerBackendOwnership(Generic[HandleT]):
 class AdbServerBackendTemplate(Generic[HandleT], ABC):
     """Template for serialized ownership of one backend acquisition.
 
-    The template defines ownership, concurrency, and cleanup signaling; subclasses
-    provide handle acquisition and release mechanics.
+    The template defines acquisition identity issuance, ownership, concurrency, and
+    cleanup signaling; subclasses provide handle acquisition and release mechanics.
     """
 
     def __init__(

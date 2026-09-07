@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 
 from adb.runtime.core import AdbRuntime
@@ -10,7 +9,10 @@ from adb.adapters.aosp.track_devices import (
 )
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentityIssuer
-from adb.server.lifecycle.backend import AdbServerBackend
+from adb.server.lifecycle.backend import (
+    AdbServerBackend,
+    AdbServerBackendFactory,
+)
 from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.runtime.state import AdbRuntimeAuthorityStateStore
@@ -29,8 +31,6 @@ from adb.transport.lifecycle.supervision.supervisor import (
 from eventing import EventBus
 from scheduling import TemporalScheduler
 
-
-_AdbServerBackendFactory = Callable[[AdbServerIdentityIssuer], AdbServerBackend]
 
 
 def _default_server_backend_factory(
@@ -61,7 +61,7 @@ class AdbRuntimeBootstrap:
     def __init__(
         self,
         *,
-        server_backend_factory: _AdbServerBackendFactory | None = None,
+        server_backend_factory: AdbServerBackendFactory | None = None,
         endpoint: AdbServerEndpoint | None = None,
         pin_endpoint: bool = True,
         server_recovery_enabled: bool = True,
