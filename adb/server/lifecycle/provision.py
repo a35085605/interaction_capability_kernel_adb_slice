@@ -36,6 +36,10 @@ class AdbServerProvisionActivated:
             raise AdbServerLifecycleConsistencyError(
                 "activated ADB server endpoint does not match backend acquisition endpoint"
             )
+        if self.acquisition.identity != self.activation.server:
+            raise AdbServerLifecycleConsistencyError(
+                "activated ADB server identity does not match backend acquisition identity"
+            )
 
 
 @dataclass(frozen=True, slots=True)

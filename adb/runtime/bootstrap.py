@@ -9,6 +9,7 @@ from adb.adapters.aosp.track_devices import (
     SmartSocketAdbTransportListWatcher as SmartSocketAdbTransportListWatchAttachment,
 )
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.identity import AdbServerIdentityIssuer
 from adb.server.lifecycle.backend import AdbServerBackend
 from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
@@ -29,11 +30,13 @@ from eventing import EventBus
 from scheduling import TemporalScheduler
 
 
-_AdbServerBackendFactory = Callable[[], AdbServerBackend]
+_AdbServerBackendFactory = Callable[[AdbServerIdentityIssuer], AdbServerBackend]
 
 
-def _default_server_backend_factory() -> AdbServerBackend:
-    return SubprocessAdbServerBackend()
+def _default_server_backend_factory(
+    identity_issuer: AdbServerIdentityIssuer,
+) -> AdbServerBackend:
+    return SubprocessAdbServerBackend(identity_issuer=identity_issuer)
 
 
 def _default_transport_list_watch_attachment_factory(
@@ -213,7 +216,8 @@ class AdbRuntimeBootstrap:
         return AdbRuntime(*args, **kwargs)
 
     def _build_core(self) -> _BootstrapCore:
-        backend = self._server_backend_factory()
+        server_identity_issuer = AdbServerIdentityIssuer()
+        backend = self._server_backend_factory(server_identity_issuer)
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("server backend factory must return AdbServerBackend")
 

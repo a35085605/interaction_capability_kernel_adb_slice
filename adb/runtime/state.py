@@ -84,10 +84,11 @@ class _AdbRuntimeServerStateWriter:
     def activate(
         self,
         endpoint: AdbServerEndpoint,
+        identity: AdbServerIdentity,
         *,
         expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
-        return self._state.activate_server(endpoint, expected=expected)
+        return self._state.activate_server(endpoint, identity, expected=expected)
 
     def deactivate(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult:
         return self._state.deactivate_server(expected)
@@ -221,16 +222,19 @@ class AdbRuntimeAuthorityStateStore:
     def activate_server(
         self,
         endpoint: AdbServerEndpoint,
+        identity: AdbServerIdentity,
         *,
         expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
+        if not isinstance(identity, AdbServerIdentity):
+            raise TypeError("identity must be AdbServerIdentity")
         if expected is not None and not isinstance(expected, AdbServerIdentity):
             raise TypeError("expected must be AdbServerIdentity or None")
 
         with self._lock:
-            activation = self._server.activate(endpoint, expected=expected)
+            activation = self._server.activate(endpoint, identity, expected=expected)
             if isinstance(activation, AdbServerActivated):
                 self._transport_list.open_session_admission()
             return activation
@@ -263,10 +267,11 @@ class AdbRuntimeAuthorityStateStore:
     def activate(
         self,
         endpoint: AdbServerEndpoint,
+        identity: AdbServerIdentity,
         *,
         expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
-        return self.activate_server(endpoint, expected=expected)
+        return self.activate_server(endpoint, identity, expected=expected)
 
     def deactivate(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult:
         return self.deactivate_server(expected)

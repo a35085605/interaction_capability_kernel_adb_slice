@@ -5,6 +5,7 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.identity import AdbServerIdentity
 
 
 def _normalize_diagnostic(value: object) -> str:
@@ -20,14 +21,17 @@ def _normalize_diagnostic(value: object) -> str:
 class AdbServerBackendAcquired:
     """Evidence that this call acquired usable ADB server access.
 
-    ``endpoint`` identifies the access retained by the backend.
+    ``endpoint`` and ``identity`` identify the server occurrence retained by the backend.
     """
 
     endpoint: AdbServerEndpoint
+    identity: AdbServerIdentity
 
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
+        if not isinstance(self.identity, AdbServerIdentity):
+            raise TypeError("identity must be AdbServerIdentity")
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,10 +85,11 @@ class AdbServerBackend(Protocol):
         """
         ...
 
-    def release(self) -> None:
-        """Release the current backend acquisition.
+    def release(self, expected: AdbServerIdentity) -> bool:
+        """Release the current backend acquisition when its identity matches ``expected``.
 
-        Completion marks the end of backend ownership.
+        Returns whether matching backend ownership was released. A missing or different
+        acquisition is left untouched.
         """
         ...
 

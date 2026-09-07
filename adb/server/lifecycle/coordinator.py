@@ -127,6 +127,7 @@ class AdbServerLifecycleCoordinator:
         try:
             activation = self._commit_activation(
                 acquisition.endpoint,
+                acquisition.identity,
                 expected=t0.identity,
             )
         except BaseException:
@@ -173,19 +174,20 @@ class AdbServerLifecycleCoordinator:
     def _commit_activation(
         self,
         endpoint: AdbServerEndpoint,
+        identity: AdbServerIdentity,
         *,
         expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
-        """Commit one newly acquired endpoint through the server-state writer."""
+        """Commit one newly acquired server occurrence through the server-state writer."""
 
-        return self._writer.activate(endpoint, expected=expected)
+        return self._writer.activate(endpoint, identity, expected=expected)
 
     def _rollback_acquisition(self, acquisition: AdbServerBackendAcquired) -> None:
         """Relinquish an acquisition established by the current provision invocation."""
 
         if not isinstance(acquisition, AdbServerBackendAcquired):
             raise TypeError("acquisition must be AdbServerBackendAcquired")
-        self._backend.release()
+        self._backend.release(acquisition.identity)
 
     def retire(
         self,
@@ -213,7 +215,7 @@ class AdbServerLifecycleCoordinator:
         if isinstance(deactivation, AdbServerDeactivationStateConflict):
             return deactivation
 
-        self._release_deactivated_server()
+        self._release_deactivated_server(server)
 
         if self._publisher is not None:
             self._publisher.publish(deactivation)
@@ -232,10 +234,12 @@ class AdbServerLifecycleCoordinator:
             raise TypeError("server state deactivate() returned an unsupported result")
         return deactivation
 
-    def _release_deactivated_server(self) -> None:
+    def _release_deactivated_server(self, server: AdbServerIdentity) -> None:
         """Relinquish the backend acquisition after one committed deactivation."""
 
-        self._backend.release()
+        if not isinstance(server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+        self._backend.release(server)
 
     def configure_endpoint_constraint(self, endpoint_constraint: AdbServerEndpoint | None) -> None:
         """Replace the endpoint constraint captured by subsequent acquisition attempts."""

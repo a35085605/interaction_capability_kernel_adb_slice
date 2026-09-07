@@ -8,6 +8,7 @@ from typing import Generic, Protocol, TypeVar, runtime_checkable
 from eventing import EventPublisher
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
 from adb.server.lifecycle.backend import (
     AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
@@ -63,6 +64,12 @@ class AdbServerBackendAcquireError(RuntimeError):
 HandleT = TypeVar("HandleT")
 
 
+@dataclass(frozen=True, slots=True)
+class _AdbServerBackendOwnership(Generic[HandleT]):
+    handle: HandleT
+    acquisition: AdbServerBackendAcquired
+
+
 class AdbServerBackendTemplate(Generic[HandleT], ABC):
     """Template for serialized ownership of one backend acquisition.
 
@@ -70,11 +77,19 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
     provide handle acquisition and release mechanics.
     """
 
-    def __init__(self, *, publisher: EventPublisher | None = None) -> None:
+    def __init__(
+        self,
+        identity_issuer: AdbServerIdentityIssuer,
+        *,
+        publisher: EventPublisher | None = None,
+    ) -> None:
+        if not isinstance(identity_issuer, AdbServerIdentityIssuer):
+            raise TypeError("identity_issuer must be AdbServerIdentityIssuer")
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
         self._operation_lock = Lock()
-        self._handle: HandleT | None = None
+        self._identity_issuer = identity_issuer
+        self._ownership: _AdbServerBackendOwnership[HandleT] | None = None
         self._publisher = publisher
 
     def bind_event_publisher(self, publisher: EventPublisher) -> None:
@@ -139,8 +154,8 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
         release_signal: AdbServerBackendReleaseCleanupUnconfirmed | None = None
         publisher: EventPublisher | None = None
         try:
-            handle = self._handle
-            if handle is not None:
+            ownership = self._ownership
+            if ownership is not None:
                 return AdbServerBackendAlreadyAcquired()
 
             try:
@@ -149,33 +164,41 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                 return AdbServerBackendAcquireFailed(exc.diagnostic)
 
             try:
-                acquisition = AdbServerBackendAcquired(endpoint)
+                acquisition = AdbServerBackendAcquired(
+                    endpoint=endpoint,
+                    identity=self._identity_issuer.issue(),
+                )
             except BaseException:
                 release_signal = self._release_handle(handle)
                 if release_signal is not None:
                     publisher = self._publisher
                 raise
 
-            self._handle = handle
+            self._ownership = _AdbServerBackendOwnership(handle, acquisition)
             return acquisition
         finally:
             self._operation_lock.release()
             if release_signal is not None and publisher is not None:
                 self._publish_release_signal(publisher, release_signal)
 
-    def release(self) -> None:
+    def release(self, expected: AdbServerIdentity) -> bool:
+        if not isinstance(expected, AdbServerIdentity):
+            raise TypeError("expected must be AdbServerIdentity")
+
         release_signal: AdbServerBackendReleaseCleanupUnconfirmed | None = None
         publisher: EventPublisher | None = None
+        released = False
         # Release waits for any active backend operation, then remains busy until logical release
         # has fully linearized.
         with self._operation_lock:
-            handle = self._handle
-            if handle is not None:
-                release_signal = self._release_handle(handle)
+            ownership = self._ownership
+            if ownership is not None and ownership.acquisition.identity == expected:
+                release_signal = self._release_handle(ownership.handle)
                 # The backend relinquishes active ownership after the implementation-specific
                 # release attempt, even when teardown could not be confirmed. The detached handle
                 # is preserved in release_signal for external follow-up.
-                self._handle = None
+                self._ownership = None
+                released = True
                 if release_signal is not None:
                     publisher = self._publisher
 
@@ -183,6 +206,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
         # re-enter backend operations without waiting on the publisher's own call stack.
         if release_signal is not None and publisher is not None:
             self._publish_release_signal(publisher, release_signal)
+        return released
 
 
 __all__ = [

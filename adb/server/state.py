@@ -7,7 +7,7 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
+from adb.server.identity import AdbServerIdentity
 
 
 class AdbServerStateStatus(str, Enum):
@@ -199,6 +199,7 @@ class AdbServerStateWriter(Protocol):
     def activate(
         self,
         endpoint: AdbServerEndpoint,
+        identity: AdbServerIdentity,
         *,
         expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult: ...
@@ -207,7 +208,7 @@ class AdbServerStateWriter(Protocol):
 
 
 class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
-    """Thread-safe authority for server state transitions and activation identity issuance."""
+    """Thread-safe authority for authoritative server state transitions."""
 
     def __init__(self, initial: AdbServerState | None = None) -> None:
         if initial is None:
@@ -218,7 +219,6 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
             raise TypeError("initial must be AdbServerState or None")
         self._lock = Lock()
         self._state = state
-        self._identity_issuer = AdbServerIdentityIssuer(after=state.identity)
 
     @property
     def state(self) -> AdbServerState:
@@ -267,17 +267,16 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
     def activate(
         self,
         endpoint: AdbServerEndpoint,
+        identity: AdbServerIdentity,
         *,
         expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
-        """Activate ``endpoint`` when its authority-identity basis is current.
-
-        A fresh server identity is issued after the activation fence succeeds, immediately
-        before the active state is committed.
-        """
+        """Make the acquired server occurrence authoritative when its fence is current."""
 
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
+        if not isinstance(identity, AdbServerIdentity):
+            raise TypeError("identity must be AdbServerIdentity")
         if expected is not None and not isinstance(expected, AdbServerIdentity):
             raise TypeError("expected must be AdbServerIdentity or None")
 
@@ -286,7 +285,6 @@ class AdbServerStateStore(AdbServerStateView, AdbServerStateWriter):
             if current.active or current.identity != expected:
                 return AdbServerActivationStateConflict(current)
 
-            identity = self._identity_issuer.issue()
             next_state = AdbServerState(
                 endpoint,
                 identity,
