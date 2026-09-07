@@ -20,9 +20,7 @@ from adb.server.lifecycle import (
     AdbServerBootstrapError,
     AdbServerDeactivated,
     AdbServerLifecycleConsistencyError,
-    AdbServerLifecycleCoordinator,
     AdbServerLifecycleError,
-    AdbServerRetired,
 )
 from adb.server.failure import (
     AdbServerConnectionFailure,
@@ -65,9 +63,7 @@ __all__ = [
     "AdbServerGenerationIssuer",
     "AdbServerLaunchFailure",
     "AdbServerLifecycleConsistencyError",
-    "AdbServerLifecycleCoordinator",
     "AdbServerLifecycleError",
-    "AdbServerRetired",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",
     "AdbServerProcessExitedFailure",

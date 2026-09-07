@@ -28,12 +28,12 @@ class AdbServerSupervisor:
 
     Owns reconciliation subscriptions, retry scheduling, and recovery worker lifetimes. Server
     authority remains in the backend; manual mutation and desired-state coordination belong to
-    Runtime rather than this supervisor.
+    the owning orchestration layer rather than this supervisor.
     """
 
     def __init__(
         self,
-        lifecycle: AdbServerBackend,
+        backend: AdbServerBackend,
         *,
         event_bus: EventBus | None,
         scheduler: TemporalScheduler[object] | None,
@@ -41,11 +41,8 @@ class AdbServerSupervisor:
         recovery_enabled: bool,
         endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> None:
-        # Keep the legacy parameter name until Runtime is migrated separately. The required
-        # capability is now AdbServerBackend, so the supervisor consumes authoritative results
-        # directly instead of lifecycle evidence tuples.
-        if not isinstance(lifecycle, AdbServerBackend):
-            raise TypeError("lifecycle must satisfy AdbServerBackend")
+        if not isinstance(backend, AdbServerBackend):
+            raise TypeError("backend must satisfy AdbServerBackend")
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if scheduler is not None and not isinstance(scheduler, TemporalScheduler):
@@ -58,7 +55,7 @@ class AdbServerSupervisor:
             raise TypeError("recovery_enabled must be bool")
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
             raise TypeError("endpoint_constraint must be TcpAddress or None")
-        self._backend = lifecycle
+        self._backend = backend
         self._event_bus = event_bus
         self._scheduler = scheduler
         self._policy = policy
