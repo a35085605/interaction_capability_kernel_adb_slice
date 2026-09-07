@@ -27,6 +27,12 @@ from adb.transport_list.watch.failure import (
     AdbTransportListWatchServerConnectionFailure,
     AdbTransportListWatchServiceFailure,
 )
+from adb.transport_list.watch.backend import (
+    AdbTransportListWatchBackendAlreadyOpen,
+    AdbTransportListWatchBackendOpened,
+    AdbTransportListWatchBackendOpenFailed,
+    AdbTransportListWatchBackendOpenResult,
+)
 from adb.transport_list.watch.session import AdbTransportListWatchSession
 from networking import TcpAddress
 
@@ -222,40 +228,47 @@ class SmartSocketAdbTransportListWatchBackend:
         endpoint: TcpAddress,
         *,
         startup_timeout_seconds: float = 5.0,
-    ) -> AdbTransportListWatchSession:
+    ) -> AdbTransportListWatchBackendOpenResult:
         if self._session is not None:
-            raise RuntimeError("an ADB transport-list watch session is already open")
+            return AdbTransportListWatchBackendAlreadyOpen()
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
         timeout = _normalize_timeout(startup_timeout_seconds)
 
         sock: socket.socket | None = None
         try:
-            try:
-                sock, deadline = self._connect(endpoint, timeout)
-                _handshake(sock, deadline, self._clock)
-                initial = to_transport_list(
-                    parse_devices(_read_frame(sock, deadline=deadline, clock=self._clock))
-                )
-                sock.settimeout(None)
-            except BaseException as exc:
-                error = _watch_error(exc)
-                if error is not None:
-                    raise error from exc
-                raise
+            sock, deadline = self._connect(endpoint, timeout)
+            _handshake(sock, deadline, self._clock)
+            initial = to_transport_list(
+                parse_devices(_read_frame(sock, deadline=deadline, clock=self._clock))
+            )
+            sock.settimeout(None)
 
             # Issue only after the resource is usable. Identity creation is outside
-            # I/O error normalization so issuer/programming failures remain intact.
+            # I/O failure normalization so issuer/programming failures remain exceptional.
             session = _SmartSocketWatchSession(
                 self._identity_issuer.issue(), sock, initial, self._release_session
             )
-        except BaseException:
+        except BaseException as exc:
             if sock is not None:
                 _close_after_failure(sock)
+            error = _watch_error(exc)
+            if error is not None:
+                return AdbTransportListWatchBackendOpenFailed(error.failure)
             raise
 
         self._session = session
-        return session
+        return AdbTransportListWatchBackendOpened(session)
+
+    def close(self, expected: AdbTransportListSessionIdentity) -> bool:
+        if not isinstance(expected, AdbTransportListSessionIdentity):
+            raise TypeError("expected must be AdbTransportListSessionIdentity")
+
+        session = self._session
+        if session is None or session.session_identity is not expected:
+            return False
+        session.close()
+        return True
 
     def _connect(self, endpoint: TcpAddress, timeout: float) -> tuple[socket.socket, float]:
         addresses = self._resolver(endpoint.host, endpoint.port, type=socket.SOCK_STREAM)

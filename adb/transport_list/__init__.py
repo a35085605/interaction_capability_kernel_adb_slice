@@ -18,6 +18,21 @@ from adb.transport_list.session_identity import (
     AdbTransportListSessionIdentity,
     AdbTransportListSessionIdentityIssuer,
 )
+from adb.transport_list.watch.backend import (
+    AdbTransportListWatchBackend,
+    AdbTransportListWatchBackendAlreadyOpen,
+    AdbTransportListWatchBackendFactory,
+    AdbTransportListWatchBackendOpened,
+    AdbTransportListWatchBackendOpenFailed,
+    AdbTransportListWatchBackendOpenResult,
+)
+from adb.transport_list.watch.coordinator import (
+    AdbTransportListWatchAlreadyActive,
+    AdbTransportListWatchAlreadyInactive,
+    AdbTransportListWatchLifecycleCoordinator,
+    AdbTransportListWatchProvisionResult,
+    AdbTransportListWatchRetireResult,
+)
 from adb.transport_list.watch_session_state import (
     AdbTransportListWatchSessionActivated,
     AdbTransportListWatchSessionActivationResult,
@@ -80,6 +95,17 @@ __all__ = [
     "AdbTransportListStateStore",
     "AdbTransportListStateView",
     "AdbTransportListStateWriter",
+    "AdbTransportListWatchAlreadyActive",
+    "AdbTransportListWatchAlreadyInactive",
+    "AdbTransportListWatchBackend",
+    "AdbTransportListWatchBackendAlreadyOpen",
+    "AdbTransportListWatchBackendFactory",
+    "AdbTransportListWatchBackendOpened",
+    "AdbTransportListWatchBackendOpenFailed",
+    "AdbTransportListWatchBackendOpenResult",
+    "AdbTransportListWatchLifecycleCoordinator",
+    "AdbTransportListWatchProvisionResult",
+    "AdbTransportListWatchRetireResult",
     "AdbTransportListWatchSessionActivated",
     "AdbTransportListWatchSessionActivationResult",
     "AdbTransportListWatchSessionActivationStateConflict",

@@ -1,29 +1,70 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from dataclasses import dataclass
+from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
-from adb.transport_list.session_identity import AdbTransportListSessionIdentityIssuer
+from adb.transport_list.session_identity import (
+    AdbTransportListSessionIdentity,
+    AdbTransportListSessionIdentityIssuer,
+)
+from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 from adb.transport_list.watch.session import AdbTransportListWatchSession
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListWatchBackendOpened:
+    """Evidence that this call established and retained one usable watch session."""
+
+    session: AdbTransportListWatchSession
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.session, AdbTransportListWatchSession):
+            raise TypeError("session must satisfy AdbTransportListWatchSession")
+
+    @property
+    def identity(self) -> AdbTransportListSessionIdentity:
+        return self.session.session_identity
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListWatchBackendAlreadyOpen:
+    """Evidence that the backend already owns a watch session."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListWatchBackendOpenFailed:
+    """Expected failure to establish a usable watch session."""
+
+    failure: AdbTransportListWatchFailure
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.failure, AdbTransportListWatchFailure):
+            raise TypeError("failure must be AdbTransportListWatchFailure")
+
+
+AdbTransportListWatchBackendOpenResult: TypeAlias = (
+    AdbTransportListWatchBackendOpened
+    | AdbTransportListWatchBackendAlreadyOpen
+    | AdbTransportListWatchBackendOpenFailed
+)
 
 
 @runtime_checkable
 class AdbTransportListWatchBackend(Protocol):
-    """Synchronously establish at most one owned watch session at a time.
+    """Manage one runtime-scoped acquisition of transport-list watch resources.
 
-    Calls to open, session reads, and session close must be serialized by the caller.
+    Calls to ``open``, session reads, and ``close`` are serialized by the caller.
     Startup cannot be cancelled; interrupting a blocked read from another thread is
-    outside this contract. Close the current session before opening another one.
+    outside this contract.
 
-    A returned session has a stable identity and a parsed, complete initial list
+    An opened session has a stable identity and a parsed, complete initial list
     (which may be empty). Its updates are a single-consumer stream of subsequent
-    complete lists, without replay or automatic reconnection. Repeated updates()
+    complete lists, without replay or automatic reconnection. Repeated ``updates()``
     calls access the same iterator.
 
-    The session owns its resources. Close is terminal and idempotent; reads after
-    close end without I/O. Read failure closes the session before propagating the
-    error. Consumers that stop iteration early must still explicitly close it.
-    Neither opening nor closing grants or revokes domain observation authority.
+    The backend owns only watch resources. Opening or closing does not grant or revoke
+    authoritative watch-session state or transport-list observation authority.
     """
 
     def open(
@@ -31,12 +72,21 @@ class AdbTransportListWatchBackend(Protocol):
         endpoint: TcpAddress,
         *,
         startup_timeout_seconds: float = 5.0,
-    ) -> AdbTransportListWatchSession:
-        """Return a fully established session, or clean up and raise an error.
+    ) -> AdbTransportListWatchBackendOpenResult:
+        """Attempt to establish one fully usable watch session.
 
-        Expected establishment failures raise AdbTransportListWatchError; there is
-        no cancellation/None result. An already owned session causes RuntimeError
-        without changing it. Programming and argument errors propagate unchanged.
+        Expected ADB connection, service, and protocol establishment failures are
+        returned as ``AdbTransportListWatchBackendOpenFailed``. An existing backend
+        acquisition returns ``AdbTransportListWatchBackendAlreadyOpen``. Programming
+        and argument errors propagate unchanged.
+        """
+        ...
+
+    def close(self, expected: AdbTransportListSessionIdentity) -> bool:
+        """Close the owned watch session when its identity matches ``expected``.
+
+        Returns whether matching backend ownership was closed. A missing or different
+        session is left untouched.
         """
         ...
 
@@ -53,5 +103,9 @@ class AdbTransportListWatchBackendFactory(Protocol):
 
 __all__ = [
     "AdbTransportListWatchBackend",
+    "AdbTransportListWatchBackendAlreadyOpen",
     "AdbTransportListWatchBackendFactory",
+    "AdbTransportListWatchBackendOpened",
+    "AdbTransportListWatchBackendOpenFailed",
+    "AdbTransportListWatchBackendOpenResult",
 ]

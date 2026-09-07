@@ -15,7 +15,18 @@ from adb.transport_list.watch_session_state import (
 )
 from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackend,
+    AdbTransportListWatchBackendAlreadyOpen,
     AdbTransportListWatchBackendFactory,
+    AdbTransportListWatchBackendOpened,
+    AdbTransportListWatchBackendOpenFailed,
+    AdbTransportListWatchBackendOpenResult,
+)
+from adb.transport_list.watch.coordinator import (
+    AdbTransportListWatchAlreadyActive,
+    AdbTransportListWatchAlreadyInactive,
+    AdbTransportListWatchLifecycleCoordinator,
+    AdbTransportListWatchProvisionResult,
+    AdbTransportListWatchRetireResult,
 )
 from adb.transport_list.watch.controller import (
     AdbTransportListWatchController,
@@ -51,14 +62,23 @@ from adb.transport_list.watch.signal import (
 
 __all__ = [
     "AdbTransportListWatchAttachment",
+    "AdbTransportListWatchAlreadyActive",
+    "AdbTransportListWatchAlreadyInactive",
     "AdbTransportListWatchBackend",
+    "AdbTransportListWatchBackendAlreadyOpen",
+    "AdbTransportListWatchBackendOpened",
+    "AdbTransportListWatchBackendOpenFailed",
+    "AdbTransportListWatchBackendOpenResult",
     "AdbTransportListWatchBackendFactory",
     "AdbTransportListWatchCancelledError",
     "AdbTransportListWatchController",
     "AdbTransportListWatchError",
     "AdbTransportListWatchFailed",
+    "AdbTransportListWatchLifecycleCoordinator",
     "AdbTransportListWatchFailure",
     "AdbTransportListWatchProtocolFailure",
+    "AdbTransportListWatchProvisionResult",
+    "AdbTransportListWatchRetireResult",
     "AdbTransportListWatchServerConnectionFailure",
     "AdbTransportListWatchServiceFailure",
     "AdbTransportListWatchSession",
