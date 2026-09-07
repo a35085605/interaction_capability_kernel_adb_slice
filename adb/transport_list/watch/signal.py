@@ -3,45 +3,45 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
+from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
 
 
-def _require_session_identity(value: object) -> AdbTransportListSessionIdentity:
-    if not isinstance(value, AdbTransportListSessionIdentity):
-        raise TypeError("session_identity must be AdbTransportListSessionIdentity")
+def _require_generation(value: object) -> AdbTransportListWatchGeneration:
+    if not isinstance(value, AdbTransportListWatchGeneration):
+        raise TypeError("generation must be AdbTransportListWatchGeneration")
     return value
 
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchStarted:
-    """Signal that one observation session committed its initial transport list."""
+    """Signal that one watch generation committed its initial transport list."""
 
-    session_identity: AdbTransportListSessionIdentity
+    generation: AdbTransportListWatchGeneration
 
     def __post_init__(self) -> None:
-        _require_session_identity(self.session_identity)
+        _require_generation(self.generation)
 
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchStopped:
-    """Signal that one observation session ended and its authority was revoked."""
+    """Signal that one watch generation ended and its authority was revoked."""
 
-    session_identity: AdbTransportListSessionIdentity
+    generation: AdbTransportListWatchGeneration
 
     def __post_init__(self) -> None:
-        _require_session_identity(self.session_identity)
+        _require_generation(self.generation)
 
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchFailed:
-    """Signal a transport-list watch failure for one observation session."""
+    """Signal a transport-list watch failure for one watch generation."""
 
-    session_identity: AdbTransportListSessionIdentity
+    generation: AdbTransportListWatchGeneration
     failure: AdbTransportListWatchFailure
 
     def __post_init__(self) -> None:
-        _require_session_identity(self.session_identity)
+        _require_generation(self.generation)
         if not isinstance(self.failure, AdbTransportListWatchFailure):
             raise TypeError("failure must be AdbTransportListWatchFailure")
 

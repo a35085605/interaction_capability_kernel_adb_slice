@@ -1,4 +1,4 @@
-"""ADB transport-list values, state, identities, readers, and queries."""
+"""ADB transport-list values, projection state, readers, queries, and watch authority."""
 
 from adb.transport_list.coordinator import AdbTransportListCoordinator
 from adb.transport_list.identity import (
@@ -13,11 +13,6 @@ from adb.transport_list.lookup import AdbTransportLookup, find_transport
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import AdbTransportListObservation
 from adb.transport_list.reader import AdbTransportListReader
-from adb.transport_list.session_identity import (
-    AdbTransportListSessionEpoch,
-    AdbTransportListSessionIdentity,
-    AdbTransportListSessionIdentityIssuer,
-)
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,
@@ -53,12 +48,8 @@ from adb.transport_list.state import (
     AdbTransportListObservationResult,
     AdbTransportListObservationStateConflict,
     AdbTransportListObserved,
-    AdbTransportListSessionAuthority,
-    AdbTransportListSessionBegun,
-    AdbTransportListSessionRevocationResult,
-    AdbTransportListSessionRevocationStateConflict,
-    AdbTransportListSessionRevoked,
     AdbTransportListState,
+    AdbTransportListStateAuthority,
     AdbTransportListStateStatus,
     AdbTransportListStateStore,
     AdbTransportListStateView,
@@ -81,15 +72,8 @@ __all__ = [
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",
     "AdbTransportListReader",
-    "AdbTransportListSessionAuthority",
-    "AdbTransportListSessionBegun",
-    "AdbTransportListSessionEpoch",
-    "AdbTransportListSessionIdentity",
-    "AdbTransportListSessionIdentityIssuer",
-    "AdbTransportListSessionRevocationResult",
-    "AdbTransportListSessionRevocationStateConflict",
-    "AdbTransportListSessionRevoked",
     "AdbTransportListState",
+    "AdbTransportListStateAuthority",
     "AdbTransportListStateStatus",
     "AdbTransportListStateStore",
     "AdbTransportListStateView",

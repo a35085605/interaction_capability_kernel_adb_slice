@@ -36,10 +36,7 @@ from adb.transport_list.watch.controller import (
     AdbTransportListWatchStartSuperseded,
     ThreadedAdbTransportListWatchController,
 )
-from adb.transport_list.watch.session import (
-    AdbTransportListWatchSession,
-    bind_transport_list_watch_session,
-)
+from adb.transport_list.watch.session import AdbTransportListWatchSession
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 from adb.transport_list.watch.error import (
     AdbTransportListWatchCancelledError,
@@ -99,5 +96,4 @@ __all__ = [
     "AdbTransportListWatchStarted",
     "AdbTransportListWatchStopped",
     "ThreadedAdbTransportListWatchController",
-    "bind_transport_list_watch_session",
 ]

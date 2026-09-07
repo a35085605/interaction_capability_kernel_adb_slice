@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Event, Lock
 
 from networking import TcpAddress
 
-from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackendAcquired,
     AdbTransportListWatchBackendAcquireDeferred,
@@ -80,9 +80,6 @@ class AdbTransportListWatchBackendTemplate(ABC):
             return AdbTransportListWatchState(
                 generation=self._generation,
                 endpoint=None if acquisition is None else acquisition.endpoint,
-                session_identity=(
-                    None if acquisition is None else acquisition.session_identity
-                ),
             )
 
     @abstractmethod
@@ -105,28 +102,33 @@ class AdbTransportListWatchBackendTemplate(ABC):
 
         session.close()
 
-    def _resource_closed(
+    def run_if_current(
         self,
-        session_identity: AdbTransportListSessionIdentity,
-    ) -> None:
-        """Revoke current authority when an owned session closes itself unexpectedly.
+        expected: AdbTransportListWatchGeneration,
+        operation: Callable[[], None],
+    ) -> bool:
+        """Run one projection mutation while matching usable authority is current.
 
-        Adapters whose sessions can self-close on read failure should call this hook from
-        their close callback. It is identity-fenced and becomes a no-op during normal
-        ``release()``, which detaches ownership before physical cleanup.
+        The backend lock remains held for the operation, so a matching ``release()`` cannot
+        advance the generation until the mutation finishes. Callers must not invoke backend
+        lifecycle methods from ``operation``.
         """
 
-        if not isinstance(session_identity, AdbTransportListSessionIdentity):
-            raise TypeError("session_identity must be AdbTransportListSessionIdentity")
+        if not isinstance(expected, AdbTransportListWatchGeneration):
+            raise TypeError("expected must be AdbTransportListWatchGeneration")
+        if not callable(operation):
+            raise TypeError("operation must be callable")
+
         with self._state_lock:
             acquisition = self._acquisition
             if (
-                acquisition is None
-                or acquisition.session_identity is not session_identity
+                expected != self._generation
+                or acquisition is None
+                or acquisition.generation != expected
             ):
-                return
-            self._acquisition = None
-            self._generation = self._generation_issuer.issue()
+                return False
+            operation()
+            return True
 
     def acquire(
         self,

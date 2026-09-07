@@ -1,14 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
 
-from adb.transport_list.session_identity import (
-    AdbTransportListSessionIdentity,
-    AdbTransportListSessionIdentityIssuer,
-)
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
@@ -43,16 +40,6 @@ class AdbTransportListWatchBackendAcquired:
         if not isinstance(self.session, AdbTransportListWatchSession):
             raise TypeError("session must satisfy AdbTransportListWatchSession")
 
-    @property
-    def identity(self) -> AdbTransportListSessionIdentity:
-        """Compatibility alias for the acquired producer session identity."""
-
-        return self.session.session_identity
-
-    @property
-    def session_identity(self) -> AdbTransportListSessionIdentity:
-        return self.session.session_identity
-
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchBackendAlreadyAcquired:
@@ -66,13 +53,9 @@ class AdbTransportListWatchBackendAlreadyAcquired:
 
     @property
     def session(self) -> AdbTransportListWatchSession:
-        """Compatibility access to the retained session."""
+        """Compatibility access to the retained resource session."""
 
         return self.acquisition.session
-
-    @property
-    def identity(self) -> AdbTransportListSessionIdentity:
-        return self.acquisition.session_identity
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,13 +163,9 @@ AdbTransportListWatchBackendReleaseResult: TypeAlias = (
 class AdbTransportListWatchBackend(AdbTransportListWatchStateView, Protocol):
     """Sole authority for one runtime-scoped transport-list watch generation.
 
-    ``read()`` returns the canonical atomic lifecycle snapshot. ``generation`` fences
-    stale lifecycle work and advances when matching pending or usable authority is
-    logically released. The acquired session owns only producer resources; transport-list
-    projection authority remains a separate domain.
-
-    Session reads are single-consumer. Implementations may surface expected connection,
-    service, or protocol failures while reading updates as ``AdbTransportListWatchError``.
+    ``generation`` is the only lifecycle and producer fence. Resource sessions carry no
+    identity or authority of their own. ``run_if_current()`` linearizes projection mutation
+    against release so stale generations cannot commit after logical revocation.
     """
 
     def acquire(
@@ -198,6 +177,14 @@ class AdbTransportListWatchBackend(AdbTransportListWatchStateView, Protocol):
         """Acquire one fully usable watch within the current generation."""
         ...
 
+    def run_if_current(
+        self,
+        expected: AdbTransportListWatchGeneration,
+        operation: Callable[[], None],
+    ) -> bool:
+        """Run ``operation`` while matching usable authority remains current."""
+        ...
+
     def release(
         self,
         expected: AdbTransportListWatchGeneration,
@@ -207,17 +194,11 @@ class AdbTransportListWatchBackend(AdbTransportListWatchStateView, Protocol):
 
 
 class AdbTransportListWatchBackendFactory(Protocol):
-    """Construct one runtime-scoped transport-list watch backend.
-
-    ``generation_issuer`` remains optional for compatibility while runtime orchestration
-    migrates; new code should provide the externally owned runtime-scoped issuer.
-    """
+    """Construct one runtime-scoped transport-list watch backend."""
 
     def __call__(
         self,
-        identity_issuer: AdbTransportListSessionIdentityIssuer,
-        *,
-        generation_issuer: AdbTransportListWatchGenerationIssuer | None = None,
+        generation_issuer: AdbTransportListWatchGenerationIssuer,
     ) -> AdbTransportListWatchBackend:
         ...
 

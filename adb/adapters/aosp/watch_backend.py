@@ -18,10 +18,6 @@ from adb.errors import (
     AdbTimeoutError,
 )
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.session_identity import (
-    AdbTransportListSessionIdentity,
-    AdbTransportListSessionIdentityIssuer,
-)
 from adb.transport_list.watch.backend_template import (
     AdbTransportListWatchBackendAcquireError,
     AdbTransportListWatchBackendAcquireInterruptedError,
@@ -137,37 +133,23 @@ class _SmartSocketWatchSession:
     """One established resource owner independent of transport-list projection authority."""
 
     __slots__ = (
-        "_session_identity",
         "_socket",
         "_initial",
-        "_on_close",
         "_closed",
         "_updates",
     )
 
     def __init__(
         self,
-        session_identity: AdbTransportListSessionIdentity,
         sock: socket.socket,
         initial: AdbTransportList,
-        on_close: Callable[[AdbTransportListSessionIdentity], None],
     ) -> None:
-        if not isinstance(session_identity, AdbTransportListSessionIdentity):
-            raise TypeError("session_identity must be AdbTransportListSessionIdentity")
         if not isinstance(initial, AdbTransportList):
             raise TypeError("initial must be AdbTransportList")
-        if not callable(on_close):
-            raise TypeError("on_close must be callable")
-        self._session_identity = session_identity
         self._socket = sock
         self._initial = initial
-        self._on_close = on_close
         self._closed = False
         self._updates = self._iterate_updates()
-
-    @property
-    def session_identity(self) -> AdbTransportListSessionIdentity:
-        return self._session_identity
 
     @property
     def initial(self) -> AdbTransportList:
@@ -204,8 +186,6 @@ class _SmartSocketWatchSession:
                     f"failed to close ADB track-devices socket: {exc}"
                 )
             ) from exc
-        finally:
-            self._on_close(self._session_identity)
 
 
 class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTemplate):
@@ -222,25 +202,17 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
 
     def __init__(
         self,
-        identity_issuer: AdbTransportListSessionIdentityIssuer,
+        generation_issuer: AdbTransportListWatchGenerationIssuer,
         *,
-        generation_issuer: AdbTransportListWatchGenerationIssuer | None = None,
         _resolver: Callable[..., list[tuple]] = socket.getaddrinfo,
         _socket_factory: Callable[..., socket.socket] = socket.socket,
         _clock: _Clock = monotonic,
     ) -> None:
-        if not isinstance(identity_issuer, AdbTransportListSessionIdentityIssuer):
-            raise TypeError("identity_issuer must be AdbTransportListSessionIdentityIssuer")
-        if generation_issuer is None:
-            generation_issuer = AdbTransportListWatchGenerationIssuer()
-        elif not isinstance(generation_issuer, AdbTransportListWatchGenerationIssuer):
-            raise TypeError(
-                "generation_issuer must be AdbTransportListWatchGenerationIssuer or None"
-            )
+        if not isinstance(generation_issuer, AdbTransportListWatchGenerationIssuer):
+            raise TypeError("generation_issuer must be AdbTransportListWatchGenerationIssuer")
         if not callable(_resolver) or not callable(_socket_factory) or not callable(_clock):
             raise TypeError("resolver, socket factory, and clock must be callable")
         super().__init__(generation_issuer)
-        self._identity_issuer = identity_issuer
         self._resolver = _resolver
         self._socket_factory = _socket_factory
         self._clock = _clock
@@ -272,13 +244,7 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
             sock.settimeout(None)
             self._check_cancelled(cancellation)
 
-            # Session identity is issued only after the resource has become fully usable.
-            return _SmartSocketWatchSession(
-                self._identity_issuer.issue(),
-                sock,
-                initial,
-                self._resource_closed,
-            )
+            return _SmartSocketWatchSession(sock, initial)
         except AdbTransportListWatchBackendAcquireInterruptedError:
             if sock is not None:
                 _close_after_failure(sock)
