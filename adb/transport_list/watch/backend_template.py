@@ -263,32 +263,6 @@ class AdbTransportListWatchBackendTemplate(ABC):
             acquisition=acquisition_to_release,
         )
 
-    # Compatibility facade for the existing coordinator. New orchestration should call
-    # acquire/release and consume canonical generation-fenced evidence directly.
-    def open(
-        self,
-        endpoint: TcpAddress,
-        *,
-        startup_timeout_seconds: float = 5.0,
-    ) -> AdbTransportListWatchBackendAcquireResult:
-        return self.acquire(
-            endpoint,
-            startup_timeout_seconds=startup_timeout_seconds,
-        )
-
-    def close(self, expected: AdbTransportListSessionIdentity) -> bool:
-        if not isinstance(expected, AdbTransportListSessionIdentity):
-            raise TypeError("expected must be AdbTransportListSessionIdentity")
-
-        with self._state_lock:
-            acquisition = self._acquisition
-            if acquisition is None or acquisition.session_identity is not expected:
-                return False
-            generation = self._generation
-
-        result = self.release(generation)
-        return isinstance(result, AdbTransportListWatchBackendReleased)
-
 
 __all__ = [
     "AdbTransportListWatchBackendAcquireError",

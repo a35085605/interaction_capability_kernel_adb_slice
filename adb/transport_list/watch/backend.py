@@ -222,14 +222,6 @@ class AdbTransportListWatchBackendFactory(Protocol):
         ...
 
 
-# Compatibility names retained while the legacy watch lifecycle coordinator migrates to
-# acquire/release directly. They intentionally denote the canonical backend evidence types.
-AdbTransportListWatchBackendOpened = AdbTransportListWatchBackendAcquired
-AdbTransportListWatchBackendAlreadyOpen = AdbTransportListWatchBackendAlreadyAcquired
-AdbTransportListWatchBackendOpenFailed = AdbTransportListWatchBackendAcquireFailed
-AdbTransportListWatchBackendOpenResult = AdbTransportListWatchBackendAcquireResult
-
-
 __all__ = [
     "AdbTransportListWatchBackend",
     "AdbTransportListWatchBackendAcquired",
@@ -243,8 +235,4 @@ __all__ = [
     "AdbTransportListWatchBackendReleaseInactive",
     "AdbTransportListWatchBackendReleaseMismatch",
     "AdbTransportListWatchBackendReleaseResult",
-    "AdbTransportListWatchBackendAlreadyOpen",
-    "AdbTransportListWatchBackendOpened",
-    "AdbTransportListWatchBackendOpenFailed",
-    "AdbTransportListWatchBackendOpenResult",
 ]
