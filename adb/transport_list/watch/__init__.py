@@ -1,5 +1,18 @@
 """ADB transport-list watch protocols, lifecycle control, results, and signals."""
 
+from adb.transport_list.watch_session_state import (
+    AdbTransportListWatchSessionActivated,
+    AdbTransportListWatchSessionActivationResult,
+    AdbTransportListWatchSessionActivationStateConflict,
+    AdbTransportListWatchSessionDeactivated,
+    AdbTransportListWatchSessionDeactivationResult,
+    AdbTransportListWatchSessionDeactivationStateConflict,
+    AdbTransportListWatchSessionState,
+    AdbTransportListWatchSessionStateStatus,
+    AdbTransportListWatchSessionStateStore,
+    AdbTransportListWatchSessionStateView,
+    AdbTransportListWatchSessionStateWriter,
+)
 from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackend,
     AdbTransportListWatchBackendFactory,
@@ -49,6 +62,17 @@ __all__ = [
     "AdbTransportListWatchServerConnectionFailure",
     "AdbTransportListWatchServiceFailure",
     "AdbTransportListWatchSession",
+    "AdbTransportListWatchSessionActivated",
+    "AdbTransportListWatchSessionActivationResult",
+    "AdbTransportListWatchSessionActivationStateConflict",
+    "AdbTransportListWatchSessionDeactivated",
+    "AdbTransportListWatchSessionDeactivationResult",
+    "AdbTransportListWatchSessionDeactivationStateConflict",
+    "AdbTransportListWatchSessionState",
+    "AdbTransportListWatchSessionStateStatus",
+    "AdbTransportListWatchSessionStateStore",
+    "AdbTransportListWatchSessionStateView",
+    "AdbTransportListWatchSessionStateWriter",
     "AdbTransportListWatchStream",
     "AdbTransportListWatchSignal",
     "AdbTransportListWatchStartCancelled",
