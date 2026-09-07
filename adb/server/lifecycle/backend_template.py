@@ -9,6 +9,7 @@ from eventing import EventPublisher
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
+from adb.server.state import AdbServerState
 from adb.server.lifecycle.backend import (
     AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
@@ -111,6 +112,16 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
         self._ownership: _AdbServerBackendOwnership[HandleT] | None = None
         self._releasing: _AdbServerBackendOwnership[HandleT] | None = None
         self._publisher = publisher
+
+    def read(self) -> AdbServerState:
+        """Atomically return the current generation and its usable endpoint, if any."""
+
+        with self._state_lock:
+            ownership = self._ownership
+            return AdbServerState(
+                generation=self._generation,
+                endpoint=None if ownership is None else ownership.acquisition.endpoint,
+            )
 
     @property
     def generation(self) -> AdbServerGeneration:

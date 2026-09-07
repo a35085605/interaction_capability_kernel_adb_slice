@@ -38,6 +38,7 @@ from adb.server.failure import (
 )
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.state import AdbServerState, AdbServerStateView
 
 __all__ = [
     "AdbServerActivated",
@@ -73,6 +74,8 @@ __all__ = [
     "AdbServerProtocolFailure",
     "AdbServerRequestFailure",
     "AdbServerServiceFailure",
+    "AdbServerState",
+    "AdbServerStateView",
     "AdbServerTimeoutFailure",
     "AdbServerUnavailableError",
 ]

@@ -9,6 +9,7 @@ from networking import TcpAddress
 
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGeneration
+from adb.server.state import AdbServerState
 from adb.server.lifecycle.backend import (
     AdbServerBackend,
     AdbServerBackendAcquired,
@@ -102,6 +103,11 @@ class AdbServerLifecycleCoordinator:
         self._publisher = publisher
         self._lock = RLock()
 
+    def read(self) -> AdbServerState:
+        """Return the backend's authoritative atomic server-state snapshot."""
+
+        return self._backend.read()
+
     def provision(self) -> AdbServerProvisionResult:
         """Ensure usable server access and publish activation for a new acquisition."""
 
@@ -169,7 +175,7 @@ class AdbServerLifecycleCoordinator:
             raise TypeError("expected_server must be AdbServerGeneration or None")
 
         expected_generation = (
-            self._backend.generation if expected_server is None else expected_server
+            self._backend.read().generation if expected_server is None else expected_server
         )
         release = self._backend.release(expected_generation)
         if isinstance(release, AdbServerBackendReleaseInactive):

@@ -6,6 +6,7 @@ from typing import Protocol, TypeAlias, runtime_checkable
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
+from adb.server.state import AdbServerStateView
 
 
 def _normalize_diagnostic(value: object) -> str:
@@ -139,13 +140,13 @@ AdbServerBackendReleaseResult: TypeAlias = (
 
 
 @runtime_checkable
-class AdbServerBackend(Protocol):
+class AdbServerBackend(AdbServerStateView, Protocol):
     """Sole authority for one runtime-scoped ADB server generation.
 
-    ``generation`` always exists and fences stale lifecycle work. It is captured by acquisition
-    attempts, remains stable across failed attempts, and advances when matching pending or usable
-    authority is logically released. ``current`` exists only while the current generation owns a
-    usable endpoint. All views and ownership transitions are concurrency-safe and linearizable.
+    ``read()`` returns the canonical atomic state snapshot. ``generation`` and ``current`` remain
+    available as compatibility views for callers that only need one field. Generation fences stale
+    lifecycle work and advances when matching pending or usable authority is logically released.
+    All views and ownership transitions are concurrency-safe and linearizable.
     """
 
     @property
