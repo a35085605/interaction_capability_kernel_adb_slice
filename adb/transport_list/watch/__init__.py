@@ -1,5 +1,9 @@
 """ADB transport-list watch protocols, lifecycle control, results, and signals."""
 
+from adb.transport_list.watch.backend import (
+    AdbTransportListWatchBackend,
+    AdbTransportListWatchBackendFactory,
+)
 from adb.transport_list.watch.controller import (
     AdbTransportListWatchController,
     AdbTransportListWatchStartCancelled,
@@ -34,6 +38,8 @@ from adb.transport_list.watch.signal import (
 
 __all__ = [
     "AdbTransportListWatchAttachment",
+    "AdbTransportListWatchBackend",
+    "AdbTransportListWatchBackendFactory",
     "AdbTransportListWatchCancelledError",
     "AdbTransportListWatchController",
     "AdbTransportListWatchError",

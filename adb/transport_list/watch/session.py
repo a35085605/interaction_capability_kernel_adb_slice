@@ -13,7 +13,12 @@ from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 @runtime_checkable
 class AdbTransportListWatchSession(Protocol):
-    """Short-lived raw watch session owning one observation-authority session identity."""
+    """Established watch resources with a stable session identity.
+
+    Backend-created sessions own only resources; their serial-use and failure
+    contract is defined by AdbTransportListWatchBackend. The legacy binding helper
+    below additionally owns observation authority for the existing controller path.
+    """
 
     @property
     def session_identity(self) -> AdbTransportListSessionIdentity:

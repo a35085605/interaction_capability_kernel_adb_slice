@@ -13,10 +13,11 @@ class AdbTransportListSessionEpoch(Epoch):
 
 @dataclass(frozen=True, slots=True, eq=False)
 class AdbTransportListSessionIdentity:
-    """Opaque identity for one authoritative transport-list producer session.
+    """Opaque identity for one transport-list producer session.
 
-    Object identity is the authority token. ``epoch`` is retained only as a monotonic runtime-local
-    diagnostic ordinal and does not participate in equality.
+    Object identity is the token checked by observation authority; issuance alone does not
+    activate that authority. ``epoch`` is retained only as a monotonic runtime-local diagnostic
+    ordinal and does not participate in equality.
     """
 
     epoch: AdbTransportListSessionEpoch
