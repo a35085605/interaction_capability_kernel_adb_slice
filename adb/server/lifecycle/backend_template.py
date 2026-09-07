@@ -13,11 +13,10 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireInterrupted,
+    AdbServerBackendAcquireRevoked,
     AdbServerBackendAcquireResult,
     AdbServerBackendAlreadyAcquired,
     AdbServerBackendReleased,
-    AdbServerBackendReleaseInterruptedAcquire,
     AdbServerBackendReleaseMismatch,
     AdbServerBackendReleaseResult,
 )
@@ -225,14 +224,14 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
             with self._state_lock:
                 if self._pending is pending:
                     self._pending = None
-            return AdbServerBackendAcquireInterrupted(pending.identity)
+            return AdbServerBackendAcquireRevoked(pending.identity)
         except AdbServerBackendAcquireError as exc:
             with self._state_lock:
                 revoked = pending.revoked
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbServerBackendAcquireInterrupted(pending.identity)
+                return AdbServerBackendAcquireRevoked(pending.identity)
             return AdbServerBackendAcquireFailed(exc.diagnostic)
         except BaseException:
             with self._state_lock:
@@ -263,7 +262,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
         # Release won the commit race. The endpoint must remain unavailable and a handle
         # obtained after revocation is cleanup-only evidence, never a new acquisition.
         self._cleanup_obtained_handle(handle)
-        return AdbServerBackendAcquireInterrupted(pending.identity)
+        return AdbServerBackendAcquireRevoked(pending.identity)
 
     def release(self, expected: AdbServerIdentity) -> AdbServerBackendReleaseResult:
         if not isinstance(expected, AdbServerIdentity):
@@ -278,7 +277,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                 # new acquisition from overlapping its cooperative cleanup.
                 pending.revoked = True
                 pending.cancellation.set()
-                return AdbServerBackendReleaseInterruptedAcquire(expected)
+                return AdbServerBackendReleased(identity=expected)
 
             ownership = self._ownership
             if ownership is not None and ownership.acquisition.identity == expected:
@@ -310,7 +309,10 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
 
         if signal is not None and publisher is not None:
             self._publish_release_signal(publisher, signal)
-        return AdbServerBackendReleased(ownership_to_release.acquisition)
+        return AdbServerBackendReleased(
+            identity=ownership_to_release.acquisition.identity,
+            acquisition=ownership_to_release.acquisition,
+        )
 
 
 __all__ = [

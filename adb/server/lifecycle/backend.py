@@ -63,8 +63,8 @@ class AdbServerBackendAcquireFailed:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireInterrupted:
-    """Evidence that a pre-issued server authority was released during acquisition."""
+class AdbServerBackendAcquireRevoked:
+    """Evidence that a pre-issued server authority was revoked during acquisition."""
 
     identity: AdbServerIdentity
 
@@ -78,30 +78,29 @@ AdbServerBackendAcquireResult: TypeAlias = (
     | AdbServerBackendAlreadyAcquired
     | AdbServerBackendAcquireDeferred
     | AdbServerBackendAcquireFailed
-    | AdbServerBackendAcquireInterrupted
+    | AdbServerBackendAcquireRevoked
 )
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendReleased:
-    """Evidence that matching usable backend ownership was released."""
+    """Evidence that matching backend authority was released.
 
-    acquisition: AdbServerBackendAcquired
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.acquisition, AdbServerBackendAcquired):
-            raise TypeError("acquisition must be AdbServerBackendAcquired")
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerBackendReleaseInterruptedAcquire:
-    """Evidence that release revoked a matching authority still being acquired."""
+    ``acquisition`` is present only when the authority had committed a usable endpoint
+    before release. How a pending acquisition is stopped is a backend implementation detail.
+    """
 
     identity: AdbServerIdentity
+    acquisition: AdbServerBackendAcquired | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.identity, AdbServerIdentity):
             raise TypeError("identity must be AdbServerIdentity")
+        if self.acquisition is not None:
+            if not isinstance(self.acquisition, AdbServerBackendAcquired):
+                raise TypeError("acquisition must be AdbServerBackendAcquired or None")
+            if self.acquisition.identity != self.identity:
+                raise ValueError("acquisition identity must match released identity")
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,9 +125,7 @@ class AdbServerBackendReleaseMismatch:
 
 
 AdbServerBackendReleaseResult: TypeAlias = (
-    AdbServerBackendReleased
-    | AdbServerBackendReleaseInterruptedAcquire
-    | AdbServerBackendReleaseMismatch
+    AdbServerBackendReleased | AdbServerBackendReleaseMismatch
 )
 
 
@@ -160,7 +157,7 @@ class AdbServerBackend(Protocol):
         ...
 
     def release(self, expected: AdbServerIdentity) -> AdbServerBackendReleaseResult:
-        """Revoke matching authority, interrupting acquisition when it is still pending."""
+        """Revoke matching authority and return authoritative release evidence."""
         ...
 
 
@@ -180,12 +177,11 @@ __all__ = [
     "AdbServerBackendAcquired",
     "AdbServerBackendAcquireDeferred",
     "AdbServerBackendAcquireFailed",
-    "AdbServerBackendAcquireInterrupted",
+    "AdbServerBackendAcquireRevoked",
     "AdbServerBackendAlreadyAcquired",
     "AdbServerBackendAcquireResult",
     "AdbServerBackendFactory",
     "AdbServerBackendReleased",
-    "AdbServerBackendReleaseInterruptedAcquire",
     "AdbServerBackendReleaseMismatch",
     "AdbServerBackendReleaseResult",
 ]

@@ -14,11 +14,10 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireInterrupted,
+    AdbServerBackendAcquireRevoked,
     AdbServerBackendAlreadyAcquired,
     AdbServerBackendAcquireResult,
     AdbServerBackendReleased,
-    AdbServerBackendReleaseInterruptedAcquire,
     AdbServerBackendReleaseMismatch,
 )
 from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
@@ -49,18 +48,29 @@ class AdbServerAlreadyInactive:
     """Evidence that unfenced retirement found no current backend authority."""
 
 
+@dataclass(frozen=True, slots=True)
+class AdbServerRetired:
+    """Evidence that matching authority was retired before activation committed."""
+
+    server: AdbServerIdentity
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.server, AdbServerIdentity):
+            raise TypeError("server must be AdbServerIdentity")
+
+
 AdbServerProvisionResult: TypeAlias = (
     tuple[AdbServerAlreadyActive]
     | tuple[
         AdbServerBackendAcquireDeferred
         | AdbServerBackendAcquireFailed
-        | AdbServerBackendAcquireInterrupted
+        | AdbServerBackendAcquireRevoked
     ]
     | tuple[AdbServerBackendAcquired, AdbServerActivated]
 )
 AdbServerRetireResult: TypeAlias = (
     AdbServerAlreadyInactive
-    | AdbServerBackendReleaseInterruptedAcquire
+    | AdbServerRetired
     | AdbServerBackendReleaseMismatch
     | AdbServerDeactivated
 )
@@ -105,7 +115,7 @@ class AdbServerLifecycleCoordinator:
             (
                 AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
-                AdbServerBackendAcquireInterrupted,
+                AdbServerBackendAcquireRevoked,
             ),
         ):
             return (acquisition,)
@@ -128,7 +138,7 @@ class AdbServerLifecycleCoordinator:
                 AdbServerBackendAlreadyAcquired,
                 AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
-                AdbServerBackendAcquireInterrupted,
+                AdbServerBackendAcquireRevoked,
             ),
         ):
             return acquisition
@@ -150,8 +160,8 @@ class AdbServerLifecycleCoordinator:
         """Release current authority, fenced by optional server identity.
 
         Pending acquisition is revocable before an endpoint exists; such retirement returns
-        backend interruption evidence and does not publish a deactivation event because no
-        activation was committed.
+        lifecycle retirement evidence and does not publish a deactivation event because no
+        activation was committed. How the backend stops pending acquisition is not observable.
         """
 
         if expected_server is not None and not isinstance(expected_server, AdbServerIdentity):
@@ -163,16 +173,12 @@ class AdbServerLifecycleCoordinator:
                 return AdbServerAlreadyInactive()
 
         release = self._backend.release(expected_server)
-        if isinstance(
-            release,
-            (
-                AdbServerBackendReleaseInterruptedAcquire,
-                AdbServerBackendReleaseMismatch,
-            ),
-        ):
+        if isinstance(release, AdbServerBackendReleaseMismatch):
             return release
         if not isinstance(release, AdbServerBackendReleased):
             raise TypeError("server backend release() returned an unsupported result")
+        if release.acquisition is None:
+            return AdbServerRetired(release.identity)
 
         deactivation = AdbServerDeactivated(release.acquisition)
         if self._publisher is not None:
@@ -193,5 +199,6 @@ __all__ = [
     "AdbServerAlreadyInactive",
     "AdbServerLifecycleCoordinator",
     "AdbServerProvisionResult",
+    "AdbServerRetired",
     "AdbServerRetireResult",
 ]

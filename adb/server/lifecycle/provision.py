@@ -7,7 +7,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireInterrupted,
+    AdbServerBackendAcquireRevoked,
 )
 from adb.server.lifecycle.coordinator import (
     AdbServerAlreadyActive,
@@ -39,7 +39,7 @@ AdbServerProvisionOutcome: TypeAlias = (
     AdbServerAlreadyActive
     | AdbServerBackendAcquireDeferred
     | AdbServerBackendAcquireFailed
-    | AdbServerBackendAcquireInterrupted
+    | AdbServerBackendAcquireRevoked
     | AdbServerProvisionActivated
 )
 
@@ -60,7 +60,7 @@ def classify_provision_result(
                 AdbServerAlreadyActive,
                 AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
-                AdbServerBackendAcquireInterrupted,
+                AdbServerBackendAcquireRevoked,
             ),
         ):
             return first
