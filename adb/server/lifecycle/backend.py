@@ -152,7 +152,10 @@ class AdbServerBackend(AdbServerStateView, Protocol):
         self,
         endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> AdbServerBackendAcquireResult:
-        """Acquire usable ADB server access within the current generation."""
+        """Acquire usable ADB server access within the current generation.
+
+        A successful constrained acquisition must expose exactly ``endpoint_constraint``.
+        """
         ...
 
     def release(self, expected: AdbServerGeneration) -> AdbServerBackendReleaseResult:

@@ -10,6 +10,8 @@ from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerState
+from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
+from adb.server.lifecycle.events import AdbServerActivated, AdbServerDeactivated
 from adb.server.lifecycle.backend import (
     AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
@@ -52,10 +54,10 @@ class AdbServerBackendReleaseCleanupUnconfirmed:
 
 @runtime_checkable
 class AdbServerBackendEventPublisherBinding(Protocol):
-    """Optional capability for binding backend-template signals to a runtime event publisher."""
+    """Optional capability for binding backend notifications to a runtime event publisher."""
 
     def bind_event_publisher(self, publisher: EventPublisher) -> None:
-        """Bind the publisher used for subsequent backend-template signals."""
+        """Bind the publisher used for state-transition notifications and cleanup signals."""
         ...
 
 
@@ -124,7 +126,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
             )
 
     def bind_event_publisher(self, publisher: EventPublisher) -> None:
-        """Bind the publisher for subsequent release-cleanup signals.
+        """Bind the publisher for subsequent backend notifications.
 
         Call during orchestration while no acquisition or release operation is active.
         """
@@ -155,6 +157,21 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
         handle: HandleT,
     ) -> AdbServerBackendReleaseCleanupUnconfirmed | None:
         """Release a previously obtained handle and report unconfirmed cleanup as signal data."""
+
+    @staticmethod
+    def _publish_notification(
+        publisher: EventPublisher,
+        event: AdbServerActivated | AdbServerDeactivated,
+    ) -> None:
+        """Publish a non-authoritative state-transition notification after commit.
+
+        Mutation results and backend state remain authoritative if notification delivery fails.
+        """
+
+        try:
+            publisher.publish(event)
+        except Exception:
+            return
 
     @staticmethod
     def _publish_release_signal(
@@ -236,6 +253,18 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                     self._pending = None
             raise
 
+        if endpoint_constraint is not None and endpoint != endpoint_constraint:
+            with self._state_lock:
+                revoked = self._generation != pending.generation
+                if self._pending is pending:
+                    self._pending = None
+            self._cleanup_obtained_handle(handle)
+            if revoked:
+                return AdbServerBackendAcquireRevoked(pending.generation)
+            raise AdbServerLifecycleConsistencyError(
+                "endpoint-constrained ADB server backend acquisition returned a different endpoint"
+            )
+
         try:
             acquisition = AdbServerBackendAcquired(
                 endpoint=endpoint,
@@ -248,13 +277,21 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
             self._cleanup_obtained_handle(handle)
             raise
 
+        committed = False
+        publisher: EventPublisher | None = None
         with self._state_lock:
             if self._pending is pending and self._generation == pending.generation:
                 self._pending = None
                 self._ownership = _AdbServerBackendOwnership(handle, acquisition)
-                return acquisition
-            if self._pending is pending:
+                publisher = self._publisher
+                committed = True
+            elif self._pending is pending:
                 self._pending = None
+
+        if committed:
+            if publisher is not None:
+                self._publish_notification(publisher, AdbServerActivated(acquisition.generation))
+            return acquisition
 
         # Release won the commit race. The endpoint must remain unavailable and a handle
         # obtained for an old generation is cleanup-only evidence, never a new acquisition.
@@ -300,13 +337,19 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
             ownership_to_release = ownership
 
         signal: AdbServerBackendReleaseCleanupUnconfirmed | None = None
+        publisher: EventPublisher | None = None
         try:
             signal = self._release_handle(ownership_to_release.handle)
         finally:
             with self._state_lock:
                 if self._releasing is ownership_to_release:
                     self._releasing = None
-                publisher = self._publisher if signal is not None else None
+                publisher = self._publisher
+            if publisher is not None:
+                self._publish_notification(
+                    publisher,
+                    AdbServerDeactivated(released_generation),
+                )
 
         if signal is not None and publisher is not None:
             self._publish_release_signal(publisher, signal)

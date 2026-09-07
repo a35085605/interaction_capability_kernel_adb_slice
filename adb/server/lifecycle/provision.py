@@ -29,7 +29,7 @@ class AdbServerProvisionActivated:
             raise TypeError("acquisition must be AdbServerBackendAcquired")
         if not isinstance(self.activation, AdbServerActivated):
             raise TypeError("activation must be AdbServerActivated")
-        if self.acquisition != self.activation.acquisition:
+        if self.acquisition.generation != self.activation.generation:
             raise AdbServerLifecycleConsistencyError(
                 "activated ADB server does not match backend acquisition"
             )

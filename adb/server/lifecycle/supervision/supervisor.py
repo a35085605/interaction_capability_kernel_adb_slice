@@ -3,25 +3,22 @@ from __future__ import annotations
 from datetime import timedelta
 from threading import RLock, Thread, current_thread
 
-from adb.server.lifecycle.coordinator import AdbServerLifecycleCoordinator
-from adb.server.lifecycle.provision import classify_provision_result
+from networking import TcpAddress
+from adb.server.endpoint import AdbServerEndpoint
+from adb.server.lifecycle.backend import AdbServerBackend, AdbServerBackendReleased
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
+    AdbServerRecoveryAcquired,
     AdbServerRecoveryAttempt,
+    AdbServerRecoveryDecision,
     AdbServerRecoveryFailed,
-)
-from adb.server.lifecycle.supervision.transition import (
-    AdbServerRecoveryCompleted,
-    AdbServerRecoveryInstruction,
-    decide_recovery_after_provision,
 )
 from adb.server.signal import (
     AdbServerReconciliationRequested,
     AdbServerRecoveryId,
     AdbServerRecoveryRetryDue,
 )
-from adb.server.lifecycle.events import AdbServerDeactivated
 from eventing import EventBus, EventSubscriptionToken
 from scheduling import ScheduleToken, TemporalScheduler
 
@@ -29,20 +26,26 @@ from scheduling import ScheduleToken, TemporalScheduler
 class AdbServerSupervisor:
     """Run reconcile-driven ADB server recovery cycles.
 
-    Owns reconciliation subscriptions, retry scheduling, and recovery worker lifetimes.
+    Owns reconciliation subscriptions, retry scheduling, and recovery worker lifetimes. Server
+    authority remains in the backend; manual mutation and desired-state coordination belong to
+    Runtime rather than this supervisor.
     """
 
     def __init__(
         self,
-        lifecycle: AdbServerLifecycleCoordinator,
+        lifecycle: AdbServerBackend,
         *,
         event_bus: EventBus | None,
         scheduler: TemporalScheduler[object] | None,
         policy: AdbServerRecoveryPolicy,
         recovery_enabled: bool,
+        endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> None:
-        if not isinstance(lifecycle, AdbServerLifecycleCoordinator):
-            raise TypeError("lifecycle must be AdbServerLifecycleCoordinator")
+        # Keep the legacy parameter name until Runtime is migrated separately. The required
+        # capability is now AdbServerBackend, so the supervisor consumes authoritative results
+        # directly instead of lifecycle evidence tuples.
+        if not isinstance(lifecycle, AdbServerBackend):
+            raise TypeError("lifecycle must satisfy AdbServerBackend")
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if scheduler is not None and not isinstance(scheduler, TemporalScheduler):
@@ -53,11 +56,14 @@ class AdbServerSupervisor:
             raise TypeError("policy must be AdbServerRecoveryPolicy")
         if not isinstance(recovery_enabled, bool):
             raise TypeError("recovery_enabled must be bool")
-        self._lifecycle = lifecycle
+        if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
+            raise TypeError("endpoint_constraint must be TcpAddress or None")
+        self._backend = lifecycle
         self._event_bus = event_bus
         self._scheduler = scheduler
         self._policy = policy
         self._recovery_enabled = recovery_enabled
+        self._endpoint_constraint = endpoint_constraint
 
         self._lock = RLock()
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
@@ -148,14 +154,14 @@ class AdbServerSupervisor:
         self,
         event: AdbServerReconciliationRequested,
     ) -> None:
-        """Commit a requested retirement, then start recovery."""
+        """Commit a generation-fenced release, then start recovery when an endpoint was removed."""
 
         with self._lock:
             if not self._running_locked():
                 return
 
-        retirement = self._lifecycle.retire(expected_server=event.server)
-        if not isinstance(retirement, AdbServerDeactivated):
+        release = self._backend.release(event.server)
+        if not isinstance(release, AdbServerBackendReleased) or release.acquisition is None:
             return
 
         self._request_recovery()
@@ -269,9 +275,9 @@ class AdbServerSupervisor:
                 if not self._is_current_recovery_locked(recovery, recovery_id):
                     return
 
-            outcome = classify_provision_result(self._lifecycle.provision())
-            instruction = decide_recovery_after_provision(recovery, outcome)
-            self._apply_recovery_instruction(recovery, recovery_id, instruction)
+            result = self._backend.acquire(self._endpoint_constraint)
+            decision = recovery.decide_after(result)
+            self._apply_recovery_decision(recovery, recovery_id, decision)
         except BaseException:
             # Contract/invariant failures are not retryable backend outcomes. Release this cycle so
             # later explicit recovery requests cannot become permanently pending behind a dead
@@ -282,24 +288,24 @@ class AdbServerSupervisor:
             with self._lock:
                 self._attempt_threads.discard(active_thread)
 
-    def _apply_recovery_instruction(
+    def _apply_recovery_decision(
         self,
         recovery: AdbServerRecovery,
         recovery_id: AdbServerRecoveryId,
-        instruction: AdbServerRecoveryInstruction,
+        decision: AdbServerRecoveryDecision,
     ) -> None:
-        """Apply one stateful recovery instruction through supervisor-owned effects."""
+        """Apply one stateful recovery decision through supervisor-owned effects."""
 
-        if isinstance(instruction, AdbServerRecoveryCompleted):
+        if isinstance(decision, AdbServerRecoveryAcquired):
             self._finish_recovery(recovery, recovery_id)
             return
-        if isinstance(instruction, AdbServerRecoveryAttempt):
-            self._apply_recovery_attempt(recovery, recovery_id, instruction)
+        if isinstance(decision, AdbServerRecoveryAttempt):
+            self._apply_recovery_attempt(recovery, recovery_id, decision)
             return
-        if isinstance(instruction, AdbServerRecoveryFailed):
+        if isinstance(decision, AdbServerRecoveryFailed):
             self._finish_recovery(recovery, recovery_id)
             return
-        raise TypeError("instruction must be AdbServerRecoveryInstruction")
+        raise TypeError("decision must be AdbServerRecoveryDecision")
 
     def _abort_recovery(
         self,

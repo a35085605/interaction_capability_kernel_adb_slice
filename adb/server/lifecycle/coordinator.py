@@ -21,7 +21,9 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendReleased,
     AdbServerBackendReleaseInactive,
     AdbServerBackendReleaseMismatch,
+    AdbServerBackendReleaseResult,
 )
+from adb.server.lifecycle.backend_template import AdbServerBackendEventPublisherBinding
 from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
 from adb.server.lifecycle.events import AdbServerActivated, AdbServerDeactivated
 
@@ -79,10 +81,12 @@ AdbServerRetireResult: TypeAlias = (
 
 
 class AdbServerLifecycleCoordinator:
-    """Coordinate backend generation authority with lifecycle evidence and publication.
+    """Compatibility facade retained while runtime orchestration migrates to the backend.
 
-    The backend is the sole authority for the current server generation. The coordinator
-    adds endpoint-constraint orchestration and lifecycle event publication only.
+    Server generation authority and lifecycle notifications belong to ``AdbServerBackend``.
+    New supervision code consumes backend acquire/release results directly. This facade keeps
+    the former provision/retire surface and endpoint-constraint storage available until Runtime
+    is migrated in a separate change.
     """
 
     def __init__(
@@ -100,21 +104,42 @@ class AdbServerLifecycleCoordinator:
             raise TypeError("publisher must satisfy EventPublisher or be None")
         self._backend = backend
         self._endpoint_constraint = endpoint_constraint
-        self._publisher = publisher
+        self._publisher: EventPublisher | None = publisher
         self._lock = RLock()
+
+        # Template-backed implementations now publish state-transition notifications themselves.
+        # Keep coordinator publication only as a compatibility fallback for other backends.
+        if publisher is not None and isinstance(backend, AdbServerBackendEventPublisherBinding):
+            backend.bind_event_publisher(publisher)
+            self._publisher = None
 
     def read(self) -> AdbServerState:
         """Return the backend's authoritative atomic server-state snapshot."""
 
         return self._backend.read()
 
+    def acquire(
+        self,
+        endpoint_constraint: AdbServerEndpoint | None = None,
+    ) -> AdbServerBackendAcquireResult:
+        """Acquire through the backend using the configured constraint when none is supplied."""
+
+        if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
+            raise TypeError("endpoint_constraint must be TcpAddress or None")
+        if endpoint_constraint is None:
+            with self._lock:
+                endpoint_constraint = self._endpoint_constraint
+        return self._acquire_backend(endpoint_constraint)
+
+    def release(self, expected: AdbServerGeneration) -> AdbServerBackendReleaseResult:
+        """Release matching backend authority directly."""
+
+        return self._backend.release(expected)
+
     def provision(self) -> AdbServerProvisionResult:
-        """Ensure usable server access and publish activation for a new acquisition."""
+        """Compatibility adapter from backend acquisition results to legacy evidence tuples."""
 
-        with self._lock:
-            endpoint_constraint = self._endpoint_constraint
-
-        acquisition = self._acquire_backend(endpoint_constraint)
+        acquisition = self.acquire()
         if isinstance(acquisition, AdbServerBackendAlreadyAcquired):
             return (AdbServerAlreadyActive(acquisition.acquisition),)
         if isinstance(
@@ -129,7 +154,7 @@ class AdbServerLifecycleCoordinator:
         if not isinstance(acquisition, AdbServerBackendAcquired):
             raise TypeError("server backend acquire() returned an unsupported result")
 
-        activation = AdbServerActivated(acquisition)
+        activation = AdbServerActivated(acquisition.generation)
         if self._publisher is not None:
             self._publisher.publish(activation)
         return (acquisition, activation)
@@ -152,6 +177,8 @@ class AdbServerLifecycleCoordinator:
         if not isinstance(acquisition, AdbServerBackendAcquired):
             raise TypeError("server backend acquire() returned an unsupported result")
 
+        # Backend templates enforce this before commit. Retain the guard while arbitrary
+        # AdbServerBackend implementations may still be used through this compatibility facade.
         if endpoint_constraint is not None and acquisition.endpoint != endpoint_constraint:
             self._backend.release(acquisition.generation)
             raise AdbServerLifecycleConsistencyError(
@@ -164,12 +191,7 @@ class AdbServerLifecycleCoordinator:
         *,
         expected_server: AdbServerGeneration | None = None,
     ) -> AdbServerRetireResult:
-        """Release current authority, fenced by optional server generation.
-
-        The backend always has a generation, including while idle. Unfenced retirement snapshots
-        that generation and lets ``release`` atomically distinguish inactivity from pending or
-        usable authority. Pending acquisition is revocable before an endpoint exists.
-        """
+        """Compatibility adapter from backend release results to legacy retirement evidence."""
 
         if expected_server is not None and not isinstance(expected_server, AdbServerGeneration):
             raise TypeError("expected_server must be AdbServerGeneration or None")
@@ -177,7 +199,7 @@ class AdbServerLifecycleCoordinator:
         expected_generation = (
             self._backend.read().generation if expected_server is None else expected_server
         )
-        release = self._backend.release(expected_generation)
+        release = self.release(expected_generation)
         if isinstance(release, AdbServerBackendReleaseInactive):
             return AdbServerAlreadyInactive()
         if isinstance(release, AdbServerBackendReleaseMismatch):
@@ -187,13 +209,13 @@ class AdbServerLifecycleCoordinator:
         if release.acquisition is None:
             return AdbServerRetired(release.generation)
 
-        deactivation = AdbServerDeactivated(release.acquisition)
+        deactivation = AdbServerDeactivated(release.generation)
         if self._publisher is not None:
             self._publisher.publish(deactivation)
         return deactivation
 
     def configure_endpoint_constraint(self, endpoint_constraint: AdbServerEndpoint | None) -> None:
-        """Replace the endpoint constraint captured by subsequent acquisition attempts."""
+        """Replace the endpoint constraint captured by subsequent compatibility acquisitions."""
 
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
             raise TypeError("endpoint_constraint must be TcpAddress or None")
