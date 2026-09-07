@@ -8,7 +8,7 @@ from eventing import EventPublisher
 from networking import TcpAddress
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServerIdentity
+from adb.server.generation import AdbServerGeneration
 from adb.server.lifecycle.backend import (
     AdbServerBackend,
     AdbServerBackendAcquired,
@@ -18,6 +18,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAlreadyAcquired,
     AdbServerBackendAcquireResult,
     AdbServerBackendReleased,
+    AdbServerBackendReleaseInactive,
     AdbServerBackendReleaseMismatch,
 )
 from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
@@ -35,8 +36,8 @@ class AdbServerAlreadyActive:
             raise TypeError("acquisition must be AdbServerBackendAcquired")
 
     @property
-    def server(self) -> AdbServerIdentity:
-        return self.acquisition.identity
+    def server(self) -> AdbServerGeneration:
+        return self.acquisition.generation
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
@@ -45,18 +46,18 @@ class AdbServerAlreadyActive:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerAlreadyInactive:
-    """Evidence that unfenced retirement found no current backend authority."""
+    """Evidence that retirement found no authority in the matching current generation."""
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRetired:
-    """Evidence that matching authority was retired before activation committed."""
+    """Evidence that matching generation was retired before activation committed."""
 
-    server: AdbServerIdentity
+    server: AdbServerGeneration
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server, AdbServerIdentity):
-            raise TypeError("server must be AdbServerIdentity")
+        if not isinstance(self.server, AdbServerGeneration):
+            raise TypeError("server must be AdbServerGeneration")
 
 
 AdbServerProvisionResult: TypeAlias = (
@@ -77,7 +78,7 @@ AdbServerRetireResult: TypeAlias = (
 
 
 class AdbServerLifecycleCoordinator:
-    """Coordinate backend authority with lifecycle evidence and publication.
+    """Coordinate backend generation authority with lifecycle evidence and publication.
 
     The backend is the sole authority for the current server generation. The coordinator
     adds endpoint-constraint orchestration and lifecycle event publication only.
@@ -146,7 +147,7 @@ class AdbServerLifecycleCoordinator:
             raise TypeError("server backend acquire() returned an unsupported result")
 
         if endpoint_constraint is not None and acquisition.endpoint != endpoint_constraint:
-            self._backend.release(acquisition.identity)
+            self._backend.release(acquisition.generation)
             raise AdbServerLifecycleConsistencyError(
                 "endpoint-constrained ADB server backend acquisition returned a different endpoint"
             )
@@ -155,30 +156,30 @@ class AdbServerLifecycleCoordinator:
     def retire(
         self,
         *,
-        expected_server: AdbServerIdentity | None = None,
+        expected_server: AdbServerGeneration | None = None,
     ) -> AdbServerRetireResult:
-        """Release current authority, fenced by optional server identity.
+        """Release current authority, fenced by optional server generation.
 
-        Pending acquisition is revocable before an endpoint exists; such retirement returns
-        lifecycle retirement evidence and does not publish a deactivation event because no
-        activation was committed. How the backend stops pending acquisition is not observable.
+        The backend always has a generation, including while idle. Unfenced retirement snapshots
+        that generation and lets ``release`` atomically distinguish inactivity from pending or
+        usable authority. Pending acquisition is revocable before an endpoint exists.
         """
 
-        if expected_server is not None and not isinstance(expected_server, AdbServerIdentity):
-            raise TypeError("expected_server must be AdbServerIdentity or None")
+        if expected_server is not None and not isinstance(expected_server, AdbServerGeneration):
+            raise TypeError("expected_server must be AdbServerGeneration or None")
 
-        if expected_server is None:
-            expected_server = self._backend.identity
-            if expected_server is None:
-                return AdbServerAlreadyInactive()
-
-        release = self._backend.release(expected_server)
+        expected_generation = (
+            self._backend.generation if expected_server is None else expected_server
+        )
+        release = self._backend.release(expected_generation)
+        if isinstance(release, AdbServerBackendReleaseInactive):
+            return AdbServerAlreadyInactive()
         if isinstance(release, AdbServerBackendReleaseMismatch):
             return release
         if not isinstance(release, AdbServerBackendReleased):
             raise TypeError("server backend release() returned an unsupported result")
         if release.acquisition is None:
-            return AdbServerRetired(release.identity)
+            return AdbServerRetired(release.generation)
 
         deactivation = AdbServerDeactivated(release.acquisition)
         if self._publisher is not None:

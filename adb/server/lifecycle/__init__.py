@@ -15,6 +15,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireResult,
     AdbServerBackendFactory,
     AdbServerBackendReleased,
+    AdbServerBackendReleaseInactive,
     AdbServerBackendReleaseMismatch,
     AdbServerBackendReleaseResult,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "AdbServerBackendEventPublisherBinding",
     "AdbServerBackendFactory",
     "AdbServerBackendReleased",
+    "AdbServerBackendReleaseInactive",
     "AdbServerBackendReleaseCleanupUnconfirmed",
     "AdbServerBackendReleaseMismatch",
     "AdbServerBackendReleaseResult",

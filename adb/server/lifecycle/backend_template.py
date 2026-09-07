@@ -8,7 +8,7 @@ from typing import Generic, Protocol, TypeVar, runtime_checkable
 from eventing import EventPublisher
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
+from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.lifecycle.backend import (
     AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
@@ -17,6 +17,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireResult,
     AdbServerBackendAlreadyAcquired,
     AdbServerBackendReleased,
+    AdbServerBackendReleaseInactive,
     AdbServerBackendReleaseMismatch,
     AdbServerBackendReleaseResult,
 )
@@ -66,7 +67,7 @@ class AdbServerBackendAcquireError(RuntimeError):
 
 
 class AdbServerBackendAcquireInterruptedError(RuntimeError):
-    """Cooperative interruption after the current server authority was released."""
+    """Cooperative interruption after the captured server generation was released."""
 
 
 HandleT = TypeVar("HandleT")
@@ -78,50 +79,45 @@ class _AdbServerBackendOwnership(Generic[HandleT]):
     acquisition: AdbServerBackendAcquired
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _AdbServerBackendPendingAcquire:
-    identity: AdbServerIdentity
+    generation: AdbServerGeneration
     cancellation: Event
-    revoked: bool = False
 
 
 class AdbServerBackendTemplate(Generic[HandleT], ABC):
-    """Template for one fenced server authority and its optional usable endpoint.
+    """Template for one current server generation and its optional usable endpoint.
 
-    A fresh server identity is issued before implementation-specific acquisition begins.
-    While acquisition is pending, ``identity`` is non-``None`` and ``current`` is ``None``.
-    Release may revoke that identity and signal acquisition cancellation without waiting for
-    the blocking acquisition path to finish. Subclasses provide cancellable handle acquisition
-    and handle release mechanics.
+    The backend receives its first generation during construction. Each acquisition captures
+    that current generation before implementation-specific blocking work begins. Failed or
+    retried acquisitions do not change it. A matching release advances the generation at the
+    logical revocation point, before cancellation or physical handle cleanup completes.
     """
 
     def __init__(
         self,
-        identity_issuer: AdbServerIdentityIssuer,
+        generation_issuer: AdbServerGenerationIssuer,
         *,
         publisher: EventPublisher | None = None,
     ) -> None:
-        if not isinstance(identity_issuer, AdbServerIdentityIssuer):
-            raise TypeError("identity_issuer must be AdbServerIdentityIssuer")
+        if not isinstance(generation_issuer, AdbServerGenerationIssuer):
+            raise TypeError("generation_issuer must be AdbServerGenerationIssuer")
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
         self._state_lock = Lock()
-        self._identity_issuer = identity_issuer
+        self._generation_issuer = generation_issuer
+        self._generation = generation_issuer.issue()
         self._pending: _AdbServerBackendPendingAcquire | None = None
         self._ownership: _AdbServerBackendOwnership[HandleT] | None = None
         self._releasing: _AdbServerBackendOwnership[HandleT] | None = None
         self._publisher = publisher
 
     @property
-    def identity(self) -> AdbServerIdentity | None:
-        """Atomically return the current authority identity, including pending acquisition."""
+    def generation(self) -> AdbServerGeneration:
+        """Atomically return the current generation, including while the backend is idle."""
 
         with self._state_lock:
-            pending = self._pending
-            if pending is not None and not pending.revoked:
-                return pending.identity
-            ownership = self._ownership
-            return None if ownership is None else ownership.acquisition.identity
+            return self._generation
 
     @property
     def current(self) -> AdbServerBackendAcquired | None:
@@ -207,10 +203,10 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                     "ADB server backend is busy with another operation"
                 )
 
-            # Identity is the authority fence for the entire acquisition attempt. It exists
-            # before any blocking implementation-specific acquisition work can begin.
+            # Capture the already-current generation before blocking acquisition work begins.
+            # Failed attempts leave it unchanged; only release advances the generation.
             pending = _AdbServerBackendPendingAcquire(
-                identity=self._identity_issuer.issue(),
+                generation=self._generation,
                 cancellation=Event(),
             )
             self._pending = pending
@@ -222,16 +218,21 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
             )
         except AdbServerBackendAcquireInterruptedError:
             with self._state_lock:
-                if self._pending is pending:
-                    self._pending = None
-            return AdbServerBackendAcquireRevoked(pending.identity)
-        except AdbServerBackendAcquireError as exc:
-            with self._state_lock:
-                revoked = pending.revoked
+                revoked = self._generation != pending.generation
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbServerBackendAcquireRevoked(pending.identity)
+                return AdbServerBackendAcquireRevoked(pending.generation)
+            raise RuntimeError(
+                "ADB server backend acquisition was interrupted without generation revocation"
+            )
+        except AdbServerBackendAcquireError as exc:
+            with self._state_lock:
+                revoked = self._generation != pending.generation
+                if self._pending is pending:
+                    self._pending = None
+            if revoked:
+                return AdbServerBackendAcquireRevoked(pending.generation)
             return AdbServerBackendAcquireFailed(exc.diagnostic)
         except BaseException:
             with self._state_lock:
@@ -242,7 +243,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
         try:
             acquisition = AdbServerBackendAcquired(
                 endpoint=endpoint,
-                identity=pending.identity,
+                generation=pending.generation,
             )
         except BaseException:
             with self._state_lock:
@@ -252,7 +253,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
             raise
 
         with self._state_lock:
-            if self._pending is pending and not pending.revoked:
+            if self._pending is pending and self._generation == pending.generation:
                 self._pending = None
                 self._ownership = _AdbServerBackendOwnership(handle, acquisition)
                 return acquisition
@@ -260,43 +261,47 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                 self._pending = None
 
         # Release won the commit race. The endpoint must remain unavailable and a handle
-        # obtained after revocation is cleanup-only evidence, never a new acquisition.
+        # obtained for an old generation is cleanup-only evidence, never a new acquisition.
         self._cleanup_obtained_handle(handle)
-        return AdbServerBackendAcquireRevoked(pending.identity)
+        return AdbServerBackendAcquireRevoked(pending.generation)
 
-    def release(self, expected: AdbServerIdentity) -> AdbServerBackendReleaseResult:
-        if not isinstance(expected, AdbServerIdentity):
-            raise TypeError("expected must be AdbServerIdentity")
+    def release(self, expected: AdbServerGeneration) -> AdbServerBackendReleaseResult:
+        if not isinstance(expected, AdbServerGeneration):
+            raise TypeError("expected must be AdbServerGeneration")
 
         ownership_to_release: _AdbServerBackendOwnership[HandleT] | None = None
+        released_generation = expected
         with self._state_lock:
-            pending = self._pending
-            if pending is not None and not pending.revoked and pending.identity == expected:
-                # Revocation linearizes here: the pending authority no longer has an endpoint
-                # and may never commit one. The operation remains registered only to prevent a
-                # new acquisition from overlapping its cooperative cleanup.
-                pending.revoked = True
-                pending.cancellation.set()
-                return AdbServerBackendReleased(identity=expected)
-
-            ownership = self._ownership
-            if ownership is not None and ownership.acquisition.identity == expected:
-                # Logical release linearizes before potentially blocking handle cleanup. From
-                # this point current endpoint is None and stale work is fenced by identity.
-                self._ownership = None
-                self._releasing = ownership
-                ownership_to_release = ownership
-            else:
-                current_identity: AdbServerIdentity | None = None
-                if pending is not None and not pending.revoked:
-                    current_identity = pending.identity
-                elif ownership is not None:
-                    current_identity = ownership.acquisition.identity
-                current = None if ownership is None else ownership.acquisition
+            if expected != self._generation:
+                ownership = self._ownership
                 return AdbServerBackendReleaseMismatch(
-                    current=current,
-                    current_identity=current_identity,
+                    current=None if ownership is None else ownership.acquisition,
+                    current_generation=self._generation,
                 )
+
+            pending = self._pending
+            current_pending = (
+                pending if pending is not None and pending.generation == self._generation else None
+            )
+            ownership = self._ownership
+            if current_pending is None and ownership is None:
+                return AdbServerBackendReleaseInactive(generation=expected)
+
+            # Logical revocation linearizes here. Advancing the generation immediately fences
+            # all work captured under ``expected`` before cancellation or physical cleanup.
+            released_generation = self._generation
+            self._generation = self._generation_issuer.issue()
+
+            if current_pending is not None:
+                current_pending.cancellation.set()
+                return AdbServerBackendReleased(generation=released_generation)
+
+            if ownership is None:
+                raise RuntimeError("ADB server backend authority state is inconsistent")
+
+            self._ownership = None
+            self._releasing = ownership
+            ownership_to_release = ownership
 
         signal: AdbServerBackendReleaseCleanupUnconfirmed | None = None
         try:
@@ -310,7 +315,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
         if signal is not None and publisher is not None:
             self._publish_release_signal(publisher, signal)
         return AdbServerBackendReleased(
-            identity=ownership_to_release.acquisition.identity,
+            generation=released_generation,
             acquisition=ownership_to_release.acquisition,
         )
 

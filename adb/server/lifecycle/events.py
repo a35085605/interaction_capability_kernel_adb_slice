@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServerIdentity
+from adb.server.generation import AdbServerGeneration
 from adb.server.lifecycle.backend import AdbServerBackendAcquired
 
 
@@ -18,8 +18,8 @@ class AdbServerActivated:
             raise TypeError("acquisition must be AdbServerBackendAcquired")
 
     @property
-    def server(self) -> AdbServerIdentity:
-        return self.acquisition.identity
+    def server(self) -> AdbServerGeneration:
+        return self.acquisition.generation
 
     @property
     def endpoint(self) -> AdbServerEndpoint:
@@ -37,8 +37,8 @@ class AdbServerDeactivated:
             raise TypeError("acquisition must be AdbServerBackendAcquired")
 
     @property
-    def server(self) -> AdbServerIdentity:
-        return self.acquisition.identity
+    def server(self) -> AdbServerGeneration:
+        return self.acquisition.generation
 
     @property
     def endpoint(self) -> AdbServerEndpoint:

@@ -1,4 +1,4 @@
-"""ADB server endpoint, identity, lifecycle, failure, and availability contracts."""
+"""ADB server endpoint, generation, lifecycle, failure, and availability contracts."""
 
 from adb.server.availability import AdbServerUnavailableError
 from adb.server.lifecycle import (
@@ -13,6 +13,7 @@ from adb.server.lifecycle import (
     AdbServerBackendEventPublisherBinding,
     AdbServerBackendFactory,
     AdbServerBackendReleased,
+    AdbServerBackendReleaseInactive,
     AdbServerBackendReleaseCleanupUnconfirmed,
     AdbServerBackendReleaseMismatch,
     AdbServerBackendReleaseResult,
@@ -35,7 +36,7 @@ from adb.server.failure import (
     AdbServerServiceFailure,
     AdbServerTimeoutFailure,
 )
-from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
+from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.endpoint import AdbServerEndpoint
 
 __all__ = [
@@ -50,6 +51,7 @@ __all__ = [
     "AdbServerBackendEventPublisherBinding",
     "AdbServerBackendFactory",
     "AdbServerBackendReleased",
+    "AdbServerBackendReleaseInactive",
     "AdbServerBackendReleaseCleanupUnconfirmed",
     "AdbServerBackendReleaseMismatch",
     "AdbServerBackendReleaseResult",
@@ -58,8 +60,8 @@ __all__ = [
     "AdbServerDeactivated",
     "AdbServerEndpoint",
     "AdbServerFailure",
-    "AdbServerIdentity",
-    "AdbServerIdentityIssuer",
+    "AdbServerGeneration",
+    "AdbServerGenerationIssuer",
     "AdbServerLaunchFailure",
     "AdbServerLifecycleConsistencyError",
     "AdbServerLifecycleCoordinator",

@@ -9,7 +9,7 @@ from adb.server.failure import (
     AdbServerLivenessFailure,
     AdbServerProcessExitedFailure,
 )
-from adb.server.identity import AdbServerIdentity
+from adb.server.generation import AdbServerGeneration
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -40,17 +40,17 @@ _LIVENESS_FAILURE_TYPES = (
 )
 
 
-def _require_server(value: object) -> AdbServerIdentity:
-    if not isinstance(value, AdbServerIdentity):
-        raise TypeError("server must be AdbServerIdentity")
+def _require_server(value: object) -> AdbServerGeneration:
+    if not isinstance(value, AdbServerGeneration):
+        raise TypeError("server must be AdbServerGeneration")
     return value
 
 
 class _ServerSignalProjection:
-    server: AdbServerIdentity
+    server: AdbServerGeneration
 
     @property
-    def identity(self) -> AdbServerIdentity:
+    def generation(self) -> AdbServerGeneration:
         return self.server
 
 
@@ -58,7 +58,7 @@ class _ServerSignalProjection:
 class AdbServerReconciliationRequested(_ServerSignalProjection):
     """Request reconciliation after terminal server liveness failure."""
 
-    server: AdbServerIdentity
+    server: AdbServerGeneration
     failure: AdbServerLivenessFailure
 
     def __post_init__(self) -> None:

@@ -5,7 +5,7 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
+from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 
 
 def _normalize_diagnostic(value: object) -> str:
@@ -22,13 +22,13 @@ class AdbServerBackendAcquired:
     """One runtime-scoped usable ADB server acquisition retained by the backend."""
 
     endpoint: AdbServerEndpoint
-    identity: AdbServerIdentity
+    generation: AdbServerGeneration
 
     def __post_init__(self) -> None:
         if not isinstance(self.endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
-        if not isinstance(self.identity, AdbServerIdentity):
-            raise TypeError("identity must be AdbServerIdentity")
+        if not isinstance(self.generation, AdbServerGeneration):
+            raise TypeError("generation must be AdbServerGeneration")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,13 +64,13 @@ class AdbServerBackendAcquireFailed:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquireRevoked:
-    """Evidence that a pre-issued server authority was revoked during acquisition."""
+    """Evidence that the captured server generation was revoked during acquisition."""
 
-    identity: AdbServerIdentity
+    generation: AdbServerGeneration
 
     def __post_init__(self) -> None:
-        if not isinstance(self.identity, AdbServerIdentity):
-            raise TypeError("identity must be AdbServerIdentity")
+        if not isinstance(self.generation, AdbServerGeneration):
+            raise TypeError("generation must be AdbServerGeneration")
 
 
 AdbServerBackendAcquireResult: TypeAlias = (
@@ -86,46 +86,55 @@ AdbServerBackendAcquireResult: TypeAlias = (
 class AdbServerBackendReleased:
     """Evidence that matching backend authority was released.
 
-    ``acquisition`` is present only when the authority had committed a usable endpoint
-    before release. How a pending acquisition is stopped is a backend implementation detail.
+    ``generation`` is the generation that was revoked. ``acquisition`` is present only when
+    that generation had committed a usable endpoint before release. Physical cleanup may still
+    be in progress after logical release has advanced the backend generation.
     """
 
-    identity: AdbServerIdentity
+    generation: AdbServerGeneration
     acquisition: AdbServerBackendAcquired | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.identity, AdbServerIdentity):
-            raise TypeError("identity must be AdbServerIdentity")
+        if not isinstance(self.generation, AdbServerGeneration):
+            raise TypeError("generation must be AdbServerGeneration")
         if self.acquisition is not None:
             if not isinstance(self.acquisition, AdbServerBackendAcquired):
                 raise TypeError("acquisition must be AdbServerBackendAcquired or None")
-            if self.acquisition.identity != self.identity:
-                raise ValueError("acquisition identity must match released identity")
+            if self.acquisition.generation != self.generation:
+                raise ValueError("acquisition generation must match released generation")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerBackendReleaseInactive:
+    """Evidence that the matching current generation has no authority to release."""
+
+    generation: AdbServerGeneration
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.generation, AdbServerGeneration):
+            raise TypeError("generation must be AdbServerGeneration")
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendReleaseMismatch:
-    """Evidence that release did not match the backend's current server authority."""
+    """Evidence that release did not match the backend's current server generation."""
 
     current: AdbServerBackendAcquired | None
-    current_identity: AdbServerIdentity | None = None
+    current_generation: AdbServerGeneration
 
     def __post_init__(self) -> None:
         if self.current is not None and not isinstance(self.current, AdbServerBackendAcquired):
             raise TypeError("current must be AdbServerBackendAcquired or None")
-        if self.current_identity is not None and not isinstance(
-            self.current_identity, AdbServerIdentity
-        ):
-            raise TypeError("current_identity must be AdbServerIdentity or None")
-        if self.current is not None:
-            if self.current_identity is None:
-                object.__setattr__(self, "current_identity", self.current.identity)
-            elif self.current_identity != self.current.identity:
-                raise ValueError("current_identity must match current acquisition identity")
+        if not isinstance(self.current_generation, AdbServerGeneration):
+            raise TypeError("current_generation must be AdbServerGeneration")
+        if self.current is not None and self.current.generation != self.current_generation:
+            raise ValueError("current_generation must match current acquisition generation")
 
 
 AdbServerBackendReleaseResult: TypeAlias = (
-    AdbServerBackendReleased | AdbServerBackendReleaseMismatch
+    AdbServerBackendReleased
+    | AdbServerBackendReleaseInactive
+    | AdbServerBackendReleaseMismatch
 )
 
 
@@ -133,15 +142,15 @@ AdbServerBackendReleaseResult: TypeAlias = (
 class AdbServerBackend(Protocol):
     """Sole authority for one runtime-scoped ADB server generation.
 
-    ``identity`` exists while one server authority is pending or usable. ``current`` only
-    exists once that authority has a usable endpoint. ``identity``, ``current``, ``acquire``
-    and ``release`` are concurrency-safe, linearizable views or ownership transitions.
-    The current authority identity fences stale lifecycle work.
+    ``generation`` always exists and fences stale lifecycle work. It is captured by acquisition
+    attempts, remains stable across failed attempts, and advances when matching pending or usable
+    authority is logically released. ``current`` exists only while the current generation owns a
+    usable endpoint. All views and ownership transitions are concurrency-safe and linearizable.
     """
 
     @property
-    def identity(self) -> AdbServerIdentity | None:
-        """Return the current server authority identity, including during acquisition."""
+    def generation(self) -> AdbServerGeneration:
+        """Return the current server generation, including while the backend is idle."""
         ...
 
     @property
@@ -153,11 +162,11 @@ class AdbServerBackend(Protocol):
         self,
         endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> AdbServerBackendAcquireResult:
-        """Acquire usable ADB server access, optionally constrained to ``endpoint_constraint``."""
+        """Acquire usable ADB server access within the current generation."""
         ...
 
-    def release(self, expected: AdbServerIdentity) -> AdbServerBackendReleaseResult:
-        """Revoke matching authority and return authoritative release evidence."""
+    def release(self, expected: AdbServerGeneration) -> AdbServerBackendReleaseResult:
+        """Release matching authority and advance the generation at logical revocation."""
         ...
 
 
@@ -166,9 +175,9 @@ class AdbServerBackendFactory(Protocol):
 
     def __call__(
         self,
-        identity_issuer: AdbServerIdentityIssuer,
+        generation_issuer: AdbServerGenerationIssuer,
     ) -> AdbServerBackend:
-        """Construct a backend using the runtime-scoped server identity issuer."""
+        """Construct a backend using the runtime-scoped server generation issuer."""
         ...
 
 
@@ -182,6 +191,7 @@ __all__ = [
     "AdbServerBackendAcquireResult",
     "AdbServerBackendFactory",
     "AdbServerBackendReleased",
+    "AdbServerBackendReleaseInactive",
     "AdbServerBackendReleaseMismatch",
     "AdbServerBackendReleaseResult",
 ]
