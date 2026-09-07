@@ -4,7 +4,6 @@ from collections.abc import Callable
 from threading import Lock, Thread, current_thread
 
 from networking import TcpAddress
-from adb.server.endpoint import AdbServerEndpoint
 from adb.transport_list.coordinator import AdbTransportListCoordinator
 from adb.transport_list.session_identity import (
     AdbTransportListSessionIdentity,
@@ -39,7 +38,7 @@ _TransportListWatchAttachmentFactory = Callable[
 _ConnectionFailureHandler = Callable[[AdbTransportListWatchServerConnectionFailure], None]
 _ControllerFactory = Callable[
     [
-        AdbServerEndpoint,
+        TcpAddress,
         EventPublisher,
         AdbTransportListCoordinator,
         AdbTransportListSessionIdentityIssuer,
@@ -57,14 +56,13 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 class AdbTransportListWatchSupervisor:
     """Maintain endpoint-bound watch controllers while session identity owns session correctness.
 
-    Authoritative server lifetime is intentionally not read here. Runtime activation wiring may
-    replace the endpoint controller, while stale observation/start/stop/failure work is fenced by
-    the transport-list session identity itself.
+    Reconciliation may replace the endpoint controller and session issuer. Stale observation,
+    start, stop, and failure work is fenced by the transport-list session identity.
     """
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
         event_bus: EventBus,
         policy: AdbTransportListWatchSupervisionPolicy,
         *,
@@ -130,7 +128,7 @@ class AdbTransportListWatchSupervisor:
         self._closed = False
 
     @property
-    def endpoint(self) -> AdbServerEndpoint:
+    def endpoint(self) -> TcpAddress:
         with self._lock:
             return self._endpoint
 
@@ -168,7 +166,7 @@ class AdbTransportListWatchSupervisor:
 
     def reconcile(
         self,
-        endpoint: AdbServerEndpoint | None = None,
+        endpoint: TcpAddress | None = None,
         *,
         replace_controller: bool = False,
         session_identity_issuer: AdbTransportListSessionIdentityIssuer | None = None,
@@ -404,7 +402,7 @@ class AdbTransportListWatchSupervisor:
         self,
         controller: AdbTransportListWatchController,
         session_identity: AdbTransportListSessionIdentity | None,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
         token: object,
         *,
         started: bool,
@@ -447,7 +445,7 @@ class AdbTransportListWatchSupervisor:
 
     def _ensure_controller_locked(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
     ) -> AdbTransportListWatchController:
         controller = self._controller
         if controller is not None:
@@ -456,7 +454,7 @@ class AdbTransportListWatchSupervisor:
 
     def _create_controller_locked(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
     ) -> AdbTransportListWatchController:
         if self._controller is not None:
             raise RuntimeError("a controller already exists")

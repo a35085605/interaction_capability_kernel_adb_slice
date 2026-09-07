@@ -6,7 +6,6 @@ from typing import TypeAlias
 
 from eventing import EventPublisher
 
-from adb.authority import AdbServerAuthority
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
@@ -27,6 +26,8 @@ from adb.server.state import (
     AdbServerDeactivationResult,
     AdbServerDeactivationStateConflict,
     AdbServerState,
+    AdbServerStateView,
+    AdbServerStateWriter,
 )
 
 
@@ -77,14 +78,17 @@ class AdbServerLifecycleCoordinator:
 
     def __init__(
         self,
-        state: AdbServerAuthority,
+        state: AdbServerStateView,
         *,
+        writer: AdbServerStateWriter,
         backend: AdbServerBackend,
         endpoint_constraint: AdbServerEndpoint | None,
         publisher: EventPublisher | None = None,
     ) -> None:
-        if not isinstance(state, AdbServerAuthority):
-            raise TypeError("state must satisfy AdbServerAuthority")
+        if not isinstance(state, AdbServerStateView):
+            raise TypeError("state must satisfy AdbServerStateView")
+        if not isinstance(writer, AdbServerStateWriter):
+            raise TypeError("writer must satisfy AdbServerStateWriter")
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("backend must satisfy AdbServerBackend")
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
@@ -92,11 +96,11 @@ class AdbServerLifecycleCoordinator:
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
         self._state = state
+        self._writer = writer
         self._backend = backend
         self._endpoint_constraint = endpoint_constraint
         self._publisher = publisher
-        # Protect coordinator-local endpoint configuration only. Cross-aggregate authority
-        # serialization belongs to the injected state authority.
+        # Protect endpoint configuration. State transitions are serialized by the writer.
         self._lock = RLock()
 
     def provision(self) -> AdbServerProvisionResult:
@@ -108,7 +112,7 @@ class AdbServerLifecycleCoordinator:
 
         with self._lock:
             endpoint_constraint = self._endpoint_constraint
-            t0 = self._state.snapshot_server()
+            t0 = self._state.snapshot()
             if t0.active:
                 server = t0.current_identity
                 endpoint = t0.endpoint
@@ -172,9 +176,9 @@ class AdbServerLifecycleCoordinator:
         *,
         expected: AdbServerIdentity | None,
     ) -> AdbServerActivationResult:
-        """Commit one newly acquired endpoint at the shared authority boundary."""
+        """Commit one newly acquired endpoint through the server-state writer."""
 
-        return self._state.activate_server(endpoint, expected=expected)
+        return self._writer.activate(endpoint, expected=expected)
 
     def _rollback_acquisition(self, acquisition: AdbServerBackendAcquired) -> None:
         """Relinquish an acquisition established by the current provision invocation."""
@@ -197,7 +201,7 @@ class AdbServerLifecycleCoordinator:
         if expected_server is not None and not isinstance(expected_server, AdbServerIdentity):
             raise TypeError("expected_server must be AdbServerIdentity or None")
 
-        t0 = self._state.snapshot_server()
+        t0 = self._state.snapshot()
         if expected_server is None:
             server = t0.current_identity
             if server is None:
@@ -221,7 +225,7 @@ class AdbServerLifecycleCoordinator:
     ) -> AdbServerDeactivationResult:
         """Commit authoritative deactivation before relinquishing the backend acquisition."""
 
-        deactivation = self._state.deactivate_server(server)
+        deactivation = self._writer.deactivate(server)
         if isinstance(deactivation, AdbServerDeactivationStateConflict):
             return deactivation
         if not isinstance(deactivation, AdbServerDeactivated):

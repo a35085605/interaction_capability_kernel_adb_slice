@@ -15,7 +15,7 @@ class AdbTransportListSessionEpoch(Epoch):
 
 
 class _AdbTransportListSessionScope:
-    """Opaque revocable namespace shared by one server-lifetime session issuer."""
+    """Opaque revocable namespace shared by one transport-list session issuer."""
 
     __slots__ = ("lock", "active")
 
@@ -28,9 +28,8 @@ class _AdbTransportListSessionScope:
 class AdbTransportListSessionIdentity:
     """Opaque identity for one authoritative transport-list producer session.
 
-    A fresh identity is issued for every session rebuild, even while the ADB server endpoint and
-    server lifetime remain unchanged. The identity carries no ``ServerIdentity`` provenance.
-    Its issuer scope is revocable so retirement can fence identities that were issued before the
+    A fresh identity is issued for every producer session rebuild within an admission scope.
+    Revoking that scope fences identities that were issued before the
     transport-list state transition became visible.
     """
 
@@ -55,7 +54,7 @@ class AdbTransportListSessionIdentity:
 
 
 class AdbTransportListSessionIdentityIssuer:
-    """Issue session identities inside one revocable server-lifetime admission scope."""
+    """Issue session identities inside one revocable transport-list admission scope."""
 
     __slots__ = ("_scope", "_sequence")
 

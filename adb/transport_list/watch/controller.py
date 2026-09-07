@@ -7,7 +7,6 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from networking import TcpAddress
-from adb.server.endpoint import AdbServerEndpoint
 from adb.transport_list.coordinator import AdbTransportListCoordinator
 from adb.transport_list.session_identity import (
     AdbTransportListSessionIdentity,
@@ -299,7 +298,7 @@ class AdbTransportListWatchController(Protocol):
     """Controller bound to one endpoint and one opaque session-identity issuer."""
 
     @property
-    def endpoint(self) -> AdbServerEndpoint:
+    def endpoint(self) -> TcpAddress:
         """Immutable attachment endpoint owned by this controller."""
         ...
 
@@ -332,14 +331,13 @@ class AdbTransportListWatchController(Protocol):
 class ThreadedAdbTransportListWatchController:
     """Threaded endpoint controller whose producer authority is session-identity scoped.
 
-    Every ``start`` acquires a fresh identity from an injected issuer. The issuer is opaque to the
-    watch and is revoked by server retirement, so no Runtime state lookup or ``ServerIdentity`` is
-    needed in this layer.
+    Every ``start`` acquires a fresh identity from an injected issuer. Revoking that opaque
+    issuer prevents new sessions and fences observations from its existing sessions.
     """
 
     def __init__(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
         publisher: EventPublisher,
         observation_coordinator: AdbTransportListCoordinator,
         session_identity_issuer: AdbTransportListSessionIdentityIssuer,
@@ -383,7 +381,7 @@ class ThreadedAdbTransportListWatchController:
         self._closed = False
 
     @property
-    def endpoint(self) -> AdbServerEndpoint:
+    def endpoint(self) -> TcpAddress:
         with self._condition:
             return self._endpoint
 
@@ -663,7 +661,7 @@ class ThreadedAdbTransportListWatchController:
 
     def _create_attachment(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
     ) -> AdbTransportListWatchAttachment:
         raw_attachment = self._attachment_factory(
             endpoint,

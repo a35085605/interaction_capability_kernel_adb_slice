@@ -157,7 +157,8 @@ class AdbRuntime(AdbManagedRuntime):
         super().__init__(state.server)
         self._state = state
         self._server_lifecycle = AdbServerLifecycleCoordinator(
-            state,
+            state.server,
+            writer=state.server_writer,
             backend=server_backend,
             endpoint_constraint=server_endpoint_constraint,
             publisher=event_bus,

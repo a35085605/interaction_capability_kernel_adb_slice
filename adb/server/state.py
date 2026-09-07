@@ -11,7 +11,7 @@ from adb.server.identity import AdbServerIdentity, AdbServerIdentityIssuer
 
 
 class AdbServerStateStatus(str, Enum):
-    """Lifecycle status of the runtime-authoritative ADB server state."""
+    """Lifecycle status of the authoritative ADB server state."""
 
     ACTIVE = "active"
     INACTIVE = "inactive"
@@ -19,7 +19,7 @@ class AdbServerStateStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True, init=False)
 class AdbServerState:
-    """Immutable authoritative ADB server state for one runtime.
+    """Immutable authoritative ADB server state.
 
     Inactive state retains the last endpoint and identity for stale-work fencing.
     """
@@ -172,7 +172,7 @@ AdbServerDeactivationResult: TypeAlias = (
 
 @runtime_checkable
 class AdbServerStateView(Protocol):
-    """Authoritative endpoint and server-identity view for one runtime."""
+    """Read the authoritative server endpoint, identity, and lifecycle status."""
 
     @property
     def endpoint(self) -> AdbServerEndpoint | None: ...

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from adb.errors import AdbTransportAmbiguousError
-from adb.server.endpoint import AdbServerEndpoint
+from networking import TcpAddress
 from adb.transport.model import AdbTransport
 from adb.transport_list.model import AdbTransportList
 from adb.transport.selection import (
@@ -18,7 +18,7 @@ class AdbTransportLookup(Protocol):
 
     def find(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
         selector: AdbTransportSelector,
     ) -> AdbTransport | None:
         ...

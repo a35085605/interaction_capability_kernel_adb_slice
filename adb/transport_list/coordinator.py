@@ -19,7 +19,7 @@ from eventing import EventPublisher
 
 
 class AdbTransportListCoordinator:
-    """Orchestrate session-fenced transport-list observations without runtime-state lookup."""
+    """Orchestrate transport-list observations fenced by their producer session."""
 
     def __init__(
         self,

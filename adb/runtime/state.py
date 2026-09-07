@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from threading import RLock
 
-from adb.authority import AdbRuntimeAuthoritySnapshot
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentity
@@ -15,6 +15,7 @@ from adb.server.state import (
     AdbServerStateStatus,
     AdbServerStateStore,
     AdbServerStateView,
+    AdbServerStateWriter,
 )
 from adb.transport_list.identity import AdbTransportListIdentity
 from adb.transport_list.model import AdbTransportList
@@ -32,7 +33,15 @@ from adb.transport_list.state import (
 )
 
 
-class _AdbServerAuthorityView:
+@dataclass(frozen=True, slots=True)
+class AdbRuntimeAuthoritySnapshot:
+    """Point-in-time snapshot of the state coordinated by this runtime."""
+
+    server: AdbServerState
+    transport_list: AdbTransportListState
+
+
+class _AdbRuntimeServerStateView:
     """Read-only server-state facade backed by the runtime authority lock."""
 
     __slots__ = ("_authority",)
@@ -64,7 +73,27 @@ class _AdbServerAuthorityView:
         return self._authority.snapshot_server()
 
 
-class _AdbTransportListAuthorityView:
+class _AdbRuntimeServerStateWriter:
+    """Adapt server-local writes to the runtime's synchronized transitions."""
+
+    __slots__ = ("_state",)
+
+    def __init__(self, state: AdbRuntimeAuthorityStateStore) -> None:
+        self._state = state
+
+    def activate(
+        self,
+        endpoint: AdbServerEndpoint,
+        *,
+        expected: AdbServerIdentity | None,
+    ) -> AdbServerActivationResult:
+        return self._state.activate_server(endpoint, expected=expected)
+
+    def deactivate(self, expected: AdbServerIdentity) -> AdbServerDeactivationResult:
+        return self._state.deactivate_server(expected)
+
+
+class _AdbRuntimeTransportListStateView:
     """Read-only transport-list facade backed by the runtime authority lock."""
 
     __slots__ = ("_authority",)
@@ -97,12 +126,16 @@ class _AdbTransportListAuthorityView:
 
 
 class AdbRuntimeAuthorityStateStore:
-    """Own the runtime-wide linearization boundary for server retirement cascades.
+    """Coordinate independent server and transport-list stores within the runtime.
 
-    Transport-list session work does not call back into this runtime authority. Instead each active
-    server lifetime owns one opaque, revocable ``AdbTransportListSessionIdentityIssuer``. Runtime
-    wiring hands that capability to the watch. Server retirement revokes the issuer and the current
-    transport-list session before releasing this authority lock.
+    Only this runtime layer maps server lifetimes to transport-list admission. The server
+    coordinator receives a server view and writer; the transport-list coordinator receives its
+    session authority. Neither domain receives the combined runtime store.
+
+    Each active server lifetime owns one revocable transport-list session issuer. Server
+    retirement revokes that issuer and its current session before releasing the runtime lock.
+    Read-only views share that lock so consumers cannot see a partially synchronized transition.
+    Supplied stores transfer mutation ownership to the runtime and must not be written directly.
     """
 
     def __init__(
@@ -135,12 +168,21 @@ class AdbRuntimeAuthorityStateStore:
         if initial_server.active:
             transport_list.activate_session_identity_issuer()
         self._lock = RLock()
-        self._server_view: AdbServerStateView = _AdbServerAuthorityView(self)
-        self._transport_list_view: AdbTransportListStateView = _AdbTransportListAuthorityView(self)
+        self._server_view: AdbServerStateView = _AdbRuntimeServerStateView(self)
+        self._server_writer: AdbServerStateWriter = _AdbRuntimeServerStateWriter(self)
+        self._transport_list_view: AdbTransportListStateView = _AdbRuntimeTransportListStateView(
+            self
+        )
 
     @property
     def server(self) -> AdbServerStateView:
         return self._server_view
+
+    @property
+    def server_writer(self) -> AdbServerStateWriter:
+        """Server-local write interface whose implementation coordinates runtime state."""
+
+        return self._server_writer
 
     @property
     def transport_list(self) -> AdbTransportListStateView:

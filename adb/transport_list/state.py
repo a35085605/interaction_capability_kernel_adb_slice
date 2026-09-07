@@ -21,7 +21,7 @@ from adb.transport_list.session_identity import (
 
 
 class AdbTransportListStateStatus(str, Enum):
-    """Visibility status of the runtime-authoritative transport-list state."""
+    """Visibility status of the authoritative transport-list state."""
 
     CURRENT = "current"
     INVALIDATED = "invalidated"
@@ -29,7 +29,7 @@ class AdbTransportListStateStatus(str, Enum):
 
 @dataclass(frozen=True, slots=True, init=False)
 class AdbTransportListState:
-    """Immutable authoritative transport-list state for one runtime.
+    """Immutable authoritative transport-list state.
 
     ``session`` is the sole producer session currently authorized to establish or continue the
     projection. ``INVALIDATED`` may retain a session while its initial list is pending. Once that
@@ -262,7 +262,7 @@ AdbTransportListInvalidationResult: TypeAlias = (
 
 @runtime_checkable
 class AdbTransportListStateView(Protocol):
-    """Authoritative transport-list state view for one runtime."""
+    """Read the authoritative transport-list observation and producer session."""
 
     @property
     def session(self) -> AdbTransportListSessionIdentity | None: ...
@@ -391,9 +391,8 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
     def activate_session_identity_issuer(self) -> AdbTransportListSessionIdentityIssuer:
         """Install one fresh opaque session-admission capability.
 
-        Runtime server activation calls this transition. The issuer contains no server identity;
-        its object identity and revocable scope are the admission fence checked by
-        ``begin_session``.
+        The issuer's object identity and revocable scope are the admission fence checked by
+        ``begin_session``. Its owner decides when to activate or revoke this capability.
         """
 
         with self._lock:
@@ -416,7 +415,7 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
 
         The issuer scope is revoked before the state lock is taken. This lock order matches
         ``begin_session`` and observation commits (issuer scope -> state lock), so work that began
-        before retirement linearizes before this transition and is then revoked, while work that
+        before revocation linearizes before this transition and is then revoked, while work that
         arrives afterwards observes the closed scope and cannot commit.
         """
 
@@ -450,8 +449,8 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
     ) -> AdbTransportListSessionBegun | None:
         """Issue and install a fresh session, superseding prior producer authority.
 
-        The issuer scope is held across the state transition. Retirement revokes that scope before
-        invalidating transport-list state, so an identity issued before retirement but committed
+        The issuer scope is held across the state transition. Revoking the issuer closes that scope
+        before invalidating transport-list state, so an identity issued before revocation but committed
         afterwards cannot resurrect authority.
         """
 
