@@ -288,10 +288,7 @@ class AdbTransportListSessionAuthority(Protocol):
 
     def snapshot(self) -> AdbTransportListState: ...
 
-    def begin_session(
-        self,
-        issuer: AdbTransportListSessionIdentityIssuer,
-    ) -> AdbTransportListSessionBegun | None: ...
+    def begin_session(self) -> AdbTransportListSessionBegun | None: ...
 
     def capture_update_basis(
         self,
@@ -329,9 +326,17 @@ class AdbTransportListStateWriter(AdbTransportListSessionAuthority, Protocol):
 
 
 class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStateWriter):
-    """Thread-safe authority for session ownership and transport-list observations."""
+    """Thread-safe authority for session admission, ownership, and observations."""
 
-    def __init__(self, initial: AdbTransportListState | None = None) -> None:
+    def __init__(
+        self,
+        session_identity_issuer: AdbTransportListSessionIdentityIssuer,
+        initial: AdbTransportListState | None = None,
+    ) -> None:
+        if not isinstance(session_identity_issuer, AdbTransportListSessionIdentityIssuer):
+            raise TypeError(
+                "session_identity_issuer must be AdbTransportListSessionIdentityIssuer"
+            )
         if initial is None:
             state = AdbTransportListState()
         elif isinstance(initial, AdbTransportListState):
@@ -339,13 +344,12 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         else:
             raise TypeError("initial must be AdbTransportListState or None")
         if state.session is not None:
-            raise ValueError(
-                "initial transport-list state cannot contain a session without its issuer"
-            )
+            raise ValueError("initial transport-list state cannot contain an active session")
         self._lock = Lock()
         self._state = state
         self._identity_issuer = AdbTransportListIdentityIssuer(after=state.identity)
-        self._session_identity_issuer: AdbTransportListSessionIdentityIssuer | None = None
+        self._session_identity_issuer = session_identity_issuer
+        self._session_admission_open = False
 
     @property
     def state(self) -> AdbTransportListState:
@@ -380,107 +384,49 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         return self.state
 
     @property
-    def current_session_identity_issuer(
-        self,
-    ) -> AdbTransportListSessionIdentityIssuer | None:
-        """Return the issuer currently admitted to create producer sessions."""
+    def session_admission_open(self) -> bool:
+        """Whether a producer session may currently be created."""
 
         with self._lock:
-            return self._session_identity_issuer
+            return self._session_admission_open
 
-    def activate_session_identity_issuer(self) -> AdbTransportListSessionIdentityIssuer:
-        """Install one fresh opaque session-admission capability.
-
-        The issuer's object identity and revocable scope are the admission fence checked by
-        ``begin_session``. Its owner decides when to activate or revoke this capability.
-        """
+    def open_session_admission(self) -> None:
+        """Admit producer-session creation for the active server lifetime."""
 
         with self._lock:
-            current = self._session_identity_issuer
-            if current is not None:
-                if current.active:
-                    raise RuntimeError(
-                        "transport-list session issuer is already active"
-                    )
-                self._session_identity_issuer = None
-            issuer = AdbTransportListSessionIdentityIssuer()
-            self._session_identity_issuer = issuer
-            return issuer
+            if self._session_admission_open:
+                raise RuntimeError("transport-list session admission is already open")
+            self._session_admission_open = True
 
-    def revoke_session_identity_issuer(
-        self,
-        issuer: AdbTransportListSessionIdentityIssuer,
-    ) -> AdbTransportListSessionRevoked | None:
-        """Revoke one admitted issuer and any producer session owned by it.
+    def close_session_admission(self) -> AdbTransportListSessionRevoked | None:
+        """Fence new sessions and revoke the current producer in one state transition."""
 
-        The issuer scope is revoked before the state lock is taken. This lock order matches
-        ``begin_session`` and observation commits (issuer scope -> state lock), so work that began
-        before revocation linearizes before this transition and is then revoked, while work that
-        arrives afterwards observes the closed scope and cannot commit.
-        """
-
-        if not isinstance(issuer, AdbTransportListSessionIdentityIssuer):
-            raise TypeError("issuer must be AdbTransportListSessionIdentityIssuer")
-
-        issuer._revoke()
         with self._lock:
-            if self._session_identity_issuer is not issuer:
+            self._session_admission_open = False
+            return self._revoke_current_session_locked()
+
+    def begin_session(self) -> AdbTransportListSessionBegun | None:
+        """Issue and install a fresh session while server admission remains open."""
+
+        with self._lock:
+            if not self._session_admission_open:
                 return None
-            self._session_identity_issuer = None
+            session = self._session_identity_issuer.issue()
             current = self._state
-            session = current.session
-            if session is None:
-                if current.status is not AdbTransportListStateStatus.INVALIDATED:
-                    raise RuntimeError(
-                        "transport-list state without a session must be invalidated"
-                    )
-                return None
-            if not issuer.owns(session):
-                raise RuntimeError(
-                    "current transport-list session does not belong to admitted issuer"
-                )
-            invalidated_identity = current.current_identity
-            self._state = self._revoked_state(current)
-            return AdbTransportListSessionRevoked(session, invalidated_identity)
-
-    def begin_session(
-        self,
-        issuer: AdbTransportListSessionIdentityIssuer,
-    ) -> AdbTransportListSessionBegun | None:
-        """Issue and install a fresh session, superseding prior producer authority.
-
-        The issuer scope is held across the state transition. Revoking the issuer closes that scope
-        before invalidating transport-list state, so an identity issued before revocation but committed
-        afterwards cannot resurrect authority.
-        """
-
-        if not isinstance(issuer, AdbTransportListSessionIdentityIssuer):
-            raise TypeError("issuer must be AdbTransportListSessionIdentityIssuer")
-        session = issuer.issue()
-        if session is None:
-            return None
-
-        with session._authority_guard() as active:
-            if not active:
-                return None
-            with self._lock:
-                if self._session_identity_issuer is not issuer:
-                    return None
-                current = self._state
-                self._state = AdbTransportListState(
-                    identity=current.identity,
-                    transport_list=current.transport_list,
-                    status=AdbTransportListStateStatus.INVALIDATED,
+            self._state = AdbTransportListState(
+                identity=current.identity,
+                transport_list=current.transport_list,
+                status=AdbTransportListStateStatus.INVALIDATED,
+                session=session,
+            )
+            return AdbTransportListSessionBegun(
+                basis=AdbTransportListObservationBasis(
                     session=session,
-                )
-                return AdbTransportListSessionBegun(
-                    basis=AdbTransportListObservationBasis(
-                        session=session,
-                        transport_list_identity=current.identity,
-                    ),
-                    superseded_session=current.session,
-                    invalidated_identity=current.current_identity,
-                )
+                    transport_list_identity=current.identity,
+                ),
+                superseded_session=current.session,
+                invalidated_identity=current.current_identity,
+            )
 
     def capture_update_basis(
         self,
@@ -489,20 +435,17 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         if not isinstance(session, AdbTransportListSessionIdentity):
             raise TypeError("session must be AdbTransportListSessionIdentity")
 
-        with session._authority_guard() as active:
-            if not active:
+        with self._lock:
+            current = self._state
+            if (
+                current.session is not session
+                or current.status is not AdbTransportListStateStatus.CURRENT
+            ):
                 return None
-            with self._lock:
-                current = self._state
-                if (
-                    current.session != session
-                    or current.status is not AdbTransportListStateStatus.CURRENT
-                ):
-                    return None
-                return AdbTransportListObservationBasis(
-                    session=session,
-                    transport_list_identity=current.identity,
-                )
+            return AdbTransportListObservationBasis(
+                session=session,
+                transport_list_identity=current.identity,
+            )
 
     def revoke_session(
         self,
@@ -513,7 +456,7 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
 
         with self._lock:
             current = self._state
-            if current.session != session:
+            if current.session is not session:
                 return AdbTransportListSessionRevocationStateConflict(session, current)
             invalidated_identity = current.current_identity
             self._state = self._revoked_state(current)
@@ -523,17 +466,18 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         """Revoke the currently installed producer session, if any."""
 
         with self._lock:
-            current = self._state
-            session = current.session
-            if session is None:
-                if current.status is not AdbTransportListStateStatus.INVALIDATED:
-                    raise RuntimeError(
-                        "transport-list state without a session must be invalidated"
-                    )
-                return None
-            invalidated_identity = current.current_identity
-            self._state = self._revoked_state(current)
-            return AdbTransportListSessionRevoked(session, invalidated_identity)
+            return self._revoke_current_session_locked()
+
+    def _revoke_current_session_locked(self) -> AdbTransportListSessionRevoked | None:
+        current = self._state
+        session = current.session
+        if session is None:
+            if current.status is not AdbTransportListStateStatus.INVALIDATED:
+                raise RuntimeError("transport-list state without a session must be invalidated")
+            return None
+        invalidated_identity = current.current_identity
+        self._state = self._revoked_state(current)
+        return AdbTransportListSessionRevoked(session, invalidated_identity)
 
     def invalidate(
         self,
@@ -596,40 +540,33 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         if not isinstance(required_status, AdbTransportListStateStatus):
             raise TypeError("required_status must be AdbTransportListStateStatus")
 
-        with basis.session._authority_guard() as active:
-            if not active:
+        with self._lock:
+            current = self._state
+            if (
+                current != expected
+                or current.session is not basis.session
+                or current.status is not required_status
+                or basis.transport_list_identity != current.identity
+            ):
                 return AdbTransportListObservationStateConflict(
                     basis=basis,
                     transport_list=transport_list,
-                    state=self.snapshot(),
+                    state=current,
                 )
-            with self._lock:
-                current = self._state
-                if (
-                    current != expected
-                    or current.session != basis.session
-                    or current.status is not required_status
-                    or basis.transport_list_identity != current.identity
-                ):
-                    return AdbTransportListObservationStateConflict(
-                        basis=basis,
-                        transport_list=transport_list,
-                        state=current,
-                    )
 
-                identity = self._identity_issuer.issue()
-                observation = AdbTransportListObservation(
-                    basis=basis,
-                    identity=identity,
-                    transport_list=transport_list,
-                )
-                self._state = AdbTransportListState(
-                    identity=identity,
-                    transport_list=transport_list,
-                    status=AdbTransportListStateStatus.CURRENT,
-                    session=basis.session,
-                )
-                return AdbTransportListObserved(observation)
+            identity = self._identity_issuer.issue()
+            observation = AdbTransportListObservation(
+                basis=basis,
+                identity=identity,
+                transport_list=transport_list,
+            )
+            self._state = AdbTransportListState(
+                identity=identity,
+                transport_list=transport_list,
+                status=AdbTransportListStateStatus.CURRENT,
+                session=basis.session,
+            )
+            return AdbTransportListObserved(observation)
 
     @staticmethod
     def _revoked_state(current: AdbTransportListState) -> AdbTransportListState:

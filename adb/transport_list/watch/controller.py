@@ -8,10 +8,7 @@ from typing import Protocol, TypeAlias, runtime_checkable
 from adb.errors import AdbProtocolError, AdbServerConnectionError, AdbServiceError
 from networking import TcpAddress
 from adb.transport_list.coordinator import AdbTransportListCoordinator
-from adb.transport_list.session_identity import (
-    AdbTransportListSessionIdentity,
-    AdbTransportListSessionIdentityIssuer,
-)
+from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import AdbTransportListObservationBasis
 from adb.transport_list.state import (
@@ -102,12 +99,16 @@ class AdbTransportListWatchStartSuperseded:
 class AdbTransportListWatchStartFailed:
     """Startup completed with a known transport-list watch failure."""
 
-    session_identity: AdbTransportListSessionIdentity
+    session_identity: AdbTransportListSessionIdentity | None
     failure: AdbTransportListWatchFailure
 
     def __post_init__(self) -> None:
-        if not isinstance(self.session_identity, AdbTransportListSessionIdentity):
-            raise TypeError("session_identity must be AdbTransportListSessionIdentity")
+        if self.session_identity is not None and not isinstance(
+            self.session_identity, AdbTransportListSessionIdentity
+        ):
+            raise TypeError(
+                "session_identity must be AdbTransportListSessionIdentity or None"
+            )
         if not isinstance(self.failure, AdbTransportListWatchFailure):
             raise TypeError("failure must be AdbTransportListWatchFailure")
 
@@ -295,7 +296,7 @@ def _raise_normalized_watch_error(exc: BaseException) -> None:
 
 @runtime_checkable
 class AdbTransportListWatchController(Protocol):
-    """Controller bound to one endpoint and one opaque session-identity issuer."""
+    """Controller bound to one endpoint and owning short-lived watch resources."""
 
     @property
     def endpoint(self) -> TcpAddress:
@@ -303,16 +304,11 @@ class AdbTransportListWatchController(Protocol):
         ...
 
     @property
-    def session_identity(self) -> AdbTransportListSessionIdentity | None:
-        """Most recently acquired producer session identity, if any."""
-        ...
-
-    @property
     def active(self) -> bool:
         ...
 
     def start(self) -> AdbTransportListWatchStartResult:
-        """Start one fresh producer identity and raw watch session for this endpoint."""
+        """Establish one fresh raw watch session for this endpoint."""
         ...
 
     def revoke(self) -> None:
@@ -329,18 +325,13 @@ class AdbTransportListWatchController(Protocol):
 
 
 class ThreadedAdbTransportListWatchController:
-    """Threaded endpoint controller whose producer authority is session-identity scoped.
-
-    Every ``start`` acquires a fresh identity from an injected issuer. Revoking that opaque
-    issuer prevents new sessions and fences observations from its existing sessions.
-    """
+    """Threaded endpoint controller whose producer identity belongs only to WatchSession."""
 
     def __init__(
         self,
         endpoint: TcpAddress,
         publisher: EventPublisher,
         observation_coordinator: AdbTransportListCoordinator,
-        session_identity_issuer: AdbTransportListSessionIdentityIssuer,
         startup_timeout_seconds: float = 5.0,
         *,
         _attachment_factory: _TransportListWatchAttachmentFactory,
@@ -354,10 +345,6 @@ class ThreadedAdbTransportListWatchController:
             raise TypeError(
                 "observation_coordinator must be AdbTransportListCoordinator"
             )
-        if not isinstance(session_identity_issuer, AdbTransportListSessionIdentityIssuer):
-            raise TypeError(
-                "session_identity_issuer must be AdbTransportListSessionIdentityIssuer"
-            )
         if not callable(_attachment_factory):
             raise TypeError("_attachment_factory must be callable")
         if not callable(_thread_factory):
@@ -366,12 +353,10 @@ class ThreadedAdbTransportListWatchController:
         self.startup_timeout_seconds = startup_timeout_seconds
         self._publisher = publisher
         self._observation_coordinator = observation_coordinator
-        self._session_identity_issuer = session_identity_issuer
         self._attachment_factory = _attachment_factory
         self._thread_factory = _thread_factory
         self._condition = Condition(Lock())
         self._endpoint = endpoint
-        self._session_identity: AdbTransportListSessionIdentity | None = None
         self._starting = False
         self._starting_thread: Thread | None = None
         self._start_token: object | None = None
@@ -386,11 +371,6 @@ class ThreadedAdbTransportListWatchController:
             return self._endpoint
 
     @property
-    def session_identity(self) -> AdbTransportListSessionIdentity | None:
-        with self._condition:
-            return self._session_identity
-
-    @property
     def active(self) -> bool:
         with self._condition:
             return (
@@ -400,7 +380,7 @@ class ThreadedAdbTransportListWatchController:
             )
 
     def start(self) -> AdbTransportListWatchStartResult:
-        """Acquire one fresh producer identity, then establish its raw watch session."""
+        """Establish raw resources, then create the authority-owning WatchSession."""
 
         with self._condition:
             if self._closed:
@@ -418,28 +398,9 @@ class ThreadedAdbTransportListWatchController:
             self._starting_thread = current_thread()
             self._start_token = token
 
-        initial_basis = self._observation_coordinator.begin(self._session_identity_issuer)
-        if initial_basis is None:
-            self._finish_start(token)
-            return AdbTransportListWatchStartSuperseded()
-        session_identity = initial_basis.session_identity
-
-        with self._condition:
-            if self._closed or self._start_token is not token:
-                cancelled_before_attachment = True
-            else:
-                cancelled_before_attachment = False
-                self._session_identity = session_identity
-
-        if cancelled_before_attachment:
-            self._observation_coordinator.revoke(session_identity)
-            self._finish_start(token)
-            return AdbTransportListWatchStartCancelled(session_identity)
-
         try:
             attachment = self._create_attachment(target_endpoint)
         except BaseException:
-            self._observation_coordinator.revoke(session_identity)
             self._finish_start(token)
             raise
 
@@ -451,16 +412,14 @@ class ThreadedAdbTransportListWatchController:
                 self._opening_attachment = attachment
 
         if cancelled_before_open:
-            self._observation_coordinator.revoke(session_identity)
             attachment.close()
             self._finish_start(token)
-            return AdbTransportListWatchStartCancelled(session_identity)
+            return AdbTransportListWatchStartCancelled()
 
         try:
             open_result = _open_transport_list_watch_attachment(attachment)
         except BaseException:
             self._clear_opening_attachment(attachment)
-            self._observation_coordinator.revoke(session_identity)
             self._finish_start(token)
             raise
 
@@ -468,33 +427,54 @@ class ThreadedAdbTransportListWatchController:
             self._clear_opening_attachment(attachment)
             if isinstance(open_result, _AdbTransportListWatchOpened):
                 _close_stream_and_attachment(open_result.stream, attachment)
-            self._observation_coordinator.revoke(session_identity)
             self._finish_start(token)
-            return AdbTransportListWatchStartCancelled(session_identity)
+            return AdbTransportListWatchStartCancelled()
 
         if isinstance(open_result, _AdbTransportListWatchOpenCancelled):
             self._clear_opening_attachment(attachment)
-            self._observation_coordinator.revoke(session_identity)
             self._finish_start(token)
-            return AdbTransportListWatchStartCancelled(session_identity)
+            return AdbTransportListWatchStartCancelled()
         if isinstance(open_result, _AdbTransportListWatchOpenFailed):
             self._clear_opening_attachment(attachment)
-            self._observation_coordinator.revoke(session_identity)
             self._finish_start(token)
-            return AdbTransportListWatchStartFailed(session_identity, open_result.failure)
+            return AdbTransportListWatchStartFailed(None, open_result.failure)
         if not isinstance(open_result, _AdbTransportListWatchOpened):
             self._clear_opening_attachment(attachment)
-            self._observation_coordinator.revoke(session_identity)
             self._finish_start(token)
             raise TypeError("transport-list attachment open returned an unsupported result")
 
         session = bind_transport_list_watch_session(
-            session_identity,
             self._observation_coordinator,
             open_result.stream,
             open_result.initial,
             attachment=attachment,
         )
+        if session is None:
+            self._clear_opening_attachment(attachment)
+            _close_stream_and_attachment(open_result.stream, attachment)
+            self._finish_start(token)
+            return AdbTransportListWatchStartSuperseded()
+
+        session_identity = session.session_identity
+        with self._condition:
+            if self._closed or self._start_token is not token:
+                cancelled_after_session = True
+                if self._opening_attachment is attachment:
+                    self._opening_attachment = None
+            else:
+                cancelled_after_session = False
+                if self._opening_attachment is not attachment:
+                    raise RuntimeError("transport-list watch opening attachment disappeared")
+                self._opening_attachment = None
+                self._active_session = session
+
+        if cancelled_after_session:
+            try:
+                session.close()
+            finally:
+                self._finish_start(token)
+            return AdbTransportListWatchStartCancelled(session_identity)
+
         startup_complete = Event()
         startup_results: list[AdbTransportListWatchStartResult] = []
         startup_errors: list[BaseException] = []
@@ -503,7 +483,6 @@ class ThreadedAdbTransportListWatchController:
                 target=self._run,
                 args=(
                     session,
-                    initial_basis,
                     startup_complete,
                     startup_results,
                     startup_errors,
@@ -514,24 +493,24 @@ class ThreadedAdbTransportListWatchController:
                 ),
             )
         except BaseException:
-            self._clear_opening_attachment(attachment)
+            with self._condition:
+                if self._active_session is session:
+                    self._active_session = None
+                self._finish_start_locked(token)
             session.close()
-            self._finish_start(token)
             raise
 
         startup_error: BaseException | None = None
         cancelled_before_start = False
         with self._condition:
-            if self._closed or self._start_token is not token:
+            if (
+                self._closed
+                or self._start_token is not token
+                or self._active_session is not session
+            ):
                 cancelled_before_start = True
-                if self._opening_attachment is attachment:
-                    self._opening_attachment = None
                 self._finish_start_locked(token)
             else:
-                if self._opening_attachment is not attachment:
-                    raise RuntimeError("transport-list watch opening attachment disappeared")
-                self._opening_attachment = None
-                self._active_session = session
                 self._active_thread = thread
                 self._finish_start_locked(token)
                 try:
@@ -566,13 +545,12 @@ class ThreadedAdbTransportListWatchController:
         with self._condition:
             session = self._active_session
             attachment = self._opening_attachment
-            session_identity = self._session_identity
             self._active_session = None
             self._opening_attachment = None
             self._start_token = None
             self._condition.notify_all()
 
-        self._close_owned_session_identity(session, attachment, session_identity)
+        self._close_owned_session(session, attachment)
 
     def stop(self) -> None:
         """Synchronously stop current startup/session while preserving the endpoint."""
@@ -580,7 +558,6 @@ class ThreadedAdbTransportListWatchController:
         with self._condition:
             session = self._active_session
             attachment = self._opening_attachment
-            session_identity = self._session_identity
             worker = self._active_thread
             starting_thread = self._starting_thread
             self._active_session = None
@@ -590,7 +567,7 @@ class ThreadedAdbTransportListWatchController:
 
         first_error: BaseException | None = None
         try:
-            self._close_owned_session_identity(session, attachment, session_identity)
+            self._close_owned_session(session, attachment)
         except BaseException as exc:
             first_error = exc
 
@@ -617,7 +594,6 @@ class ThreadedAdbTransportListWatchController:
             self._closed = True
             session = self._active_session
             attachment = self._opening_attachment
-            session_identity = self._session_identity
             worker = self._active_thread
             starting_thread = self._starting_thread
             self._active_session = None
@@ -627,7 +603,7 @@ class ThreadedAdbTransportListWatchController:
 
         first_error: BaseException | None = None
         try:
-            self._close_owned_session_identity(session, attachment, session_identity)
+            self._close_owned_session(session, attachment)
         except BaseException as exc:
             first_error = exc
 
@@ -645,17 +621,14 @@ class ThreadedAdbTransportListWatchController:
         if first_error is not None:
             raise first_error
 
-    def _close_owned_session_identity(
-        self,
+    @staticmethod
+    def _close_owned_session(
         session: AdbTransportListWatchSession | None,
         attachment: AdbTransportListWatchAttachment | None,
-        session_identity: AdbTransportListSessionIdentity | None,
     ) -> None:
         if session is not None:
             session.close()
             return
-        if session_identity is not None:
-            self._observation_coordinator.revoke(session_identity)
         if attachment is not None:
             attachment.close()
 
@@ -707,7 +680,6 @@ class ThreadedAdbTransportListWatchController:
     def _run(
         self,
         session: AdbTransportListWatchSession,
-        initial_basis: AdbTransportListObservationBasis,
         startup_complete: Event,
         startup_results: list[AdbTransportListWatchStartResult],
         startup_errors: list[BaseException],
@@ -716,12 +688,12 @@ class ThreadedAdbTransportListWatchController:
         terminal: object | None = None
         startup_succeeded = False
         try:
-            if initial_basis.session_identity != session_identity:
-                raise ValueError(
-                    "transport-list watch initial basis has mismatched session identity"
-                )
             initial = session.initial
-            if not self._commit_initial_observation(session, initial_basis, initial):
+            if not self._commit_initial_observation(
+                session,
+                session.initial_basis,
+                initial,
+            ):
                 startup_results.append(AdbTransportListWatchStartSuperseded(session_identity))
                 return
 
@@ -734,7 +706,7 @@ class ThreadedAdbTransportListWatchController:
 
             updates = iter(session.updates())
             while True:
-                basis = self._capture_update_basis(session, session_identity)
+                basis = self._capture_update_basis(session)
                 if basis is None:
                     break
                 try:
@@ -776,12 +748,13 @@ class ThreadedAdbTransportListWatchController:
     def _capture_update_basis(
         self,
         session: AdbTransportListWatchSession,
-        session_identity: AdbTransportListSessionIdentity,
     ) -> AdbTransportListObservationBasis | None:
         with self._condition:
             if self._closed or self._active_session is not session:
                 return None
-            return self._observation_coordinator.capture_update_basis(session_identity)
+            return self._observation_coordinator.capture_update_basis(
+                session.session_identity
+            )
 
     def _commit_initial_observation(
         self,

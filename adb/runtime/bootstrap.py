@@ -13,6 +13,7 @@ from adb.server.lifecycle.backend import AdbServerBackend
 from adb.adapters.subprocess.server_backend import SubprocessAdbServerBackend
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.runtime.state import AdbRuntimeAuthorityStateStore
+from adb.transport_list.session_identity import AdbTransportListSessionIdentityIssuer
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchSupervisionPolicy,
 )
@@ -216,9 +217,12 @@ class AdbRuntimeBootstrap:
         if not isinstance(backend, AdbServerBackend):
             raise TypeError("server backend factory must return AdbServerBackend")
 
+        session_identity_issuer = AdbTransportListSessionIdentityIssuer()
         return _BootstrapCore(
             server_backend=backend,
-            runtime_state=AdbRuntimeAuthorityStateStore(),
+            runtime_state=AdbRuntimeAuthorityStateStore(
+                session_identity_issuer=session_identity_issuer,
+            ),
         )
 
     def _configure_recovery_endpoint(

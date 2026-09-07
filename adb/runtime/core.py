@@ -211,15 +211,13 @@ class AdbRuntime(AdbManagedRuntime):
             raise RuntimeError("transport-list watch requires an event bus")
         server = self.server
         endpoint = self.current_endpoint
-        issuer = self._state.transport_list_session_issuer
-        if server is None or endpoint is None or issuer is None:
-            raise RuntimeError("ADB runtime has no active transport-list session binding")
+        if server is None or endpoint is None:
+            raise RuntimeError("ADB runtime has no active transport-list server binding")
         return AdbTransportListWatchSupervisor(
             endpoint,
             event_bus,
             policy,
             transport_list_observation_coordinator=self._transport_list_coordinator,
-            session_identity_issuer=issuer,
             connection_failure_handler=_bind_watch_connection_failure(event_bus, server),
             _attachment_factory=_attachment_factory,
         )
@@ -457,17 +455,13 @@ class AdbRuntime(AdbManagedRuntime):
         watch_supervisor = self._transport_list_watch_supervisor
         if watch_supervisor is not None:
             endpoint = event.state.endpoint
-            issuer = self._state.transport_list_session_issuer
             assert endpoint is not None
-            if issuer is None:
-                raise RuntimeError("server activation has no transport-list session issuer")
             event_bus = self._event_bus
             if event_bus is None:
                 raise RuntimeError("transport-list watch reconciliation requires an event bus")
             watch_supervisor.reconcile(
                 endpoint,
                 replace_controller=True,
-                session_identity_issuer=issuer,
                 connection_failure_handler=_bind_watch_connection_failure(
                     event_bus,
                     event.server,

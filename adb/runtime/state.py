@@ -132,9 +132,10 @@ class AdbRuntimeAuthorityStateStore:
     coordinator receives a server view and writer; the transport-list coordinator receives its
     session authority. Neither domain receives the combined runtime store.
 
-    Each active server lifetime owns one revocable transport-list session issuer. Server
-    retirement revokes that issuer and its current session before releasing the runtime lock.
-    Read-only views share that lock so consumers cannot see a partially synchronized transition.
+    One bootstrap-scoped transport-list session issuer spans all server lifetimes. Server
+    activation opens session admission and retirement closes admission while revoking the current
+    session before releasing the runtime lock. Read-only views share that lock so consumers cannot
+    see a partially synchronized transition.
     Supplied stores transfer mutation ownership to the runtime and must not be written directly.
     """
 
@@ -142,31 +143,40 @@ class AdbRuntimeAuthorityStateStore:
         self,
         server: AdbServerStateStore | None = None,
         transport_list: AdbTransportListStateStore | None = None,
+        *,
+        session_identity_issuer: AdbTransportListSessionIdentityIssuer | None = None,
     ) -> None:
         if server is None:
             server = AdbServerStateStore()
         elif not isinstance(server, AdbServerStateStore):
             raise TypeError("server must be AdbServerStateStore or None")
         if transport_list is None:
-            transport_list = AdbTransportListStateStore()
+            if not isinstance(
+                session_identity_issuer,
+                AdbTransportListSessionIdentityIssuer,
+            ):
+                raise TypeError(
+                    "session_identity_issuer must be supplied when transport_list is None"
+                )
+            transport_list = AdbTransportListStateStore(session_identity_issuer)
         elif not isinstance(transport_list, AdbTransportListStateStore):
             raise TypeError("transport_list must be AdbTransportListStateStore or None")
+        elif session_identity_issuer is not None:
+            raise ValueError(
+                "session_identity_issuer cannot be supplied with an existing transport_list"
+            )
 
         initial_server = server.snapshot()
         initial_transport = transport_list.snapshot()
         if initial_transport.session is not None:
-            raise ValueError(
-                "runtime state cannot adopt an existing transport-list session without its issuer"
-            )
-        if transport_list.current_session_identity_issuer is not None:
-            raise ValueError(
-                "runtime state cannot adopt an existing transport-list session issuer"
-            )
+            raise ValueError("runtime state cannot adopt an existing transport-list session")
+        if transport_list.session_admission_open:
+            raise ValueError("runtime state cannot adopt open transport-list session admission")
 
         self._server = server
         self._transport_list = transport_list
         if initial_server.active:
-            transport_list.activate_session_identity_issuer()
+            transport_list.open_session_admission()
         self._lock = RLock()
         self._server_view: AdbServerStateView = _AdbRuntimeServerStateView(self)
         self._server_writer: AdbServerStateWriter = _AdbRuntimeServerStateWriter(self)
@@ -197,15 +207,6 @@ class AdbRuntimeAuthorityStateStore:
 
         return self._transport_list
 
-    @property
-    def transport_list_session_issuer(
-        self,
-    ) -> AdbTransportListSessionIdentityIssuer | None:
-        """Opaque admission capability for the currently active server lifetime."""
-
-        with self._lock:
-            return self._transport_list.current_session_identity_issuer
-
     def snapshot(self) -> AdbRuntimeAuthoritySnapshot:
         with self._lock:
             return AdbRuntimeAuthoritySnapshot(
@@ -231,7 +232,7 @@ class AdbRuntimeAuthorityStateStore:
         with self._lock:
             activation = self._server.activate(endpoint, expected=expected)
             if isinstance(activation, AdbServerActivated):
-                self._transport_list.activate_session_identity_issuer()
+                self._transport_list.open_session_admission()
             return activation
 
     def deactivate_server(
@@ -248,11 +249,7 @@ class AdbRuntimeAuthorityStateStore:
             if not isinstance(deactivation, AdbServerDeactivated):
                 return deactivation
 
-            issuer = self._transport_list.current_session_identity_issuer
-            if issuer is not None:
-                self._transport_list.revoke_session_identity_issuer(issuer)
-            else:
-                self._transport_list.revoke_current_session()
+            self._transport_list.close_session_admission()
             transport_state = self._transport_list.snapshot()
             if (
                 transport_state.status is not AdbTransportListStateStatus.INVALIDATED

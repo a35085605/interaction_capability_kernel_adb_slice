@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import AdbTransportListObservationBasis
-from adb.transport_list.session_identity import (
-    AdbTransportListSessionIdentity,
-    AdbTransportListSessionIdentityIssuer,
-)
+from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.state import (
     AdbTransportListCoordinatedObservationResult,
     AdbTransportListInvalidated,
@@ -38,15 +35,10 @@ class AdbTransportListCoordinator:
     def authority(self) -> AdbTransportListSessionAuthority:
         return self._authority
 
-    def begin(
-        self,
-        issuer: AdbTransportListSessionIdentityIssuer,
-    ) -> AdbTransportListObservationBasis | None:
-        """Acquire a fresh producer session from the supplied revocable issuer scope."""
+    def begin(self) -> AdbTransportListObservationBasis | None:
+        """Acquire a fresh producer session while runtime admission remains open."""
 
-        if not isinstance(issuer, AdbTransportListSessionIdentityIssuer):
-            raise TypeError("issuer must be AdbTransportListSessionIdentityIssuer")
-        result = self._authority.begin_session(issuer)
+        result = self._authority.begin_session()
         if result is None:
             return None
         if self._publisher is not None:

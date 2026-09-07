@@ -7,6 +7,7 @@ from typing import Protocol, runtime_checkable
 from adb.transport_list.coordinator import AdbTransportListCoordinator
 from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.model import AdbTransportList
+from adb.transport_list.observation import AdbTransportListObservationBasis
 from adb.transport_list.watch.attachment import AdbTransportListWatchAttachment
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
@@ -17,6 +18,10 @@ class AdbTransportListWatchSession(Protocol):
 
     @property
     def session_identity(self) -> AdbTransportListSessionIdentity:
+        ...
+
+    @property
+    def initial_basis(self) -> AdbTransportListObservationBasis:
         ...
 
     @property
@@ -31,10 +36,10 @@ class AdbTransportListWatchSession(Protocol):
 
 
 class _SessionIdentityBoundAdbTransportListWatchSession:
-    """Own one raw stream and revoke its session identity when the session closes."""
+    """Own one producer identity together with its raw watch resources."""
 
     __slots__ = (
-        "_session_identity",
+        "_initial_basis",
         "_coordinator",
         "_stream",
         "_attachment",
@@ -45,15 +50,15 @@ class _SessionIdentityBoundAdbTransportListWatchSession:
 
     def __init__(
         self,
-        session_identity: AdbTransportListSessionIdentity,
+        initial_basis: AdbTransportListObservationBasis,
         coordinator: AdbTransportListCoordinator,
         stream: AdbTransportListWatchStream,
         initial: AdbTransportList,
         *,
         attachment: AdbTransportListWatchAttachment | None = None,
     ) -> None:
-        if not isinstance(session_identity, AdbTransportListSessionIdentity):
-            raise TypeError("session_identity must be AdbTransportListSessionIdentity")
+        if not isinstance(initial_basis, AdbTransportListObservationBasis):
+            raise TypeError("initial_basis must be AdbTransportListObservationBasis")
         if not isinstance(coordinator, AdbTransportListCoordinator):
             raise TypeError("coordinator must be AdbTransportListCoordinator")
         if not isinstance(stream, AdbTransportListWatchStream):
@@ -66,7 +71,7 @@ class _SessionIdentityBoundAdbTransportListWatchSession:
             )
         if not isinstance(initial, AdbTransportList):
             raise TypeError("initial must be AdbTransportList")
-        self._session_identity = session_identity
+        self._initial_basis = initial_basis
         self._coordinator = coordinator
         self._stream = stream
         self._attachment = attachment
@@ -76,7 +81,11 @@ class _SessionIdentityBoundAdbTransportListWatchSession:
 
     @property
     def session_identity(self) -> AdbTransportListSessionIdentity:
-        return self._session_identity
+        return self._initial_basis.session_identity
+
+    @property
+    def initial_basis(self) -> AdbTransportListObservationBasis:
+        return self._initial_basis
 
     @property
     def initial(self) -> AdbTransportList:
@@ -96,7 +105,7 @@ class _SessionIdentityBoundAdbTransportListWatchSession:
 
         # Revoke producer authority before potentially blocking resource cleanup. A stale close
         # cannot invalidate a replacement session because revocation is session-identity-fenced.
-        self._coordinator.revoke(self._session_identity)
+        self._coordinator.revoke(self.session_identity)
 
         first_error: BaseException | None = None
         try:
@@ -115,22 +124,40 @@ class _SessionIdentityBoundAdbTransportListWatchSession:
 
 
 def bind_transport_list_watch_session(
-    session_identity: AdbTransportListSessionIdentity,
     coordinator: AdbTransportListCoordinator,
     stream: AdbTransportListWatchStream,
     initial: AdbTransportList,
     *,
     attachment: AdbTransportListWatchAttachment | None = None,
-) -> AdbTransportListWatchSession:
-    """Bind raw watch resources to one observation session identity and transfer ownership."""
+) -> AdbTransportListWatchSession | None:
+    """Acquire producer authority and bind it to established raw watch resources."""
 
-    return _SessionIdentityBoundAdbTransportListWatchSession(
-        session_identity,
-        coordinator,
-        stream,
-        initial,
-        attachment=attachment,
-    )
+    if not isinstance(coordinator, AdbTransportListCoordinator):
+        raise TypeError("coordinator must be AdbTransportListCoordinator")
+    if not isinstance(stream, AdbTransportListWatchStream):
+        raise TypeError("stream must satisfy AdbTransportListWatchStream")
+    if attachment is not None and not isinstance(
+        attachment, AdbTransportListWatchAttachment
+    ):
+        raise TypeError("attachment must satisfy AdbTransportListWatchAttachment or be None")
+    if not isinstance(initial, AdbTransportList):
+        raise TypeError("initial must be AdbTransportList")
+
+    initial_basis = coordinator.begin()
+    if initial_basis is None:
+        return None
+
+    try:
+        return _SessionIdentityBoundAdbTransportListWatchSession(
+            initial_basis,
+            coordinator,
+            stream,
+            initial,
+            attachment=attachment,
+        )
+    except BaseException:
+        coordinator.revoke(initial_basis.session_identity)
+        raise
 
 
 __all__ = [

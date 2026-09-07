@@ -5,10 +5,7 @@ from threading import Lock, Thread, current_thread
 
 from networking import TcpAddress
 from adb.transport_list.coordinator import AdbTransportListCoordinator
-from adb.transport_list.session_identity import (
-    AdbTransportListSessionIdentity,
-    AdbTransportListSessionIdentityIssuer,
-)
+from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.watch.supervision.policy import AdbTransportListWatchSupervisionPolicy
 from adb.transport_list.watch.controller import (
     AdbTransportListWatchController,
@@ -41,7 +38,6 @@ _ControllerFactory = Callable[
         TcpAddress,
         EventPublisher,
         AdbTransportListCoordinator,
-        AdbTransportListSessionIdentityIssuer,
     ],
     AdbTransportListWatchController,
 ]
@@ -54,11 +50,7 @@ def _default_thread_factory(*args, **kwargs) -> Thread:
 
 
 class AdbTransportListWatchSupervisor:
-    """Maintain endpoint-bound watch controllers while session identity owns session correctness.
-
-    Reconciliation may replace the endpoint controller and session issuer. Stale observation,
-    start, stop, and failure work is fenced by the transport-list session identity.
-    """
+    """Maintain endpoint-bound watch controllers and correlate their WatchSession signals."""
 
     def __init__(
         self,
@@ -67,7 +59,6 @@ class AdbTransportListWatchSupervisor:
         policy: AdbTransportListWatchSupervisionPolicy,
         *,
         transport_list_observation_coordinator: AdbTransportListCoordinator,
-        session_identity_issuer: AdbTransportListSessionIdentityIssuer,
         connection_failure_handler: _ConnectionFailureHandler,
         _attachment_factory: _TransportListWatchAttachmentFactory | None = None,
         _controller_factory: _ControllerFactory | None = None,
@@ -89,10 +80,6 @@ class AdbTransportListWatchSupervisor:
                 "transport_list_observation_coordinator must be "
                 "AdbTransportListCoordinator"
             )
-        if not isinstance(session_identity_issuer, AdbTransportListSessionIdentityIssuer):
-            raise TypeError(
-                "session_identity_issuer must be AdbTransportListSessionIdentityIssuer"
-            )
         if not callable(connection_failure_handler):
             raise TypeError("connection_failure_handler must be callable")
         if _attachment_factory is not None and not callable(_attachment_factory):
@@ -111,7 +98,6 @@ class AdbTransportListWatchSupervisor:
         self._transport_list_observation_coordinator = (
             transport_list_observation_coordinator
         )
-        self._session_identity_issuer = session_identity_issuer
         self._connection_failure_handler = connection_failure_handler
         self._policy = policy
         self._attachment_factory = _attachment_factory
@@ -121,6 +107,8 @@ class AdbTransportListWatchSupervisor:
         self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
         self._watch_requested = False
         self._controller: AdbTransportListWatchController | None = None
+        self._current_session_identity: AdbTransportListSessionIdentity | None = None
+        self._last_session_epoch_value = 0
         self._watch_active = False
         self._start_in_progress = False
         self._start_token: object | None = None
@@ -169,33 +157,24 @@ class AdbTransportListWatchSupervisor:
         endpoint: TcpAddress | None = None,
         *,
         replace_controller: bool = False,
-        session_identity_issuer: AdbTransportListSessionIdentityIssuer | None = None,
         connection_failure_handler: _ConnectionFailureHandler | None = None,
     ) -> None:
         """Restart an inactive session or replace the endpoint controller after activation.
 
         ``replace_controller`` is the explicit server-lifetime boundary supplied by runtime
-        activation wiring. It intentionally replaces the controller even when the endpoint is
-        unchanged; session identity, not endpoint equality, owns stale-work fencing.
+        activation wiring. Session authority is fenced by StateStore admission and WatchSession
+        identity rather than by controller-scoped issuer replacement.
         """
 
         if endpoint is not None and not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress or None")
         if not isinstance(replace_controller, bool):
             raise TypeError("replace_controller must be bool")
-        if session_identity_issuer is not None and not isinstance(
-            session_identity_issuer, AdbTransportListSessionIdentityIssuer
-        ):
-            raise TypeError(
-                "session_identity_issuer must be AdbTransportListSessionIdentityIssuer or None"
-            )
         if connection_failure_handler is not None and not callable(connection_failure_handler):
             raise TypeError("connection_failure_handler must be callable or None")
-        if replace_controller and (
-            session_identity_issuer is None or connection_failure_handler is None
-        ):
+        if replace_controller and connection_failure_handler is None:
             raise ValueError(
-                "controller replacement requires a fresh session issuer and failure handler"
+                "controller replacement requires a fresh failure handler"
             )
 
         launch: tuple[Thread, AdbTransportListWatchController, object] | None = None
@@ -207,8 +186,6 @@ class AdbTransportListWatchSupervisor:
                 self._require_open()
                 if endpoint is not None:
                     self._endpoint = endpoint
-                if session_identity_issuer is not None:
-                    self._session_identity_issuer = session_identity_issuer
                 if connection_failure_handler is not None:
                     self._connection_failure_handler = connection_failure_handler
                 if not self._watch_requested:
@@ -221,6 +198,7 @@ class AdbTransportListWatchSupervisor:
                 ):
                     self._cancel_start_locked()
                     self._watch_active = False
+                    self._current_session_identity = None
                     self._controller = None
                     controller_to_close = controller
                     replace_controller = False
@@ -266,6 +244,7 @@ class AdbTransportListWatchSupervisor:
             self._closed = True
             self._watch_requested = False
             self._watch_active = False
+            self._current_session_identity = None
             self._cancel_start_locked()
             subscriptions = self._subscriptions
             self._subscriptions = ()
@@ -284,12 +263,19 @@ class AdbTransportListWatchSupervisor:
     def _on_watch_started(self, event: AdbTransportListWatchStarted) -> None:
         with self._lock:
             controller = self._controller
-            if (
-                self._closed
-                or not self._watch_requested
-                or controller is None
-                or event.session_identity != controller.session_identity
-            ):
+            if self._closed or not self._watch_requested or controller is None:
+                return
+
+            current_session = self._current_session_identity
+            if current_session is None:
+                if (
+                    not self._start_in_progress
+                    or event.session_identity.epoch.value <= self._last_session_epoch_value
+                ):
+                    return
+                self._current_session_identity = event.session_identity
+                self._last_session_epoch_value = event.session_identity.epoch.value
+            elif event.session_identity is not current_session:
                 return
             self._watch_active = controller.active
 
@@ -297,13 +283,13 @@ class AdbTransportListWatchSupervisor:
         connection_failure: AdbTransportListWatchServerConnectionFailure | None = None
         handler: _ConnectionFailureHandler | None = None
         with self._lock:
-            controller = self._controller
             if (
                 self._closed
-                or controller is None
-                or event.session_identity != controller.session_identity
+                or self._controller is None
+                or event.session_identity is not self._current_session_identity
             ):
                 return
+            self._current_session_identity = None
             self._watch_active = False
             if self._watch_requested and isinstance(
                 event.failure,
@@ -317,13 +303,13 @@ class AdbTransportListWatchSupervisor:
 
     def _on_watch_stopped(self, event: AdbTransportListWatchStopped) -> None:
         with self._lock:
-            controller = self._controller
             if (
                 self._closed
-                or controller is None
-                or event.session_identity != controller.session_identity
+                or self._controller is None
+                or event.session_identity is not self._current_session_identity
             ):
                 return
+            self._current_session_identity = None
             self._watch_active = False
 
     def _run_start_attempt(
@@ -410,6 +396,8 @@ class AdbTransportListWatchSupervisor:
     ) -> bool:
         stop_superseded_session = False
         publish_failure = False
+        connection_failure: AdbTransportListWatchServerConnectionFailure | None = None
+        handler: _ConnectionFailureHandler | None = None
 
         with self._lock:
             if self._controller is not controller or self._start_token is not token:
@@ -421,19 +409,29 @@ class AdbTransportListWatchSupervisor:
                 and self._watch_requested
                 and self._endpoint == endpoint
                 and controller.endpoint == endpoint
-                and (
-                    session_identity is None
-                    or controller.session_identity == session_identity
-                )
             )
+            if (
+                session_identity is not None
+                and session_identity.epoch.value > self._last_session_epoch_value
+            ):
+                self._last_session_epoch_value = session_identity.epoch.value
             watch_active = started and target_is_current and controller.active
             self._watch_active = watch_active
+            self._current_session_identity = session_identity if watch_active else None
             stop_superseded_session = started and not watch_active
             publish_failure = (
                 failure is not None
                 and session_identity is not None
                 and target_is_current
             )
+            if (
+                failure is not None
+                and target_is_current
+                and self._watch_requested
+                and isinstance(failure, AdbTransportListWatchServerConnectionFailure)
+            ):
+                connection_failure = failure
+                handler = self._connection_failure_handler
 
         if stop_superseded_session:
             controller.stop()
@@ -441,6 +439,8 @@ class AdbTransportListWatchSupervisor:
             assert failure is not None
             assert session_identity is not None
             self._bus.publish(AdbTransportListWatchFailed(session_identity, failure))
+        if connection_failure is not None and handler is not None:
+            handler(connection_failure)
         return watch_active
 
     def _ensure_controller_locked(
@@ -469,7 +469,6 @@ class AdbTransportListWatchSupervisor:
                 endpoint,
                 self._bus,
                 self._transport_list_observation_coordinator,
-                self._session_identity_issuer,
                 startup_timeout_seconds=self._policy.episode_timeout_seconds,
                 _attachment_factory=attachment_factory,
             )
@@ -478,7 +477,6 @@ class AdbTransportListWatchSupervisor:
                 endpoint,
                 self._bus,
                 self._transport_list_observation_coordinator,
-                self._session_identity_issuer,
             )
         if not isinstance(controller, AdbTransportListWatchController):
             raise TypeError("controller factory must return AdbTransportListWatchController")
@@ -486,6 +484,7 @@ class AdbTransportListWatchSupervisor:
             raise ValueError("controller factory returned a mismatched endpoint binding")
         self._controller = controller
         self._watch_active = False
+        self._current_session_identity = None
         return controller
 
     def _begin_start_locked(self) -> object:
