@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterator
 from math import isfinite
 from numbers import Real
 import socket
+from threading import Event
 from time import monotonic
 
 from adb.adapters.aosp.track_devices import to_transport_list
@@ -21,18 +22,19 @@ from adb.transport_list.session_identity import (
     AdbTransportListSessionIdentity,
     AdbTransportListSessionIdentityIssuer,
 )
+from adb.transport_list.watch.backend_template import (
+    AdbTransportListWatchBackendAcquireError,
+    AdbTransportListWatchBackendAcquireInterruptedError,
+    AdbTransportListWatchBackendTemplate,
+)
 from adb.transport_list.watch.error import AdbTransportListWatchError
 from adb.transport_list.watch.failure import (
+    AdbTransportListWatchFailure,
     AdbTransportListWatchProtocolFailure,
     AdbTransportListWatchServerConnectionFailure,
     AdbTransportListWatchServiceFailure,
 )
-from adb.transport_list.watch.backend import (
-    AdbTransportListWatchBackendAlreadyOpen,
-    AdbTransportListWatchBackendOpened,
-    AdbTransportListWatchBackendOpenFailed,
-    AdbTransportListWatchBackendOpenResult,
-)
+from adb.transport_list.watch.generation import AdbTransportListWatchGenerationIssuer
 from adb.transport_list.watch.session import AdbTransportListWatchSession
 from networking import TcpAddress
 
@@ -49,17 +51,20 @@ def _normalize_timeout(value: object) -> float:
     return timeout
 
 
-def _watch_error(exc: BaseException) -> AdbTransportListWatchError | None:
+def _watch_failure(exc: BaseException) -> AdbTransportListWatchFailure | None:
     diagnostic = str(exc).strip() or None
     if isinstance(exc, AdbProtocolError):
-        return AdbTransportListWatchError(AdbTransportListWatchProtocolFailure(diagnostic))
+        return AdbTransportListWatchProtocolFailure(diagnostic)
     if isinstance(exc, AdbServiceError):
-        return AdbTransportListWatchError(AdbTransportListWatchServiceFailure(diagnostic))
+        return AdbTransportListWatchServiceFailure(diagnostic)
     if isinstance(exc, (AdbServerConnectionError, OSError)):
-        return AdbTransportListWatchError(
-            AdbTransportListWatchServerConnectionFailure(diagnostic)
-        )
+        return AdbTransportListWatchServerConnectionFailure(diagnostic)
     return None
+
+
+def _watch_error(exc: BaseException) -> AdbTransportListWatchError | None:
+    failure = _watch_failure(exc)
+    return None if failure is None else AdbTransportListWatchError(failure)
 
 
 def _close_after_failure(sock: socket.socket) -> None:
@@ -129,10 +134,15 @@ def _handshake(sock: socket.socket, deadline: float, clock: _Clock) -> None:
 
 
 class _SmartSocketWatchSession:
-    """One established resource owner, independent of domain authority and legacy watchers."""
+    """One established resource owner independent of transport-list projection authority."""
 
     __slots__ = (
-        "_session_identity", "_socket", "_initial", "_on_close", "_closed", "_updates"
+        "_session_identity",
+        "_socket",
+        "_initial",
+        "_on_close",
+        "_closed",
+        "_updates",
     )
 
     def __init__(
@@ -140,12 +150,14 @@ class _SmartSocketWatchSession:
         session_identity: AdbTransportListSessionIdentity,
         sock: socket.socket,
         initial: AdbTransportList,
-        on_close: Callable[[_SmartSocketWatchSession], None],
+        on_close: Callable[[AdbTransportListSessionIdentity], None],
     ) -> None:
         if not isinstance(session_identity, AdbTransportListSessionIdentity):
             raise TypeError("session_identity must be AdbTransportListSessionIdentity")
         if not isinstance(initial, AdbTransportList):
             raise TypeError("initial must be AdbTransportList")
+        if not callable(on_close):
+            raise TypeError("on_close must be callable")
         self._session_identity = session_identity
         self._socket = sock
         self._initial = initial
@@ -177,8 +189,7 @@ class _SmartSocketWatchSession:
                 if error is not None:
                     raise error from exc
                 raise
-            # A consumer stopping iteration is not a socket failure. It must close
-            # the session explicitly, including when it abandons this generator.
+            # Stopping iteration is not a socket failure. Consumers must close explicitly.
             yield transport_list
 
     def close(self) -> None:
@@ -194,86 +205,102 @@ class _SmartSocketWatchSession:
                 )
             ) from exc
         finally:
-            self._on_close(self)
+            self._on_close(self._session_identity)
 
 
-class SmartSocketAdbTransportListWatchBackend:
-    """Create identity-bearing sessions through synchronous AOSP track-devices I/O.
+class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTemplate):
+    """Generation-fenced transport-list watch authority over AOSP track-devices I/O.
 
-    Use open/read/close serially. There are no worker threads, startup cancellation,
-    reconnection, or domain authority side effects. The issuer belongs to the caller's
-    runtime scope. This backend is independent of the legacy Watcher/Attachment path.
+    Lifecycle authority and resource ownership are linearized by the shared backend
+    template. The adapter is responsible only for establishing a fully usable smart-socket
+    session, translating expected I/O failures, and closing its physical socket resource.
+
+    DNS resolution itself remains synchronous. Cancellation is observed before and after
+    each blocking startup stage; matching ``release()`` still revokes authority immediately
+    even when an in-flight system call takes until its configured deadline to return.
     """
 
     def __init__(
         self,
         identity_issuer: AdbTransportListSessionIdentityIssuer,
         *,
+        generation_issuer: AdbTransportListWatchGenerationIssuer | None = None,
         _resolver: Callable[..., list[tuple]] = socket.getaddrinfo,
         _socket_factory: Callable[..., socket.socket] = socket.socket,
         _clock: _Clock = monotonic,
     ) -> None:
         if not isinstance(identity_issuer, AdbTransportListSessionIdentityIssuer):
             raise TypeError("identity_issuer must be AdbTransportListSessionIdentityIssuer")
+        if generation_issuer is None:
+            generation_issuer = AdbTransportListWatchGenerationIssuer()
+        elif not isinstance(generation_issuer, AdbTransportListWatchGenerationIssuer):
+            raise TypeError(
+                "generation_issuer must be AdbTransportListWatchGenerationIssuer or None"
+            )
         if not callable(_resolver) or not callable(_socket_factory) or not callable(_clock):
             raise TypeError("resolver, socket factory, and clock must be callable")
+        super().__init__(generation_issuer)
         self._identity_issuer = identity_issuer
         self._resolver = _resolver
         self._socket_factory = _socket_factory
         self._clock = _clock
-        self._session: _SmartSocketWatchSession | None = None
 
-    def open(
+    @staticmethod
+    def _check_cancelled(cancellation: Event) -> None:
+        if cancellation.is_set():
+            raise AdbTransportListWatchBackendAcquireInterruptedError
+
+    def _obtain_session(
         self,
         endpoint: TcpAddress,
-        *,
-        startup_timeout_seconds: float = 5.0,
-    ) -> AdbTransportListWatchBackendOpenResult:
-        if self._session is not None:
-            return AdbTransportListWatchBackendAlreadyOpen()
-        if not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
+        startup_timeout_seconds: float,
+        cancellation: Event,
+    ) -> AdbTransportListWatchSession:
         timeout = _normalize_timeout(startup_timeout_seconds)
+        self._check_cancelled(cancellation)
 
         sock: socket.socket | None = None
         try:
             sock, deadline = self._connect(endpoint, timeout)
+            self._check_cancelled(cancellation)
             _handshake(sock, deadline, self._clock)
+            self._check_cancelled(cancellation)
             initial = to_transport_list(
                 parse_devices(_read_frame(sock, deadline=deadline, clock=self._clock))
             )
+            self._check_cancelled(cancellation)
             sock.settimeout(None)
+            self._check_cancelled(cancellation)
 
-            # Issue only after the resource is usable. Identity creation is outside
-            # I/O failure normalization so issuer/programming failures remain exceptional.
-            session = _SmartSocketWatchSession(
-                self._identity_issuer.issue(), sock, initial, self._release_session
+            # Session identity is issued only after the resource has become fully usable.
+            return _SmartSocketWatchSession(
+                self._identity_issuer.issue(),
+                sock,
+                initial,
+                self._resource_closed,
             )
+        except AdbTransportListWatchBackendAcquireInterruptedError:
+            if sock is not None:
+                _close_after_failure(sock)
+            raise
         except BaseException as exc:
             if sock is not None:
                 _close_after_failure(sock)
-            error = _watch_error(exc)
-            if error is not None:
-                return AdbTransportListWatchBackendOpenFailed(error.failure)
+            failure = _watch_failure(exc)
+            if failure is not None:
+                raise AdbTransportListWatchBackendAcquireError(failure) from exc
             raise
 
-        self._session = session
-        return AdbTransportListWatchBackendOpened(session)
-
-    def close(self, expected: AdbTransportListSessionIdentity) -> bool:
-        if not isinstance(expected, AdbTransportListSessionIdentity):
-            raise TypeError("expected must be AdbTransportListSessionIdentity")
-
-        session = self._session
-        if session is None or session.session_identity is not expected:
-            return False
-        session.close()
-        return True
-
     def _connect(self, endpoint: TcpAddress, timeout: float) -> tuple[socket.socket, float]:
-        addresses = self._resolver(endpoint.host, endpoint.port, type=socket.SOCK_STREAM)
-        # Synchronous DNS resolution is not bounded by the socket timeout. Connect
-        # candidates, handshake, and the first complete frame share the deadline.
+        try:
+            addresses = self._resolver(endpoint.host, endpoint.port, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise AdbServerConnectionError(
+                f"failed to resolve ADB server address {endpoint.host!r}: {exc}"
+            ) from exc
+
+        # Synchronous DNS resolution above is not bounded by the socket timeout. Connect
+        # candidates, handshake, and the first complete frame share one deadline.
         deadline = self._clock() + timeout
         last_error: OSError | None = None
         for family, socktype, proto, _, sockaddr in addresses:
@@ -294,10 +321,6 @@ class SmartSocketAdbTransportListWatchBackend:
 
         detail = str(last_error) if last_error is not None else "no address candidates"
         raise AdbServerConnectionError(f"failed to connect to ADB server: {detail}") from last_error
-
-    def _release_session(self, session: _SmartSocketWatchSession) -> None:
-        if self._session is session:
-            self._session = None
 
 
 __all__ = ["SmartSocketAdbTransportListWatchBackend"]

@@ -8,6 +8,8 @@ from networking import TcpAddress
 from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackend,
+    AdbTransportListWatchBackendAcquireDeferred,
+    AdbTransportListWatchBackendAcquireRevoked,
     AdbTransportListWatchBackendAlreadyOpen,
     AdbTransportListWatchBackendOpened,
     AdbTransportListWatchBackendOpenFailed,
@@ -55,6 +57,8 @@ AdbTransportListWatchProvisionResult: TypeAlias = (
     | tuple[
         AdbTransportListWatchBackendAlreadyOpen
         | AdbTransportListWatchBackendOpenFailed
+        | AdbTransportListWatchBackendAcquireDeferred
+        | AdbTransportListWatchBackendAcquireRevoked
     ]
     | tuple[
         AdbTransportListWatchBackendOpened,
@@ -104,10 +108,11 @@ class AdbTransportListWatchLifecycleCoordinator:
         *,
         startup_timeout_seconds: float = 5.0,
     ) -> AdbTransportListWatchProvisionResult:
-        """Open watch resources and commit their session identity as authoritative.
+        """Acquire watch authority and mirror its session identity into legacy state.
 
-        Returns ordered backend-open and activation evidence. A newly opened backend
-        session is closed when its activation fence is lost or activation raises.
+        This remains a compatibility facade while orchestration migrates to backend
+        acquire/release results directly. A newly acquired backend session is released
+        when the legacy activation fence is lost or activation raises.
         """
 
         t0 = self._state.snapshot()
@@ -147,7 +152,7 @@ class AdbTransportListWatchLifecycleCoordinator:
         self,
         startup_timeout_seconds: float,
     ) -> AdbTransportListWatchBackendOpenResult:
-        opening = self._backend.open(
+        opening = self._backend.acquire(
             self._endpoint,
             startup_timeout_seconds=startup_timeout_seconds,
         )
@@ -156,27 +161,29 @@ class AdbTransportListWatchLifecycleCoordinator:
             (
                 AdbTransportListWatchBackendAlreadyOpen,
                 AdbTransportListWatchBackendOpenFailed,
+                AdbTransportListWatchBackendAcquireDeferred,
+                AdbTransportListWatchBackendAcquireRevoked,
             ),
         ):
             return opening
         if not isinstance(opening, AdbTransportListWatchBackendOpened):
-            raise TypeError("watch backend open() returned an unsupported result")
+            raise TypeError("watch backend acquire() returned an unsupported result")
         return opening
 
     def _rollback_opening(self, opening: AdbTransportListWatchBackendOpened) -> None:
         if not isinstance(opening, AdbTransportListWatchBackendOpened):
             raise TypeError("opening must be AdbTransportListWatchBackendOpened")
-        self._backend.close(opening.identity)
+        self._backend.release(opening.generation)
 
     def retire(
         self,
         *,
         expected_session: AdbTransportListSessionIdentity | None = None,
     ) -> AdbTransportListWatchRetireResult:
-        """Retire authoritative watch-session state and close matching resources.
+        """Retire legacy session state and release matching backend authority.
 
-        ``expected_session`` fences stale retirement requests. A committed deactivation
-        is published after backend close is requested.
+        ``expected_session`` fences stale retirement requests. Backend generation remains
+        the canonical lifecycle fence; this facade mirrors deactivation for old consumers.
         """
 
         if expected_session is not None and not isinstance(
@@ -203,7 +210,9 @@ class AdbTransportListWatchLifecycleCoordinator:
         if not isinstance(deactivation, AdbTransportListWatchSessionDeactivated):
             raise TypeError("watch-session state deactivate() returned an unsupported result")
 
-        self._backend.close(session)
+        backend_state = self._backend.read()
+        if backend_state.session_identity is session:
+            self._backend.release(backend_state.generation)
         if self._publisher is not None:
             self._publisher.publish(deactivation)
         return deactivation
