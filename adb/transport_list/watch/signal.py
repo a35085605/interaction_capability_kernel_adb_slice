@@ -3,55 +3,45 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from adb.server.identity import AdbServerIdentity
+from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 
 
-def _require_server(value: object) -> AdbServerIdentity:
-    if not isinstance(value, AdbServerIdentity):
-        raise TypeError("server must be AdbServerIdentity")
+def _require_session_identity(value: object) -> AdbTransportListSessionIdentity:
+    if not isinstance(value, AdbTransportListSessionIdentity):
+        raise TypeError("session_identity must be AdbTransportListSessionIdentity")
     return value
 
 
-class _TransportListWatchServerSignalProjection:
-    server: AdbServerIdentity
-
-    @property
-    def server_identity(self) -> AdbServerIdentity:
-        return self.server
-
-
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchStarted(_TransportListWatchServerSignalProjection):
-    """Signal that a transport-list watch entered stream mode for one server lifetime."""
+class AdbTransportListWatchStarted:
+    """Signal that one observation session committed its initial transport list."""
 
-    server: AdbServerIdentity
+    session_identity: AdbTransportListSessionIdentity
 
     def __post_init__(self) -> None:
-        _require_server(self.server)
+        _require_session_identity(self.session_identity)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchStopped(_TransportListWatchServerSignalProjection):
-    """Signal that a transport-list watch ended while preserving the last observed transport
-    evidence.
-    """
+class AdbTransportListWatchStopped:
+    """Signal that one observation session ended and its authority was revoked."""
 
-    server: AdbServerIdentity
+    session_identity: AdbTransportListSessionIdentity
 
     def __post_init__(self) -> None:
-        _require_server(self.server)
+        _require_session_identity(self.session_identity)
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchFailed(_TransportListWatchServerSignalProjection):
-    """Signal a transport-list watch failure while preserving authoritative server state."""
+class AdbTransportListWatchFailed:
+    """Signal a transport-list watch failure for one observation session."""
 
-    server: AdbServerIdentity
+    session_identity: AdbTransportListSessionIdentity
     failure: AdbTransportListWatchFailure
 
     def __post_init__(self) -> None:
-        _require_server(self.server)
+        _require_session_identity(self.session_identity)
         if not isinstance(self.failure, AdbTransportListWatchFailure):
             raise TypeError("failure must be AdbTransportListWatchFailure")
 

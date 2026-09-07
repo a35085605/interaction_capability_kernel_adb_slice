@@ -1,10 +1,6 @@
 """ADB transport-list values, state, identities, readers, and queries."""
 
-from adb.transport_list.coordinator import (
-    AdbTransportListCoordinator,
-    AdbTransportListCoordinatedObservationResult,
-    AdbTransportListObservationServerConflict,
-)
+from adb.transport_list.coordinator import AdbTransportListCoordinator
 from adb.transport_list.identity import (
     AdbTransportListIdentity,
     AdbTransportListIdentityIssuer,
@@ -13,23 +9,31 @@ from adb.transport_list.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
 )
-from adb.transport_list.lookup import (
-    AdbTransportLookup,
-    find_transport,
-)
+from adb.transport_list.lookup import AdbTransportLookup, find_transport
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import (
     AdbTransportListObservation,
     AdbTransportListObservationBasis,
 )
 from adb.transport_list.reader import AdbTransportListReader
+from adb.transport_list.session_identity import (
+    AdbTransportListSessionEpoch,
+    AdbTransportListSessionIdentity,
+    AdbTransportListSessionIdentityIssuer,
+)
 from adb.transport_list.state import (
+    AdbTransportListCoordinatedObservationResult,
     AdbTransportListInvalidated,
     AdbTransportListInvalidationResult,
     AdbTransportListInvalidationStateConflict,
     AdbTransportListObservationResult,
     AdbTransportListObservationStateConflict,
     AdbTransportListObserved,
+    AdbTransportListSessionAuthority,
+    AdbTransportListSessionBegun,
+    AdbTransportListSessionRevocationResult,
+    AdbTransportListSessionRevocationStateConflict,
+    AdbTransportListSessionRevoked,
     AdbTransportListState,
     AdbTransportListStateStatus,
     AdbTransportListStateStore,
@@ -51,10 +55,17 @@ __all__ = [
     "AdbTransportListObservation",
     "AdbTransportListObservationBasis",
     "AdbTransportListObservationResult",
-    "AdbTransportListObservationServerConflict",
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",
     "AdbTransportListReader",
+    "AdbTransportListSessionAuthority",
+    "AdbTransportListSessionBegun",
+    "AdbTransportListSessionEpoch",
+    "AdbTransportListSessionIdentity",
+    "AdbTransportListSessionIdentityIssuer",
+    "AdbTransportListSessionRevocationResult",
+    "AdbTransportListSessionRevocationStateConflict",
+    "AdbTransportListSessionRevoked",
     "AdbTransportListState",
     "AdbTransportListStateStatus",
     "AdbTransportListStateStore",

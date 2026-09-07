@@ -6,6 +6,8 @@ from threading import RLock
 from adb.runtime.managed import AdbManagedRuntime
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.failure import AdbServerConnectionFailure
+from adb.server.identity import AdbServerIdentity
 from adb.server.lifecycle.backend import (
     AdbServerBackend,
     AdbServerBackendAcquireDeferred,
@@ -29,6 +31,7 @@ from adb.server.lifecycle.provision import (
     classify_provision_result,
 )
 from adb.server.lifecycle.supervision.supervisor import AdbServerSupervisor
+from adb.server.signal import AdbServerReconciliationRequested
 from adb.server.state import AdbServerActivated, AdbServerDeactivated
 from adb.runtime.state import AdbRuntimeAuthorityStateStore
 from adb.transport.configuration import AdbConfiguredTransport
@@ -39,6 +42,7 @@ from adb.transport_list.watch.supervision.policy import (
 )
 from adb.transport_list.watch.attachment import AdbTransportListWatchAttachment
 from adb.transport_list.watch.supervision.supervisor import AdbTransportListWatchSupervisor
+from adb.transport_list.watch.failure import AdbTransportListWatchServerConnectionFailure
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.supervisor import AdbConfiguredTransportSupervisor
 from eventing import EventBus, EventSubscriptionToken
@@ -129,9 +133,10 @@ class AdbRuntime(AdbManagedRuntime):
             raise ValueError("supervised runtime components require an event bus")
         if (
             transport_list_watch_supervisor is not None
-            and transport_list_watch_supervisor.authority is not state
+            and transport_list_watch_supervisor.transport_list_observation_coordinator.authority
+            is not state.transport_list_session_authority
         ):
-            raise ValueError("transport-list watch supervisor must share runtime authority")
+            raise ValueError("transport-list watch supervisor must share transport-list authority")
         if (
             transport_supervisor is not None
             and transport_supervisor.server_state is not state.server
@@ -158,7 +163,7 @@ class AdbRuntime(AdbManagedRuntime):
             publisher=event_bus,
         )
         self._transport_list_coordinator = AdbTransportListCoordinator(
-            state,
+            state.transport_list_session_authority,
             publisher=event_bus,
         )
         if _bootstrap_server:
@@ -205,15 +210,16 @@ class AdbRuntime(AdbManagedRuntime):
             raise RuntimeError("transport-list watch requires an event bus")
         server = self.server
         endpoint = self.current_endpoint
-        if server is None or endpoint is None:
-            raise RuntimeError("ADB runtime has no active server binding")
+        issuer = self._state.transport_list_session_issuer
+        if server is None or endpoint is None or issuer is None:
+            raise RuntimeError("ADB runtime has no active transport-list session binding")
         return AdbTransportListWatchSupervisor(
-            server,
             endpoint,
             event_bus,
             policy,
-            authority=self._state,
             transport_list_observation_coordinator=self._transport_list_coordinator,
+            session_identity_issuer=issuer,
+            connection_failure_handler=_bind_watch_connection_failure(event_bus, server),
             _attachment_factory=_attachment_factory,
         )
 
@@ -296,9 +302,10 @@ class AdbRuntime(AdbManagedRuntime):
             )
         if (
             transport_list_watch_supervisor is not None
-            and transport_list_watch_supervisor.authority is not self._state
+            and transport_list_watch_supervisor.transport_list_observation_coordinator.authority
+            is not self._state.transport_list_session_authority
         ):
-            raise ValueError("transport-list watch supervisor must share runtime authority")
+            raise ValueError("transport-list watch supervisor must share transport-list authority")
         if (
             transport_supervisor is not None
             and transport_supervisor.server_state is not self._state.server
@@ -435,10 +442,10 @@ class AdbRuntime(AdbManagedRuntime):
         with self._runtime_lock:
             if self._closed or not (self._started or self._starting):
                 return
-        self._reconcile_server_dependents()
+        self._reconcile_server_dependents(event)
 
-    def _reconcile_server_dependents(self) -> None:
-        """Rebind runtime-owned server dependents to the current authoritative lifetime."""
+    def _reconcile_server_dependents(self, event: AdbServerActivated) -> None:
+        """Rebind runtime-owned server dependents to the committed activation."""
 
         # Configured transports must reset their server-scoped projections before a successor
         # transport-list watch can publish observations for the new lifetime.
@@ -448,7 +455,23 @@ class AdbRuntime(AdbManagedRuntime):
 
         watch_supervisor = self._transport_list_watch_supervisor
         if watch_supervisor is not None:
-            watch_supervisor.reconcile()
+            endpoint = event.state.endpoint
+            issuer = self._state.transport_list_session_issuer
+            assert endpoint is not None
+            if issuer is None:
+                raise RuntimeError("server activation has no transport-list session issuer")
+            event_bus = self._event_bus
+            if event_bus is None:
+                raise RuntimeError("transport-list watch reconciliation requires an event bus")
+            watch_supervisor.reconcile(
+                endpoint,
+                replace_controller=True,
+                session_identity_issuer=issuer,
+                connection_failure_handler=_bind_watch_connection_failure(
+                    event_bus,
+                    event.server,
+                ),
+            )
 
     def _require_started(self) -> None:
         with self._runtime_lock:
@@ -462,6 +485,30 @@ class AdbRuntime(AdbManagedRuntime):
         if supervisor is None:
             raise RuntimeError("configured transport supervision is not configured")
         return supervisor
+
+
+def _bind_watch_connection_failure(
+    event_bus: EventBus,
+    server: AdbServerIdentity,
+):
+    """Bind watch failure escalation to one server lifetime without exposing it to Watch."""
+
+    if not isinstance(server, AdbServerIdentity):
+        raise TypeError("server must be AdbServerIdentity")
+
+    def publish(failure: AdbTransportListWatchServerConnectionFailure) -> None:
+        if not isinstance(failure, AdbTransportListWatchServerConnectionFailure):
+            raise TypeError(
+                "failure must be AdbTransportListWatchServerConnectionFailure"
+            )
+        event_bus.publish(
+            AdbServerReconciliationRequested(
+                server,
+                AdbServerConnectionFailure(failure.diagnostic),
+            )
+        )
+
+    return publish
 
 
 def _is_event_bus(value: object) -> bool:

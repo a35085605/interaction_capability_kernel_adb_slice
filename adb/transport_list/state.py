@@ -5,7 +5,6 @@ from enum import Enum
 from threading import Lock
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb.server.identity import AdbServerIdentity
 from adb.transport_list.identity import (
     AdbTransportListIdentity,
     AdbTransportListIdentityIssuer,
@@ -14,6 +13,10 @@ from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import (
     AdbTransportListObservation,
     AdbTransportListObservationBasis,
+)
+from adb.transport_list.session_identity import (
+    AdbTransportListSessionIdentity,
+    AdbTransportListSessionIdentityIssuer,
 )
 
 
@@ -28,10 +31,13 @@ class AdbTransportListStateStatus(str, Enum):
 class AdbTransportListState:
     """Immutable authoritative transport-list state for one runtime.
 
-    Invalidated state retains the last committed identity and transport list for stale-work
-    fencing while observation provenance remains outside authoritative state.
+    ``session`` is the sole producer session currently authorized to establish or continue the
+    projection. ``INVALIDATED`` may retain a session while its initial list is pending. Once that
+    session is revoked, ``session`` becomes ``None`` while the last committed identity/data remain
+    available only as historical evidence.
     """
 
+    session: AdbTransportListSessionIdentity | None = None
     identity: AdbTransportListIdentity | None = None
     transport_list: AdbTransportList | None = None
     status: AdbTransportListStateStatus = AdbTransportListStateStatus.INVALIDATED
@@ -41,19 +47,28 @@ class AdbTransportListState:
         identity: AdbTransportListIdentity | None = None,
         transport_list: AdbTransportList | None = None,
         status: AdbTransportListStateStatus | None = None,
+        *,
+        session: AdbTransportListSessionIdentity | None = None,
     ) -> None:
         if status is None:
             status = (
                 AdbTransportListStateStatus.CURRENT
-                if identity is not None or transport_list is not None
+                if session is not None
+                and identity is not None
+                and transport_list is not None
                 else AdbTransportListStateStatus.INVALIDATED
             )
+        object.__setattr__(self, "session", session)
         object.__setattr__(self, "identity", identity)
         object.__setattr__(self, "transport_list", transport_list)
         object.__setattr__(self, "status", status)
         self.__post_init__()
 
     def __post_init__(self) -> None:
+        if self.session is not None and not isinstance(
+            self.session, AdbTransportListSessionIdentity
+        ):
+            raise TypeError("session must be AdbTransportListSessionIdentity or None")
         if self.identity is not None and not isinstance(
             self.identity, AdbTransportListIdentity
         ):
@@ -66,8 +81,11 @@ class AdbTransportListState:
             raise TypeError("status must be AdbTransportListStateStatus")
         if (self.identity is None) != (self.transport_list is None):
             raise ValueError("transport-list identity and data must be present together")
-        if self.status is AdbTransportListStateStatus.CURRENT and self.identity is None:
-            raise ValueError("current transport-list state must have identity and data")
+        if self.status is AdbTransportListStateStatus.CURRENT:
+            if self.identity is None:
+                raise ValueError("current transport-list state must have identity and data")
+            if self.session is None:
+                raise ValueError("current transport-list state must have an owning session")
 
     @property
     def current(self) -> AdbTransportList | None:
@@ -102,9 +120,11 @@ class AdbTransportListObserved:
 
     @property
     def identity(self) -> AdbTransportListIdentity:
-        """Identity issued by the state authority for the committed observation."""
-
         return self.observation.identity
+
+    @property
+    def session(self) -> AdbTransportListSessionIdentity:
+        return self.observation.session
 
     def __bool__(self) -> bool:
         return True
@@ -112,7 +132,7 @@ class AdbTransportListObserved:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListObservationStateConflict:
-    """Evidence that a raw observation lost its authoritative transport-list-state fence."""
+    """Evidence that a raw observation lost its session/list/status authority fence."""
 
     basis: AdbTransportListObservationBasis
     transport_list: AdbTransportList
@@ -133,41 +153,77 @@ class AdbTransportListObservationStateConflict:
 AdbTransportListObservationResult: TypeAlias = (
     AdbTransportListObserved | AdbTransportListObservationStateConflict
 )
+AdbTransportListCoordinatedObservationResult: TypeAlias = AdbTransportListObservationResult
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListObservationServerConflict:
-    """Evidence that raw transport-list data belongs to a non-authoritative server lifetime."""
+class AdbTransportListSessionBegun:
+    """Evidence that a fresh producer session acquired transport-list authority."""
 
     basis: AdbTransportListObservationBasis
-    transport_list: AdbTransportList
-    current_server: AdbServerIdentity | None
-    state: AdbTransportListState
+    superseded_session: AdbTransportListSessionIdentity | None
+    invalidated_identity: AdbTransportListIdentity | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.basis, AdbTransportListObservationBasis):
             raise TypeError("basis must be AdbTransportListObservationBasis")
-        if not isinstance(self.transport_list, AdbTransportList):
-            raise TypeError("transport_list must be AdbTransportList")
-        if self.current_server is not None and not isinstance(
-            self.current_server, AdbServerIdentity
+        if self.superseded_session is not None and not isinstance(
+            self.superseded_session, AdbTransportListSessionIdentity
         ):
-            raise TypeError("current_server must be AdbServerIdentity or None")
-        if not isinstance(self.state, AdbTransportListState):
-            raise TypeError("state must be AdbTransportListState")
-        if self.current_server == self.basis.server:
-            raise ValueError("server conflict requires a different authoritative server")
+            raise TypeError(
+                "superseded_session must be AdbTransportListSessionIdentity or None"
+            )
+        if self.invalidated_identity is not None and not isinstance(
+            self.invalidated_identity, AdbTransportListIdentity
+        ):
+            raise TypeError("invalidated_identity must be AdbTransportListIdentity or None")
 
     @property
-    def server(self) -> AdbServerIdentity:
-        return self.basis.server
+    def session(self) -> AdbTransportListSessionIdentity:
+        return self.basis.session
+
+    def __bool__(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListSessionRevoked:
+    """Evidence that one producer session lost transport-list authority."""
+
+    session: AdbTransportListSessionIdentity
+    invalidated_identity: AdbTransportListIdentity | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.session, AdbTransportListSessionIdentity):
+            raise TypeError("session must be AdbTransportListSessionIdentity")
+        if self.invalidated_identity is not None and not isinstance(
+            self.invalidated_identity, AdbTransportListIdentity
+        ):
+            raise TypeError("invalidated_identity must be AdbTransportListIdentity or None")
+
+    def __bool__(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListSessionRevocationStateConflict:
+    """Evidence that a stale session tried to revoke another producer's authority."""
+
+    session: AdbTransportListSessionIdentity
+    state: AdbTransportListState
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.session, AdbTransportListSessionIdentity):
+            raise TypeError("session must be AdbTransportListSessionIdentity")
+        if not isinstance(self.state, AdbTransportListState):
+            raise TypeError("state must be AdbTransportListState")
 
     def __bool__(self) -> bool:
         return False
 
 
-AdbTransportListCoordinatedObservationResult: TypeAlias = (
-    AdbTransportListObservationResult | AdbTransportListObservationServerConflict
+AdbTransportListSessionRevocationResult: TypeAlias = (
+    AdbTransportListSessionRevoked | AdbTransportListSessionRevocationStateConflict
 )
 
 
@@ -209,6 +265,9 @@ class AdbTransportListStateView(Protocol):
     """Authoritative transport-list state view for one runtime."""
 
     @property
+    def session(self) -> AdbTransportListSessionIdentity | None: ...
+
+    @property
     def identity(self) -> AdbTransportListIdentity | None: ...
 
     @property
@@ -224,15 +283,34 @@ class AdbTransportListStateView(Protocol):
 
 
 @runtime_checkable
-class AdbTransportListStateWriter(Protocol):
-    """Apply authoritative transport-list observation and invalidation transitions."""
+class AdbTransportListSessionAuthority(Protocol):
+    """Narrow authority for session-fenced transport-list observation transitions."""
 
-    def invalidate(
+    def snapshot(self) -> AdbTransportListState: ...
+
+    def begin_session(
         self,
-        expected: AdbTransportListIdentity,
-    ) -> AdbTransportListInvalidationResult: ...
+        issuer: AdbTransportListSessionIdentityIssuer,
+    ) -> AdbTransportListSessionBegun | None: ...
 
-    def observe(
+    def capture_update_basis(
+        self,
+        session: AdbTransportListSessionIdentity,
+    ) -> AdbTransportListObservationBasis | None: ...
+
+    def revoke_session(
+        self,
+        session: AdbTransportListSessionIdentity,
+    ) -> AdbTransportListSessionRevocationResult: ...
+
+    def observe_initial(
+        self,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
+        expected: AdbTransportListState,
+    ) -> AdbTransportListObservationResult: ...
+
+    def observe_update(
         self,
         basis: AdbTransportListObservationBasis,
         transport_list: AdbTransportList,
@@ -240,8 +318,18 @@ class AdbTransportListStateWriter(Protocol):
     ) -> AdbTransportListObservationResult: ...
 
 
+@runtime_checkable
+class AdbTransportListStateWriter(AdbTransportListSessionAuthority, Protocol):
+    """Apply authoritative session, observation, and invalidation transitions."""
+
+    def invalidate(
+        self,
+        expected: AdbTransportListIdentity,
+    ) -> AdbTransportListInvalidationResult: ...
+
+
 class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStateWriter):
-    """Thread-safe authority for transport-list state transitions and identity issuance."""
+    """Thread-safe authority for session ownership and transport-list observations."""
 
     def __init__(self, initial: AdbTransportListState | None = None) -> None:
         if initial is None:
@@ -250,16 +338,23 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
             state = initial
         else:
             raise TypeError("initial must be AdbTransportListState or None")
+        if state.session is not None:
+            raise ValueError(
+                "initial transport-list state cannot contain a session without its issuer"
+            )
         self._lock = Lock()
         self._state = state
         self._identity_issuer = AdbTransportListIdentityIssuer(after=state.identity)
+        self._session_identity_issuer: AdbTransportListSessionIdentityIssuer | None = None
 
     @property
     def state(self) -> AdbTransportListState:
-        """Atomically return the current immutable authoritative state value."""
-
         with self._lock:
             return self._state
+
+    @property
+    def session(self) -> AdbTransportListSessionIdentity | None:
+        return self.state.session
 
     @property
     def transport_list(self) -> AdbTransportList | None:
@@ -282,16 +377,169 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
         return self.state.current_identity
 
     def snapshot(self) -> AdbTransportListState:
-        """Atomically capture the current immutable authoritative state value."""
-
         return self.state
+
+    @property
+    def current_session_identity_issuer(
+        self,
+    ) -> AdbTransportListSessionIdentityIssuer | None:
+        """Return the issuer currently admitted to create producer sessions."""
+
+        with self._lock:
+            return self._session_identity_issuer
+
+    def activate_session_identity_issuer(self) -> AdbTransportListSessionIdentityIssuer:
+        """Install one fresh opaque session-admission capability.
+
+        Runtime server activation calls this transition. The issuer contains no server identity;
+        its object identity and revocable scope are the admission fence checked by
+        ``begin_session``.
+        """
+
+        with self._lock:
+            current = self._session_identity_issuer
+            if current is not None:
+                if current.active:
+                    raise RuntimeError(
+                        "transport-list session issuer is already active"
+                    )
+                self._session_identity_issuer = None
+            issuer = AdbTransportListSessionIdentityIssuer()
+            self._session_identity_issuer = issuer
+            return issuer
+
+    def revoke_session_identity_issuer(
+        self,
+        issuer: AdbTransportListSessionIdentityIssuer,
+    ) -> AdbTransportListSessionRevoked | None:
+        """Revoke one admitted issuer and any producer session owned by it.
+
+        The issuer scope is revoked before the state lock is taken. This lock order matches
+        ``begin_session`` and observation commits (issuer scope -> state lock), so work that began
+        before retirement linearizes before this transition and is then revoked, while work that
+        arrives afterwards observes the closed scope and cannot commit.
+        """
+
+        if not isinstance(issuer, AdbTransportListSessionIdentityIssuer):
+            raise TypeError("issuer must be AdbTransportListSessionIdentityIssuer")
+
+        issuer._revoke()
+        with self._lock:
+            if self._session_identity_issuer is not issuer:
+                return None
+            self._session_identity_issuer = None
+            current = self._state
+            session = current.session
+            if session is None:
+                if current.status is not AdbTransportListStateStatus.INVALIDATED:
+                    raise RuntimeError(
+                        "transport-list state without a session must be invalidated"
+                    )
+                return None
+            if not issuer.owns(session):
+                raise RuntimeError(
+                    "current transport-list session does not belong to admitted issuer"
+                )
+            invalidated_identity = current.current_identity
+            self._state = self._revoked_state(current)
+            return AdbTransportListSessionRevoked(session, invalidated_identity)
+
+    def begin_session(
+        self,
+        issuer: AdbTransportListSessionIdentityIssuer,
+    ) -> AdbTransportListSessionBegun | None:
+        """Issue and install a fresh session, superseding prior producer authority.
+
+        The issuer scope is held across the state transition. Retirement revokes that scope before
+        invalidating transport-list state, so an identity issued before retirement but committed
+        afterwards cannot resurrect authority.
+        """
+
+        if not isinstance(issuer, AdbTransportListSessionIdentityIssuer):
+            raise TypeError("issuer must be AdbTransportListSessionIdentityIssuer")
+        session = issuer.issue()
+        if session is None:
+            return None
+
+        with session._authority_guard() as active:
+            if not active:
+                return None
+            with self._lock:
+                if self._session_identity_issuer is not issuer:
+                    return None
+                current = self._state
+                self._state = AdbTransportListState(
+                    identity=current.identity,
+                    transport_list=current.transport_list,
+                    status=AdbTransportListStateStatus.INVALIDATED,
+                    session=session,
+                )
+                return AdbTransportListSessionBegun(
+                    basis=AdbTransportListObservationBasis(
+                        session=session,
+                        transport_list_identity=current.identity,
+                    ),
+                    superseded_session=current.session,
+                    invalidated_identity=current.current_identity,
+                )
+
+    def capture_update_basis(
+        self,
+        session: AdbTransportListSessionIdentity,
+    ) -> AdbTransportListObservationBasis | None:
+        if not isinstance(session, AdbTransportListSessionIdentity):
+            raise TypeError("session must be AdbTransportListSessionIdentity")
+
+        with session._authority_guard() as active:
+            if not active:
+                return None
+            with self._lock:
+                current = self._state
+                if (
+                    current.session != session
+                    or current.status is not AdbTransportListStateStatus.CURRENT
+                ):
+                    return None
+                return AdbTransportListObservationBasis(
+                    session=session,
+                    transport_list_identity=current.identity,
+                )
+
+    def revoke_session(
+        self,
+        session: AdbTransportListSessionIdentity,
+    ) -> AdbTransportListSessionRevocationResult:
+        if not isinstance(session, AdbTransportListSessionIdentity):
+            raise TypeError("session must be AdbTransportListSessionIdentity")
+
+        with self._lock:
+            current = self._state
+            if current.session != session:
+                return AdbTransportListSessionRevocationStateConflict(session, current)
+            invalidated_identity = current.current_identity
+            self._state = self._revoked_state(current)
+            return AdbTransportListSessionRevoked(session, invalidated_identity)
+
+    def revoke_current_session(self) -> AdbTransportListSessionRevoked | None:
+        """Revoke the currently installed producer session, if any."""
+
+        with self._lock:
+            current = self._state
+            session = current.session
+            if session is None:
+                if current.status is not AdbTransportListStateStatus.INVALIDATED:
+                    raise RuntimeError(
+                        "transport-list state without a session must be invalidated"
+                    )
+                return None
+            invalidated_identity = current.current_identity
+            self._state = self._revoked_state(current)
+            return AdbTransportListSessionRevoked(session, invalidated_identity)
 
     def invalidate(
         self,
         expected: AdbTransportListIdentity,
     ) -> AdbTransportListInvalidationResult:
-        """Invalidate ``expected`` iff it is the current authoritative list identity."""
-
         if not isinstance(expected, AdbTransportListIdentity):
             raise TypeError("expected must be AdbTransportListIdentity")
 
@@ -299,57 +547,99 @@ class AdbTransportListStateStore(AdbTransportListStateView, AdbTransportListStat
             current = self._state
             if current.current_identity != expected:
                 return AdbTransportListInvalidationStateConflict(current)
-            transport_list = current.transport_list
-            assert transport_list is not None
-            next_state = AdbTransportListState(
-                identity=expected,
-                transport_list=transport_list,
-                status=AdbTransportListStateStatus.INVALIDATED,
-            )
-            self._state = next_state
+            self._state = self._revoked_state(current)
             return AdbTransportListInvalidated(expected)
 
-    def observe(
+    def observe_initial(
         self,
         basis: AdbTransportListObservationBasis,
         transport_list: AdbTransportList,
         expected: AdbTransportListState,
     ) -> AdbTransportListObservationResult:
-        """Commit raw transport-list data when ``expected`` is authoritative and basis-matched.
+        """Commit the sole ``INVALIDATED -> CURRENT`` transition for one session."""
 
-        The fresh transport-list identity is issued only after both state fences succeed and
-        immediately before the new authoritative state is committed.
-        """
+        return self._observe(
+            basis,
+            transport_list,
+            expected,
+            required_status=AdbTransportListStateStatus.INVALIDATED,
+        )
 
+    def observe_update(
+        self,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
+        expected: AdbTransportListState,
+    ) -> AdbTransportListObservationResult:
+        """Commit one ``CURRENT -> CURRENT`` continuation for the owning session."""
+
+        return self._observe(
+            basis,
+            transport_list,
+            expected,
+            required_status=AdbTransportListStateStatus.CURRENT,
+        )
+
+    def _observe(
+        self,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
+        expected: AdbTransportListState,
+        *,
+        required_status: AdbTransportListStateStatus,
+    ) -> AdbTransportListObservationResult:
         if not isinstance(basis, AdbTransportListObservationBasis):
             raise TypeError("basis must be AdbTransportListObservationBasis")
         if not isinstance(transport_list, AdbTransportList):
             raise TypeError("transport_list must be AdbTransportList")
         if not isinstance(expected, AdbTransportListState):
             raise TypeError("expected must be AdbTransportListState")
+        if not isinstance(required_status, AdbTransportListStateStatus):
+            raise TypeError("required_status must be AdbTransportListStateStatus")
 
-        with self._lock:
-            current = self._state
-            if current != expected or basis.transport_list_identity != current.identity:
+        with basis.session._authority_guard() as active:
+            if not active:
                 return AdbTransportListObservationStateConflict(
                     basis=basis,
                     transport_list=transport_list,
-                    state=current,
+                    state=self.snapshot(),
                 )
+            with self._lock:
+                current = self._state
+                if (
+                    current != expected
+                    or current.session != basis.session
+                    or current.status is not required_status
+                    or basis.transport_list_identity != current.identity
+                ):
+                    return AdbTransportListObservationStateConflict(
+                        basis=basis,
+                        transport_list=transport_list,
+                        state=current,
+                    )
 
-            identity = self._identity_issuer.issue()
-            observation = AdbTransportListObservation(
-                basis=basis,
-                identity=identity,
-                transport_list=transport_list,
-            )
-            next_state = AdbTransportListState(
-                identity=identity,
-                transport_list=transport_list,
-                status=AdbTransportListStateStatus.CURRENT,
-            )
-            self._state = next_state
-            return AdbTransportListObserved(observation)
+                identity = self._identity_issuer.issue()
+                observation = AdbTransportListObservation(
+                    basis=basis,
+                    identity=identity,
+                    transport_list=transport_list,
+                )
+                self._state = AdbTransportListState(
+                    identity=identity,
+                    transport_list=transport_list,
+                    status=AdbTransportListStateStatus.CURRENT,
+                    session=basis.session,
+                )
+                return AdbTransportListObserved(observation)
+
+    @staticmethod
+    def _revoked_state(current: AdbTransportListState) -> AdbTransportListState:
+        return AdbTransportListState(
+            identity=current.identity,
+            transport_list=current.transport_list,
+            status=AdbTransportListStateStatus.INVALIDATED,
+            session=None,
+        )
 
 
 __all__ = [
@@ -358,9 +648,13 @@ __all__ = [
     "AdbTransportListInvalidationResult",
     "AdbTransportListInvalidationStateConflict",
     "AdbTransportListObservationResult",
-    "AdbTransportListObservationServerConflict",
     "AdbTransportListObservationStateConflict",
     "AdbTransportListObserved",
+    "AdbTransportListSessionAuthority",
+    "AdbTransportListSessionBegun",
+    "AdbTransportListSessionRevocationResult",
+    "AdbTransportListSessionRevocationStateConflict",
+    "AdbTransportListSessionRevoked",
     "AdbTransportListState",
     "AdbTransportListStateStatus",
     "AdbTransportListStateStore",

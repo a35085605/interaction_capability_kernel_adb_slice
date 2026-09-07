@@ -1,69 +1,119 @@
 from __future__ import annotations
 
-from adb.authority import AdbTransportListObservationAuthority
-from adb.server.identity import AdbServerIdentity
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import AdbTransportListObservationBasis
+from adb.transport_list.session_identity import (
+    AdbTransportListSessionIdentity,
+    AdbTransportListSessionIdentityIssuer,
+)
 from adb.transport_list.state import (
     AdbTransportListCoordinatedObservationResult,
-    AdbTransportListObservationServerConflict,
+    AdbTransportListInvalidated,
+    AdbTransportListObservationResult,
     AdbTransportListObserved,
+    AdbTransportListSessionAuthority,
+    AdbTransportListSessionRevocationResult,
+    AdbTransportListSessionRevoked,
 )
 from eventing import EventPublisher
 
 
 class AdbTransportListCoordinator:
-    """Orchestrate ordered transport-list observations through one authority boundary."""
+    """Orchestrate session-fenced transport-list observations without runtime-state lookup."""
 
     def __init__(
         self,
-        authority: AdbTransportListObservationAuthority,
+        authority: AdbTransportListSessionAuthority,
         *,
         publisher: EventPublisher | None = None,
     ) -> None:
-        if not isinstance(authority, AdbTransportListObservationAuthority):
-            raise TypeError(
-                "authority must satisfy AdbTransportListObservationAuthority"
-            )
+        if not isinstance(authority, AdbTransportListSessionAuthority):
+            raise TypeError("authority must satisfy AdbTransportListSessionAuthority")
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
-
         self._authority = authority
         self._publisher = publisher
 
     @property
-    def authority(self) -> AdbTransportListObservationAuthority:
-        """Observation authority used for all fenced transport-list commits."""
-
+    def authority(self) -> AdbTransportListSessionAuthority:
         return self._authority
 
-    def capture_basis(
+    def begin(
         self,
-        server: AdbServerIdentity,
+        issuer: AdbTransportListSessionIdentityIssuer,
     ) -> AdbTransportListObservationBasis | None:
-        """Capture the authority basis immediately before a raw observation is read.
+        """Acquire a fresh producer session from the supplied revocable issuer scope."""
 
-        ``None`` means ``server`` is no longer the authoritative active server lifetime and the
-        caller must not start another read for that binding.
-        """
+        if not isinstance(issuer, AdbTransportListSessionIdentityIssuer):
+            raise TypeError("issuer must be AdbTransportListSessionIdentityIssuer")
+        result = self._authority.begin_session(issuer)
+        if result is None:
+            return None
+        if self._publisher is not None:
+            if result.superseded_session is not None:
+                self._publisher.publish(
+                    AdbTransportListSessionRevoked(
+                        result.superseded_session,
+                        result.invalidated_identity,
+                    )
+                )
+            if result.invalidated_identity is not None:
+                self._publisher.publish(AdbTransportListInvalidated(result.invalidated_identity))
+        return result.basis
 
-        if not isinstance(server, AdbServerIdentity):
-            raise TypeError("server must be AdbServerIdentity")
-        return self._authority.capture_transport_list_basis(server)
+    def capture_update_basis(
+        self,
+        session: AdbTransportListSessionIdentity,
+    ) -> AdbTransportListObservationBasis | None:
+        if not isinstance(session, AdbTransportListSessionIdentity):
+            raise TypeError("session must be AdbTransportListSessionIdentity")
+        return self._authority.capture_update_basis(session)
 
-    def observe(
+    def observe_initial(
         self,
         basis: AdbTransportListObservationBasis,
         transport_list: AdbTransportList,
-    ) -> AdbTransportListCoordinatedObservationResult:
-        """Commit raw transport-list data when the captured authority fences still hold."""
+    ) -> AdbTransportListObservationResult:
+        return self._observe(basis, transport_list, initial=True)
 
+    def observe_update(
+        self,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
+    ) -> AdbTransportListObservationResult:
+        return self._observe(basis, transport_list, initial=False)
+
+    def revoke(
+        self,
+        session: AdbTransportListSessionIdentity,
+    ) -> AdbTransportListSessionRevocationResult:
+        if not isinstance(session, AdbTransportListSessionIdentity):
+            raise TypeError("session must be AdbTransportListSessionIdentity")
+        result = self._authority.revoke_session(session)
+        if isinstance(result, AdbTransportListSessionRevoked) and self._publisher is not None:
+            self._publisher.publish(result)
+            if result.invalidated_identity is not None:
+                self._publisher.publish(AdbTransportListInvalidated(result.invalidated_identity))
+        return result
+
+    def _observe(
+        self,
+        basis: AdbTransportListObservationBasis,
+        transport_list: AdbTransportList,
+        *,
+        initial: bool,
+    ) -> AdbTransportListObservationResult:
         if not isinstance(basis, AdbTransportListObservationBasis):
             raise TypeError("basis must be AdbTransportListObservationBasis")
         if not isinstance(transport_list, AdbTransportList):
             raise TypeError("transport_list must be AdbTransportList")
 
-        result = self._authority.observe_transport_list(basis, transport_list)
+        expected = self._authority.snapshot()
+        result = (
+            self._authority.observe_initial(basis, transport_list, expected)
+            if initial
+            else self._authority.observe_update(basis, transport_list, expected)
+        )
         if isinstance(result, AdbTransportListObserved) and self._publisher is not None:
             self._publisher.publish(result)
         return result
@@ -72,5 +122,4 @@ class AdbTransportListCoordinator:
 __all__ = [
     "AdbTransportListCoordinator",
     "AdbTransportListCoordinatedObservationResult",
-    "AdbTransportListObservationServerConflict",
 ]

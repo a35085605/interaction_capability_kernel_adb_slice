@@ -4,7 +4,8 @@ from collections.abc import Iterator
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
-from adb.server.identity import AdbServerIdentity
+from adb.transport_list.coordinator import AdbTransportListCoordinator
+from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.attachment import AdbTransportListWatchAttachment
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
@@ -12,10 +13,10 @@ from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 @runtime_checkable
 class AdbTransportListWatchSession(Protocol):
-    """Short-lived server-bound raw watch session for one ADB server lifetime."""
+    """Short-lived raw watch session owning one observation-authority session identity."""
 
     @property
-    def server(self) -> AdbServerIdentity:
+    def session_identity(self) -> AdbTransportListSessionIdentity:
         ...
 
     @property
@@ -29,11 +30,12 @@ class AdbTransportListWatchSession(Protocol):
         ...
 
 
-class _ServerBoundAdbTransportListWatchSession:
-    """Own one short-lived raw stream and attachment for a fixed server binding."""
+class _SessionIdentityBoundAdbTransportListWatchSession:
+    """Own one raw stream and revoke its session identity when the session closes."""
 
     __slots__ = (
-        "_server",
+        "_session_identity",
+        "_coordinator",
         "_stream",
         "_attachment",
         "_initial",
@@ -43,14 +45,17 @@ class _ServerBoundAdbTransportListWatchSession:
 
     def __init__(
         self,
-        server: AdbServerIdentity,
+        session_identity: AdbTransportListSessionIdentity,
+        coordinator: AdbTransportListCoordinator,
         stream: AdbTransportListWatchStream,
         initial: AdbTransportList,
         *,
         attachment: AdbTransportListWatchAttachment | None = None,
     ) -> None:
-        if not isinstance(server, AdbServerIdentity):
-            raise TypeError("server must be AdbServerIdentity")
+        if not isinstance(session_identity, AdbTransportListSessionIdentity):
+            raise TypeError("session_identity must be AdbTransportListSessionIdentity")
+        if not isinstance(coordinator, AdbTransportListCoordinator):
+            raise TypeError("coordinator must be AdbTransportListCoordinator")
         if not isinstance(stream, AdbTransportListWatchStream):
             raise TypeError("stream must satisfy AdbTransportListWatchStream")
         if attachment is not None and not isinstance(
@@ -61,7 +66,8 @@ class _ServerBoundAdbTransportListWatchSession:
             )
         if not isinstance(initial, AdbTransportList):
             raise TypeError("initial must be AdbTransportList")
-        self._server = server
+        self._session_identity = session_identity
+        self._coordinator = coordinator
         self._stream = stream
         self._attachment = attachment
         self._initial = initial
@@ -69,8 +75,8 @@ class _ServerBoundAdbTransportListWatchSession:
         self._closed = False
 
     @property
-    def server(self) -> AdbServerIdentity:
-        return self._server
+    def session_identity(self) -> AdbTransportListSessionIdentity:
+        return self._session_identity
 
     @property
     def initial(self) -> AdbTransportList:
@@ -87,6 +93,10 @@ class _ServerBoundAdbTransportListWatchSession:
             if self._closed:
                 return
             self._closed = True
+
+        # Revoke producer authority before potentially blocking resource cleanup. A stale close
+        # cannot invalidate a replacement session because revocation is session-identity-fenced.
+        self._coordinator.revoke(self._session_identity)
 
         first_error: BaseException | None = None
         try:
@@ -105,16 +115,18 @@ class _ServerBoundAdbTransportListWatchSession:
 
 
 def bind_transport_list_watch_session(
-    server: AdbServerIdentity,
+    session_identity: AdbTransportListSessionIdentity,
+    coordinator: AdbTransportListCoordinator,
     stream: AdbTransportListWatchStream,
     initial: AdbTransportList,
     *,
     attachment: AdbTransportListWatchAttachment | None = None,
 ) -> AdbTransportListWatchSession:
-    """Bind one raw stream to a fixed server lifetime and transfer attachment ownership."""
+    """Bind raw watch resources to one observation session identity and transfer ownership."""
 
-    return _ServerBoundAdbTransportListWatchSession(
-        server,
+    return _SessionIdentityBoundAdbTransportListWatchSession(
+        session_identity,
+        coordinator,
         stream,
         initial,
         attachment=attachment,
