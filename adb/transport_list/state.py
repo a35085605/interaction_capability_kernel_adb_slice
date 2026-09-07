@@ -12,7 +12,6 @@ from adb.transport_list.identity import (
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import AdbTransportListObservation
 from adb.transport_list.session_identity import AdbTransportListSessionIdentity
-from adb.transport_list.watch_session_state import AdbTransportListWatchSessionState
 
 
 class AdbTransportListStateStatus(str, Enum):
@@ -27,7 +26,8 @@ class AdbTransportListState:
     """Immutable authoritative transport-list projection state.
 
     Invalidated state may retain the last committed identity/data as historical evidence. Producer
-    watch-session ownership is tracked independently and coordinated by the runtime.
+    admission and observation fencing are tracked independently; watch lifecycle authority belongs
+    to the transport-list watch backend.
     """
 
     identity: AdbTransportListIdentity | None = None
@@ -186,16 +186,13 @@ class AdbTransportListSessionRevoked:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListSessionRevocationStateConflict:
-    """Evidence that a stale session tried to revoke another producer's authority."""
+    """Evidence that a stale producer session had no authority to revoke."""
 
     session: AdbTransportListSessionIdentity
-    state: AdbTransportListWatchSessionState
 
     def __post_init__(self) -> None:
         if not isinstance(self.session, AdbTransportListSessionIdentity):
             raise TypeError("session must be AdbTransportListSessionIdentity")
-        if not isinstance(self.state, AdbTransportListWatchSessionState):
-            raise TypeError("state must be AdbTransportListWatchSessionState")
 
     def __bool__(self) -> bool:
         return False
@@ -260,9 +257,12 @@ class AdbTransportListStateView(Protocol):
 
 @runtime_checkable
 class AdbTransportListSessionAuthority(Protocol):
-    """Runtime-coordinated authority for session-fenced transport-list observations."""
+    """Command boundary for producer-session-fenced transport-list observations.
 
-    def snapshot(self) -> AdbTransportListWatchSessionState: ...
+    Watch lifecycle state belongs to ``AdbTransportListWatchBackend``. This authority
+    admits producer identities and fences projection mutations without exposing a second
+    lifecycle state model.
+    """
 
     def begin_session(self) -> AdbTransportListSessionBegun | None: ...
 

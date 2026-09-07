@@ -45,19 +45,6 @@ from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackendReleaseMismatch,
     AdbTransportListWatchBackendReleaseResult,
 )
-from adb.transport_list.watch_session_state import (
-    AdbTransportListWatchSessionActivated,
-    AdbTransportListWatchSessionActivationResult,
-    AdbTransportListWatchSessionActivationStateConflict,
-    AdbTransportListWatchSessionDeactivated,
-    AdbTransportListWatchSessionDeactivationResult,
-    AdbTransportListWatchSessionDeactivationStateConflict,
-    AdbTransportListWatchSessionState,
-    AdbTransportListWatchSessionStateStatus,
-    AdbTransportListWatchSessionStateStore,
-    AdbTransportListWatchSessionStateView,
-    AdbTransportListWatchSessionStateWriter,
-)
 from adb.transport_list.state import (
     AdbTransportListCoordinatedObservationResult,
     AdbTransportListInvalidated,
@@ -126,17 +113,6 @@ __all__ = [
     "AdbTransportListWatchState",
     "AdbTransportListWatchStateView",
     "AdbTransportListWatchBackendFactory",
-    "AdbTransportListWatchSessionActivated",
-    "AdbTransportListWatchSessionActivationResult",
-    "AdbTransportListWatchSessionActivationStateConflict",
-    "AdbTransportListWatchSessionDeactivated",
-    "AdbTransportListWatchSessionDeactivationResult",
-    "AdbTransportListWatchSessionDeactivationStateConflict",
-    "AdbTransportListWatchSessionState",
-    "AdbTransportListWatchSessionStateStatus",
-    "AdbTransportListWatchSessionStateStore",
-    "AdbTransportListWatchSessionStateView",
-    "AdbTransportListWatchSessionStateWriter",
     "classify_observed_transport",
     "find_transport",
 ]
