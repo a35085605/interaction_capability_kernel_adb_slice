@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterator
 from math import isfinite
 from numbers import Real
 import socket
-from threading import Event
+from threading import Event, Lock
 from time import monotonic
 
 from adb.adapters.aosp.track_devices import to_transport_list
@@ -130,11 +130,18 @@ def _handshake(sock: socket.socket, deadline: float, clock: _Clock) -> None:
 
 
 class _SmartSocketWatchSession:
-    """One established resource owner independent of transport-list projection authority."""
+    """Backend-owned smart-socket session borrowed by one producer.
+
+    ``cancel()`` is the cross-thread retirement operation used after generation revocation.
+    It interrupts blocking socket I/O and suppresses teardown errors because logical release
+    is already authoritative. ``close()`` remains the idempotent final-cleanup operation.
+    """
 
     __slots__ = (
         "_socket",
         "_initial",
+        "_lock",
+        "_cancelled",
         "_closed",
         "_updates",
     )
@@ -148,6 +155,8 @@ class _SmartSocketWatchSession:
             raise TypeError("initial must be AdbTransportList")
         self._socket = sock
         self._initial = initial
+        self._lock = Lock()
+        self._cancelled = False
         self._closed = False
         self._updates = self._iterate_updates()
 
@@ -158,11 +167,39 @@ class _SmartSocketWatchSession:
     def updates(self) -> Iterator[AdbTransportList]:
         return self._updates
 
+    def _is_closed(self) -> bool:
+        with self._lock:
+            return self._closed
+
+    def _is_cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
+
+    def _begin_close(self, *, cancelled: bool) -> socket.socket | None:
+        with self._lock:
+            if cancelled:
+                self._cancelled = True
+            if self._closed:
+                return None
+            self._closed = True
+            return self._socket
+
+    @staticmethod
+    def _shutdown(sock: socket.socket) -> None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            # Shutdown is only used to wake a blocking reader. A disconnected/already-closed
+            # socket is already in an acceptable retirement state.
+            pass
+
     def _iterate_updates(self) -> Iterator[AdbTransportList]:
-        while not self._closed:
+        while not self._is_closed():
             try:
                 transport_list = to_transport_list(parse_devices(_read_frame(self._socket)))
             except BaseException as exc:
+                if self._is_cancelled():
+                    return
                 try:
                     self.close()
                 except BaseException:
@@ -171,15 +208,31 @@ class _SmartSocketWatchSession:
                 if error is not None:
                     raise error from exc
                 raise
-            # Stopping iteration is not a socket failure. Consumers must close explicitly.
+            # A release may race after this read and before the yield. Generation fencing at the
+            # coordinator/backend boundary remains authoritative for any resulting observation.
             yield transport_list
 
-    def close(self) -> None:
-        if self._closed:
+    def cancel(self) -> None:
+        """Best-effort non-blocking retirement used by backend logical release."""
+
+        sock = self._begin_close(cancelled=True)
+        if sock is None:
             return
-        self._closed = True
+        self._shutdown(sock)
         try:
-            self._socket.close()
+            sock.close()
+        except OSError:
+            # Cancellation is housekeeping after logical revocation. It must not turn release
+            # into a different lifecycle outcome.
+            pass
+
+    def close(self) -> None:
+        sock = self._begin_close(cancelled=True)
+        if sock is None:
+            return
+        self._shutdown(sock)
+        try:
+            sock.close()
         except OSError as exc:
             raise AdbTransportListWatchError(
                 AdbTransportListWatchServerConnectionFailure(
@@ -192,8 +245,9 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
     """Generation-fenced transport-list watch authority over AOSP track-devices I/O.
 
     Lifecycle authority and resource ownership are linearized by the shared backend
-    template. The adapter is responsible only for establishing a fully usable smart-socket
-    session, translating expected I/O failures, and closing its physical socket resource.
+    template. The adapter establishes a fully usable smart-socket session, translates expected
+    I/O failures, and provides non-blocking cancellation that interrupts a retired session
+    without making physical teardown part of the public release lifecycle.
 
     DNS resolution itself remains synchronous. Cancellation is observed before and after
     each blocking startup stage; matching ``release()`` still revokes authority immediately

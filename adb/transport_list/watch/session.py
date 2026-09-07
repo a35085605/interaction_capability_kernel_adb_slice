@@ -8,10 +8,14 @@ from adb.transport_list.model import AdbTransportList
 
 @runtime_checkable
 class AdbTransportListWatchSession(Protocol):
-    """Established watch resources owned by one backend acquisition.
+    """Established watch resources lifetime-owned by the backend.
 
-    The session is a physical resource handle only. Watch generation carries lifecycle and
-    producer authority, matching the server backend's generation/handle separation.
+    Producers may consume ``initial`` and ``updates()`` while the acquisition remains
+    authoritative, but receiving the session does not transfer physical lifetime ownership.
+    The backend may call ``cancel()`` concurrently with a blocking update read after logical
+    revocation. ``cancel()`` must therefore be thread-safe, idempotent, and non-blocking.
+    ``close()`` performs idempotent final cleanup and is also used for rollback-only sessions
+    that never became visible to a producer.
     """
 
     @property
@@ -21,7 +25,12 @@ class AdbTransportListWatchSession(Protocol):
     def updates(self) -> Iterator[AdbTransportList]:
         ...
 
+    def cancel(self) -> None:
+        """Request retirement and interrupt any active blocking read."""
+        ...
+
     def close(self) -> None:
+        """Perform idempotent final physical cleanup."""
         ...
 
 

@@ -48,13 +48,25 @@ class _AdbTransportListWatchBackendPendingAcquire:
     cancellation: Event
 
 
+@dataclass(frozen=True, slots=True)
+class _AdbTransportListWatchBackendOwnership:
+    """Backend-private binding of logical acquisition evidence to its physical session."""
+
+    session: AdbTransportListWatchSession
+    acquisition: AdbTransportListWatchBackendAcquired
+
+
 class AdbTransportListWatchBackendTemplate(ABC):
     """Template for one current watch generation and its optional usable session.
 
     The current generation exists before acquisition starts. Failed/retried acquisitions
-    retain it. Matching release advances the generation at the logical revocation point,
-    before startup cancellation or physical session cleanup. This makes the backend the
-    sole linearizable authority for watch lifecycle and resource ownership.
+    retain it. Matching release advances the generation at the logical revocation point
+    before cancellation of pending startup or retirement of a committed physical session.
+
+    The backend owns session lifetime, while producers only execute reads through an acquired
+    session. Physical retirement is deliberately not a lifecycle state: release detaches the
+    old ownership, requests non-blocking session cancellation, and may immediately admit an
+    acquisition for the new generation.
     """
 
     def __init__(
@@ -69,17 +81,16 @@ class AdbTransportListWatchBackendTemplate(ABC):
         self._generation_issuer = generation_issuer
         self._generation = generation_issuer.issue()
         self._pending: _AdbTransportListWatchBackendPendingAcquire | None = None
-        self._acquisition: AdbTransportListWatchBackendAcquired | None = None
-        self._releasing: AdbTransportListWatchBackendAcquired | None = None
+        self._ownership: _AdbTransportListWatchBackendOwnership | None = None
 
     def read(self) -> AdbTransportListWatchState:
         """Atomically return current generation and usable session metadata, if any."""
 
         with self._state_lock:
-            acquisition = self._acquisition
+            ownership = self._ownership
             return AdbTransportListWatchState(
                 generation=self._generation,
-                endpoint=None if acquisition is None else acquisition.endpoint,
+                endpoint=None if ownership is None else ownership.acquisition.endpoint,
             )
 
     @abstractmethod
@@ -97,10 +108,27 @@ class AdbTransportListWatchBackendTemplate(ABC):
         ``AdbTransportListWatchBackendAcquireError``. Programming errors propagate.
         """
 
-    def _release_session(self, session: AdbTransportListWatchSession) -> None:
-        """Physically release a previously committed or rollback-only session."""
+    @staticmethod
+    def _cleanup_uncommitted_session(session: AdbTransportListWatchSession) -> None:
+        """Best-effort final cleanup for a session that never transferred to a producer."""
 
-        session.close()
+        try:
+            session.close()
+        except Exception:
+            # Cleanup diagnostics are non-authoritative and must not replace the primary
+            # acquisition outcome or a programming exception already in flight.
+            return
+
+    @staticmethod
+    def _retire_committed_session(session: AdbTransportListWatchSession) -> None:
+        """Request non-blocking retirement of a detached committed session."""
+
+        try:
+            session.cancel()
+        except Exception:
+            # Logical release already linearized. Retirement failure is housekeeping evidence,
+            # not a different lifecycle outcome. Adapters should make cancel() best-effort.
+            return
 
     def run_if_current(
         self,
@@ -120,11 +148,11 @@ class AdbTransportListWatchBackendTemplate(ABC):
             raise TypeError("operation must be callable")
 
         with self._state_lock:
-            acquisition = self._acquisition
+            ownership = self._ownership
             if (
                 expected != self._generation
-                or acquisition is None
-                or acquisition.generation != expected
+                or ownership is None
+                or ownership.acquisition.generation != expected
             ):
                 return False
             operation()
@@ -140,12 +168,12 @@ class AdbTransportListWatchBackendTemplate(ABC):
             raise TypeError("endpoint must be TcpAddress")
 
         with self._state_lock:
-            acquisition = self._acquisition
-            if acquisition is not None:
-                return AdbTransportListWatchBackendAlreadyAcquired(acquisition)
-            if self._pending is not None or self._releasing is not None:
+            ownership = self._ownership
+            if ownership is not None:
+                return AdbTransportListWatchBackendAlreadyAcquired(ownership.acquisition)
+            if self._pending is not None:
                 return AdbTransportListWatchBackendAcquireDeferred(
-                    "ADB transport-list watch backend is busy with another operation"
+                    "ADB transport-list watch backend is busy with another acquisition"
                 )
             pending = _AdbTransportListWatchBackendPendingAcquire(
                 generation=self._generation,
@@ -189,18 +217,19 @@ class AdbTransportListWatchBackendTemplate(ABC):
                 generation=pending.generation,
                 session=session,
             )
+            ownership = _AdbTransportListWatchBackendOwnership(session, acquisition)
         except BaseException:
             with self._state_lock:
                 if self._pending is pending:
                     self._pending = None
-            self._release_session(session)
+            self._cleanup_uncommitted_session(session)
             raise
 
         committed = False
         with self._state_lock:
             if self._pending is pending and self._generation == pending.generation:
                 self._pending = None
-                self._acquisition = acquisition
+                self._ownership = ownership
                 committed = True
             elif self._pending is pending:
                 self._pending = None
@@ -208,8 +237,9 @@ class AdbTransportListWatchBackendTemplate(ABC):
         if committed:
             return acquisition
 
-        # Matching release advanced the generation before this session could commit.
-        self._release_session(session)
+        # Matching release advanced the generation before this session could commit. No producer
+        # received it, so final cleanup can happen directly without entering retirement state.
+        self._cleanup_uncommitted_session(session)
         return AdbTransportListWatchBackendAcquireRevoked(pending.generation)
 
     def release(
@@ -219,11 +249,12 @@ class AdbTransportListWatchBackendTemplate(ABC):
         if not isinstance(expected, AdbTransportListWatchGeneration):
             raise TypeError("expected must be AdbTransportListWatchGeneration")
 
-        acquisition_to_release: AdbTransportListWatchBackendAcquired | None = None
+        ownership_to_retire: _AdbTransportListWatchBackendOwnership | None = None
         with self._state_lock:
             if expected != self._generation:
+                ownership = self._ownership
                 return AdbTransportListWatchBackendReleaseMismatch(
-                    current=self._acquisition,
+                    current=None if ownership is None else ownership.acquisition,
                     current_generation=self._generation,
                 )
 
@@ -233,10 +264,12 @@ class AdbTransportListWatchBackendTemplate(ABC):
                 if pending is not None and pending.generation == self._generation
                 else None
             )
-            acquisition = self._acquisition
-            if current_pending is None and acquisition is None:
+            ownership = self._ownership
+            if current_pending is None and ownership is None:
                 return AdbTransportListWatchBackendReleaseInactive(expected)
 
+            # Logical revocation linearizes here. Once the generation advances, stale producers
+            # cannot commit through run_if_current(), regardless of when physical I/O unwinds.
             released_generation = self._generation
             self._generation = self._generation_issuer.issue()
 
@@ -244,25 +277,20 @@ class AdbTransportListWatchBackendTemplate(ABC):
                 current_pending.cancellation.set()
                 return AdbTransportListWatchBackendReleased(released_generation)
 
-            if acquisition is None:
+            if ownership is None:
                 raise RuntimeError(
                     "ADB transport-list watch backend authority state is inconsistent"
                 )
 
-            self._acquisition = None
-            self._releasing = acquisition
-            acquisition_to_release = acquisition
+            self._ownership = None
+            ownership_to_retire = ownership
 
-        try:
-            self._release_session(acquisition_to_release.session)
-        finally:
-            with self._state_lock:
-                if self._releasing is acquisition_to_release:
-                    self._releasing = None
-
+        # Retirement is deliberately outside authoritative backend state. cancel() must only
+        # interrupt/retire the old physical session and must not delay the next generation.
+        self._retire_committed_session(ownership_to_retire.session)
         return AdbTransportListWatchBackendReleased(
             generation=released_generation,
-            acquisition=acquisition_to_release,
+            acquisition=ownership_to_retire.acquisition,
         )
 
 

@@ -26,7 +26,12 @@ def _normalize_diagnostic(value: object) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchBackendAcquired:
-    """One runtime-scoped usable transport-list watch retained by the backend."""
+    """One runtime-scoped usable transport-list watch retained by the backend.
+
+    ``session`` is exposed for producer execution, but that exposure does not transfer
+    physical lifetime ownership. Matching backend release may cancel it concurrently after
+    generation revocation.
+    """
 
     endpoint: TcpAddress
     generation: AdbTransportListWatchGeneration
@@ -53,7 +58,7 @@ class AdbTransportListWatchBackendAlreadyAcquired:
 
     @property
     def session(self) -> AdbTransportListWatchSession:
-        """Compatibility access to the retained resource session."""
+        """Compatibility access to the retained producer-use session."""
 
         return self.acquisition.session
 
@@ -164,8 +169,9 @@ class AdbTransportListWatchBackend(AdbTransportListWatchStateView, Protocol):
     """Sole authority for one runtime-scoped transport-list watch generation.
 
     ``generation`` is the only lifecycle and producer fence. Resource sessions carry no
-    identity or authority of their own. ``run_if_current()`` linearizes projection mutation
-    against release so stale generations cannot commit after logical revocation.
+    identity or authority of their own and remain lifetime-owned by the backend even while a
+    producer consumes them. ``run_if_current()`` linearizes projection mutation against release
+    so stale generations cannot commit after logical revocation.
     """
 
     def acquire(
