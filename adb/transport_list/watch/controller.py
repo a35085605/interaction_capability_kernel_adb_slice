@@ -66,7 +66,7 @@ class AdbTransportListWatchStartSucceeded:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchStartCancelled:
-    """Startup was cancelled by lifecycle closure before the watch became active."""
+    """The attachment reported that startup did not establish a watch stream."""
 
     session_identity: AdbTransportListSessionIdentity | None = None
 
@@ -141,7 +141,7 @@ class _AdbTransportListWatchOpenFailed:
 
 
 class _CloseOnceAdbTransportListWatchAttachment:
-    """Make one adapter attachment safe to close from competing lifecycle paths."""
+    """Make one adapter attachment safe across startup cleanup paths."""
 
     __slots__ = ("_attachment", "_lock", "_closed")
 
@@ -310,10 +310,6 @@ class AdbTransportListWatchController(Protocol):
         """Establish one fresh raw watch session for this endpoint."""
         ...
 
-    def revoke(self) -> None:
-        """Synchronously revoke and cancel the current session without closing the controller."""
-        ...
-
     def stop(self) -> None:
         """Stop the current session while preserving this controller's endpoint."""
         ...
@@ -357,9 +353,7 @@ class ThreadedAdbTransportListWatchController:
         self._condition = Condition(Lock())
         self._endpoint = endpoint
         self._starting = False
-        self._starting_thread: Thread | None = None
-        self._start_token: object | None = None
-        self._opening_attachment: AdbTransportListWatchAttachment | None = None
+        self._destroying = False
         self._active_session: AdbTransportListWatchSession | None = None
         self._active_thread: Thread | None = None
         self._closed = False
@@ -379,9 +373,11 @@ class ThreadedAdbTransportListWatchController:
             )
 
     def start(self) -> AdbTransportListWatchStartResult:
-        """Establish raw resources, then create the authority-owning WatchSession."""
+        """Synchronously establish raw resources and one authority-owning WatchSession."""
 
         with self._condition:
+            while self._destroying:
+                self._condition.wait()
             if self._closed:
                 raise RuntimeError("ADB transport-list watch controller is closed")
             if self._starting:
@@ -392,244 +388,167 @@ class ThreadedAdbTransportListWatchController:
                 )
 
             target_endpoint = self._endpoint
-            token = object()
             self._starting = True
-            self._starting_thread = current_thread()
-            self._start_token = token
 
         try:
             attachment = self._create_attachment(target_endpoint)
-        except BaseException:
-            self._finish_start(token)
-            raise
-
-        with self._condition:
-            if self._closed or self._start_token is not token:
-                cancelled_before_open = True
-            else:
-                cancelled_before_open = False
-                self._opening_attachment = attachment
-
-        if cancelled_before_open:
-            attachment.close()
-            self._finish_start(token)
-            return AdbTransportListWatchStartCancelled()
-
-        try:
             open_result = _open_transport_list_watch_attachment(attachment)
-        except BaseException:
-            self._clear_opening_attachment(attachment)
-            self._finish_start(token)
-            raise
 
-        if not self._start_is_authorized(token):
-            self._clear_opening_attachment(attachment)
-            if isinstance(open_result, _AdbTransportListWatchOpened):
-                _close_stream_and_attachment(open_result.stream, attachment)
-            self._finish_start(token)
-            return AdbTransportListWatchStartCancelled()
+            if isinstance(open_result, _AdbTransportListWatchOpenCancelled):
+                self._finish_start()
+                return AdbTransportListWatchStartCancelled()
+            if isinstance(open_result, _AdbTransportListWatchOpenFailed):
+                self._finish_start()
+                return AdbTransportListWatchStartFailed(None, open_result.failure)
+            if not isinstance(open_result, _AdbTransportListWatchOpened):
+                raise TypeError("transport-list attachment open returned an unsupported result")
 
-        if isinstance(open_result, _AdbTransportListWatchOpenCancelled):
-            self._clear_opening_attachment(attachment)
-            self._finish_start(token)
-            return AdbTransportListWatchStartCancelled()
-        if isinstance(open_result, _AdbTransportListWatchOpenFailed):
-            self._clear_opening_attachment(attachment)
-            self._finish_start(token)
-            return AdbTransportListWatchStartFailed(None, open_result.failure)
-        if not isinstance(open_result, _AdbTransportListWatchOpened):
-            self._clear_opening_attachment(attachment)
-            self._finish_start(token)
-            raise TypeError("transport-list attachment open returned an unsupported result")
-
-        session = bind_transport_list_watch_session(
-            self._observation_coordinator,
-            open_result.stream,
-            open_result.initial,
-            attachment=attachment,
-        )
-        if session is None:
-            self._clear_opening_attachment(attachment)
-            _close_stream_and_attachment(open_result.stream, attachment)
-            self._finish_start(token)
-            return AdbTransportListWatchStartSuperseded()
-
-        session_identity = session.session_identity
-        with self._condition:
-            if self._closed or self._start_token is not token:
-                cancelled_after_session = True
-                if self._opening_attachment is attachment:
-                    self._opening_attachment = None
-            else:
-                cancelled_after_session = False
-                if self._opening_attachment is not attachment:
-                    raise RuntimeError("transport-list watch opening attachment disappeared")
-                self._opening_attachment = None
-                self._active_session = session
-
-        if cancelled_after_session:
-            try:
-                session.close()
-            finally:
-                self._finish_start(token)
-            return AdbTransportListWatchStartCancelled(session_identity)
-
-        startup_complete = Event()
-        startup_results: list[AdbTransportListWatchStartResult] = []
-        startup_errors: list[BaseException] = []
-        try:
-            thread = self._thread_factory(
-                target=self._run,
-                args=(
-                    session,
-                    startup_complete,
-                    startup_results,
-                    startup_errors,
-                ),
-                name=(
-                    "adb-transport-list-watch-"
-                    f"{target_endpoint.host}-{target_endpoint.port}-s{session_identity}"
-                ),
+            session = bind_transport_list_watch_session(
+                self._observation_coordinator,
+                open_result.stream,
+                open_result.initial,
+                attachment=attachment,
             )
-        except BaseException:
-            with self._condition:
-                if self._active_session is session:
-                    self._active_session = None
-                self._finish_start_locked(token)
-            session.close()
-            raise
+            if session is None:
+                _close_stream_and_attachment(open_result.stream, attachment)
+                self._finish_start()
+                return AdbTransportListWatchStartSuperseded()
 
-        startup_error: BaseException | None = None
-        cancelled_before_start = False
-        with self._condition:
-            if (
-                self._closed
-                or self._start_token is not token
-                or self._active_session is not session
-            ):
-                cancelled_before_start = True
-                self._finish_start_locked(token)
-            else:
+            session_identity = session.session_identity
+            startup_complete = Event()
+            startup_results: list[AdbTransportListWatchStartResult] = []
+            startup_errors: list[BaseException] = []
+            try:
+                thread = self._thread_factory(
+                    target=self._run,
+                    args=(
+                        session,
+                        startup_complete,
+                        startup_results,
+                        startup_errors,
+                    ),
+                    name=(
+                        "adb-transport-list-watch-"
+                        f"{target_endpoint.host}-{target_endpoint.port}-s{session_identity}"
+                    ),
+                )
+            except BaseException:
+                session.close()
+                raise
+
+            startup_error: BaseException | None = None
+            with self._condition:
+                self._active_session = session
                 self._active_thread = thread
-                self._finish_start_locked(token)
                 try:
                     thread.start()
                 except BaseException as exc:
                     self._active_session = None
                     self._active_thread = None
-                    self._condition.notify_all()
                     startup_error = exc
+                finally:
+                    # Startup owns attachment/stream/session resources locally until this
+                    # point. Destruction may proceed only after the complete session has
+                    # either been published as active or failed to start its worker.
+                    self._finish_start_locked()
 
-        if cancelled_before_start or startup_error is not None:
-            session.close()
-        if startup_error is not None:
-            raise startup_error
-        if cancelled_before_start:
-            return AdbTransportListWatchStartCancelled(session_identity)
+            if startup_error is not None:
+                session.close()
+                raise startup_error
 
-        startup_complete.wait()
-        if startup_errors:
-            if thread is not current_thread():
-                thread.join()
-            raise startup_errors[0]
-        if len(startup_results) != 1:
-            raise RuntimeError(
-                "ADB transport-list watch controller did not produce exactly one startup result"
-            )
-        return startup_results[0]
-
-    def revoke(self) -> None:
-        """Fence current session authority without changing this controller's endpoint."""
-
-        with self._condition:
-            session = self._active_session
-            attachment = self._opening_attachment
-            self._active_session = None
-            self._opening_attachment = None
-            self._start_token = None
-            self._condition.notify_all()
-
-        self._close_owned_session(session, attachment)
+            startup_complete.wait()
+            if startup_errors:
+                if thread is not current_thread():
+                    thread.join()
+                raise startup_errors[0]
+            if len(startup_results) != 1:
+                raise RuntimeError(
+                    "ADB transport-list watch controller did not produce exactly one startup result"
+                )
+            return startup_results[0]
+        except BaseException:
+            self._finish_start()
+            raise
 
     def stop(self) -> None:
-        """Synchronously stop current startup/session while preserving the endpoint."""
+        """Synchronously destroy the established session while preserving the endpoint."""
 
-        with self._condition:
-            session = self._active_session
-            attachment = self._opening_attachment
-            worker = self._active_thread
-            starting_thread = self._starting_thread
-            self._active_session = None
-            self._opening_attachment = None
-            self._start_token = None
-            self._condition.notify_all()
-
+        self._begin_destroy()
         first_error: BaseException | None = None
         try:
-            self._close_owned_session(session, attachment)
-        except BaseException as exc:
-            first_error = exc
+            with self._condition:
+                session = self._active_session
+                worker = self._active_thread
+                self._active_session = None
+                self._condition.notify_all()
 
-        with self._condition:
-            while self._starting and starting_thread is not current_thread():
-                self._condition.wait()
-
-        if worker is not None and worker is not current_thread():
-            try:
-                worker.join()
-            except BaseException as exc:
-                if first_error is None:
+            if session is not None:
+                try:
+                    session.close()
+                except BaseException as exc:
                     first_error = exc
+
+            if worker is not None and worker is not current_thread():
+                try:
+                    worker.join()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
+        finally:
+            self._finish_destroy()
 
         if first_error is not None:
             raise first_error
 
     def close(self) -> None:
-        """Permanently close the controller and its current watch resources."""
+        """Permanently close the controller after any synchronous startup completes."""
 
         with self._condition:
             if self._closed:
                 return
-            self._closed = True
-            session = self._active_session
-            attachment = self._opening_attachment
-            worker = self._active_thread
-            starting_thread = self._starting_thread
-            self._active_session = None
-            self._opening_attachment = None
-            self._start_token = None
-            self._condition.notify_all()
 
+        self._begin_destroy()
         first_error: BaseException | None = None
         try:
-            self._close_owned_session(session, attachment)
-        except BaseException as exc:
-            first_error = exc
+            with self._condition:
+                if self._closed:
+                    return
+                self._closed = True
+                session = self._active_session
+                worker = self._active_thread
+                self._active_session = None
+                self._condition.notify_all()
 
-        with self._condition:
-            while self._starting and starting_thread is not current_thread():
-                self._condition.wait()
-
-        if worker is not None and worker is not current_thread():
-            try:
-                worker.join()
-            except BaseException as exc:
-                if first_error is None:
+            if session is not None:
+                try:
+                    session.close()
+                except BaseException as exc:
                     first_error = exc
+
+            if worker is not None and worker is not current_thread():
+                try:
+                    worker.join()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
+        finally:
+            self._finish_destroy()
 
         if first_error is not None:
             raise first_error
 
-    @staticmethod
-    def _close_owned_session(
-        session: AdbTransportListWatchSession | None,
-        attachment: AdbTransportListWatchAttachment | None,
-    ) -> None:
-        if session is not None:
-            session.close()
-            return
-        if attachment is not None:
-            attachment.close()
+    def _begin_destroy(self) -> None:
+        with self._condition:
+            while self._destroying:
+                self._condition.wait()
+            self._destroying = True
+            while self._starting:
+                self._condition.wait()
+
+    def _finish_destroy(self) -> None:
+        with self._condition:
+            self._destroying = False
+            self._condition.notify_all()
 
     def _create_attachment(
         self,
@@ -651,29 +570,14 @@ class ThreadedAdbTransportListWatchController:
             )
         return _CloseOnceAdbTransportListWatchAttachment(raw_attachment)
 
-    def _start_is_authorized(self, token: object) -> bool:
+    def _finish_start(self) -> None:
         with self._condition:
-            return not self._closed and self._start_token is token
+            self._finish_start_locked()
 
-    def _clear_opening_attachment(
-        self,
-        attachment: AdbTransportListWatchAttachment,
-    ) -> None:
-        with self._condition:
-            if self._opening_attachment is attachment:
-                self._opening_attachment = None
-
-    def _finish_start(self, token: object) -> None:
-        with self._condition:
-            self._finish_start_locked(token)
-
-    def _finish_start_locked(self, token: object) -> None:
+    def _finish_start_locked(self) -> None:
         if not self._starting:
             return
-        if self._start_token is token:
-            self._start_token = None
         self._starting = False
-        self._starting_thread = None
         self._condition.notify_all()
 
     def _run(
