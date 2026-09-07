@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.observation import AdbTransportListObservationBasis
 from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.state import (
     AdbTransportListCoordinatedObservationResult,
@@ -35,8 +34,8 @@ class AdbTransportListCoordinator:
     def authority(self) -> AdbTransportListSessionAuthority:
         return self._authority
 
-    def begin(self) -> AdbTransportListObservationBasis | None:
-        """Acquire a fresh producer session while runtime admission remains open."""
+    def begin(self) -> AdbTransportListSessionIdentity | None:
+        """Acquire a fresh producer session while admission remains open."""
 
         result = self._authority.begin_session()
         if result is None:
@@ -51,29 +50,28 @@ class AdbTransportListCoordinator:
                 )
             if result.invalidated_identity is not None:
                 self._publisher.publish(AdbTransportListInvalidated(result.invalidated_identity))
-        return result.basis
+        return result.session
 
-    def capture_update_basis(
-        self,
-        session: AdbTransportListSessionIdentity,
-    ) -> AdbTransportListObservationBasis | None:
+    def can_observe_update(self, session: AdbTransportListSessionIdentity) -> bool:
+        """Whether ``session`` is currently allowed to enter another blocking update read."""
+
         if not isinstance(session, AdbTransportListSessionIdentity):
             raise TypeError("session must be AdbTransportListSessionIdentity")
-        return self._authority.capture_update_basis(session)
+        return self._authority.can_observe_update(session)
 
     def observe_initial(
         self,
-        basis: AdbTransportListObservationBasis,
+        session: AdbTransportListSessionIdentity,
         transport_list: AdbTransportList,
     ) -> AdbTransportListObservationResult:
-        return self._observe(basis, transport_list, initial=True)
+        return self._observe(session, transport_list, initial=True)
 
     def observe_update(
         self,
-        basis: AdbTransportListObservationBasis,
+        session: AdbTransportListSessionIdentity,
         transport_list: AdbTransportList,
     ) -> AdbTransportListObservationResult:
-        return self._observe(basis, transport_list, initial=False)
+        return self._observe(session, transport_list, initial=False)
 
     def revoke(
         self,
@@ -90,21 +88,20 @@ class AdbTransportListCoordinator:
 
     def _observe(
         self,
-        basis: AdbTransportListObservationBasis,
+        session: AdbTransportListSessionIdentity,
         transport_list: AdbTransportList,
         *,
         initial: bool,
     ) -> AdbTransportListObservationResult:
-        if not isinstance(basis, AdbTransportListObservationBasis):
-            raise TypeError("basis must be AdbTransportListObservationBasis")
+        if not isinstance(session, AdbTransportListSessionIdentity):
+            raise TypeError("session must be AdbTransportListSessionIdentity")
         if not isinstance(transport_list, AdbTransportList):
             raise TypeError("transport_list must be AdbTransportList")
 
-        expected = self._authority.snapshot()
         result = (
-            self._authority.observe_initial(basis, transport_list, expected)
+            self._authority.observe_initial(session, transport_list)
             if initial
-            else self._authority.observe_update(basis, transport_list, expected)
+            else self._authority.observe_update(session, transport_list)
         )
         if isinstance(result, AdbTransportListObserved) and self._publisher is not None:
             self._publisher.publish(result)

@@ -7,7 +7,6 @@ from typing import Protocol, runtime_checkable
 from adb.transport_list.coordinator import AdbTransportListCoordinator
 from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.observation import AdbTransportListObservationBasis
 from adb.transport_list.watch.attachment import AdbTransportListWatchAttachment
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
@@ -18,10 +17,6 @@ class AdbTransportListWatchSession(Protocol):
 
     @property
     def session_identity(self) -> AdbTransportListSessionIdentity:
-        ...
-
-    @property
-    def initial_basis(self) -> AdbTransportListObservationBasis:
         ...
 
     @property
@@ -39,7 +34,7 @@ class _SessionIdentityBoundAdbTransportListWatchSession:
     """Own one producer identity together with its raw watch resources."""
 
     __slots__ = (
-        "_initial_basis",
+        "_session_identity",
         "_coordinator",
         "_stream",
         "_attachment",
@@ -50,15 +45,15 @@ class _SessionIdentityBoundAdbTransportListWatchSession:
 
     def __init__(
         self,
-        initial_basis: AdbTransportListObservationBasis,
+        session_identity: AdbTransportListSessionIdentity,
         coordinator: AdbTransportListCoordinator,
         stream: AdbTransportListWatchStream,
         initial: AdbTransportList,
         *,
         attachment: AdbTransportListWatchAttachment | None = None,
     ) -> None:
-        if not isinstance(initial_basis, AdbTransportListObservationBasis):
-            raise TypeError("initial_basis must be AdbTransportListObservationBasis")
+        if not isinstance(session_identity, AdbTransportListSessionIdentity):
+            raise TypeError("session_identity must be AdbTransportListSessionIdentity")
         if not isinstance(coordinator, AdbTransportListCoordinator):
             raise TypeError("coordinator must be AdbTransportListCoordinator")
         if not isinstance(stream, AdbTransportListWatchStream):
@@ -71,7 +66,7 @@ class _SessionIdentityBoundAdbTransportListWatchSession:
             )
         if not isinstance(initial, AdbTransportList):
             raise TypeError("initial must be AdbTransportList")
-        self._initial_basis = initial_basis
+        self._session_identity = session_identity
         self._coordinator = coordinator
         self._stream = stream
         self._attachment = attachment
@@ -81,11 +76,7 @@ class _SessionIdentityBoundAdbTransportListWatchSession:
 
     @property
     def session_identity(self) -> AdbTransportListSessionIdentity:
-        return self._initial_basis.session_identity
-
-    @property
-    def initial_basis(self) -> AdbTransportListObservationBasis:
-        return self._initial_basis
+        return self._session_identity
 
     @property
     def initial(self) -> AdbTransportList:
@@ -143,20 +134,20 @@ def bind_transport_list_watch_session(
     if not isinstance(initial, AdbTransportList):
         raise TypeError("initial must be AdbTransportList")
 
-    initial_basis = coordinator.begin()
-    if initial_basis is None:
+    session_identity = coordinator.begin()
+    if session_identity is None:
         return None
 
     try:
         return _SessionIdentityBoundAdbTransportListWatchSession(
-            initial_basis,
+            session_identity,
             coordinator,
             stream,
             initial,
             attachment=attachment,
         )
     except BaseException:
-        coordinator.revoke(initial_basis.session_identity)
+        coordinator.revoke(session_identity)
         raise
 
 

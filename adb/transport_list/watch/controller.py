@@ -10,7 +10,6 @@ from networking import TcpAddress
 from adb.transport_list.coordinator import AdbTransportListCoordinator
 from adb.transport_list.session_identity import AdbTransportListSessionIdentity
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.observation import AdbTransportListObservationBasis
 from adb.transport_list.state import (
     AdbTransportListObservationStateConflict,
     AdbTransportListObserved,
@@ -689,11 +688,7 @@ class ThreadedAdbTransportListWatchController:
         startup_succeeded = False
         try:
             initial = session.initial
-            if not self._commit_initial_observation(
-                session,
-                session.initial_basis,
-                initial,
-            ):
+            if not self._commit_initial_observation(session, initial):
                 startup_results.append(AdbTransportListWatchStartSuperseded(session_identity))
                 return
 
@@ -706,14 +701,13 @@ class ThreadedAdbTransportListWatchController:
 
             updates = iter(session.updates())
             while True:
-                basis = self._capture_update_basis(session)
-                if basis is None:
+                if not self._can_observe_update(session):
                     break
                 try:
                     transport_list = next(updates)
                 except StopIteration:
                     break
-                if not self._commit_update_observation(session, basis, transport_list):
+                if not self._commit_update_observation(session, transport_list):
                     break
             terminal = AdbTransportListWatchStopped(session_identity)
         except AdbTransportListWatchError as exc:
@@ -745,26 +739,24 @@ class ThreadedAdbTransportListWatchController:
         if startup_succeeded and terminal is not None and publish_terminal:
             self._publisher.publish(terminal)
 
-    def _capture_update_basis(
+    def _can_observe_update(
         self,
         session: AdbTransportListWatchSession,
-    ) -> AdbTransportListObservationBasis | None:
+    ) -> bool:
         with self._condition:
             if self._closed or self._active_session is not session:
-                return None
-            return self._observation_coordinator.capture_update_basis(
+                return False
+            return self._observation_coordinator.can_observe_update(
                 session.session_identity
             )
 
     def _commit_initial_observation(
         self,
         session: AdbTransportListWatchSession,
-        basis: AdbTransportListObservationBasis,
         transport_list: AdbTransportList,
     ) -> bool:
         return self._commit_observation(
             session,
-            basis,
             transport_list,
             initial=True,
         )
@@ -772,12 +764,10 @@ class ThreadedAdbTransportListWatchController:
     def _commit_update_observation(
         self,
         session: AdbTransportListWatchSession,
-        basis: AdbTransportListObservationBasis,
         transport_list: AdbTransportList,
     ) -> bool:
         return self._commit_observation(
             session,
-            basis,
             transport_list,
             initial=False,
         )
@@ -785,22 +775,20 @@ class ThreadedAdbTransportListWatchController:
     def _commit_observation(
         self,
         session: AdbTransportListWatchSession,
-        basis: AdbTransportListObservationBasis,
         transport_list: AdbTransportList,
         *,
         initial: bool,
     ) -> bool:
-        if not isinstance(basis, AdbTransportListObservationBasis):
-            raise TypeError("basis must be AdbTransportListObservationBasis")
         if not isinstance(transport_list, AdbTransportList):
             raise TypeError("transport_list must be AdbTransportList")
         with self._condition:
             if self._closed or self._active_session is not session:
                 return False
+            session_identity = session.session_identity
             result = (
-                self._observation_coordinator.observe_initial(basis, transport_list)
+                self._observation_coordinator.observe_initial(session_identity, transport_list)
                 if initial
-                else self._observation_coordinator.observe_update(basis, transport_list)
+                else self._observation_coordinator.observe_update(session_identity, transport_list)
             )
         if isinstance(result, AdbTransportListObserved):
             return True
