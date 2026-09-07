@@ -14,9 +14,11 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
+    AdbServerBackendAcquireInterrupted,
     AdbServerBackendAlreadyAcquired,
     AdbServerBackendAcquireResult,
     AdbServerBackendReleased,
+    AdbServerBackendReleaseInterruptedAcquire,
     AdbServerBackendReleaseMismatch,
 )
 from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
@@ -44,23 +46,30 @@ class AdbServerAlreadyActive:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerAlreadyInactive:
-    """Evidence that unfenced retirement found no current backend acquisition."""
+    """Evidence that unfenced retirement found no current backend authority."""
 
 
 AdbServerProvisionResult: TypeAlias = (
     tuple[AdbServerAlreadyActive]
-    | tuple[AdbServerBackendAcquireDeferred | AdbServerBackendAcquireFailed]
+    | tuple[
+        AdbServerBackendAcquireDeferred
+        | AdbServerBackendAcquireFailed
+        | AdbServerBackendAcquireInterrupted
+    ]
     | tuple[AdbServerBackendAcquired, AdbServerActivated]
 )
 AdbServerRetireResult: TypeAlias = (
-    AdbServerAlreadyInactive | AdbServerBackendReleaseMismatch | AdbServerDeactivated
+    AdbServerAlreadyInactive
+    | AdbServerBackendReleaseInterruptedAcquire
+    | AdbServerBackendReleaseMismatch
+    | AdbServerDeactivated
 )
 
 
 class AdbServerLifecycleCoordinator:
-    """Coordinate backend ownership with lifecycle evidence and publication.
+    """Coordinate backend authority with lifecycle evidence and publication.
 
-    The backend is the sole authority for the current server acquisition. The coordinator
+    The backend is the sole authority for the current server generation. The coordinator
     adds endpoint-constraint orchestration and lifecycle event publication only.
     """
 
@@ -93,7 +102,11 @@ class AdbServerLifecycleCoordinator:
             return (AdbServerAlreadyActive(acquisition.acquisition),)
         if isinstance(
             acquisition,
-            (AdbServerBackendAcquireDeferred, AdbServerBackendAcquireFailed),
+            (
+                AdbServerBackendAcquireDeferred,
+                AdbServerBackendAcquireFailed,
+                AdbServerBackendAcquireInterrupted,
+            ),
         ):
             return (acquisition,)
         if not isinstance(acquisition, AdbServerBackendAcquired):
@@ -115,6 +128,7 @@ class AdbServerLifecycleCoordinator:
                 AdbServerBackendAlreadyAcquired,
                 AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
+                AdbServerBackendAcquireInterrupted,
             ),
         ):
             return acquisition
@@ -133,19 +147,29 @@ class AdbServerLifecycleCoordinator:
         *,
         expected_server: AdbServerIdentity | None = None,
     ) -> AdbServerRetireResult:
-        """Release the current backend acquisition, fenced by optional server identity."""
+        """Release current authority, fenced by optional server identity.
+
+        Pending acquisition is revocable before an endpoint exists; such retirement returns
+        backend interruption evidence and does not publish a deactivation event because no
+        activation was committed.
+        """
 
         if expected_server is not None and not isinstance(expected_server, AdbServerIdentity):
             raise TypeError("expected_server must be AdbServerIdentity or None")
 
         if expected_server is None:
-            current = self._backend.current
-            if current is None:
+            expected_server = self._backend.identity
+            if expected_server is None:
                 return AdbServerAlreadyInactive()
-            expected_server = current.identity
 
         release = self._backend.release(expected_server)
-        if isinstance(release, AdbServerBackendReleaseMismatch):
+        if isinstance(
+            release,
+            (
+                AdbServerBackendReleaseInterruptedAcquire,
+                AdbServerBackendReleaseMismatch,
+            ),
+        ):
             return release
         if not isinstance(release, AdbServerBackendReleased):
             raise TypeError("server backend release() returned an unsupported result")

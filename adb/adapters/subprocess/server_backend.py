@@ -4,7 +4,7 @@ from collections.abc import Callable
 import os
 import socket
 import subprocess
-from threading import Lock
+from threading import Event, Lock
 from time import monotonic, sleep
 from typing import Protocol
 
@@ -16,6 +16,7 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.identity import AdbServerIdentityIssuer
 from adb.server.lifecycle.backend_template import (
     AdbServerBackendAcquireError,
+    AdbServerBackendAcquireInterruptedError,
     AdbServerBackendReleaseCleanupUnconfirmed,
     AdbServerBackendTemplate,
 )
@@ -36,6 +37,10 @@ class _ServerStatusReader(Protocol):
 
 class _AdbServerSubprocessStartError(RuntimeError):
     """Infrastructure failure while creating a foreground ADB server child."""
+
+
+class _AdbServerSubprocessAcquireInterrupted(RuntimeError):
+    """Startup was interrupted after its server authority was released."""
 
 
 class _AdbServerSubprocessTerminationUnconfirmed(RuntimeError):
@@ -163,7 +168,12 @@ class _AdbServerSubprocessFactory:
     def create(
         self,
         endpoint: AdbServerEndpoint | None,
+        cancellation: Event | None = None,
     ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
+        if cancellation is not None and not isinstance(cancellation, Event):
+            raise TypeError("cancellation must be threading.Event or None")
+        if cancellation is not None and cancellation.is_set():
+            raise _AdbServerSubprocessAcquireInterrupted
         if not self._socket_activation_supported:
             raise _AdbServerSubprocessStartError(
                 "ADB acceptfd socket activation is unavailable on this platform; "
@@ -172,7 +182,13 @@ class _AdbServerSubprocessFactory:
 
         attachment, resolved_endpoint = self._launch(endpoint)
         try:
-            self._wait_until_ready(resolved_endpoint, attachment._process)
+            if cancellation is not None and cancellation.is_set():
+                raise _AdbServerSubprocessAcquireInterrupted
+            self._wait_until_ready(
+                resolved_endpoint,
+                attachment._process,
+                cancellation=cancellation,
+            )
         except BaseException:
             try:
                 attachment.close()
@@ -274,10 +290,17 @@ class _AdbServerSubprocessFactory:
         self,
         endpoint: AdbServerEndpoint,
         process: subprocess.Popen[bytes],
+        *,
+        cancellation: Event | None = None,
     ) -> None:
+        if cancellation is not None and not isinstance(cancellation, Event):
+            raise TypeError("cancellation must be threading.Event or None")
         deadline = self._monotonic() + self.startup_timeout_seconds
         last_error: AdbError | None = None
         while True:
+            if cancellation is not None and cancellation.is_set():
+                raise _AdbServerSubprocessAcquireInterrupted
+
             return_code = process.poll()
             if return_code is not None:
                 raise _AdbServerSubprocessStartError(
@@ -289,6 +312,8 @@ class _AdbServerSubprocessFactory:
             except AdbError as exc:
                 last_error = exc
             else:
+                if cancellation is not None and cancellation.is_set():
+                    raise _AdbServerSubprocessAcquireInterrupted
                 if process.poll() is not None:
                     raise _AdbServerSubprocessStartError(
                         "ADB server child process exited while startup readiness was being verified"
@@ -301,7 +326,11 @@ class _AdbServerSubprocessFactory:
                 raise _AdbServerSubprocessStartError(
                     f"timed out waiting for created ADB server readiness{suffix}"
                 )
-            self._sleep(min(self.probe_interval_seconds, remaining))
+            delay = min(self.probe_interval_seconds, remaining)
+            if cancellation is None:
+                self._sleep(delay)
+            elif cancellation.wait(delay):
+                raise _AdbServerSubprocessAcquireInterrupted
 
 
 class SubprocessAdbServerBackend(AdbServerBackendTemplate[_OwnedAdbServerProcess]):
@@ -334,9 +363,12 @@ class SubprocessAdbServerBackend(AdbServerBackendTemplate[_OwnedAdbServerProcess
     def _obtain_handle(
         self,
         endpoint_constraint: AdbServerEndpoint | None,
+        cancellation: Event,
     ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
         try:
-            return self._factory.create(endpoint_constraint)
+            return self._factory.create(endpoint_constraint, cancellation)
+        except _AdbServerSubprocessAcquireInterrupted as exc:
+            raise AdbServerBackendAcquireInterruptedError from exc
         except _AdbServerSubprocessStartupCleanupUnconfirmed as exc:
             raise AdbServerBackendAcquireError(
                 "ADB subprocess backend acquire failed and child-process cleanup "

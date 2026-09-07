@@ -13,9 +13,10 @@ class _AdbServerEpoch(Epoch):
 
 @dataclass(frozen=True, slots=True)
 class AdbServerIdentity:
-    """Runtime-scoped identity for an ADB server occurrence.
+    """Runtime-scoped identity for one ADB server authority generation.
 
-    Server authority and process ownership are tracked separately.
+    Identity is issued before a usable endpoint is acquired. Server authority, endpoint
+    availability, and process ownership are tracked separately.
     """
 
     _epoch: _AdbServerEpoch = field(repr=False)

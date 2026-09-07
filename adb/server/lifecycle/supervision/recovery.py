@@ -11,6 +11,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquired,
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
+    AdbServerBackendAcquireInterrupted,
     AdbServerBackendAlreadyAcquired,
     AdbServerBackendAcquireResult,
 )
@@ -60,10 +61,7 @@ class AdbServerRecoveryFailed:
             raise TypeError("attempts must be an integer")
         if self.attempts <= 0:
             raise ValueError("attempts must be greater than zero")
-        if not isinstance(
-            self.cause,
-            AdbServerBackendAcquireFailed,
-        ):
+        if not isinstance(self.cause, AdbServerBackendAcquireFailed):
             raise TypeError("cause must be AdbServerBackendAcquireFailed")
 
 
@@ -121,6 +119,7 @@ class AdbServerRecovery:
                 AdbServerBackendAlreadyAcquired,
                 AdbServerBackendAcquireDeferred,
                 AdbServerBackendAcquireFailed,
+                AdbServerBackendAcquireInterrupted,
             ),
         ):
             raise TypeError("result must be AdbServerBackendAcquireResult")
@@ -128,7 +127,10 @@ class AdbServerRecovery:
         if isinstance(result, (AdbServerBackendAcquired, AdbServerBackendAlreadyAcquired)):
             return AdbServerRecoveryAcquired()
 
-        if isinstance(result, AdbServerBackendAcquireDeferred):
+        if isinstance(
+            result,
+            (AdbServerBackendAcquireDeferred, AdbServerBackendAcquireInterrupted),
+        ):
             return self._next_attempt(self._policy.deferred_retry_seconds)
 
         if not isinstance(result, AdbServerBackendAcquireFailed):

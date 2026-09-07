@@ -6,6 +6,7 @@ from typing import TypeAlias
 from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireDeferred,
     AdbServerBackendAcquireFailed,
+    AdbServerBackendAcquireInterrupted,
 )
 from adb.server.lifecycle.coordinator import AdbServerAlreadyActive
 from adb.server.lifecycle.provision import (
@@ -47,6 +48,7 @@ def decide_recovery_after_provision(
         (
             AdbServerBackendAcquireDeferred,
             AdbServerBackendAcquireFailed,
+            AdbServerBackendAcquireInterrupted,
         ),
     ):
         decision = recovery.decide_after(outcome)

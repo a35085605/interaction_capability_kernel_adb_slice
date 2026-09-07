@@ -62,17 +62,29 @@ class AdbServerBackendAcquireFailed:
         object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
 
 
+@dataclass(frozen=True, slots=True)
+class AdbServerBackendAcquireInterrupted:
+    """Evidence that a pre-issued server authority was released during acquisition."""
+
+    identity: AdbServerIdentity
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.identity, AdbServerIdentity):
+            raise TypeError("identity must be AdbServerIdentity")
+
+
 AdbServerBackendAcquireResult: TypeAlias = (
     AdbServerBackendAcquired
     | AdbServerBackendAlreadyAcquired
     | AdbServerBackendAcquireDeferred
     | AdbServerBackendAcquireFailed
+    | AdbServerBackendAcquireInterrupted
 )
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendReleased:
-    """Evidence that matching backend ownership was released."""
+    """Evidence that matching usable backend ownership was released."""
 
     acquisition: AdbServerBackendAcquired
 
@@ -82,28 +94,58 @@ class AdbServerBackendReleased:
 
 
 @dataclass(frozen=True, slots=True)
+class AdbServerBackendReleaseInterruptedAcquire:
+    """Evidence that release revoked a matching authority still being acquired."""
+
+    identity: AdbServerIdentity
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.identity, AdbServerIdentity):
+            raise TypeError("identity must be AdbServerIdentity")
+
+
+@dataclass(frozen=True, slots=True)
 class AdbServerBackendReleaseMismatch:
-    """Evidence that release did not match the backend's current acquisition."""
+    """Evidence that release did not match the backend's current server authority."""
 
     current: AdbServerBackendAcquired | None
+    current_identity: AdbServerIdentity | None = None
 
     def __post_init__(self) -> None:
         if self.current is not None and not isinstance(self.current, AdbServerBackendAcquired):
             raise TypeError("current must be AdbServerBackendAcquired or None")
+        if self.current_identity is not None and not isinstance(
+            self.current_identity, AdbServerIdentity
+        ):
+            raise TypeError("current_identity must be AdbServerIdentity or None")
+        if self.current is not None:
+            if self.current_identity is None:
+                object.__setattr__(self, "current_identity", self.current.identity)
+            elif self.current_identity != self.current.identity:
+                raise ValueError("current_identity must match current acquisition identity")
 
 
 AdbServerBackendReleaseResult: TypeAlias = (
-    AdbServerBackendReleased | AdbServerBackendReleaseMismatch
+    AdbServerBackendReleased
+    | AdbServerBackendReleaseInterruptedAcquire
+    | AdbServerBackendReleaseMismatch
 )
 
 
 @runtime_checkable
 class AdbServerBackend(Protocol):
-    """Sole authority for one runtime-scoped usable ADB server acquisition.
+    """Sole authority for one runtime-scoped ADB server generation.
 
-    ``current``, ``acquire`` and ``release`` are concurrency-safe, linearizable views or
-    ownership transitions. The current acquisition's identity fences stale lifecycle work.
+    ``identity`` exists while one server authority is pending or usable. ``current`` only
+    exists once that authority has a usable endpoint. ``identity``, ``current``, ``acquire``
+    and ``release`` are concurrency-safe, linearizable views or ownership transitions.
+    The current authority identity fences stale lifecycle work.
     """
+
+    @property
+    def identity(self) -> AdbServerIdentity | None:
+        """Return the current server authority identity, including during acquisition."""
+        ...
 
     @property
     def current(self) -> AdbServerBackendAcquired | None:
@@ -118,7 +160,7 @@ class AdbServerBackend(Protocol):
         ...
 
     def release(self, expected: AdbServerIdentity) -> AdbServerBackendReleaseResult:
-        """Release current ownership only when its identity matches ``expected``."""
+        """Revoke matching authority, interrupting acquisition when it is still pending."""
         ...
 
 
@@ -138,10 +180,12 @@ __all__ = [
     "AdbServerBackendAcquired",
     "AdbServerBackendAcquireDeferred",
     "AdbServerBackendAcquireFailed",
+    "AdbServerBackendAcquireInterrupted",
     "AdbServerBackendAlreadyAcquired",
     "AdbServerBackendAcquireResult",
     "AdbServerBackendFactory",
     "AdbServerBackendReleased",
+    "AdbServerBackendReleaseInterruptedAcquire",
     "AdbServerBackendReleaseMismatch",
     "AdbServerBackendReleaseResult",
 ]
