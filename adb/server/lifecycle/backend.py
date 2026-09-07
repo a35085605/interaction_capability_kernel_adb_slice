@@ -143,21 +143,10 @@ AdbServerBackendReleaseResult: TypeAlias = (
 class AdbServerBackend(AdbServerStateView, Protocol):
     """Sole authority for one runtime-scoped ADB server generation.
 
-    ``read()`` returns the canonical atomic state snapshot. ``generation`` and ``current`` remain
-    available as compatibility views for callers that only need one field. Generation fences stale
-    lifecycle work and advances when matching pending or usable authority is logically released.
-    All views and ownership transitions are concurrency-safe and linearizable.
+    ``read()`` returns the canonical atomic state snapshot. Generation fences stale lifecycle
+    work and advances when matching pending or usable authority is logically released. All views
+    and ownership transitions are concurrency-safe and linearizable.
     """
-
-    @property
-    def generation(self) -> AdbServerGeneration:
-        """Return the current server generation, including while the backend is idle."""
-        ...
-
-    @property
-    def current(self) -> AdbServerBackendAcquired | None:
-        """Return the currently owned usable server acquisition, if any."""
-        ...
 
     def acquire(
         self,

@@ -123,21 +123,6 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                 endpoint=None if ownership is None else ownership.acquisition.endpoint,
             )
 
-    @property
-    def generation(self) -> AdbServerGeneration:
-        """Atomically return the current generation, including while the backend is idle."""
-
-        with self._state_lock:
-            return self._generation
-
-    @property
-    def current(self) -> AdbServerBackendAcquired | None:
-        """Atomically return the currently owned usable server acquisition."""
-
-        with self._state_lock:
-            ownership = self._ownership
-            return None if ownership is None else ownership.acquisition
-
     def bind_event_publisher(self, publisher: EventPublisher) -> None:
         """Bind the publisher for subsequent release-cleanup signals.
 
