@@ -5,10 +5,6 @@ from adb.transport_list.identity import (
     AdbTransportListIdentity,
     AdbTransportListIdentityIssuer,
 )
-from adb.transport_list.interpretation import (
-    AdbObservedTransportCompatibility,
-    classify_observed_transport,
-)
 from adb.transport_list.lookup import AdbTransportLookup, find_transport
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.observation import AdbTransportListObservation
@@ -52,7 +48,6 @@ from adb.transport_list.state import (
 )
 
 __all__ = [
-    "AdbObservedTransportCompatibility",
     "AdbTransportLookup",
     "AdbTransportList",
     "AdbTransportListCoordinator",
@@ -89,6 +84,5 @@ __all__ = [
     "AdbTransportListWatchState",
     "AdbTransportListWatchStateView",
     "AdbTransportListWatchBackendFactory",
-    "classify_observed_transport",
     "find_transport",
 ]
