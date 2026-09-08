@@ -1,0 +1,866 @@
+diff --git a/adb/transport_list/watch/__init__.py b/adb/transport_list/watch/__init__.py
+index bee1741..4ecc08c 100644
+--- a/adb/transport_list/watch/__init__.py
++++ b/adb/transport_list/watch/__init__.py
+@@ -39,6 +39,9 @@ from adb.transport_list.watch.signal import (
+     AdbTransportListWatchLifecycleSignal,
+     AdbTransportListWatchReady,
+     AdbTransportListWatchEnded,
++    AdbTransportListWatchRecoveryId,
++    AdbTransportListWatchRecoveryRetryDue,
++    AdbTransportListWatchSignal,
+ )
+ 
+ __all__ = [
+@@ -70,4 +73,7 @@ __all__ = [
+     "AdbTransportListWatchLifecycleSignal",
+     "AdbTransportListWatchReady",
+     "AdbTransportListWatchEnded",
++    "AdbTransportListWatchRecoveryId",
++    "AdbTransportListWatchRecoveryRetryDue",
++    "AdbTransportListWatchSignal",
+ ]
+diff --git a/adb/transport_list/watch/signal.py b/adb/transport_list/watch/signal.py
+index 5e493d6..bc2968f 100644
+--- a/adb/transport_list/watch/signal.py
++++ b/adb/transport_list/watch/signal.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ from dataclasses import dataclass
+ from typing import TypeAlias
++from uuid import uuid4
+ 
+ from adb.transport_list.watch.failure import AdbTransportListWatchFailure
+ from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
+@@ -13,6 +14,28 @@ def _require_generation(value: object) -> AdbTransportListWatchGeneration:
+     return value
+ 
+ 
++@dataclass(frozen=True, slots=True, order=True)
++class AdbTransportListWatchRecoveryId:
++    """Opaque identity for one runtime-supervised transport-list watch recovery."""
++
++    value: str
++
++    def __post_init__(self) -> None:
++        if not isinstance(self.value, str):
++            raise TypeError(
++                "ADB transport-list watch recovery id must be a string, "
++                f"got {type(self.value).__name__}"
++            )
++        normalized = self.value.strip()
++        if not normalized:
++            raise ValueError("ADB transport-list watch recovery id cannot be empty")
++        object.__setattr__(self, "value", normalized)
++
++    @classmethod
++    def new(cls) -> "AdbTransportListWatchRecoveryId":
++        return cls(uuid4().hex)
++
++
+ @dataclass(frozen=True, slots=True)
+ class AdbTransportListWatchReady:
+     """Signal that one watch generation committed its initial transport list."""
+@@ -46,11 +69,30 @@ class AdbTransportListWatchFailed:
+             raise TypeError("failure must be AdbTransportListWatchFailure")
+ 
+ 
++@dataclass(frozen=True, slots=True)
++class AdbTransportListWatchRecoveryRetryDue:
++    """Runtime-supervision signal that one scheduled watch recovery attempt became due."""
++
++    recovery_id: AdbTransportListWatchRecoveryId
++    attempt_number: int
++
++    def __post_init__(self) -> None:
++        if not isinstance(self.recovery_id, AdbTransportListWatchRecoveryId):
++            raise TypeError("recovery_id must be AdbTransportListWatchRecoveryId")
++        if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
++            raise TypeError("attempt_number must be an integer")
++        if self.attempt_number <= 0:
++            raise ValueError("attempt_number must be greater than zero")
++
++
+ AdbTransportListWatchLifecycleSignal: TypeAlias = (
+     AdbTransportListWatchReady
+     | AdbTransportListWatchEnded
+     | AdbTransportListWatchFailed
+ )
++AdbTransportListWatchSignal: TypeAlias = (
++    AdbTransportListWatchLifecycleSignal | AdbTransportListWatchRecoveryRetryDue
++)
+ 
+ 
+ __all__ = [
+@@ -59,4 +101,7 @@ __all__ = [
+     "AdbTransportListWatchLifecycleSignal",
+     "AdbTransportListWatchReady",
+     "AdbTransportListWatchEnded",
++    "AdbTransportListWatchRecoveryId",
++    "AdbTransportListWatchRecoveryRetryDue",
++    "AdbTransportListWatchSignal",
+ ]
+diff --git a/adb/transport_list/watch/supervision/__init__.py b/adb/transport_list/watch/supervision/__init__.py
+new file mode 100644
+index 0000000..3fd1b38
+--- /dev/null
++++ b/adb/transport_list/watch/supervision/__init__.py
+@@ -0,0 +1,29 @@
++"""Transport-list watch recovery policy, decisions, and lifecycle supervision."""
++
++from adb.transport_list.watch.supervision.policy import (
++    AdbTransportListWatchRecoveryPolicy,
++)
++from adb.transport_list.watch.supervision.recovery import (
++    AdbTransportListWatchRecovery,
++    AdbTransportListWatchRecoveryAcquired,
++    AdbTransportListWatchRecoveryAttempt,
++    AdbTransportListWatchRecoveryDecision,
++    AdbTransportListWatchRecoveryFailed,
++    AdbTransportListWatchRecoveryFailureCause,
++    AdbTransportListWatchRecoveryResult,
++)
++from adb.transport_list.watch.supervision.supervisor import (
++    AdbTransportListWatchSupervisor,
++)
++
++__all__ = [
++    "AdbTransportListWatchRecovery",
++    "AdbTransportListWatchRecoveryAcquired",
++    "AdbTransportListWatchRecoveryAttempt",
++    "AdbTransportListWatchRecoveryDecision",
++    "AdbTransportListWatchRecoveryFailed",
++    "AdbTransportListWatchRecoveryFailureCause",
++    "AdbTransportListWatchRecoveryResult",
++    "AdbTransportListWatchRecoveryPolicy",
++    "AdbTransportListWatchSupervisor",
++]
+diff --git a/adb/transport_list/watch/supervision/policy.py b/adb/transport_list/watch/supervision/policy.py
+new file mode 100644
+index 0000000..899d019
+--- /dev/null
++++ b/adb/transport_list/watch/supervision/policy.py
+@@ -0,0 +1,101 @@
++from __future__ import annotations
++
++from dataclasses import dataclass
++import math
++from numbers import Real
++
++
++def _normalize_positive_seconds(value: object, *, field_name: str) -> float:
++    if isinstance(value, bool) or not isinstance(value, Real):
++        raise TypeError(f"{field_name} must be a real number")
++    normalized = float(value)
++    if not math.isfinite(normalized) or normalized <= 0.0:
++        raise ValueError(f"{field_name} must be finite and greater than zero")
++    return normalized
++
++
++def _normalize_retry_configuration(
++    *,
++    retry_initial_seconds: object,
++    retry_max_seconds: object,
++    retry_multiplier: object,
++    retry_jitter_ratio: object,
++    deferred_retry_seconds: object,
++    max_attempts: object,
++) -> tuple[float, float, float, float, float, int | None]:
++    initial = _normalize_positive_seconds(
++        retry_initial_seconds,
++        field_name="ADB transport-list watch recovery initial retry",
++    )
++    maximum = _normalize_positive_seconds(
++        retry_max_seconds,
++        field_name="ADB transport-list watch recovery maximum retry",
++    )
++    multiplier = _normalize_positive_seconds(
++        retry_multiplier,
++        field_name="ADB transport-list watch recovery retry multiplier",
++    )
++    if multiplier < 1.0:
++        raise ValueError(
++            "ADB transport-list watch recovery retry multiplier must be at least one"
++        )
++    if maximum < initial:
++        raise ValueError(
++            "ADB transport-list watch recovery maximum retry must be >= initial retry"
++        )
++    if isinstance(retry_jitter_ratio, bool) or not isinstance(retry_jitter_ratio, Real):
++        raise TypeError(
++            "ADB transport-list watch recovery retry jitter ratio must be a real number"
++        )
++    jitter = float(retry_jitter_ratio)
++    if not math.isfinite(jitter) or not 0.0 <= jitter < 1.0:
++        raise ValueError(
++            "ADB transport-list watch recovery retry jitter ratio must be in [0, 1)"
++        )
++    deferred = _normalize_positive_seconds(
++        deferred_retry_seconds,
++        field_name="ADB transport-list watch recovery deferred retry",
++    )
++    if max_attempts is not None:
++        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
++            raise TypeError(
++                "ADB transport-list watch recovery max_attempts must be an integer or None"
++            )
++        if max_attempts <= 0:
++            raise ValueError(
++                "ADB transport-list watch recovery max_attempts must be greater than zero"
++            )
++    return initial, maximum, multiplier, jitter, deferred, max_attempts
++
++
++@dataclass(frozen=True, slots=True)
++class AdbTransportListWatchRecoveryPolicy:
++    """Retry and backoff policy for one transport-list watch recovery cycle."""
++
++    retry_initial_seconds: float = 0.5
++    retry_max_seconds: float = 30.0
++    retry_multiplier: float = 2.0
++    retry_jitter_ratio: float = 0.2
++    deferred_retry_seconds: float = 0.1
++    max_attempts: int | None = None
++
++    def __post_init__(self) -> None:
++        initial, maximum, multiplier, jitter, deferred, max_attempts = (
++            _normalize_retry_configuration(
++                retry_initial_seconds=self.retry_initial_seconds,
++                retry_max_seconds=self.retry_max_seconds,
++                retry_multiplier=self.retry_multiplier,
++                retry_jitter_ratio=self.retry_jitter_ratio,
++                deferred_retry_seconds=self.deferred_retry_seconds,
++                max_attempts=self.max_attempts,
++            )
++        )
++        object.__setattr__(self, "retry_initial_seconds", initial)
++        object.__setattr__(self, "retry_max_seconds", maximum)
++        object.__setattr__(self, "retry_multiplier", multiplier)
++        object.__setattr__(self, "retry_jitter_ratio", jitter)
++        object.__setattr__(self, "deferred_retry_seconds", deferred)
++        object.__setattr__(self, "max_attempts", max_attempts)
++
++
++__all__ = ["AdbTransportListWatchRecoveryPolicy"]
+diff --git a/adb/transport_list/watch/supervision/recovery.py b/adb/transport_list/watch/supervision/recovery.py
+new file mode 100644
+index 0000000..4a80d39
+--- /dev/null
++++ b/adb/transport_list/watch/supervision/recovery.py
+@@ -0,0 +1,190 @@
++from __future__ import annotations
++
++from collections.abc import Callable
++from dataclasses import dataclass
++from math import isfinite
++from numbers import Real
++from random import random
++from typing import TypeAlias
++
++from adb.transport_list.watch.contract import (
++    AdbTransportListWatchAcquireBlocked,
++    AdbTransportListWatchAcquireCommitted,
++    AdbTransportListWatchAcquireExisting,
++    AdbTransportListWatchAcquireFailed,
++    AdbTransportListWatchAcquireOutcome,
++    AdbTransportListWatchAcquireSuperseded,
++)
++from adb.transport_list.watch.supervision.policy import (
++    AdbTransportListWatchRecoveryPolicy,
++)
++
++
++_RandomSource = Callable[[], float]
++
++
++@dataclass(frozen=True, slots=True)
++class AdbTransportListWatchRecoveryAttempt:
++    """One acquisition attempt selected by the watch recovery state machine."""
++
++    attempt_number: int
++    delay_seconds: float = 0.0
++
++    def __post_init__(self) -> None:
++        if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
++            raise TypeError("attempt_number must be an integer")
++        if self.attempt_number <= 0:
++            raise ValueError("attempt_number must be greater than zero")
++        if isinstance(self.delay_seconds, bool) or not isinstance(self.delay_seconds, Real):
++            raise TypeError("delay_seconds must be a real number")
++        delay = float(self.delay_seconds)
++        if not isfinite(delay) or delay < 0.0:
++            raise ValueError(
++                "delay_seconds must be finite and greater than or equal to zero"
++            )
++        object.__setattr__(self, "delay_seconds", delay)
++
++
++@dataclass(frozen=True, slots=True)
++class AdbTransportListWatchRecoveryAcquired:
++    """Terminal decision that a usable watch acquisition exists after this attempt."""
++
++
++AdbTransportListWatchRecoveryFailureCause: TypeAlias = AdbTransportListWatchAcquireFailed
++
++
++@dataclass(frozen=True, slots=True)
++class AdbTransportListWatchRecoveryFailed:
++    """Terminal recovery result after budget-consuming unsuccessful attempts are exhausted."""
++
++    attempts: int
++    cause: AdbTransportListWatchRecoveryFailureCause
++
++    def __post_init__(self) -> None:
++        if isinstance(self.attempts, bool) or not isinstance(self.attempts, int):
++            raise TypeError("attempts must be an integer")
++        if self.attempts <= 0:
++            raise ValueError("attempts must be greater than zero")
++        if not isinstance(self.cause, AdbTransportListWatchAcquireFailed):
++            raise TypeError("cause must be AdbTransportListWatchAcquireFailed")
++
++
++AdbTransportListWatchRecoveryResult: TypeAlias = (
++    AdbTransportListWatchRecoveryAcquired | AdbTransportListWatchRecoveryFailed
++)
++AdbTransportListWatchRecoveryDecision: TypeAlias = (
++    AdbTransportListWatchRecoveryAttempt | AdbTransportListWatchRecoveryResult
++)
++
++
++class AdbTransportListWatchRecovery:
++    """Decision engine for one bounded transport-list watch recovery cycle.
++
++    Tracks retry budget, backoff, jitter, and exhaustion. The supervisor executes each
++    selected acquisition attempt and feeds its result back into :meth:`decide_after`.
++    """
++
++    def __init__(
++        self,
++        policy: AdbTransportListWatchRecoveryPolicy,
++        *,
++        _random: _RandomSource = random,
++    ) -> None:
++        if not isinstance(policy, AdbTransportListWatchRecoveryPolicy):
++            raise TypeError("policy must be AdbTransportListWatchRecoveryPolicy")
++        if not callable(_random):
++            raise TypeError("_random must be callable")
++        self._policy = policy
++        self._random = _random
++        self._attempt_number = 0
++        self._failed_attempts = 0
++
++    @property
++    def attempt_number(self) -> int:
++        return self._attempt_number
++
++    @property
++    def failed_attempts(self) -> int:
++        return self._failed_attempts
++
++    def begin(self) -> AdbTransportListWatchRecoveryAttempt:
++        """Select the first immediate acquisition attempt for this recovery cycle."""
++
++        if self._attempt_number != 0:
++            raise RuntimeError("ADB transport-list watch recovery has already begun")
++        return self._next_attempt(0.0)
++
++    def decide_after(
++        self,
++        result: AdbTransportListWatchAcquireOutcome,
++    ) -> AdbTransportListWatchRecoveryDecision:
++        """Apply retry policy after one selected acquisition attempt completes."""
++
++        if self._attempt_number == 0:
++            raise RuntimeError("ADB transport-list watch recovery has not begun")
++
++        if not isinstance(
++            result,
++            (
++                AdbTransportListWatchAcquireCommitted,
++                AdbTransportListWatchAcquireExisting,
++                AdbTransportListWatchAcquireBlocked,
++                AdbTransportListWatchAcquireFailed,
++                AdbTransportListWatchAcquireSuperseded,
++            ),
++        ):
++            raise TypeError("result must be AdbTransportListWatchAcquireOutcome")
++
++        if isinstance(
++            result,
++            (AdbTransportListWatchAcquireCommitted, AdbTransportListWatchAcquireExisting),
++        ):
++            return AdbTransportListWatchRecoveryAcquired()
++
++        if isinstance(
++            result,
++            (AdbTransportListWatchAcquireBlocked, AdbTransportListWatchAcquireSuperseded),
++        ):
++            return self._next_attempt(self._policy.deferred_retry_seconds)
++
++        if not isinstance(result, AdbTransportListWatchAcquireFailed):
++            raise TypeError("unsupported budget-consuming transport-list watch acquire outcome")
++
++        self._failed_attempts += 1
++        if (
++            self._policy.max_attempts is not None
++            and self._failed_attempts >= self._policy.max_attempts
++        ):
++            return AdbTransportListWatchRecoveryFailed(self._failed_attempts, result)
++
++        return self._next_attempt(self._retry_delay(self._failed_attempts))
++
++    def _next_attempt(self, delay_seconds: float) -> AdbTransportListWatchRecoveryAttempt:
++        self._attempt_number += 1
++        return AdbTransportListWatchRecoveryAttempt(self._attempt_number, delay_seconds)
++
++    def _retry_delay(self, failed_attempts: int) -> float:
++        base = min(
++            self._policy.retry_initial_seconds
++            * (self._policy.retry_multiplier ** max(0, failed_attempts - 1)),
++            self._policy.retry_max_seconds,
++        )
++        sample = self._random()
++        if not 0.0 <= sample <= 1.0:
++            raise ValueError(
++                "transport-list watch recovery random source must return a value in [0, 1]"
++            )
++        jitter = self._policy.retry_jitter_ratio
++        factor = 1.0 + ((sample * 2.0) - 1.0) * jitter
++        return max(base * factor, 1e-6)
++
++
++__all__ = [
++    "AdbTransportListWatchRecovery",
++    "AdbTransportListWatchRecoveryAcquired",
++    "AdbTransportListWatchRecoveryAttempt",
++    "AdbTransportListWatchRecoveryDecision",
++    "AdbTransportListWatchRecoveryFailed",
++    "AdbTransportListWatchRecoveryFailureCause",
++    "AdbTransportListWatchRecoveryResult",
++]
+diff --git a/adb/transport_list/watch/supervision/supervisor.py b/adb/transport_list/watch/supervision/supervisor.py
+new file mode 100644
+index 0000000..164d836
+--- /dev/null
++++ b/adb/transport_list/watch/supervision/supervisor.py
+@@ -0,0 +1,420 @@
++from __future__ import annotations
++
++from datetime import timedelta
++from threading import RLock, Thread, current_thread
++
++from networking import TcpAddress
++from adb.transport_list.watch.contract import (
++    AdbTransportListWatchLifecycle,
++    AdbTransportListWatchReleaseApplied,
++)
++from adb.transport_list.watch.signal import (
++    AdbTransportListWatchFailed,
++    AdbTransportListWatchRecoveryId,
++    AdbTransportListWatchRecoveryRetryDue,
++)
++from adb.transport_list.watch.supervision.policy import (
++    AdbTransportListWatchRecoveryPolicy,
++)
++from adb.transport_list.watch.supervision.recovery import (
++    AdbTransportListWatchRecovery,
++    AdbTransportListWatchRecoveryAcquired,
++    AdbTransportListWatchRecoveryAttempt,
++    AdbTransportListWatchRecoveryDecision,
++    AdbTransportListWatchRecoveryFailed,
++)
++from eventing import EventBus, EventSubscriptionToken
++from scheduling import ScheduleToken, TemporalScheduler
++
++
++class AdbTransportListWatchSupervisor:
++    """Run failure-driven transport-list watch recovery cycles.
++
++    Owns watch-failure subscriptions, retry scheduling, and recovery worker lifetimes. Watch
++    authority remains in the lifecycle. A failed generation is released through the lifecycle's
++    generation fence, and the detached acquisition's endpoint becomes the recovery target.
++    """
++
++    def __init__(
++        self,
++        lifecycle: AdbTransportListWatchLifecycle,
++        *,
++        event_bus: EventBus | None,
++        scheduler: TemporalScheduler[object] | None,
++        policy: AdbTransportListWatchRecoveryPolicy,
++        recovery_enabled: bool,
++    ) -> None:
++        if not isinstance(lifecycle, AdbTransportListWatchLifecycle):
++            raise TypeError("lifecycle must satisfy AdbTransportListWatchLifecycle")
++        if event_bus is not None and not _is_event_bus(event_bus):
++            raise TypeError("event_bus must satisfy EventBus or be None")
++        if scheduler is not None and not isinstance(scheduler, TemporalScheduler):
++            raise TypeError("scheduler must satisfy TemporalScheduler or be None")
++        if scheduler is not None and event_bus is None:
++            raise ValueError("scheduled transport-list watch supervision requires an event bus")
++        if not isinstance(policy, AdbTransportListWatchRecoveryPolicy):
++            raise TypeError("policy must be AdbTransportListWatchRecoveryPolicy")
++        if not isinstance(recovery_enabled, bool):
++            raise TypeError("recovery_enabled must be bool")
++        self._lifecycle = lifecycle
++        self._event_bus = event_bus
++        self._scheduler = scheduler
++        self._policy = policy
++        self._recovery_enabled = recovery_enabled
++
++        self._lock = RLock()
++        self._subscriptions: tuple[EventSubscriptionToken, ...] = ()
++        self._recovery: AdbTransportListWatchRecovery | None = None
++        self._recovery_id: AdbTransportListWatchRecoveryId | None = None
++        self._recovery_attempt: AdbTransportListWatchRecoveryAttempt | None = None
++        self._recovery_endpoint: TcpAddress | None = None
++        self._retry_token: ScheduleToken | None = None
++        self._attempt_threads: set[Thread] = set()
++        self._pending_recovery_endpoint: TcpAddress | None = None
++        self._started = False
++        self._starting = False
++        self._closed = False
++
++    @property
++    def started(self) -> bool:
++        with self._lock:
++            return self._started
++
++    @property
++    def closed(self) -> bool:
++        with self._lock:
++            return self._closed
++
++    def start(self) -> None:
++        """Start watch failure reconciliation and recovery supervision."""
++
++        with self._lock:
++            if self._closed:
++                raise RuntimeError("ADB transport-list watch supervisor is closed")
++            if self._started or self._starting:
++                raise RuntimeError("ADB transport-list watch supervisor is already started")
++            self._starting = True
++
++        subscription_tokens: list[EventSubscriptionToken] = []
++        try:
++            event_bus = self._event_bus
++            if event_bus is not None:
++                subscription_tokens.append(
++                    event_bus.subscribe(
++                        AdbTransportListWatchFailed,
++                        self._on_watch_failed,
++                    )
++                )
++                if self._scheduler is not None:
++                    subscription_tokens.append(
++                        event_bus.subscribe(
++                            AdbTransportListWatchRecoveryRetryDue,
++                            self._on_recovery_retry_due,
++                        )
++                    )
++        except BaseException:
++            if self._event_bus is not None:
++                for token in subscription_tokens:
++                    self._event_bus.unsubscribe(token)
++            with self._lock:
++                retry_token, attempt_threads = self._clear_recovery_locked()
++                self._starting = False
++            self._cancel_retry(retry_token)
++            self._join_attempt_threads(attempt_threads)
++            raise
++
++        with self._lock:
++            self._subscriptions = tuple(subscription_tokens)
++            self._started = True
++            self._starting = False
++
++    def close(self) -> None:
++        """Stop supervision while retaining the current healthy watch."""
++
++        with self._lock:
++            if self._closed:
++                return
++            self._closed = True
++            self._started = False
++            self._starting = False
++            subscriptions = self._subscriptions
++            self._subscriptions = ()
++            retry_token, attempt_threads = self._clear_recovery_locked()
++
++        event_bus = self._event_bus
++        if event_bus is not None:
++            for token in subscriptions:
++                event_bus.unsubscribe(token)
++        self._cancel_retry(retry_token)
++        self._join_attempt_threads(attempt_threads)
++
++    def _on_watch_failed(self, event: AdbTransportListWatchFailed) -> None:
++        """Release the failed generation, then recover the endpoint that was detached."""
++
++        with self._lock:
++            if not self._running_locked():
++                return
++
++        release = self._lifecycle.release(event.generation)
++        if (
++            not isinstance(release, AdbTransportListWatchReleaseApplied)
++            or release.acquisition is None
++        ):
++            return
++
++        self._request_recovery(release.acquisition.endpoint)
++
++    def _request_recovery(self, endpoint: TcpAddress) -> None:
++        """Start recovery for one committed failed-watch release."""
++
++        if not isinstance(endpoint, TcpAddress):
++            raise TypeError("endpoint must be TcpAddress")
++
++        with self._lock:
++            if (
++                not self._running_locked()
++                or not self._recovery_enabled
++                or self._scheduler is None
++                or self._event_bus is None
++            ):
++                return
++
++            if self._recovery is not None:
++                self._pending_recovery_endpoint = endpoint
++                return
++
++            recovery = AdbTransportListWatchRecovery(self._policy)
++            recovery_id = AdbTransportListWatchRecoveryId.new()
++            self._recovery = recovery
++            self._recovery_id = recovery_id
++            self._recovery_endpoint = endpoint
++            self._pending_recovery_endpoint = None
++            attempt = recovery.begin()
++
++        self._apply_recovery_attempt(recovery, recovery_id, attempt)
++
++    def _apply_recovery_attempt(
++        self,
++        recovery: AdbTransportListWatchRecovery,
++        recovery_id: AdbTransportListWatchRecoveryId,
++        attempt: AdbTransportListWatchRecoveryAttempt,
++    ) -> None:
++        """Execute immediately or arrange one watch recovery acquisition attempt."""
++
++        with self._lock:
++            if not self._is_current_recovery_locked(recovery, recovery_id):
++                return
++
++        if attempt.delay_seconds > 0.0:
++            scheduler = self._scheduler
++            if scheduler is None:
++                return
++            token = scheduler.schedule_after(
++                timedelta(seconds=attempt.delay_seconds),
++                AdbTransportListWatchRecoveryRetryDue(
++                    recovery_id,
++                    attempt.attempt_number,
++                ),
++            )
++            with self._lock:
++                if not self._is_current_recovery_locked(recovery, recovery_id):
++                    scheduler.cancel(token)
++                    return
++                old_token = self._retry_token
++                self._retry_token = token
++                self._recovery_attempt = attempt
++            if old_token is not None:
++                scheduler.cancel(old_token)
++            return
++
++        self._launch_recovery_attempt(recovery, recovery_id, attempt)
++
++    def _on_recovery_retry_due(
++        self,
++        event: AdbTransportListWatchRecoveryRetryDue,
++    ) -> None:
++        with self._lock:
++            recovery = self._recovery
++            recovery_id = self._recovery_id
++            attempt = self._recovery_attempt
++            if (
++                recovery is None
++                or recovery_id != event.recovery_id
++                or attempt is None
++                or attempt.attempt_number != event.attempt_number
++                or not self._is_current_recovery_locked(recovery, recovery_id)
++            ):
++                return
++            self._retry_token = None
++            self._recovery_attempt = None
++
++        self._launch_recovery_attempt(recovery, recovery_id, attempt)
++
++    def _launch_recovery_attempt(
++        self,
++        recovery: AdbTransportListWatchRecovery,
++        recovery_id: AdbTransportListWatchRecoveryId,
++        attempt: AdbTransportListWatchRecoveryAttempt,
++    ) -> None:
++        thread = Thread(
++            target=self._run_recovery_attempt,
++            args=(recovery, recovery_id),
++            name=(
++                "adb-transport-list-watch-recovery-"
++                f"{recovery_id.value[:12]}-{attempt.attempt_number}"
++            ),
++            daemon=True,
++        )
++        with self._lock:
++            if not self._is_current_recovery_locked(recovery, recovery_id):
++                return
++            self._attempt_threads.add(thread)
++            try:
++                thread.start()
++            except BaseException:
++                self._attempt_threads.discard(thread)
++                raise
++
++    def _run_recovery_attempt(
++        self,
++        recovery: AdbTransportListWatchRecovery,
++        recovery_id: AdbTransportListWatchRecoveryId,
++    ) -> None:
++        active_thread = current_thread()
++        try:
++            with self._lock:
++                if not self._is_current_recovery_locked(recovery, recovery_id):
++                    return
++                endpoint = self._recovery_endpoint
++                if endpoint is None:
++                    raise RuntimeError(
++                        "ADB transport-list watch recovery endpoint state is inconsistent"
++                    )
++
++            result = self._lifecycle.acquire(endpoint)
++            decision = recovery.decide_after(result)
++            self._apply_recovery_decision(recovery, recovery_id, decision)
++        except BaseException:
++            # Contract/invariant failures are not retryable lifecycle outcomes. Release this cycle
++            # so later explicit recovery requests cannot become permanently pending behind a dead
++            # worker, but do not automatically restart the broken cycle.
++            self._abort_recovery(recovery, recovery_id)
++            raise
++        finally:
++            with self._lock:
++                self._attempt_threads.discard(active_thread)
++
++    def _apply_recovery_decision(
++        self,
++        recovery: AdbTransportListWatchRecovery,
++        recovery_id: AdbTransportListWatchRecoveryId,
++        decision: AdbTransportListWatchRecoveryDecision,
++    ) -> None:
++        """Apply one stateful watch recovery decision through supervisor-owned effects."""
++
++        if isinstance(decision, AdbTransportListWatchRecoveryAcquired):
++            self._finish_recovery(recovery, recovery_id)
++            return
++        if isinstance(decision, AdbTransportListWatchRecoveryAttempt):
++            self._apply_recovery_attempt(recovery, recovery_id, decision)
++            return
++        if isinstance(decision, AdbTransportListWatchRecoveryFailed):
++            self._finish_recovery(recovery, recovery_id)
++            return
++        raise TypeError("decision must be AdbTransportListWatchRecoveryDecision")
++
++    def _abort_recovery(
++        self,
++        recovery: AdbTransportListWatchRecovery,
++        recovery_id: AdbTransportListWatchRecoveryId,
++    ) -> None:
++        """Terminate a broken recovery cycle and clear its scheduled work."""
++
++        scheduler = self._scheduler
++        with self._lock:
++            if self._recovery is not recovery or self._recovery_id != recovery_id:
++                return
++            retry_token = self._retry_token
++            self._recovery = None
++            self._recovery_id = None
++            self._recovery_attempt = None
++            self._recovery_endpoint = None
++            self._retry_token = None
++            self._pending_recovery_endpoint = None
++
++        if retry_token is not None and scheduler is not None:
++            scheduler.cancel(retry_token)
++
++    def _finish_recovery(
++        self,
++        recovery: AdbTransportListWatchRecovery,
++        recovery_id: AdbTransportListWatchRecoveryId,
++    ) -> None:
++        """Release one terminal recovery cycle and consume queued recovery demand."""
++
++        scheduler = self._scheduler
++        with self._lock:
++            if not self._is_current_recovery_locked(recovery, recovery_id):
++                return
++            retry_token = self._retry_token
++            self._recovery = None
++            self._recovery_id = None
++            self._recovery_attempt = None
++            self._recovery_endpoint = None
++            self._retry_token = None
++            pending_endpoint = self._pending_recovery_endpoint
++            self._pending_recovery_endpoint = None
++            running = self._running_locked()
++
++        if retry_token is not None and scheduler is not None:
++            scheduler.cancel(retry_token)
++        if pending_endpoint is not None and running:
++            self._request_recovery(pending_endpoint)
++
++    def _is_current_recovery_locked(
++        self,
++        recovery: AdbTransportListWatchRecovery,
++        recovery_id: AdbTransportListWatchRecoveryId,
++    ) -> bool:
++        return (
++            self._running_locked()
++            and self._recovery is recovery
++            and self._recovery_id == recovery_id
++        )
++
++    def _running_locked(self) -> bool:
++        return not self._closed and (self._started or self._starting)
++
++    def _clear_recovery_locked(
++        self,
++    ) -> tuple[ScheduleToken | None, tuple[Thread, ...]]:
++        retry_token = self._retry_token
++        self._recovery = None
++        self._recovery_id = None
++        self._recovery_attempt = None
++        self._recovery_endpoint = None
++        self._retry_token = None
++        self._pending_recovery_endpoint = None
++        return retry_token, tuple(self._attempt_threads)
++
++    def _cancel_retry(self, token: ScheduleToken | None) -> None:
++        scheduler = self._scheduler
++        if token is not None and scheduler is not None:
++            scheduler.cancel(token)
++
++    @staticmethod
++    def _join_attempt_threads(threads: tuple[Thread, ...]) -> None:
++        for thread in threads:
++            if thread is not current_thread():
++                thread.join()
++
++
++def _is_event_bus(value: object) -> bool:
++    return (
++        callable(getattr(value, "publish", None))
++        and callable(getattr(value, "subscribe", None))
++        and callable(getattr(value, "unsubscribe", None))
++    )
++
++
++__all__ = ["AdbTransportListWatchSupervisor"]

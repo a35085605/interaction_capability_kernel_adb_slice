@@ -39,6 +39,9 @@ from adb.transport_list.watch.signal import (
     AdbTransportListWatchLifecycleSignal,
     AdbTransportListWatchReady,
     AdbTransportListWatchEnded,
+    AdbTransportListWatchRecoveryId,
+    AdbTransportListWatchRecoveryRetryDue,
+    AdbTransportListWatchSignal,
 )
 
 __all__ = [
@@ -70,4 +73,7 @@ __all__ = [
     "AdbTransportListWatchLifecycleSignal",
     "AdbTransportListWatchReady",
     "AdbTransportListWatchEnded",
+    "AdbTransportListWatchRecoveryId",
+    "AdbTransportListWatchRecoveryRetryDue",
+    "AdbTransportListWatchSignal",
 ]
