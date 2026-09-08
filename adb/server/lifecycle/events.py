@@ -10,7 +10,7 @@ class AdbServerActivated:
     """Notification that one server generation transitioned to a usable endpoint.
 
     The payload deliberately carries only the generation that activated. Consumers must read
-    the authoritative backend state before making state-dependent decisions.
+    the authoritative lifecycle state before making state-dependent decisions.
     """
 
     generation: AdbServerGeneration
@@ -24,7 +24,7 @@ class AdbServerActivated:
 class AdbServerDeactivated:
     """Notification that one server generation transitioned away from a usable endpoint.
 
-    ``generation`` identifies the lifetime whose endpoint became unavailable. The backend may
+    ``generation`` identifies the lifetime whose endpoint became unavailable. The lifecycle may
     already expose a newer current generation when a consumer receives this notification.
     """
 

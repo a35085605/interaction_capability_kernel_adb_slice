@@ -24,9 +24,9 @@ def _normalize_diagnostic(value: object) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchAcquisition:
-    """One runtime-scoped usable transport-list watch retained by the backend.
+    """One runtime-scoped usable transport-list watch retained by the lifecycle.
 
-    This is lifecycle evidence only. The backend retains the physical watch resource; producer
+    This is lifecycle evidence only. The lifecycle retains the physical watch resource; producer
     access to transport-list data is provided through a separate watch-stream capability.
     """
 
@@ -41,8 +41,8 @@ class AdbTransportListWatchAcquisition:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchBackendAcquireCommitted:
-    """The requested watch acquisition committed as the backend's current authority."""
+class AdbTransportListWatchAcquireCommitted:
+    """The requested watch acquisition committed as the lifecycle's current authority."""
 
     acquisition: AdbTransportListWatchAcquisition
 
@@ -52,8 +52,8 @@ class AdbTransportListWatchBackendAcquireCommitted:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchBackendAcquireExisting:
-    """The backend already retained a usable watch acquisition; no new one was committed."""
+class AdbTransportListWatchAcquireExisting:
+    """The lifecycle already retained a usable watch acquisition; no new one was committed."""
 
     acquisition: AdbTransportListWatchAcquisition
 
@@ -63,8 +63,8 @@ class AdbTransportListWatchBackendAcquireExisting:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchBackendAcquireBlocked:
-    """Watch acquisition could not proceed because conflicting backend work is active."""
+class AdbTransportListWatchAcquireBlocked:
+    """Watch acquisition could not proceed because conflicting lifecycle work is active."""
 
     diagnostic: str
 
@@ -73,7 +73,7 @@ class AdbTransportListWatchBackendAcquireBlocked:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchBackendAcquireFailed:
+class AdbTransportListWatchAcquireFailed:
     """Expected failure to establish a usable watch acquisition."""
 
     failure: AdbTransportListWatchFailure
@@ -84,7 +84,7 @@ class AdbTransportListWatchBackendAcquireFailed:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchBackendAcquireSuperseded:
+class AdbTransportListWatchAcquireSuperseded:
     """The captured watch generation ceased to be current before the acquisition could commit."""
 
     generation: AdbTransportListWatchGeneration
@@ -95,16 +95,16 @@ class AdbTransportListWatchBackendAcquireSuperseded:
 
 
 AdbTransportListWatchAcquireOutcome: TypeAlias = (
-    AdbTransportListWatchBackendAcquireCommitted
-    | AdbTransportListWatchBackendAcquireExisting
-    | AdbTransportListWatchBackendAcquireBlocked
-    | AdbTransportListWatchBackendAcquireFailed
-    | AdbTransportListWatchBackendAcquireSuperseded
+    AdbTransportListWatchAcquireCommitted
+    | AdbTransportListWatchAcquireExisting
+    | AdbTransportListWatchAcquireBlocked
+    | AdbTransportListWatchAcquireFailed
+    | AdbTransportListWatchAcquireSuperseded
 )
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchBackendReleaseApplied:
+class AdbTransportListWatchReleaseApplied:
     """Matching watch authority was released and its generation was advanced.
 
     ``acquisition`` is the committed acquisition that was detached. ``None`` means the released
@@ -128,7 +128,7 @@ class AdbTransportListWatchBackendReleaseApplied:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchBackendReleaseInactive:
+class AdbTransportListWatchReleaseInactive:
     """The matching current generation has no watch authority to release."""
 
     generation: AdbTransportListWatchGeneration
@@ -139,8 +139,8 @@ class AdbTransportListWatchBackendReleaseInactive:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchBackendReleaseGenerationMismatch:
-    """The requested generation does not match the backend's current watch generation."""
+class AdbTransportListWatchReleaseGenerationMismatch:
+    """The requested generation does not match the lifecycle's current watch generation."""
 
     current: AdbTransportListWatchAcquisition | None
     current_generation: AdbTransportListWatchGeneration
@@ -157,9 +157,9 @@ class AdbTransportListWatchBackendReleaseGenerationMismatch:
 
 
 AdbTransportListWatchReleaseOutcome: TypeAlias = (
-    AdbTransportListWatchBackendReleaseApplied
-    | AdbTransportListWatchBackendReleaseInactive
-    | AdbTransportListWatchBackendReleaseGenerationMismatch
+    AdbTransportListWatchReleaseApplied
+    | AdbTransportListWatchReleaseInactive
+    | AdbTransportListWatchReleaseGenerationMismatch
 )
 
 
@@ -189,7 +189,7 @@ class AdbTransportListWatchLifecycle(AdbTransportListWatchStateView, Protocol):
 
 
 class AdbTransportListWatchLifecycleFactory(Protocol):
-    """Construct one runtime-scoped transport-list watch backend."""
+    """Construct one runtime-scoped transport-list watch lifecycle."""
 
     def __call__(
         self,
@@ -201,15 +201,15 @@ class AdbTransportListWatchLifecycleFactory(Protocol):
 __all__ = [
     "AdbTransportListWatchLifecycle",
     "AdbTransportListWatchAcquisition",
-    "AdbTransportListWatchBackendAcquireBlocked",
-    "AdbTransportListWatchBackendAcquireCommitted",
-    "AdbTransportListWatchBackendAcquireExisting",
-    "AdbTransportListWatchBackendAcquireFailed",
+    "AdbTransportListWatchAcquireBlocked",
+    "AdbTransportListWatchAcquireCommitted",
+    "AdbTransportListWatchAcquireExisting",
+    "AdbTransportListWatchAcquireFailed",
     "AdbTransportListWatchAcquireOutcome",
-    "AdbTransportListWatchBackendAcquireSuperseded",
+    "AdbTransportListWatchAcquireSuperseded",
     "AdbTransportListWatchLifecycleFactory",
-    "AdbTransportListWatchBackendReleaseApplied",
-    "AdbTransportListWatchBackendReleaseGenerationMismatch",
-    "AdbTransportListWatchBackendReleaseInactive",
+    "AdbTransportListWatchReleaseApplied",
+    "AdbTransportListWatchReleaseGenerationMismatch",
+    "AdbTransportListWatchReleaseInactive",
     "AdbTransportListWatchReleaseOutcome",
 ]

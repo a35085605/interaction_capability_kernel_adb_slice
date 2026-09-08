@@ -20,7 +20,7 @@ def _normalize_diagnostic(value: object) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerAcquisition:
-    """One runtime-scoped usable ADB server acquisition retained by the backend."""
+    """One runtime-scoped usable ADB server acquisition retained by the lifecycle."""
 
     endpoint: AdbServerEndpoint
     generation: AdbServerGeneration
@@ -33,8 +33,8 @@ class AdbServerAcquisition:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireCommitted:
-    """The requested acquisition committed as the backend's current authority."""
+class AdbServerAcquireCommitted:
+    """The requested acquisition committed as the lifecycle's current authority."""
 
     acquisition: AdbServerAcquisition
 
@@ -44,8 +44,8 @@ class AdbServerBackendAcquireCommitted:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireExisting:
-    """The backend already retained a usable acquisition; no new acquisition was committed."""
+class AdbServerAcquireExisting:
+    """The lifecycle already retained a usable acquisition; no new acquisition was committed."""
 
     acquisition: AdbServerAcquisition
 
@@ -55,8 +55,8 @@ class AdbServerBackendAcquireExisting:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireBlocked:
-    """Acquisition could not proceed because conflicting backend work is currently active."""
+class AdbServerAcquireBlocked:
+    """Acquisition could not proceed because conflicting lifecycle work is currently active."""
 
     diagnostic: str
 
@@ -65,8 +65,8 @@ class AdbServerBackendAcquireBlocked:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireFailed:
-    """Backend acquisition failed to satisfy the request."""
+class AdbServerAcquireFailed:
+    """Server acquisition failed to satisfy the request."""
 
     diagnostic: str
 
@@ -75,7 +75,7 @@ class AdbServerBackendAcquireFailed:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireSuperseded:
+class AdbServerAcquireSuperseded:
     """The captured generation ceased to be current before this acquisition could commit."""
 
     generation: AdbServerGeneration
@@ -86,16 +86,16 @@ class AdbServerBackendAcquireSuperseded:
 
 
 AdbServerAcquireOutcome: TypeAlias = (
-    AdbServerBackendAcquireCommitted
-    | AdbServerBackendAcquireExisting
-    | AdbServerBackendAcquireBlocked
-    | AdbServerBackendAcquireFailed
-    | AdbServerBackendAcquireSuperseded
+    AdbServerAcquireCommitted
+    | AdbServerAcquireExisting
+    | AdbServerAcquireBlocked
+    | AdbServerAcquireFailed
+    | AdbServerAcquireSuperseded
 )
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendReleaseApplied:
+class AdbServerReleaseApplied:
     """Matching authority was released and its generation was advanced.
 
     ``acquisition`` is the committed acquisition that was detached. ``None`` means the released
@@ -117,7 +117,7 @@ class AdbServerBackendReleaseApplied:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendReleaseInactive:
+class AdbServerReleaseInactive:
     """The matching current generation has no authority to release."""
 
     generation: AdbServerGeneration
@@ -128,8 +128,8 @@ class AdbServerBackendReleaseInactive:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendReleaseGenerationMismatch:
-    """The requested generation does not match the backend's current generation."""
+class AdbServerReleaseGenerationMismatch:
+    """The requested generation does not match the lifecycle's current generation."""
 
     current: AdbServerAcquisition | None
     current_generation: AdbServerGeneration
@@ -144,9 +144,9 @@ class AdbServerBackendReleaseGenerationMismatch:
 
 
 AdbServerReleaseOutcome: TypeAlias = (
-    AdbServerBackendReleaseApplied
-    | AdbServerBackendReleaseInactive
-    | AdbServerBackendReleaseGenerationMismatch
+    AdbServerReleaseApplied
+    | AdbServerReleaseInactive
+    | AdbServerReleaseGenerationMismatch
 )
 
 
@@ -175,28 +175,28 @@ class AdbServerLifecycle(AdbServerStateView, Protocol):
 
 
 class AdbServerLifecycleFactory(Protocol):
-    """Construct one runtime-scoped ADB server backend."""
+    """Construct one runtime-scoped ADB server lifecycle."""
 
     def __call__(
         self,
         generation_issuer: AdbServerGenerationIssuer,
     ) -> AdbServerLifecycle:
-        """Construct a backend using the runtime-scoped server generation issuer."""
+        """Construct a lifecycle using the runtime-scoped server generation issuer."""
         ...
 
 
 __all__ = [
     "AdbServerLifecycle",
     "AdbServerAcquisition",
-    "AdbServerBackendAcquireBlocked",
-    "AdbServerBackendAcquireCommitted",
-    "AdbServerBackendAcquireExisting",
-    "AdbServerBackendAcquireFailed",
+    "AdbServerAcquireBlocked",
+    "AdbServerAcquireCommitted",
+    "AdbServerAcquireExisting",
+    "AdbServerAcquireFailed",
     "AdbServerAcquireOutcome",
-    "AdbServerBackendAcquireSuperseded",
+    "AdbServerAcquireSuperseded",
     "AdbServerLifecycleFactory",
-    "AdbServerBackendReleaseApplied",
-    "AdbServerBackendReleaseGenerationMismatch",
-    "AdbServerBackendReleaseInactive",
+    "AdbServerReleaseApplied",
+    "AdbServerReleaseGenerationMismatch",
+    "AdbServerReleaseInactive",
     "AdbServerReleaseOutcome",
 ]

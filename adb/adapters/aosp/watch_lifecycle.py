@@ -19,9 +19,9 @@ from adb.errors import (
 )
 from adb.transport_list.model import AdbTransportList
 from adb.cleanup import CleanupDelegate
-from adb.transport_list.watch.backend_template import (
-    AdbTransportListWatchBackendAcquireError,
-    AdbTransportListWatchBackendAcquireInterruptedError,
+from adb.transport_list.watch.template import (
+    AdbTransportListWatchAcquireError,
+    AdbTransportListWatchAcquireInterruptedError,
     AdbTransportListWatchLifecycleTemplate,
 )
 from adb.transport_list.watch.error import AdbTransportListWatchError
@@ -137,7 +137,7 @@ def _handshake(sock: socket.socket, deadline: float, clock: _Clock) -> None:
 
 
 class _SmartSocketWatchHandle:
-    """Backend-owned smart-socket physical handle and transport-list data source."""
+    """Lifecycle-owned smart-socket physical handle and transport-list data source."""
 
     __slots__ = (
         "_socket",
@@ -222,7 +222,7 @@ class _SmartSocketWatchHandle:
 class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTemplate):
     """Generation-fenced transport-list watch authority over AOSP track-devices I/O.
 
-    Lifecycle authority and resource ownership are linearized by the shared backend
+    Lifecycle authority and resource ownership are linearized by the shared lifecycle
     template. The adapter establishes a fully usable smart-socket handle, translates expected
     I/O failures, and provides non-blocking cancellation that interrupts a retired handle
     without making physical teardown part of the public release lifecycle.
@@ -255,7 +255,7 @@ class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTe
     @staticmethod
     def _check_cancelled(cancellation: Event) -> None:
         if cancellation.is_set():
-            raise AdbTransportListWatchBackendAcquireInterruptedError
+            raise AdbTransportListWatchAcquireInterruptedError
 
     def _obtain_handle(
         self,
@@ -287,9 +287,9 @@ class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTe
             self._schedule_delegated_cleanup(exc.cleanup_resource, endpoint)
             failure = _watch_failure(exc.primary_error)
             if failure is not None:
-                raise AdbTransportListWatchBackendAcquireError(failure) from exc
+                raise AdbTransportListWatchAcquireError(failure) from exc
             raise exc.primary_error from exc
-        except AdbTransportListWatchBackendAcquireInterruptedError:
+        except AdbTransportListWatchAcquireInterruptedError:
             if sock is not None:
                 self._schedule_resource_cleanup(
                     sock,
@@ -306,7 +306,7 @@ class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTe
                 )
             failure = _watch_failure(exc)
             if failure is not None:
-                raise AdbTransportListWatchBackendAcquireError(failure) from exc
+                raise AdbTransportListWatchAcquireError(failure) from exc
             raise
 
     def _connect(self, endpoint: TcpAddress, timeout: float) -> tuple[socket.socket, float]:

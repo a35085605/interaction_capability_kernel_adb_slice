@@ -15,9 +15,9 @@ class _AdbServerGenerationEpoch(Epoch):
 class AdbServerGeneration:
     """Runtime-scoped generation fencing one ADB server authority lifetime.
 
-    A backend owns a current generation before any acquisition begins. Failed or retried
+    A lifecycle owns a current generation before any acquisition begins. Failed or retried
     acquisitions remain in that generation. Releasing or revoking matching authority advances
-    the backend to a fresh generation before physical cleanup, fencing stale lifecycle work.
+    the lifecycle to a fresh generation before physical cleanup, fencing stale lifecycle work.
     """
 
     _epoch: _AdbServerGenerationEpoch = field(repr=False)

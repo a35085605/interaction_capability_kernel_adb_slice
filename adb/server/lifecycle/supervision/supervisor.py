@@ -5,7 +5,7 @@ from threading import RLock, Thread, current_thread
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.backend import AdbServerLifecycle, AdbServerBackendReleaseApplied
+from adb.server.lifecycle.contract import AdbServerLifecycle, AdbServerReleaseApplied
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
@@ -27,13 +27,13 @@ class AdbServerSupervisor:
     """Run reconcile-driven ADB server recovery cycles.
 
     Owns reconciliation subscriptions, retry scheduling, and recovery worker lifetimes. Server
-    authority remains in the backend; manual mutation and desired-state coordination belong to
+    authority remains in the lifecycle; manual mutation and desired-state coordination belong to
     the owning orchestration layer rather than this supervisor.
     """
 
     def __init__(
         self,
-        backend: AdbServerLifecycle,
+        lifecycle: AdbServerLifecycle,
         *,
         event_bus: EventBus | None,
         scheduler: TemporalScheduler[object] | None,
@@ -41,8 +41,8 @@ class AdbServerSupervisor:
         recovery_enabled: bool,
         endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> None:
-        if not isinstance(backend, AdbServerLifecycle):
-            raise TypeError("backend must satisfy AdbServerLifecycle")
+        if not isinstance(lifecycle, AdbServerLifecycle):
+            raise TypeError("lifecycle must satisfy AdbServerLifecycle")
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if scheduler is not None and not isinstance(scheduler, TemporalScheduler):
@@ -55,7 +55,7 @@ class AdbServerSupervisor:
             raise TypeError("recovery_enabled must be bool")
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
             raise TypeError("endpoint_constraint must be TcpAddress or None")
-        self._backend = backend
+        self._lifecycle = lifecycle
         self._event_bus = event_bus
         self._scheduler = scheduler
         self._policy = policy
@@ -157,9 +157,9 @@ class AdbServerSupervisor:
             if not self._running_locked():
                 return
 
-        release = self._backend.release(event.server)
+        release = self._lifecycle.release(event.server)
         if (
-            not isinstance(release, AdbServerBackendReleaseApplied)
+            not isinstance(release, AdbServerReleaseApplied)
             or release.acquisition is None
         ):
             return
@@ -275,11 +275,11 @@ class AdbServerSupervisor:
                 if not self._is_current_recovery_locked(recovery, recovery_id):
                     return
 
-            result = self._backend.acquire(self._endpoint_constraint)
+            result = self._lifecycle.acquire(self._endpoint_constraint)
             decision = recovery.decide_after(result)
             self._apply_recovery_decision(recovery, recovery_id, decision)
         except BaseException:
-            # Contract/invariant failures are not retryable backend outcomes. Release this cycle so
+            # Contract/invariant failures are not retryable lifecycle outcomes. Release this cycle so
             # later explicit recovery requests cannot become permanently pending behind a dead
             # worker, but do not automatically restart the broken cycle.
             self._abort_recovery(recovery, recovery_id)

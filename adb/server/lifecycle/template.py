@@ -13,17 +13,17 @@ from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerState
 from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
 from adb.server.lifecycle.events import AdbServerActivated, AdbServerDeactivated
-from adb.server.lifecycle.backend import (
+from adb.server.lifecycle.contract import (
     AdbServerAcquisition,
-    AdbServerBackendAcquireBlocked,
-    AdbServerBackendAcquireCommitted,
-    AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireSuperseded,
+    AdbServerAcquireBlocked,
+    AdbServerAcquireCommitted,
+    AdbServerAcquireFailed,
+    AdbServerAcquireSuperseded,
     AdbServerAcquireOutcome,
-    AdbServerBackendAcquireExisting,
-    AdbServerBackendReleaseApplied,
-    AdbServerBackendReleaseInactive,
-    AdbServerBackendReleaseGenerationMismatch,
+    AdbServerAcquireExisting,
+    AdbServerReleaseApplied,
+    AdbServerReleaseInactive,
+    AdbServerReleaseGenerationMismatch,
     AdbServerReleaseOutcome,
 )
 
@@ -38,40 +38,40 @@ def _normalize_diagnostic(value: object) -> str:
 
 
 @runtime_checkable
-class AdbServerBackendEventPublisherBinding(Protocol):
-    """Optional capability for binding backend state-transition notifications."""
+class AdbServerLifecycleEventPublisherBinding(Protocol):
+    """Optional capability for binding lifecycle state-transition notifications."""
 
     def bind_event_publisher(self, publisher: EventPublisher) -> None:
         """Bind the publisher used for non-authoritative state-transition notifications."""
         ...
 
 
-class AdbServerBackendAcquireError(RuntimeError):
-    """Expected failure while obtaining a backend acquisition handle."""
+class AdbServerAcquireError(RuntimeError):
+    """Expected failure while obtaining a server acquisition handle."""
 
     def __init__(self, diagnostic: str) -> None:
         self.diagnostic = _normalize_diagnostic(diagnostic)
         super().__init__(self.diagnostic)
 
 
-class AdbServerBackendAcquireInterruptedError(RuntimeError):
+class AdbServerAcquireInterruptedError(RuntimeError):
     """Cooperative interruption after the captured server generation was released."""
 
     def __init__(self) -> None:
-        super().__init__("ADB server backend acquisition was interrupted")
+        super().__init__("ADB server acquisition was interrupted")
 
 
 HandleT = TypeVar("HandleT")
 
 
 @dataclass(frozen=True, slots=True)
-class _AdbServerBackendOwnership(Generic[HandleT]):
+class _Ownership(Generic[HandleT]):
     handle: HandleT
     acquisition: AdbServerAcquisition
 
 
 @dataclass(frozen=True, slots=True)
-class _AdbServerBackendPendingAcquire:
+class _PendingAcquire:
     generation: AdbServerGeneration
     cancellation: Event
 
@@ -102,8 +102,8 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         self._state_lock = Lock()
         self._generation_issuer = generation_issuer
         self._generation = generation_issuer.issue()
-        self._pending: _AdbServerBackendPendingAcquire | None = None
-        self._ownership: _AdbServerBackendOwnership[HandleT] | None = None
+        self._pending: _PendingAcquire | None = None
+        self._ownership: _Ownership[HandleT] | None = None
         self._cleanup = BackgroundCleanup(cleanup_delegate)
         self._publisher = publisher
 
@@ -124,7 +124,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             raise TypeError("publisher must satisfy EventPublisher")
         with self._state_lock:
             if self._pending is not None:
-                raise RuntimeError("cannot bind an event publisher during a backend acquisition")
+                raise RuntimeError("cannot bind an event publisher during a server acquisition")
             self._publisher = publisher
 
     @abstractmethod
@@ -183,22 +183,22 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
                     endpoint_constraint is None
                     or ownership.acquisition.endpoint == endpoint_constraint
                 ):
-                    return AdbServerBackendAcquireExisting(ownership.acquisition)
-                return AdbServerBackendAcquireBlocked(
-                    "ADB server backend already retains a different endpoint"
+                    return AdbServerAcquireExisting(ownership.acquisition)
+                return AdbServerAcquireBlocked(
+                    "ADB server lifecycle already retains a different endpoint"
                 )
             if self._pending is not None:
-                return AdbServerBackendAcquireBlocked(
-                    "ADB server backend is busy with another acquisition"
+                return AdbServerAcquireBlocked(
+                    "ADB server lifecycle is busy with another acquisition"
                 )
             if endpoint_constraint is not None and self._cleanup.has_conflict(
                 endpoint_constraint
             ):
-                return AdbServerBackendAcquireBlocked(
-                    "ADB server backend is cleaning a resource for the requested endpoint"
+                return AdbServerAcquireBlocked(
+                    "ADB server lifecycle is cleaning a resource for the requested endpoint"
                 )
 
-            pending = _AdbServerBackendPendingAcquire(
+            pending = _PendingAcquire(
                 generation=self._generation,
                 cancellation=Event(),
             )
@@ -206,24 +206,24 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
 
         try:
             handle, endpoint = self._obtain_handle(endpoint_constraint, pending.cancellation)
-        except AdbServerBackendAcquireInterruptedError as exc:
+        except AdbServerAcquireInterruptedError as exc:
             with self._state_lock:
                 revoked = self._generation != pending.generation
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbServerBackendAcquireSuperseded(pending.generation)
+                return AdbServerAcquireSuperseded(pending.generation)
             raise RuntimeError(
-                "ADB server backend acquisition was interrupted without generation revocation"
+                "ADB server acquisition was interrupted without generation revocation"
             ) from exc
-        except AdbServerBackendAcquireError as exc:
+        except AdbServerAcquireError as exc:
             with self._state_lock:
                 revoked = self._generation != pending.generation
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbServerBackendAcquireSuperseded(pending.generation)
-            return AdbServerBackendAcquireFailed(exc.diagnostic)
+                return AdbServerAcquireSuperseded(pending.generation)
+            return AdbServerAcquireFailed(exc.diagnostic)
         except BaseException:
             with self._state_lock:
                 if self._pending is pending:
@@ -237,9 +237,9 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
                     self._pending = None
             self._schedule_cleanup(handle, endpoint)
             if revoked:
-                return AdbServerBackendAcquireSuperseded(pending.generation)
-            return AdbServerBackendAcquireBlocked(
-                "ADB server backend obtained an endpoint whose prior resource is still cleaning"
+                return AdbServerAcquireSuperseded(pending.generation)
+            return AdbServerAcquireBlocked(
+                "ADB server lifecycle obtained an endpoint whose prior resource is still cleaning"
             )
 
         if endpoint_constraint is not None and endpoint != endpoint_constraint:
@@ -249,9 +249,9 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbServerBackendAcquireSuperseded(pending.generation)
+                return AdbServerAcquireSuperseded(pending.generation)
             raise AdbServerLifecycleConsistencyError(
-                "endpoint-constrained ADB server backend acquisition returned a different endpoint"
+                "endpoint-constrained ADB server acquisition returned a different endpoint"
             )
 
         try:
@@ -271,7 +271,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         with self._state_lock:
             if self._pending is pending and self._generation == pending.generation:
                 self._pending = None
-                self._ownership = _AdbServerBackendOwnership(handle, acquisition)
+                self._ownership = _Ownership(handle, acquisition)
                 publisher = self._publisher
                 committed = True
             else:
@@ -282,9 +282,9 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         if committed:
             if publisher is not None:
                 self._publish_notification(publisher, AdbServerActivated(acquisition.generation))
-            return AdbServerBackendAcquireCommitted(acquisition)
+            return AdbServerAcquireCommitted(acquisition)
 
-        return AdbServerBackendAcquireSuperseded(pending.generation)
+        return AdbServerAcquireSuperseded(pending.generation)
 
     def release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
         if not isinstance(expected, AdbServerGeneration):
@@ -294,7 +294,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         with self._state_lock:
             if expected != self._generation:
                 ownership = self._ownership
-                return AdbServerBackendReleaseGenerationMismatch(
+                return AdbServerReleaseGenerationMismatch(
                     current=None if ownership is None else ownership.acquisition,
                     current_generation=self._generation,
                 )
@@ -305,19 +305,19 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             )
             ownership = self._ownership
             if current_pending is None and ownership is None:
-                return AdbServerBackendReleaseInactive(generation=expected)
+                return AdbServerReleaseInactive(generation=expected)
 
             released_generation = self._generation
             self._generation = self._generation_issuer.issue()
 
             if current_pending is not None:
                 current_pending.cancellation.set()
-                return AdbServerBackendReleaseApplied(
+                return AdbServerReleaseApplied(
                     generation=released_generation
                 )
 
             if ownership is None:
-                raise RuntimeError("ADB server backend authority state is inconsistent")
+                raise RuntimeError("ADB server lifecycle authority state is inconsistent")
 
             self._ownership = None
             self._schedule_cleanup(ownership.handle, ownership.acquisition.endpoint)
@@ -329,15 +329,15 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
                 AdbServerDeactivated(released_generation),
             )
 
-        return AdbServerBackendReleaseApplied(
+        return AdbServerReleaseApplied(
             generation=released_generation,
             acquisition=ownership.acquisition,
         )
 
 
 __all__ = [
-    "AdbServerBackendAcquireError",
-    "AdbServerBackendAcquireInterruptedError",
-    "AdbServerBackendEventPublisherBinding",
+    "AdbServerAcquireError",
+    "AdbServerAcquireInterruptedError",
+    "AdbServerLifecycleEventPublisherBinding",
     "AdbServerLifecycleTemplate",
 ]

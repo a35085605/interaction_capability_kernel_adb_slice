@@ -7,12 +7,12 @@ from numbers import Real
 from random import random
 from typing import TypeAlias
 
-from adb.server.lifecycle.backend import (
-    AdbServerBackendAcquireCommitted,
-    AdbServerBackendAcquireBlocked,
-    AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireSuperseded,
-    AdbServerBackendAcquireExisting,
+from adb.server.lifecycle.contract import (
+    AdbServerAcquireCommitted,
+    AdbServerAcquireBlocked,
+    AdbServerAcquireFailed,
+    AdbServerAcquireSuperseded,
+    AdbServerAcquireExisting,
     AdbServerAcquireOutcome,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
@@ -43,10 +43,10 @@ class AdbServerRecoveryAttempt:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryAcquired:
-    """Terminal decision that a usable backend acquisition exists after this attempt."""
+    """Terminal decision that a usable server acquisition exists after this attempt."""
 
 
-AdbServerRecoveryFailureCause: TypeAlias = AdbServerBackendAcquireFailed
+AdbServerRecoveryFailureCause: TypeAlias = AdbServerAcquireFailed
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,8 +61,8 @@ class AdbServerRecoveryFailed:
             raise TypeError("attempts must be an integer")
         if self.attempts <= 0:
             raise ValueError("attempts must be greater than zero")
-        if not isinstance(self.cause, AdbServerBackendAcquireFailed):
-            raise TypeError("cause must be AdbServerBackendAcquireFailed")
+        if not isinstance(self.cause, AdbServerAcquireFailed):
+            raise TypeError("cause must be AdbServerAcquireFailed")
 
 
 AdbServerRecoveryResult: TypeAlias = AdbServerRecoveryAcquired | AdbServerRecoveryFailed
@@ -115,29 +115,29 @@ class AdbServerRecovery:
         if not isinstance(
             result,
             (
-                AdbServerBackendAcquireCommitted,
-                AdbServerBackendAcquireExisting,
-                AdbServerBackendAcquireBlocked,
-                AdbServerBackendAcquireFailed,
-                AdbServerBackendAcquireSuperseded,
+                AdbServerAcquireCommitted,
+                AdbServerAcquireExisting,
+                AdbServerAcquireBlocked,
+                AdbServerAcquireFailed,
+                AdbServerAcquireSuperseded,
             ),
         ):
             raise TypeError("result must be AdbServerAcquireOutcome")
 
         if isinstance(
             result,
-            (AdbServerBackendAcquireCommitted, AdbServerBackendAcquireExisting),
+            (AdbServerAcquireCommitted, AdbServerAcquireExisting),
         ):
             return AdbServerRecoveryAcquired()
 
         if isinstance(
             result,
-            (AdbServerBackendAcquireBlocked, AdbServerBackendAcquireSuperseded),
+            (AdbServerAcquireBlocked, AdbServerAcquireSuperseded),
         ):
             return self._next_attempt(self._policy.deferred_retry_seconds)
 
-        if not isinstance(result, AdbServerBackendAcquireFailed):
-            raise TypeError("unsupported budget-consuming backend acquire outcome")
+        if not isinstance(result, AdbServerAcquireFailed):
+            raise TypeError("unsupported budget-consuming server acquire outcome")
 
         self._failed_attempts += 1
         if (

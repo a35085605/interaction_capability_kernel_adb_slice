@@ -10,17 +10,17 @@ from networking import TcpAddress
 
 from adb.cleanup import BackgroundCleanup, CleanupAttempt, CleanupDelegate
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.watch.backend import (
+from adb.transport_list.watch.contract import (
     AdbTransportListWatchAcquisition,
-    AdbTransportListWatchBackendAcquireBlocked,
-    AdbTransportListWatchBackendAcquireCommitted,
-    AdbTransportListWatchBackendAcquireFailed,
-    AdbTransportListWatchBackendAcquireSuperseded,
+    AdbTransportListWatchAcquireBlocked,
+    AdbTransportListWatchAcquireCommitted,
+    AdbTransportListWatchAcquireFailed,
+    AdbTransportListWatchAcquireSuperseded,
     AdbTransportListWatchAcquireOutcome,
-    AdbTransportListWatchBackendAcquireExisting,
-    AdbTransportListWatchBackendReleaseApplied,
-    AdbTransportListWatchBackendReleaseInactive,
-    AdbTransportListWatchBackendReleaseGenerationMismatch,
+    AdbTransportListWatchAcquireExisting,
+    AdbTransportListWatchReleaseApplied,
+    AdbTransportListWatchReleaseInactive,
+    AdbTransportListWatchReleaseGenerationMismatch,
     AdbTransportListWatchReleaseOutcome,
 )
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
@@ -32,7 +32,7 @@ from adb.transport_list.watch.state import AdbTransportListWatchState
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 
-class AdbTransportListWatchBackendAcquireError(RuntimeError):
+class AdbTransportListWatchAcquireError(RuntimeError):
     """Expected failure while obtaining a usable transport-list watch handle."""
 
     def __init__(self, failure: AdbTransportListWatchFailure) -> None:
@@ -42,7 +42,7 @@ class AdbTransportListWatchBackendAcquireError(RuntimeError):
         super().__init__(failure.diagnostic or type(failure).__name__)
 
 
-class AdbTransportListWatchBackendAcquireInterruptedError(RuntimeError):
+class AdbTransportListWatchAcquireInterruptedError(RuntimeError):
     """Cooperative interruption after the captured watch generation was released."""
 
     def __init__(self) -> None:
@@ -50,7 +50,7 @@ class AdbTransportListWatchBackendAcquireInterruptedError(RuntimeError):
 
 
 class _AdbTransportListWatchHandle(AdbTransportListWatchStream, Protocol):
-    """Backend-private physical watch handle with lifecycle cleanup operations."""
+    """Lifecycle-private physical watch handle with lifecycle cleanup operations."""
 
     def close(self) -> object | None:
         """Attempt regular cleanup; return unresolved delegate resource or ``None``."""
@@ -58,7 +58,7 @@ class _AdbTransportListWatchHandle(AdbTransportListWatchStream, Protocol):
 
 
 class _AdbTransportListWatchStreamView:
-    """Narrow producer capability over a backend-owned physical handle."""
+    """Narrow producer capability over a lifecycle-owned physical handle."""
 
     __slots__ = ("__handle",)
 
@@ -74,14 +74,14 @@ class _AdbTransportListWatchStreamView:
 
 
 @dataclass(frozen=True, slots=True)
-class _AdbTransportListWatchBackendPendingAcquire:
+class _PendingAcquire:
     generation: AdbTransportListWatchGeneration
     cancellation: Event
 
 
 @dataclass(frozen=True, slots=True)
-class _AdbTransportListWatchBackendOwnership:
-    """Backend-private physical ownership plus producer-facing data capability."""
+class _Ownership:
+    """Lifecycle-private physical ownership plus producer-facing data capability."""
 
     handle: _AdbTransportListWatchHandle
     stream: AdbTransportListWatchStream
@@ -112,8 +112,8 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         self._state_lock = Lock()
         self._generation_issuer = generation_issuer
         self._generation = generation_issuer.issue()
-        self._pending: _AdbTransportListWatchBackendPendingAcquire | None = None
-        self._ownership: _AdbTransportListWatchBackendOwnership | None = None
+        self._pending: _PendingAcquire | None = None
+        self._ownership: _Ownership | None = None
         self._cleanup = BackgroundCleanup(cleanup_delegate)
 
     def read(self) -> AdbTransportListWatchState:
@@ -132,7 +132,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         endpoint: TcpAddress,
         cancellation: Event,
     ) -> _AdbTransportListWatchHandle:
-        """Obtain a fully usable backend-owned physical watch handle."""
+        """Obtain a fully usable lifecycle-owned physical watch handle."""
 
     def _schedule_cleanup(
         self,
@@ -186,19 +186,19 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             ownership = self._ownership
             if ownership is not None:
                 if ownership.acquisition.endpoint == endpoint:
-                    return AdbTransportListWatchBackendAcquireExisting(ownership.acquisition)
-                return AdbTransportListWatchBackendAcquireBlocked(
-                    "ADB transport-list watch backend already retains a different endpoint"
+                    return AdbTransportListWatchAcquireExisting(ownership.acquisition)
+                return AdbTransportListWatchAcquireBlocked(
+                    "ADB transport-list watch lifecycle already retains a different endpoint"
                 )
             if self._pending is not None:
-                return AdbTransportListWatchBackendAcquireBlocked(
-                    "ADB transport-list watch backend is busy with another acquisition"
+                return AdbTransportListWatchAcquireBlocked(
+                    "ADB transport-list watch lifecycle is busy with another acquisition"
                 )
             if self._cleanup.has_conflict(endpoint):
-                return AdbTransportListWatchBackendAcquireBlocked(
-                    "ADB transport-list watch backend is cleaning a resource for this endpoint"
+                return AdbTransportListWatchAcquireBlocked(
+                    "ADB transport-list watch lifecycle is cleaning a resource for this endpoint"
                 )
-            pending = _AdbTransportListWatchBackendPendingAcquire(
+            pending = _PendingAcquire(
                 generation=self._generation,
                 cancellation=Event(),
             )
@@ -206,24 +206,24 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
 
         try:
             handle = self._obtain_handle(endpoint, pending.cancellation)
-        except AdbTransportListWatchBackendAcquireInterruptedError as exc:
+        except AdbTransportListWatchAcquireInterruptedError as exc:
             with self._state_lock:
                 revoked = self._generation != pending.generation
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbTransportListWatchBackendAcquireSuperseded(pending.generation)
+                return AdbTransportListWatchAcquireSuperseded(pending.generation)
             raise RuntimeError(
                 "ADB transport-list watch acquisition was interrupted without generation revocation"
             ) from exc
-        except AdbTransportListWatchBackendAcquireError as exc:
+        except AdbTransportListWatchAcquireError as exc:
             with self._state_lock:
                 revoked = self._generation != pending.generation
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbTransportListWatchBackendAcquireSuperseded(pending.generation)
-            return AdbTransportListWatchBackendAcquireFailed(exc.failure)
+                return AdbTransportListWatchAcquireSuperseded(pending.generation)
+            return AdbTransportListWatchAcquireFailed(exc.failure)
         except BaseException:
             with self._state_lock:
                 if self._pending is pending:
@@ -237,9 +237,9 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                     self._pending = None
             self._schedule_cleanup(handle, endpoint)
             if revoked:
-                return AdbTransportListWatchBackendAcquireSuperseded(pending.generation)
-            return AdbTransportListWatchBackendAcquireBlocked(
-                "ADB transport-list watch backend obtained a resource whose prior endpoint is still cleaning"
+                return AdbTransportListWatchAcquireSuperseded(pending.generation)
+            return AdbTransportListWatchAcquireBlocked(
+                "ADB transport-list watch lifecycle obtained a resource whose prior endpoint is still cleaning"
             )
 
         try:
@@ -247,7 +247,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 endpoint=endpoint,
                 generation=pending.generation,
             )
-            ownership = _AdbTransportListWatchBackendOwnership(
+            ownership = _Ownership(
                 handle=handle,
                 stream=_AdbTransportListWatchStreamView(handle),
                 acquisition=acquisition,
@@ -271,9 +271,9 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                     self._pending = None
 
         if committed:
-            return AdbTransportListWatchBackendAcquireCommitted(acquisition)
+            return AdbTransportListWatchAcquireCommitted(acquisition)
 
-        return AdbTransportListWatchBackendAcquireSuperseded(pending.generation)
+        return AdbTransportListWatchAcquireSuperseded(pending.generation)
 
     def release(
         self,
@@ -285,7 +285,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         with self._state_lock:
             if expected != self._generation:
                 ownership = self._ownership
-                return AdbTransportListWatchBackendReleaseGenerationMismatch(
+                return AdbTransportListWatchReleaseGenerationMismatch(
                     current=None if ownership is None else ownership.acquisition,
                     current_generation=self._generation,
                 )
@@ -298,33 +298,33 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             )
             ownership = self._ownership
             if current_pending is None and ownership is None:
-                return AdbTransportListWatchBackendReleaseInactive(expected)
+                return AdbTransportListWatchReleaseInactive(expected)
 
             released_generation = self._generation
             self._generation = self._generation_issuer.issue()
 
             if current_pending is not None:
                 current_pending.cancellation.set()
-                return AdbTransportListWatchBackendReleaseApplied(
+                return AdbTransportListWatchReleaseApplied(
                     generation=released_generation
                 )
 
             if ownership is None:
                 raise RuntimeError(
-                    "ADB transport-list watch backend authority state is inconsistent"
+                    "ADB transport-list watch lifecycle authority state is inconsistent"
                 )
 
             self._ownership = None
             self._schedule_cleanup(ownership.handle, ownership.acquisition.endpoint)
 
-        return AdbTransportListWatchBackendReleaseApplied(
+        return AdbTransportListWatchReleaseApplied(
             generation=released_generation,
             acquisition=ownership.acquisition,
         )
 
 
 __all__ = [
-    "AdbTransportListWatchBackendAcquireError",
-    "AdbTransportListWatchBackendAcquireInterruptedError",
+    "AdbTransportListWatchAcquireError",
+    "AdbTransportListWatchAcquireInterruptedError",
     "AdbTransportListWatchLifecycleTemplate",
 ]

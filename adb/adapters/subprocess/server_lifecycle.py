@@ -15,9 +15,9 @@ from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGenerationIssuer
 from adb.cleanup import CleanupDelegate
-from adb.server.lifecycle.backend_template import (
-    AdbServerBackendAcquireError,
-    AdbServerBackendAcquireInterruptedError,
+from adb.server.lifecycle.template import (
+    AdbServerAcquireError,
+    AdbServerAcquireInterruptedError,
     AdbServerLifecycleTemplate,
 )
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
@@ -204,7 +204,7 @@ class _AdbServerSubprocessFactory:
         if not self._socket_activation_supported:
             raise _AdbServerSubprocessStartError(
                 "ADB acceptfd socket activation is unavailable on this platform; "
-                "a platform-specific server backend is required"
+                "a platform-specific server lifecycle implementation is required"
             )
 
         attachment, resolved_endpoint = self._launch(endpoint)
@@ -447,16 +447,16 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate[_OwnedAdbServerPro
             for resource in exc.cleanup_resources:
                 self._schedule_delegated_cleanup(resource, exc.cleanup_endpoint)
             if isinstance(exc.primary_error, _AdbServerSubprocessAcquireInterrupted):
-                raise AdbServerBackendAcquireInterruptedError() from exc
+                raise AdbServerAcquireInterruptedError() from exc
             if isinstance(exc.primary_error, _AdbServerSubprocessStartError):
-                raise AdbServerBackendAcquireError(
+                raise AdbServerAcquireError(
                     str(exc.primary_error).strip() or type(exc.primary_error).__name__
                 ) from exc
             raise exc.primary_error from exc
         except _AdbServerSubprocessAcquireInterrupted as exc:
-            raise AdbServerBackendAcquireInterruptedError() from exc
+            raise AdbServerAcquireInterruptedError() from exc
         except _AdbServerSubprocessStartError as exc:
-            raise AdbServerBackendAcquireError(str(exc)) from exc
+            raise AdbServerAcquireError(str(exc)) from exc
 
     def _cleanup_handle(
         self,
