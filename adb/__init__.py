@@ -60,7 +60,6 @@ from adb.transport_list import (
     AdbTransportListStateWriter,
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,
-    AdbTransportLookup,
 )
 from adb.transport import (
     AdbDeviceSerial,
@@ -132,7 +131,6 @@ __all__ = [
     "AdbServerUnavailableError",
     "AdbServiceError",
     "AdbTimeoutError",
-    "AdbTransportLookup",
     "AdbTransport",
     "AdbTransportState",
     "AdbTransportAmbiguousError",

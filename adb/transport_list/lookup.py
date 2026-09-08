@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
-
 from adb.errors import AdbTransportAmbiguousError
-from networking import TcpAddress
 from adb.transport.model import AdbTransport
 from adb.transport_list.model import AdbTransportList
 from adb.transport.selection import (
@@ -11,17 +8,6 @@ from adb.transport.selection import (
     AdbTransportBySerial,
     AdbTransportSelector,
 )
-
-
-class AdbTransportLookup(Protocol):
-    """Find one transport in a freshly read transport list."""
-
-    def find(
-        self,
-        endpoint: TcpAddress,
-        selector: AdbTransportSelector,
-    ) -> AdbTransport | None:
-        ...
 
 
 def find_transport(
@@ -57,7 +43,4 @@ def find_transport(
     return matches[0] if matches else None
 
 
-__all__ = [
-    "AdbTransportLookup",
-    "find_transport",
-]
+__all__ = ["find_transport"]
