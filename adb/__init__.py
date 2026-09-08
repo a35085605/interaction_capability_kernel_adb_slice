@@ -14,14 +14,6 @@ from adb.errors import (
     AdbTransportSelectionError,
     AdbTransportUnavailableError,
 )
-from adb.api import (
-    AdbConfiguredTransportHandle,
-    AdbConfiguredTransportRegistration,
-    AdbConfiguredTransportType,
-    AdbRuntime,
-    AdbRuntimeBootstrap,
-    AdbServerEndpoint,
-)
 from adb.runtime import AdbManagedRuntime, AdbRuntimeAuthorityStateStore
 from adb.server import (
     AdbServerActivated,
@@ -77,9 +69,6 @@ from adb.transport import (
 
 __all__ = [
     "CleanupDelegate",
-    "AdbConfiguredTransportHandle",
-    "AdbConfiguredTransportRegistration",
-    "AdbConfiguredTransportType",
     "AdbDeviceSerial",
     "AdbTransportListGeneration",
     "AdbTransportListGenerationIssuer",
@@ -100,8 +89,6 @@ __all__ = [
     "AdbError",
     "AdbManagedRuntime",
     "AdbRuntimeAuthorityStateStore",
-    "AdbRuntimeBootstrap",
-    "AdbRuntime",
     "AdbProtocolError",
     "AdbRemoteCommandError",
     "AdbServerConnectionError",
@@ -125,7 +112,6 @@ __all__ = [
     "AdbServerDeactivated",
     "AdbServerState",
     "AdbServerStateView",
-    "AdbServerEndpoint",
     "AdbServerGeneration",
     "AdbServerGenerationIssuer",
     "AdbServerUnavailableError",
