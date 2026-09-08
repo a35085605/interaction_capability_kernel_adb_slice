@@ -8,6 +8,7 @@ from typing import Protocol
 
 from networking import TcpAddress
 
+from adb.cleanup import CleanupHandoff, CleanupHandoffError, CleanupSink
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackendAcquired,
@@ -16,8 +17,6 @@ from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackendAcquireRevoked,
     AdbTransportListWatchBackendAcquireResult,
     AdbTransportListWatchBackendAlreadyAcquired,
-    AdbTransportListWatchBackendCleanupHandoff,
-    AdbTransportListWatchBackendCleanupHandoffError,
     AdbTransportListWatchBackendReleased,
     AdbTransportListWatchBackendReleaseInactive,
     AdbTransportListWatchBackendReleaseMismatch,
@@ -42,16 +41,12 @@ class AdbTransportListWatchBackendAcquireError(RuntimeError):
     def __init__(
         self,
         failure: AdbTransportListWatchFailure,
-        cleanup_handoff: AdbTransportListWatchBackendCleanupHandoff | None = None,
+        cleanup_handoff: CleanupHandoff | None = None,
     ) -> None:
         if not isinstance(failure, AdbTransportListWatchFailure):
             raise TypeError("failure must be AdbTransportListWatchFailure")
-        if cleanup_handoff is not None and not isinstance(
-            cleanup_handoff, AdbTransportListWatchBackendCleanupHandoff
-        ):
-            raise TypeError(
-                "cleanup_handoff must be AdbTransportListWatchBackendCleanupHandoff or None"
-            )
+        if cleanup_handoff is not None and not isinstance(cleanup_handoff, CleanupHandoff):
+            raise TypeError("cleanup_handoff must be CleanupHandoff or None")
         self.failure = failure
         self.cleanup_handoff = cleanup_handoff
         super().__init__(failure.diagnostic or type(failure).__name__)
@@ -60,34 +55,22 @@ class AdbTransportListWatchBackendAcquireError(RuntimeError):
 class AdbTransportListWatchBackendAcquireInterruptedError(RuntimeError):
     """Cooperative interruption after the captured watch generation was released."""
 
-    def __init__(
-        self,
-        cleanup_handoff: AdbTransportListWatchBackendCleanupHandoff | None = None,
-    ) -> None:
-        if cleanup_handoff is not None and not isinstance(
-            cleanup_handoff, AdbTransportListWatchBackendCleanupHandoff
-        ):
-            raise TypeError(
-                "cleanup_handoff must be AdbTransportListWatchBackendCleanupHandoff or None"
-            )
+    def __init__(self, cleanup_handoff: CleanupHandoff | None = None) -> None:
+        if cleanup_handoff is not None and not isinstance(cleanup_handoff, CleanupHandoff):
+            raise TypeError("cleanup_handoff must be CleanupHandoff or None")
         self.cleanup_handoff = cleanup_handoff
         super().__init__("ADB transport-list watch acquisition was interrupted")
 
 
 class _AdbTransportListWatchHandle(AdbTransportListWatchStream, Protocol):
-    """Backend-private physical watch handle.
+    """Backend-private physical watch handle with lifecycle cleanup operations."""
 
-    Implementations also provide the producer data plane, but cancellation and cleanup remain
-    exclusively under backend ownership until either cleanup is confirmed or a returned cleanup
-    handoff transfers unresolved ownership away from the backend.
-    """
-
-    def cancel(self) -> AdbTransportListWatchBackendCleanupHandoff | None:
-        """Request non-blocking retirement or transfer unresolved cleanup ownership."""
+    def cancel(self) -> CleanupHandoff | None:
+        """Request non-blocking retirement or return unresolved cleanup ownership."""
         ...
 
-    def close(self) -> AdbTransportListWatchBackendCleanupHandoff | None:
-        """Perform final cleanup or transfer unresolved cleanup ownership."""
+    def close(self) -> CleanupHandoff | None:
+        """Perform final cleanup or return unresolved cleanup ownership."""
         ...
 
 
@@ -129,24 +112,29 @@ class AdbTransportListWatchBackendTemplate(ABC):
     it. Matching release advances the generation at the logical revocation point before
     cancellation of pending startup or retirement of a committed physical handle.
 
-    Physical lifetime is entirely backend-owned until cleanup is confirmed or unresolved cleanup
-    ownership is explicitly handed to the caller. Producers receive only a narrow stream view for
-    ``initial``/``updates()``; they never receive lifecycle cancellation authority.
+    Normal physical cleanup remains backend-owned. When normal cleanup cannot be confirmed,
+    ownership is synchronously transferred to the configured ``CleanupSink`` before the backend
+    abandons the resource. Cleanup transfer never appears in lifecycle results.
     """
 
     def __init__(
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
+        *,
+        cleanup_sink: CleanupSink,
     ) -> None:
         if not isinstance(generation_issuer, AdbTransportListWatchGenerationIssuer):
             raise TypeError(
                 "generation_issuer must be AdbTransportListWatchGenerationIssuer"
             )
+        if not isinstance(cleanup_sink, CleanupSink):
+            raise TypeError("cleanup_sink must satisfy CleanupSink")
         self._state_lock = Lock()
         self._generation_issuer = generation_issuer
         self._generation = generation_issuer.issue()
         self._pending: _AdbTransportListWatchBackendPendingAcquire | None = None
         self._ownership: _AdbTransportListWatchBackendOwnership | None = None
+        self._cleanup_sink = cleanup_sink
 
     def read(self) -> AdbTransportListWatchState:
         """Atomically return current generation and usable endpoint metadata, if any."""
@@ -170,65 +158,52 @@ class AdbTransportListWatchBackendTemplate(ABC):
         ``AdbTransportListWatchBackendAcquireInterruptedError`` when cancellation wins.
         Expected establishment failures should be wrapped in
         ``AdbTransportListWatchBackendAcquireError``. Any unresolved startup cleanup ownership
-        must be carried by the raised exception.
+        must be carried by the template-facing exception as ``CleanupHandoff``.
         """
 
-    @staticmethod
-    def _cleanup_uncommitted_handle(
-        handle: _AdbTransportListWatchHandle,
-    ) -> AdbTransportListWatchBackendCleanupHandoff | None:
-        """Clean an uncommitted handle or transfer unresolved cleanup ownership."""
+    def _accept_cleanup(self, cleanup_handoff: CleanupHandoff | None) -> None:
+        if cleanup_handoff is None:
+            return
+        if not isinstance(cleanup_handoff, CleanupHandoff):
+            raise TypeError("cleanup_handoff must be CleanupHandoff or None")
+        # Ownership transfers out of the backend here. The backend never reclaims accepted work.
+        self._cleanup_sink.accept(cleanup_handoff)
+
+    def _cleanup_uncommitted_handle(self, handle: _AdbTransportListWatchHandle) -> None:
+        """Clean an uncommitted handle or transfer unresolved ownership to the cleanup sink."""
 
         try:
-            return handle.close()
+            cleanup_handoff = handle.close()
         except BaseException as exc:
-            return AdbTransportListWatchBackendCleanupHandoff(
-                handle=handle,
+            cleanup_handoff = CleanupHandoff(
+                resource=handle,
                 diagnostic=(
                     "ADB watch uncommitted cleanup raised unexpectedly: "
                     f"{_cleanup_exception_diagnostic(exc)}"
                 ),
             )
+        self._accept_cleanup(cleanup_handoff)
 
-    @staticmethod
-    def _retire_committed_handle(
-        handle: _AdbTransportListWatchHandle,
-    ) -> AdbTransportListWatchBackendCleanupHandoff | None:
-        """Retire a detached committed handle or transfer unresolved cleanup ownership."""
+    def _retire_committed_handle(self, handle: _AdbTransportListWatchHandle) -> None:
+        """Retire a detached committed handle or transfer unresolved ownership to the sink."""
 
         try:
-            return handle.cancel()
+            cleanup_handoff = handle.cancel()
         except BaseException as exc:
-            return AdbTransportListWatchBackendCleanupHandoff(
-                handle=handle,
+            cleanup_handoff = CleanupHandoff(
+                resource=handle,
                 diagnostic=(
                     "ADB watch committed retirement raised unexpectedly: "
                     f"{_cleanup_exception_diagnostic(exc)}"
                 ),
             )
-
-    @staticmethod
-    def _raise_primary_with_handoff(
-        primary_error: BaseException,
-        cleanup_handoff: AdbTransportListWatchBackendCleanupHandoff | None,
-    ) -> None:
-        if cleanup_handoff is None:
-            raise primary_error
-        raise AdbTransportListWatchBackendCleanupHandoffError(
-            primary_error,
-            cleanup_handoff,
-        ) from primary_error
+        self._accept_cleanup(cleanup_handoff)
 
     def _borrow_stream(
         self,
         expected: AdbTransportListWatchGeneration,
     ) -> AdbTransportListWatchStream | None:
-        """Return the narrow producer stream while matching watch authority is current.
-
-        This is package-internal orchestration plumbing, not part of
-        ``AdbTransportListWatchBackend``. The returned stream does not own the physical handle;
-        matching release may retire that handle concurrently after this method returns.
-        """
+        """Return the narrow producer stream while matching watch authority is current."""
 
         if not isinstance(expected, AdbTransportListWatchGeneration):
             raise TypeError("expected must be AdbTransportListWatchGeneration")
@@ -271,29 +246,27 @@ class AdbTransportListWatchBackendTemplate(ABC):
                 revoked = self._generation != pending.generation
                 if self._pending is pending:
                     self._pending = None
+            self._accept_cleanup(exc.cleanup_handoff)
             if revoked:
-                return AdbTransportListWatchBackendAcquireRevoked(
-                    pending.generation,
-                    cleanup_handoff=exc.cleanup_handoff,
-                )
-            primary = RuntimeError(
+                return AdbTransportListWatchBackendAcquireRevoked(pending.generation)
+            raise RuntimeError(
                 "ADB transport-list watch acquisition was interrupted without generation revocation"
-            )
-            self._raise_primary_with_handoff(primary, exc.cleanup_handoff)
+            ) from exc
         except AdbTransportListWatchBackendAcquireError as exc:
             with self._state_lock:
                 revoked = self._generation != pending.generation
                 if self._pending is pending:
                     self._pending = None
+            self._accept_cleanup(exc.cleanup_handoff)
             if revoked:
-                return AdbTransportListWatchBackendAcquireRevoked(
-                    pending.generation,
-                    cleanup_handoff=exc.cleanup_handoff,
-                )
-            return AdbTransportListWatchBackendAcquireFailed(
-                exc.failure,
-                cleanup_handoff=exc.cleanup_handoff,
-            )
+                return AdbTransportListWatchBackendAcquireRevoked(pending.generation)
+            return AdbTransportListWatchBackendAcquireFailed(exc.failure)
+        except CleanupHandoffError as exc:
+            with self._state_lock:
+                if self._pending is pending:
+                    self._pending = None
+            self._accept_cleanup(exc.cleanup_handoff)
+            raise exc.primary_error from exc
         except BaseException:
             with self._state_lock:
                 if self._pending is pending:
@@ -310,12 +283,12 @@ class AdbTransportListWatchBackendTemplate(ABC):
                 stream=_AdbTransportListWatchStreamView(handle),
                 acquisition=acquisition,
             )
-        except BaseException as exc:
+        except BaseException:
             with self._state_lock:
                 if self._pending is pending:
                     self._pending = None
-            cleanup_handoff = self._cleanup_uncommitted_handle(handle)
-            self._raise_primary_with_handoff(exc, cleanup_handoff)
+            self._cleanup_uncommitted_handle(handle)
+            raise
 
         committed = False
         with self._state_lock:
@@ -329,13 +302,8 @@ class AdbTransportListWatchBackendTemplate(ABC):
         if committed:
             return acquisition
 
-        # Matching release advanced the generation before this handle could commit. No producer
-        # received its stream, so final cleanup can happen directly.
-        cleanup_handoff = self._cleanup_uncommitted_handle(handle)
-        return AdbTransportListWatchBackendAcquireRevoked(
-            pending.generation,
-            cleanup_handoff=cleanup_handoff,
-        )
+        self._cleanup_uncommitted_handle(handle)
+        return AdbTransportListWatchBackendAcquireRevoked(pending.generation)
 
     def release(
         self,
@@ -363,9 +331,6 @@ class AdbTransportListWatchBackendTemplate(ABC):
             if current_pending is None and ownership is None:
                 return AdbTransportListWatchBackendReleaseInactive(expected)
 
-            # Logical revocation linearizes here. Once the generation advances, stale producer
-            # the backend generation fences only watch lifecycle work. Downstream consumers
-            # coordinate any cross-capability stale-data policy outside this backend.
             released_generation = self._generation
             self._generation = self._generation_issuer.issue()
 
@@ -381,13 +346,10 @@ class AdbTransportListWatchBackendTemplate(ABC):
             self._ownership = None
             ownership_to_retire = ownership
 
-        # Physical retirement is deliberately outside authoritative backend state. The returned
-        # handoff, when present, is the authoritative transfer of unresolved physical ownership.
-        cleanup_handoff = self._retire_committed_handle(ownership_to_retire.handle)
+        self._retire_committed_handle(ownership_to_retire.handle)
         return AdbTransportListWatchBackendReleased(
             generation=released_generation,
             acquisition=ownership_to_retire.acquisition,
-            cleanup_handoff=cleanup_handoff,
         )
 
 

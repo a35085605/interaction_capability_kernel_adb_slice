@@ -1,5 +1,6 @@
 """Host-side ADB server, transport-list, transport, and protocol capabilities."""
 
+from adb.cleanup import CleanupHandoff, CleanupSink, RetainingCleanupSink
 from adb.epoch import Epoch, EpochIssuer, EpochSequence
 from adb.errors import (
     AdbError,
@@ -31,12 +32,9 @@ from adb.server import (
     AdbServerBackendAcquireRevoked,
     AdbServerBackendAlreadyAcquired,
     AdbServerBackendAcquireResult,
-    AdbServerBackendCleanupHandoff,
-    AdbServerBackendCleanupHandoffError,
     AdbServerBackendFactory,
     AdbServerBackendReleased,
     AdbServerBackendReleaseInactive,
-    AdbServerBackendReleaseCleanupUnconfirmed,
     AdbServerBackendReleaseMismatch,
     AdbServerBackendReleaseResult,
     AdbServerBootstrapError,
@@ -61,8 +59,6 @@ from adb.transport_list import (
     AdbTransportListStateWriter,
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,
-    AdbTransportListWatchBackendCleanupHandoff,
-    AdbTransportListWatchBackendCleanupHandoffError,
     AdbTransportLookup,
 )
 from adb.transport import (
@@ -80,6 +76,9 @@ from adb.transport import (
 )
 
 __all__ = [
+    "CleanupHandoff",
+    "CleanupSink",
+    "RetainingCleanupSink",
     "AdbConfiguredTransportHandle",
     "AdbConfiguredTransportRegistration",
     "AdbConfiguredTransportType",
@@ -94,8 +93,6 @@ __all__ = [
     "AdbTransportListStateWriter",
     "AdbTransportListWatchGeneration",
     "AdbTransportListWatchGenerationIssuer",
-    "AdbTransportListWatchBackendCleanupHandoff",
-    "AdbTransportListWatchBackendCleanupHandoffError",
     "AdbTransportListReader",
     "AdbObservedTransportKind",
     "AdbObservedTransportState",
@@ -118,14 +115,11 @@ __all__ = [
     "AdbServerBackendAcquireRevoked",
     "AdbServerBackendAlreadyAcquired",
     "AdbServerBackendAcquireResult",
-    "AdbServerBackendCleanupHandoff",
-    "AdbServerBackendCleanupHandoffError",
     "AdbServerBackendReleased",
     "AdbServerBackendReleaseInactive",
     "AdbServerBackendReleaseMismatch",
     "AdbServerBackendReleaseResult",
     "AdbServerBackendFactory",
-    "AdbServerBackendReleaseCleanupUnconfirmed",
     "AdbServerBootstrapError",
     "AdbServerLifecycleConsistencyError",
     "AdbServerLifecycleError",

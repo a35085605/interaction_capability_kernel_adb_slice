@@ -18,10 +18,7 @@ from adb.errors import (
     AdbTimeoutError,
 )
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.watch.backend import (
-    AdbTransportListWatchBackendCleanupHandoff,
-    AdbTransportListWatchBackendCleanupHandoffError,
-)
+from adb.cleanup import CleanupHandoff, CleanupHandoffError, CleanupSink
 from adb.transport_list.watch.backend_template import (
     AdbTransportListWatchBackendAcquireError,
     AdbTransportListWatchBackendAcquireInterruptedError,
@@ -75,12 +72,12 @@ def _close_after_failure(
     sock: socket.socket,
     *,
     context: str,
-) -> AdbTransportListWatchBackendCleanupHandoff | None:
+) -> CleanupHandoff | None:
     try:
         sock.close()
     except BaseException as exc:
-        return AdbTransportListWatchBackendCleanupHandoff(
-            handle=sock,
+        return CleanupHandoff(
+            resource=sock,
             diagnostic=_cleanup_diagnostic(context, exc),
         )
     return None
@@ -90,7 +87,7 @@ class _WatchStartupCleanupHandoffRequired(RuntimeError):
     def __init__(
         self,
         primary_error: BaseException,
-        cleanup_handoff: AdbTransportListWatchBackendCleanupHandoff,
+        cleanup_handoff: CleanupHandoff,
     ) -> None:
         self.primary_error = primary_error
         self.cleanup_handoff = cleanup_handoff
@@ -184,7 +181,7 @@ class _SmartSocketWatchHandle:
         self._lock = Lock()
         self._cancelled = False
         self._closed = False
-        self._cleanup_handoff: AdbTransportListWatchBackendCleanupHandoff | None = None
+        self._cleanup_handoff: CleanupHandoff | None = None
         self._updates = self._iterate_updates()
 
     @property
@@ -235,7 +232,7 @@ class _SmartSocketWatchHandle:
         *,
         cancelled: bool,
         retain_handoff: bool = False,
-    ) -> AdbTransportListWatchBackendCleanupHandoff | None:
+    ) -> CleanupHandoff | None:
         # Keep close/retention/transfer under one handle lock so a data-plane failure cannot
         # retain unresolved cleanup after a concurrent lifecycle release has already returned.
         with self._lock:
@@ -271,8 +268,8 @@ class _SmartSocketWatchHandle:
                         "socket shutdown also failed",
                         shutdown_error,
                     )
-                handoff = AdbTransportListWatchBackendCleanupHandoff(
-                    handle=sock,
+                handoff = CleanupHandoff(
+                    resource=sock,
                     diagnostic=diagnostic,
                 )
                 if retain_handoff:
@@ -281,12 +278,12 @@ class _SmartSocketWatchHandle:
                 return handoff
             return None
 
-    def cancel(self) -> AdbTransportListWatchBackendCleanupHandoff | None:
+    def cancel(self) -> CleanupHandoff | None:
         """Request non-blocking retirement or transfer unresolved socket cleanup."""
 
         return self._close_or_handoff(cancelled=True)
 
-    def close(self) -> AdbTransportListWatchBackendCleanupHandoff | None:
+    def close(self) -> CleanupHandoff | None:
         return self._close_or_handoff(cancelled=True)
 
 
@@ -307,6 +304,7 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
         *,
+        cleanup_sink: CleanupSink,
         startup_timeout_seconds: float = 5.0,
         _resolver: Callable[..., list[tuple]] = socket.getaddrinfo,
         _socket_factory: Callable[..., socket.socket] = socket.socket,
@@ -316,7 +314,7 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
             raise TypeError("generation_issuer must be AdbTransportListWatchGenerationIssuer")
         if not callable(_resolver) or not callable(_socket_factory) or not callable(_clock):
             raise TypeError("resolver, socket factory, and clock must be callable")
-        super().__init__(generation_issuer)
+        super().__init__(generation_issuer, cleanup_sink=cleanup_sink)
         self._startup_timeout_seconds = _normalize_timeout(startup_timeout_seconds)
         self._resolver = _resolver
         self._socket_factory = _socket_factory
@@ -356,7 +354,7 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
                     failure,
                     cleanup_handoff=exc.cleanup_handoff,
                 ) from exc
-            raise AdbTransportListWatchBackendCleanupHandoffError(
+            raise CleanupHandoffError(
                 exc.primary_error,
                 exc.cleanup_handoff,
             ) from exc
@@ -390,7 +388,7 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
                     cleanup_handoff=cleanup_handoff,
                 ) from exc
             if cleanup_handoff is not None:
-                raise AdbTransportListWatchBackendCleanupHandoffError(
+                raise CleanupHandoffError(
                     exc,
                     cleanup_handoff,
                 ) from exc
