@@ -13,7 +13,7 @@ from adb._lifecycle import (
     LifecycleAcquireOwned,
     LifecycleAuthorityCore,
     LifecycleDiagnostics,
-    LifecyclePendingAcquire,
+    LifecycleAcquireStarted,
     LifecycleReleaseGenerationMismatch,
     LifecycleReleaseInactive,
     LifecycleReleaseOwned,
@@ -243,23 +243,24 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
                 start.diagnostic
                 or "ADB server lifecycle is cleaning a resource for the requested endpoint"
             )
-        if not isinstance(start, LifecyclePendingAcquire):
+        if not isinstance(start, LifecycleAcquireStarted):
             raise TypeError("unsupported shared lifecycle acquire start")
-        pending = start
+        attempt = start
+        pending = attempt.pending
 
         try:
-            handle, endpoint = self._obtain_handle(endpoint_constraint, pending.cancellation)
+            handle, endpoint = self._obtain_handle(endpoint_constraint, attempt.cancellation)
         except AdbServerAcquireInterruptedError as exc:
             revoked = self._core.abandon_acquire(pending)
             if revoked:
-                return AdbServerAcquireSuperseded(pending.generation)
+                return AdbServerAcquireSuperseded(attempt.generation)
             raise RuntimeError(
                 "ADB server acquisition was interrupted without generation revocation"
             ) from exc
         except AdbServerAcquireError as exc:
             revoked = self._core.abandon_acquire(pending)
             if revoked:
-                return AdbServerAcquireSuperseded(pending.generation)
+                return AdbServerAcquireSuperseded(attempt.generation)
             return AdbServerAcquireFailed(exc.diagnostic)
         except BaseException:
             self._core.abandon_acquire(pending)
@@ -271,7 +272,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
                 before_clear=lambda: self._register_cleanup(handle, endpoint),
             )
             if revoked:
-                return AdbServerAcquireSuperseded(pending.generation)
+                return AdbServerAcquireSuperseded(attempt.generation)
             return AdbServerAcquireBlocked(
                 "ADB server lifecycle obtained an endpoint whose prior resource is still cleaning"
             )
@@ -282,7 +283,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
                 before_clear=lambda: self._register_cleanup(handle, endpoint),
             )
             if revoked:
-                return AdbServerAcquireSuperseded(pending.generation)
+                return AdbServerAcquireSuperseded(attempt.generation)
             raise AdbServerLifecycleConsistencyError(
                 "endpoint-constrained ADB server acquisition returned a different endpoint"
             )
@@ -290,7 +291,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         try:
             acquisition = AdbServerAcquisition(
                 endpoint=endpoint,
-                generation=pending.generation,
+                generation=attempt.generation,
             )
             ownership = _Ownership(handle, acquisition)
         except BaseException:
@@ -320,7 +321,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
                 )
             return AdbServerAcquireCommitted(acquisition)
 
-        return AdbServerAcquireSuperseded(pending.generation)
+        return AdbServerAcquireSuperseded(attempt.generation)
 
     def release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
         if not isinstance(expected, AdbServerGeneration):

@@ -14,7 +14,7 @@ from adb._lifecycle import (
     LifecycleAcquireOwned,
     LifecycleAuthorityCore,
     LifecycleDiagnostics,
-    LifecyclePendingAcquire,
+    LifecycleAcquireStarted,
     LifecycleReleaseGenerationMismatch,
     LifecycleReleaseInactive,
     LifecycleReleaseOwned,
@@ -240,16 +240,17 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 start.diagnostic
                 or "ADB transport-list watch lifecycle is cleaning a resource for this endpoint"
             )
-        if not isinstance(start, LifecyclePendingAcquire):
+        if not isinstance(start, LifecycleAcquireStarted):
             raise TypeError("unsupported shared lifecycle acquire start")
-        pending = start
+        attempt = start
+        pending = attempt.pending
 
         try:
-            handle = self._obtain_handle(endpoint, pending.cancellation)
+            handle = self._obtain_handle(endpoint, attempt.cancellation)
         except AdbTransportListWatchAcquireInterruptedError as exc:
             revoked = self._core.abandon_acquire(pending)
             if revoked:
-                return AdbTransportListWatchAcquireSuperseded(pending.generation)
+                return AdbTransportListWatchAcquireSuperseded(attempt.generation)
             raise RuntimeError(
                 "ADB transport-list watch acquisition was interrupted without generation "
                 "revocation"
@@ -257,7 +258,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         except AdbTransportListWatchAcquireError as exc:
             revoked = self._core.abandon_acquire(pending)
             if revoked:
-                return AdbTransportListWatchAcquireSuperseded(pending.generation)
+                return AdbTransportListWatchAcquireSuperseded(attempt.generation)
             return AdbTransportListWatchAcquireFailed(exc.failure)
         except BaseException:
             self._core.abandon_acquire(pending)
@@ -269,7 +270,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 before_clear=lambda: self._register_cleanup(handle, endpoint),
             )
             if revoked:
-                return AdbTransportListWatchAcquireSuperseded(pending.generation)
+                return AdbTransportListWatchAcquireSuperseded(attempt.generation)
             return AdbTransportListWatchAcquireBlocked(
                 "ADB transport-list watch lifecycle obtained a resource whose prior endpoint "
                 "is still cleaning"
@@ -278,7 +279,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         try:
             acquisition = AdbTransportListWatchAcquisition(
                 endpoint=endpoint,
-                generation=pending.generation,
+                generation=attempt.generation,
             )
             ownership = _Ownership(
                 handle=handle,
@@ -300,7 +301,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if committed:
             return AdbTransportListWatchAcquireCommitted(acquisition)
 
-        return AdbTransportListWatchAcquireSuperseded(pending.generation)
+        return AdbTransportListWatchAcquireSuperseded(attempt.generation)
 
     def release(
         self,
