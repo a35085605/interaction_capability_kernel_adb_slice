@@ -14,7 +14,7 @@ def _require_generation(value: object) -> AdbTransportListWatchGeneration:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchStarted:
+class AdbTransportListWatchReady:
     """Signal that one watch generation committed its initial transport list."""
 
     generation: AdbTransportListWatchGeneration
@@ -24,7 +24,7 @@ class AdbTransportListWatchStarted:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchStopped:
+class AdbTransportListWatchEnded:
     """Signal that one watch generation ended and its authority was revoked."""
 
     generation: AdbTransportListWatchGeneration
@@ -46,9 +46,9 @@ class AdbTransportListWatchFailed:
             raise TypeError("failure must be AdbTransportListWatchFailure")
 
 
-AdbTransportListWatchSignal: TypeAlias = (
-    AdbTransportListWatchStarted
-    | AdbTransportListWatchStopped
+AdbTransportListWatchLifecycleSignal: TypeAlias = (
+    AdbTransportListWatchReady
+    | AdbTransportListWatchEnded
     | AdbTransportListWatchFailed
 )
 
@@ -56,7 +56,7 @@ AdbTransportListWatchSignal: TypeAlias = (
 __all__ = [
     "AdbTransportListWatchFailed",
     "AdbTransportListWatchFailure",
-    "AdbTransportListWatchSignal",
-    "AdbTransportListWatchStarted",
-    "AdbTransportListWatchStopped",
+    "AdbTransportListWatchLifecycleSignal",
+    "AdbTransportListWatchReady",
+    "AdbTransportListWatchEnded",
 ]

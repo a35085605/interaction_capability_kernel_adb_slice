@@ -8,12 +8,12 @@ from random import random
 from typing import TypeAlias
 
 from adb.server.lifecycle.backend import (
-    AdbServerBackendAcquired,
-    AdbServerBackendAcquireDeferred,
+    AdbServerBackendAcquireCommitted,
+    AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireFailed,
-    AdbServerBackendAcquireRevoked,
-    AdbServerBackendAlreadyAcquired,
-    AdbServerBackendAcquireResult,
+    AdbServerBackendAcquireSuperseded,
+    AdbServerBackendAcquireExisting,
+    AdbServerBackendAcquireOutcome,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 
@@ -106,7 +106,7 @@ class AdbServerRecovery:
             raise RuntimeError("ADB server recovery has already begun")
         return self._next_attempt(0.0)
 
-    def decide_after(self, result: AdbServerBackendAcquireResult) -> AdbServerRecoveryDecision:
+    def decide_after(self, result: AdbServerBackendAcquireOutcome) -> AdbServerRecoveryDecision:
         """Apply retry policy after one selected acquisition attempt completes."""
 
         if self._attempt_number == 0:
@@ -115,21 +115,24 @@ class AdbServerRecovery:
         if not isinstance(
             result,
             (
-                AdbServerBackendAcquired,
-                AdbServerBackendAlreadyAcquired,
-                AdbServerBackendAcquireDeferred,
+                AdbServerBackendAcquireCommitted,
+                AdbServerBackendAcquireExisting,
+                AdbServerBackendAcquireBlocked,
                 AdbServerBackendAcquireFailed,
-                AdbServerBackendAcquireRevoked,
+                AdbServerBackendAcquireSuperseded,
             ),
         ):
-            raise TypeError("result must be AdbServerBackendAcquireResult")
+            raise TypeError("result must be AdbServerBackendAcquireOutcome")
 
-        if isinstance(result, (AdbServerBackendAcquired, AdbServerBackendAlreadyAcquired)):
+        if isinstance(
+            result,
+            (AdbServerBackendAcquireCommitted, AdbServerBackendAcquireExisting),
+        ):
             return AdbServerRecoveryAcquired()
 
         if isinstance(
             result,
-            (AdbServerBackendAcquireDeferred, AdbServerBackendAcquireRevoked),
+            (AdbServerBackendAcquireBlocked, AdbServerBackendAcquireSuperseded),
         ):
             return self._next_attempt(self._policy.deferred_retry_seconds)
 

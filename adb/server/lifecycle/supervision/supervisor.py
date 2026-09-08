@@ -5,7 +5,7 @@ from threading import RLock, Thread, current_thread
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.backend import AdbServerBackend, AdbServerBackendReleased
+from adb.server.lifecycle.backend import AdbServerBackend, AdbServerBackendReleaseApplied
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
@@ -158,7 +158,10 @@ class AdbServerSupervisor:
                 return
 
         release = self._backend.release(event.server)
-        if not isinstance(release, AdbServerBackendReleased):
+        if (
+            not isinstance(release, AdbServerBackendReleaseApplied)
+            or release.acquisition is None
+        ):
             return
 
         self._request_recovery()

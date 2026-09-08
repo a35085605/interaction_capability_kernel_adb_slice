@@ -19,7 +19,7 @@ def _normalize_diagnostic(value: object) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquired:
+class AdbServerBackendAcquisition:
     """One runtime-scoped usable ADB server acquisition retained by the backend."""
 
     endpoint: AdbServerEndpoint
@@ -33,19 +33,30 @@ class AdbServerBackendAcquired:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAlreadyAcquired:
-    """Evidence that the backend already retains this usable server acquisition."""
+class AdbServerBackendAcquireCommitted:
+    """The requested acquisition committed as the backend's current authority."""
 
-    acquisition: AdbServerBackendAcquired
+    acquisition: AdbServerBackendAcquisition
 
     def __post_init__(self) -> None:
-        if not isinstance(self.acquisition, AdbServerBackendAcquired):
-            raise TypeError("acquisition must be AdbServerBackendAcquired")
+        if not isinstance(self.acquisition, AdbServerBackendAcquisition):
+            raise TypeError("acquisition must be AdbServerBackendAcquisition")
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireDeferred:
-    """Backend acquisition could not begin because acquisition or cleanup work is active."""
+class AdbServerBackendAcquireExisting:
+    """The backend already retained a usable acquisition; no new acquisition was committed."""
+
+    acquisition: AdbServerBackendAcquisition
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.acquisition, AdbServerBackendAcquisition):
+            raise TypeError("acquisition must be AdbServerBackendAcquisition")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerBackendAcquireBlocked:
+    """Acquisition could not proceed because conflicting backend work is currently active."""
 
     diagnostic: str
 
@@ -64,8 +75,8 @@ class AdbServerBackendAcquireFailed:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendAcquireRevoked:
-    """Evidence that the captured server generation was revoked during acquisition."""
+class AdbServerBackendAcquireSuperseded:
+    """The captured generation ceased to be current before this acquisition could commit."""
 
     generation: AdbServerGeneration
 
@@ -74,40 +85,40 @@ class AdbServerBackendAcquireRevoked:
             raise TypeError("generation must be AdbServerGeneration")
 
 
-AdbServerBackendAcquireResult: TypeAlias = (
-    AdbServerBackendAcquired
-    | AdbServerBackendAlreadyAcquired
-    | AdbServerBackendAcquireDeferred
+AdbServerBackendAcquireOutcome: TypeAlias = (
+    AdbServerBackendAcquireCommitted
+    | AdbServerBackendAcquireExisting
+    | AdbServerBackendAcquireBlocked
     | AdbServerBackendAcquireFailed
-    | AdbServerBackendAcquireRevoked
+    | AdbServerBackendAcquireSuperseded
 )
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendPendingAcquireReleased:
-    """Evidence that matching pending acquisition authority was released."""
+class AdbServerBackendReleaseApplied:
+    """Matching authority was released and its generation was advanced.
+
+    ``acquisition`` is the committed acquisition that was detached. ``None`` means the released
+    authority was a still-pending acquisition rather than a committed usable acquisition.
+    """
 
     generation: AdbServerGeneration
+    acquisition: AdbServerBackendAcquisition | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerBackendReleased:
-    """Evidence that a matching committed server generation was released."""
-
-    generation: AdbServerGeneration
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.generation, AdbServerGeneration):
-            raise TypeError("generation must be AdbServerGeneration")
+        if self.acquisition is not None and not isinstance(
+            self.acquisition, AdbServerBackendAcquisition
+        ):
+            raise TypeError("acquisition must be AdbServerBackendAcquisition or None")
+        if self.acquisition is not None and self.acquisition.generation != self.generation:
+            raise ValueError("released acquisition generation must match generation")
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendReleaseInactive:
-    """Evidence that the matching current generation has no authority to release."""
+    """The matching current generation has no authority to release."""
 
     generation: AdbServerGeneration
 
@@ -117,26 +128,25 @@ class AdbServerBackendReleaseInactive:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendReleaseMismatch:
-    """Evidence that release did not match the backend's current server generation."""
+class AdbServerBackendReleaseGenerationMismatch:
+    """The requested generation does not match the backend's current generation."""
 
-    current: AdbServerBackendAcquired | None
+    current: AdbServerBackendAcquisition | None
     current_generation: AdbServerGeneration
 
     def __post_init__(self) -> None:
-        if self.current is not None and not isinstance(self.current, AdbServerBackendAcquired):
-            raise TypeError("current must be AdbServerBackendAcquired or None")
+        if self.current is not None and not isinstance(self.current, AdbServerBackendAcquisition):
+            raise TypeError("current must be AdbServerBackendAcquisition or None")
         if not isinstance(self.current_generation, AdbServerGeneration):
             raise TypeError("current_generation must be AdbServerGeneration")
         if self.current is not None and self.current.generation != self.current_generation:
             raise ValueError("current_generation must match current acquisition generation")
 
 
-AdbServerBackendReleaseResult: TypeAlias = (
-    AdbServerBackendReleased
-    | AdbServerBackendPendingAcquireReleased
+AdbServerBackendReleaseOutcome: TypeAlias = (
+    AdbServerBackendReleaseApplied
     | AdbServerBackendReleaseInactive
-    | AdbServerBackendReleaseMismatch
+    | AdbServerBackendReleaseGenerationMismatch
 )
 
 
@@ -146,20 +156,20 @@ class AdbServerBackend(AdbServerStateView, Protocol):
 
     ``read()`` returns the canonical atomic state snapshot. Generation fences stale lifecycle
     work and advances when matching pending or usable authority is logically released. Physical
-    cleanup ownership is an implementation concern and is not part of lifecycle results.
+    cleanup ownership is an implementation concern and is not part of lifecycle outcomes.
     """
 
     def acquire(
         self,
         endpoint_constraint: AdbServerEndpoint | None = None,
-    ) -> AdbServerBackendAcquireResult:
-        """Acquire usable ADB server access within the current generation.
+    ) -> AdbServerBackendAcquireOutcome:
+        """Attempt to establish usable ADB server access within the current generation.
 
-        A successful constrained acquisition must expose exactly ``endpoint_constraint``.
+        A committed or existing constrained acquisition must expose exactly ``endpoint_constraint``.
         """
         ...
 
-    def release(self, expected: AdbServerGeneration) -> AdbServerBackendReleaseResult:
+    def release(self, expected: AdbServerGeneration) -> AdbServerBackendReleaseOutcome:
         """Release matching authority and advance the generation at logical revocation."""
         ...
 
@@ -177,16 +187,16 @@ class AdbServerBackendFactory(Protocol):
 
 __all__ = [
     "AdbServerBackend",
-    "AdbServerBackendAcquired",
-    "AdbServerBackendAcquireDeferred",
+    "AdbServerBackendAcquisition",
+    "AdbServerBackendAcquireBlocked",
+    "AdbServerBackendAcquireCommitted",
+    "AdbServerBackendAcquireExisting",
     "AdbServerBackendAcquireFailed",
-    "AdbServerBackendAcquireRevoked",
-    "AdbServerBackendAlreadyAcquired",
-    "AdbServerBackendAcquireResult",
+    "AdbServerBackendAcquireOutcome",
+    "AdbServerBackendAcquireSuperseded",
     "AdbServerBackendFactory",
-    "AdbServerBackendPendingAcquireReleased",
-    "AdbServerBackendReleased",
+    "AdbServerBackendReleaseApplied",
+    "AdbServerBackendReleaseGenerationMismatch",
     "AdbServerBackendReleaseInactive",
-    "AdbServerBackendReleaseMismatch",
-    "AdbServerBackendReleaseResult",
+    "AdbServerBackendReleaseOutcome",
 ]

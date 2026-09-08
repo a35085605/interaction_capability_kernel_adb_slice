@@ -11,17 +11,17 @@ from networking import TcpAddress
 from adb.cleanup import BackgroundCleanup, CleanupAttempt, CleanupDelegate
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.backend import (
-    AdbTransportListWatchBackendAcquired,
-    AdbTransportListWatchBackendAcquireDeferred,
+    AdbTransportListWatchBackendAcquisition,
+    AdbTransportListWatchBackendAcquireBlocked,
+    AdbTransportListWatchBackendAcquireCommitted,
     AdbTransportListWatchBackendAcquireFailed,
-    AdbTransportListWatchBackendAcquireRevoked,
-    AdbTransportListWatchBackendAcquireResult,
-    AdbTransportListWatchBackendAlreadyAcquired,
-    AdbTransportListWatchBackendPendingAcquireReleased,
-    AdbTransportListWatchBackendReleased,
+    AdbTransportListWatchBackendAcquireSuperseded,
+    AdbTransportListWatchBackendAcquireOutcome,
+    AdbTransportListWatchBackendAcquireExisting,
+    AdbTransportListWatchBackendReleaseApplied,
     AdbTransportListWatchBackendReleaseInactive,
-    AdbTransportListWatchBackendReleaseMismatch,
-    AdbTransportListWatchBackendReleaseResult,
+    AdbTransportListWatchBackendReleaseGenerationMismatch,
+    AdbTransportListWatchBackendReleaseOutcome,
 )
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 from adb.transport_list.watch.generation import (
@@ -85,7 +85,7 @@ class _AdbTransportListWatchBackendOwnership:
 
     handle: _AdbTransportListWatchHandle
     stream: AdbTransportListWatchStream
-    acquisition: AdbTransportListWatchBackendAcquired
+    acquisition: AdbTransportListWatchBackendAcquisition
 
 
 class AdbTransportListWatchBackendTemplate(ABC):
@@ -178,20 +178,24 @@ class AdbTransportListWatchBackendTemplate(ABC):
     def acquire(
         self,
         endpoint: TcpAddress,
-    ) -> AdbTransportListWatchBackendAcquireResult:
+    ) -> AdbTransportListWatchBackendAcquireOutcome:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
 
         with self._state_lock:
             ownership = self._ownership
             if ownership is not None:
-                return AdbTransportListWatchBackendAlreadyAcquired(ownership.acquisition)
+                if ownership.acquisition.endpoint == endpoint:
+                    return AdbTransportListWatchBackendAcquireExisting(ownership.acquisition)
+                return AdbTransportListWatchBackendAcquireBlocked(
+                    "ADB transport-list watch backend already retains a different endpoint"
+                )
             if self._pending is not None:
-                return AdbTransportListWatchBackendAcquireDeferred(
+                return AdbTransportListWatchBackendAcquireBlocked(
                     "ADB transport-list watch backend is busy with another acquisition"
                 )
             if self._cleanup.has_conflict(endpoint):
-                return AdbTransportListWatchBackendAcquireDeferred(
+                return AdbTransportListWatchBackendAcquireBlocked(
                     "ADB transport-list watch backend is cleaning a resource for this endpoint"
                 )
             pending = _AdbTransportListWatchBackendPendingAcquire(
@@ -208,7 +212,7 @@ class AdbTransportListWatchBackendTemplate(ABC):
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbTransportListWatchBackendAcquireRevoked(pending.generation)
+                return AdbTransportListWatchBackendAcquireSuperseded(pending.generation)
             raise RuntimeError(
                 "ADB transport-list watch acquisition was interrupted without generation revocation"
             ) from exc
@@ -218,7 +222,7 @@ class AdbTransportListWatchBackendTemplate(ABC):
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbTransportListWatchBackendAcquireRevoked(pending.generation)
+                return AdbTransportListWatchBackendAcquireSuperseded(pending.generation)
             return AdbTransportListWatchBackendAcquireFailed(exc.failure)
         except BaseException:
             with self._state_lock:
@@ -233,13 +237,13 @@ class AdbTransportListWatchBackendTemplate(ABC):
                     self._pending = None
             self._schedule_cleanup(handle, endpoint)
             if revoked:
-                return AdbTransportListWatchBackendAcquireRevoked(pending.generation)
-            return AdbTransportListWatchBackendAcquireDeferred(
+                return AdbTransportListWatchBackendAcquireSuperseded(pending.generation)
+            return AdbTransportListWatchBackendAcquireBlocked(
                 "ADB transport-list watch backend obtained a resource whose prior endpoint is still cleaning"
             )
 
         try:
-            acquisition = AdbTransportListWatchBackendAcquired(
+            acquisition = AdbTransportListWatchBackendAcquisition(
                 endpoint=endpoint,
                 generation=pending.generation,
             )
@@ -267,21 +271,21 @@ class AdbTransportListWatchBackendTemplate(ABC):
                     self._pending = None
 
         if committed:
-            return acquisition
+            return AdbTransportListWatchBackendAcquireCommitted(acquisition)
 
-        return AdbTransportListWatchBackendAcquireRevoked(pending.generation)
+        return AdbTransportListWatchBackendAcquireSuperseded(pending.generation)
 
     def release(
         self,
         expected: AdbTransportListWatchGeneration,
-    ) -> AdbTransportListWatchBackendReleaseResult:
+    ) -> AdbTransportListWatchBackendReleaseOutcome:
         if not isinstance(expected, AdbTransportListWatchGeneration):
             raise TypeError("expected must be AdbTransportListWatchGeneration")
 
         with self._state_lock:
             if expected != self._generation:
                 ownership = self._ownership
-                return AdbTransportListWatchBackendReleaseMismatch(
+                return AdbTransportListWatchBackendReleaseGenerationMismatch(
                     current=None if ownership is None else ownership.acquisition,
                     current_generation=self._generation,
                 )
@@ -301,7 +305,7 @@ class AdbTransportListWatchBackendTemplate(ABC):
 
             if current_pending is not None:
                 current_pending.cancellation.set()
-                return AdbTransportListWatchBackendPendingAcquireReleased(
+                return AdbTransportListWatchBackendReleaseApplied(
                     generation=released_generation
                 )
 
@@ -313,7 +317,10 @@ class AdbTransportListWatchBackendTemplate(ABC):
             self._ownership = None
             self._schedule_cleanup(ownership.handle, ownership.acquisition.endpoint)
 
-        return AdbTransportListWatchBackendReleased(generation=released_generation)
+        return AdbTransportListWatchBackendReleaseApplied(
+            generation=released_generation,
+            acquisition=ownership.acquisition,
+        )
 
 
 __all__ = [
