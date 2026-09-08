@@ -9,7 +9,7 @@ from adb.adapters.subprocess.command import (
     server_args,
 )
 from networking import TcpAddress
-from adb.transport.lifecycle.control.port import AdbTcpConnect, AdbTcpDisconnect
+from adb.transport.address import AdbConnectAddress
 from native_attempt import NativeAttemptResult
 
 
@@ -27,22 +27,22 @@ class SubprocessAdbTransportController:
         object.__setattr__(self, "executable", normalize_executable(self.executable))
         object.__setattr__(self, "timeout_seconds", normalize_timeout(self.timeout_seconds))
 
-    def connect(self, operation: AdbTcpConnect) -> NativeAttemptResult:
-        if not isinstance(operation, AdbTcpConnect):
-            raise TypeError("operation must be AdbTcpConnect")
+    def connect(self, address: AdbConnectAddress) -> NativeAttemptResult:
+        if not isinstance(address, AdbConnectAddress):
+            raise TypeError("address must be AdbConnectAddress")
         return run_adb(
             self.executable,
             self.timeout_seconds,
-            [*server_args(self.endpoint), "connect", operation.address.value],
+            [*server_args(self.endpoint), "connect", address.value],
         )
 
-    def disconnect(self, operation: AdbTcpDisconnect) -> NativeAttemptResult:
-        if not isinstance(operation, AdbTcpDisconnect):
-            raise TypeError("operation must be AdbTcpDisconnect")
+    def disconnect(self, address: AdbConnectAddress) -> NativeAttemptResult:
+        if not isinstance(address, AdbConnectAddress):
+            raise TypeError("address must be AdbConnectAddress")
         return run_adb(
             self.executable,
             self.timeout_seconds,
-            [*server_args(self.endpoint), "disconnect", operation.address.value],
+            [*server_args(self.endpoint), "disconnect", address.value],
         )
 
 

@@ -20,10 +20,7 @@ from adb.transport.model import (
     AdbTransportState,
 )
 from adb.transport.lifecycle import (
-    AdbTcpConnect,
-    AdbTcpConnector,
-    AdbTcpDisconnect,
-    AdbTcpDisconnector,
+    AdbTcpTransportController,
     AdbTcpTransportEnsureOrchestrator,
     AdbTcpTransportEnsurePolicy,
     AdbTcpTransportEnsureReadiness,
@@ -45,10 +42,7 @@ __all__ = [
     "AdbObservedTransportState",
     "AdbDeviceSerial",
     "AdbConnectAddress",
-    "AdbTcpConnect",
-    "AdbTcpConnector",
-    "AdbTcpDisconnect",
-    "AdbTcpDisconnector",
+    "AdbTcpTransportController",
     "AdbTcpTransportConfiguration",
     "AdbTcpTransportEnsureOrchestrator",
     "AdbTcpTransportEnsurePolicy",
