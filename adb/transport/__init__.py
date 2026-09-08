@@ -1,4 +1,4 @@
-"""ADB transport configuration, lifecycle, selection, resolution, and capabilities."""
+"""ADB transport configuration, lifecycle, selection, and capabilities."""
 
 from adb.transport.address import AdbConnectAddress
 from adb.transport.configuration import (
@@ -39,11 +39,6 @@ from adb.transport.lifecycle import (
     AdbTransportReconnect,
     AdbTransportReconnector,
 )
-from adb.transport.resolution import (
-    AdbConfiguredTransportProjection,
-    AdbConfiguredTransportResolution,
-    AdbConfiguredTransportResolutionStatus,
-)
 from adb.transport.selection import (
     AdbTransportById,
     AdbTransportBySerial,
@@ -52,9 +47,6 @@ from adb.transport.selection import (
 
 __all__ = [
     "AdbConfiguredTransport",
-    "AdbConfiguredTransportProjection",
-    "AdbConfiguredTransportResolution",
-    "AdbConfiguredTransportResolutionStatus",
     "AdbObservedTransportKind",
     "AdbObservedTransportState",
     "AdbDeviceSerial",

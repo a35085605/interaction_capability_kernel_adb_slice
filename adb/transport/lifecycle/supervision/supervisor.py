@@ -31,9 +31,10 @@ from adb.transport_list.state import (
     AdbTransportListState,
     AdbTransportListStateView,
 )
-from adb.transport.resolution import (
+from adb.transport_list.resolution import (
     AdbConfiguredTransportProjection,
     AdbConfiguredTransportResolutionStatus,
+    resolve_configured_transport,
 )
 from adb.transport.lifecycle.ensure import (
     AdbTcpTransportEnsureReadiness,
@@ -331,7 +332,7 @@ class AdbConfiguredTransportSupervisor:
         if not isinstance(transport_list_identity, AdbTransportListIdentity):
             raise TypeError("transport_list_identity must be AdbTransportListIdentity")
         previous = registration.projection
-        resolution = transport_list.resolve_configured_transport(registration.configuration)
+        resolution = resolve_configured_transport(transport_list, registration.configuration)
         current = AdbConfiguredTransportProjection(
             server=server,
             transport_list=transport_list_identity,

@@ -1,4 +1,4 @@
-"""ADB transport-list values, projection state, readers, queries, and watch authority."""
+"""ADB transport-list values, resolution, projection state, readers, queries, and watch authority."""
 
 from adb.transport_list.generation import (
     AdbTransportListGeneration,
@@ -7,6 +7,12 @@ from adb.transport_list.generation import (
 from adb.transport_list.lookup import AdbTransportLookup, find_transport
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.reader import AdbTransportListReader
+from adb.transport_list.resolution import (
+    AdbConfiguredTransportProjection,
+    AdbConfiguredTransportResolution,
+    AdbConfiguredTransportResolutionStatus,
+    resolve_configured_transport,
+)
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,
@@ -40,6 +46,9 @@ from adb.transport_list.state import (
 )
 
 __all__ = [
+    "AdbConfiguredTransportProjection",
+    "AdbConfiguredTransportResolution",
+    "AdbConfiguredTransportResolutionStatus",
     "AdbTransportLookup",
     "AdbTransportList",
     "AdbTransportListGeneration",
@@ -69,4 +78,5 @@ __all__ = [
     "AdbTransportListWatchStateView",
     "AdbTransportListWatchBackendFactory",
     "find_transport",
+    "resolve_configured_transport",
 ]

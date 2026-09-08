@@ -4,14 +4,15 @@ from dataclasses import dataclass
 from enum import Enum
 
 from adb.server.identity import AdbServerIdentity
+from adb.transport.configuration import AdbConfiguredTransport
+from adb.transport.identity import AdbTransportId
 from adb.transport.model import AdbTransport
 from adb.transport_list.identity import AdbTransportListIdentity
 from adb.transport_list.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
 )
-from adb.transport.configuration import AdbConfiguredTransport
-from adb.transport.identity import AdbTransportId
+from adb.transport_list.model import AdbTransportList
 
 
 class AdbConfiguredTransportResolutionStatus(str, Enum):
@@ -91,6 +92,49 @@ class AdbConfiguredTransportResolution:
         return transport.transport_id if transport is not None else None
 
 
+def resolve_configured_transport(
+    transport_list: AdbTransportList,
+    configuration: AdbConfiguredTransport,
+) -> AdbConfiguredTransportResolution:
+    """Resolve a configured transport from exact evidence with unspecified-kind fallback."""
+
+    if not isinstance(transport_list, AdbTransportList):
+        raise TypeError("transport_list must be AdbTransportList")
+    if not isinstance(configuration, AdbConfiguredTransport):
+        raise TypeError("configuration must be AdbConfiguredTransport")
+
+    serial_matches = tuple(
+        transport
+        for transport in transport_list
+        if transport.matches_serial(configuration.serial)
+    )
+    classified = tuple(
+        (transport, classify_observed_transport(configuration, transport))
+        for transport in serial_matches
+    )
+    exact_matches = tuple(
+        transport
+        for transport, compatibility in classified
+        if compatibility is AdbObservedTransportCompatibility.MATCH
+    )
+    unspecified_matches = tuple(
+        transport
+        for transport, compatibility in classified
+        if compatibility is AdbObservedTransportCompatibility.UNSPECIFIED
+    )
+    matches = exact_matches if exact_matches else unspecified_matches
+    type_mismatches = tuple(
+        transport
+        for transport, compatibility in classified
+        if compatibility is AdbObservedTransportCompatibility.MISMATCH
+    )
+    return AdbConfiguredTransportResolution(
+        configuration=configuration,
+        matches=matches,
+        type_mismatches=type_mismatches,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AdbConfiguredTransportProjection:
     """One configured-transport resolution bound to source server and list identities."""
@@ -124,4 +168,5 @@ __all__ = [
     "AdbConfiguredTransportProjection",
     "AdbConfiguredTransportResolution",
     "AdbConfiguredTransportResolutionStatus",
+    "resolve_configured_transport",
 ]

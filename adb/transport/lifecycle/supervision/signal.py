@@ -7,7 +7,7 @@ from adb.transport.configuration import (
     AdbConfiguredTransport,
     AdbTcpTransportConfiguration,
 )
-from adb.transport.resolution import AdbConfiguredTransportProjection
+from adb.transport_list.resolution import AdbConfiguredTransportProjection
 from adb.transport.lifecycle.ensure import (
     AdbTcpTransportEnsureResult,
     AdbTcpTransportEnsureStatus,

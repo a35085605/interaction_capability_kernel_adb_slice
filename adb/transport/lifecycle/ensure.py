@@ -23,8 +23,9 @@ from adb.transport_list.interpretation import (
     AdbObservedTransportCompatibility,
     classify_observed_transport,
 )
-from adb.transport.resolution import (
+from adb.transport_list.resolution import (
     AdbConfiguredTransportResolutionStatus,
+    resolve_configured_transport,
 )
 from adb.transport.lifecycle.control.port import AdbTcpConnect, AdbTcpConnector
 from adb.transport.identity import AdbDeviceSerial
@@ -383,7 +384,7 @@ class AdbTcpTransportEnsureEpisode:
         self.probes_attempted += 1
         self.final_transport_list = transport_list
 
-        resolution = transport_list.resolve_configured_transport(self.operation.configuration)
+        resolution = resolve_configured_transport(transport_list, self.operation.configuration)
         self.latest_resolution_status = resolution.status
 
         if resolution.status is AdbConfiguredTransportResolutionStatus.AMBIGUOUS:

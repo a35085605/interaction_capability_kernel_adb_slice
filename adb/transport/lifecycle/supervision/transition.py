@@ -14,7 +14,7 @@ from adb.transport.lifecycle.ensure import (
 )
 from adb.transport.lifecycle.supervision.policy import AdbConfiguredTransportSupervisionPolicy
 from adb.transport.lifecycle.supervision.signal import AdbConfiguredTransportRecoveryExhausted
-from adb.transport.resolution import (
+from adb.transport_list.resolution import (
     AdbConfiguredTransportProjection,
     AdbConfiguredTransportResolutionStatus,
 )
