@@ -23,6 +23,47 @@ def _normalize_diagnostic(value: object) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class AdbTransportListWatchBackendCleanupHandoff:
+    """Transfer unresolved watch physical-cleanup ownership out of the backend.
+
+    ``handle`` is no longer backend-owned. The receiver becomes responsible for either
+    confirming physical cleanup or transferring ownership again to a more capable authority.
+    """
+
+    handle: object
+    diagnostic: str
+
+    def __post_init__(self) -> None:
+        if self.handle is None:
+            raise TypeError("handle cannot be None")
+        object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
+
+
+class AdbTransportListWatchBackendCleanupHandoffError(RuntimeError):
+    """Primary exceptional outcome accompanied by unresolved watch cleanup ownership."""
+
+    def __init__(
+        self,
+        primary_error: BaseException,
+        cleanup_handoff: AdbTransportListWatchBackendCleanupHandoff,
+    ) -> None:
+        if not isinstance(primary_error, BaseException):
+            raise TypeError("primary_error must be BaseException")
+        if not isinstance(
+            cleanup_handoff, AdbTransportListWatchBackendCleanupHandoff
+        ):
+            raise TypeError(
+                "cleanup_handoff must be AdbTransportListWatchBackendCleanupHandoff"
+            )
+        self.primary_error = primary_error
+        self.cleanup_handoff = cleanup_handoff
+        super().__init__(
+            f"{primary_error}; unresolved ADB watch cleanup ownership was handed off: "
+            f"{cleanup_handoff.diagnostic}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AdbTransportListWatchBackendAcquired:
     """One runtime-scoped usable transport-list watch retained by the backend.
 
@@ -66,10 +107,17 @@ class AdbTransportListWatchBackendAcquireFailed:
     """Expected failure to establish a usable watch acquisition."""
 
     failure: AdbTransportListWatchFailure
+    cleanup_handoff: AdbTransportListWatchBackendCleanupHandoff | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.failure, AdbTransportListWatchFailure):
             raise TypeError("failure must be AdbTransportListWatchFailure")
+        if self.cleanup_handoff is not None and not isinstance(
+            self.cleanup_handoff, AdbTransportListWatchBackendCleanupHandoff
+        ):
+            raise TypeError(
+                "cleanup_handoff must be AdbTransportListWatchBackendCleanupHandoff or None"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,10 +125,17 @@ class AdbTransportListWatchBackendAcquireRevoked:
     """Evidence that the captured watch generation was revoked during acquisition."""
 
     generation: AdbTransportListWatchGeneration
+    cleanup_handoff: AdbTransportListWatchBackendCleanupHandoff | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.generation, AdbTransportListWatchGeneration):
             raise TypeError("generation must be AdbTransportListWatchGeneration")
+        if self.cleanup_handoff is not None and not isinstance(
+            self.cleanup_handoff, AdbTransportListWatchBackendCleanupHandoff
+        ):
+            raise TypeError(
+                "cleanup_handoff must be AdbTransportListWatchBackendCleanupHandoff or None"
+            )
 
 
 AdbTransportListWatchBackendAcquireResult: TypeAlias = (
@@ -97,12 +152,14 @@ class AdbTransportListWatchBackendReleased:
     """Evidence that matching watch authority was logically released.
 
     ``generation`` is the revoked generation. ``acquisition`` is present only when
-    that generation had committed a usable watch before release. Physical cleanup may
-    continue after the generation has advanced.
+    that generation had committed a usable watch before release. ``cleanup_handoff`` is present
+    only when normal physical retirement could not be confirmed and unresolved ownership was
+    transferred to the caller.
     """
 
     generation: AdbTransportListWatchGeneration
     acquisition: AdbTransportListWatchBackendAcquired | None = None
+    cleanup_handoff: AdbTransportListWatchBackendCleanupHandoff | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.generation, AdbTransportListWatchGeneration):
@@ -114,6 +171,12 @@ class AdbTransportListWatchBackendReleased:
                 )
             if self.acquisition.generation != self.generation:
                 raise ValueError("acquisition generation must match released generation")
+        if self.cleanup_handoff is not None and not isinstance(
+            self.cleanup_handoff, AdbTransportListWatchBackendCleanupHandoff
+        ):
+            raise TypeError(
+                "cleanup_handoff must be AdbTransportListWatchBackendCleanupHandoff or None"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +222,10 @@ class AdbTransportListWatchBackend(AdbTransportListWatchStateView, Protocol):
     ``read()`` returns the canonical atomic state snapshot. Generation fences stale lifecycle
     work and advances when matching pending or usable authority is logically released. Physical
     watch resources and producer data-plane plumbing remain backend implementation details.
+
+    Every physical resource obtained by the backend follows confirmed-or-handoff cleanup:
+    ownership is retained until cleanup is confirmed, or transferred through a result/exception
+    carrying ``AdbTransportListWatchBackendCleanupHandoff``.
     """
 
     def acquire(
@@ -194,6 +261,8 @@ __all__ = [
     "AdbTransportListWatchBackendAcquireRevoked",
     "AdbTransportListWatchBackendAcquireResult",
     "AdbTransportListWatchBackendAlreadyAcquired",
+    "AdbTransportListWatchBackendCleanupHandoff",
+    "AdbTransportListWatchBackendCleanupHandoffError",
     "AdbTransportListWatchBackendFactory",
     "AdbTransportListWatchBackendReleased",
     "AdbTransportListWatchBackendReleaseInactive",

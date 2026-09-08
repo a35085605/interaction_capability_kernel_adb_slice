@@ -13,16 +13,16 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireRevoked,
     AdbServerBackendAlreadyAcquired,
     AdbServerBackendAcquireResult,
+    AdbServerBackendCleanupHandoff,
+    AdbServerBackendCleanupHandoffError,
     AdbServerBackendFactory,
     AdbServerBackendReleased,
     AdbServerBackendReleaseInactive,
     AdbServerBackendReleaseMismatch,
     AdbServerBackendReleaseResult,
 )
-from adb.server.lifecycle.backend_template import (
-    AdbServerBackendEventPublisherBinding,
-    AdbServerBackendReleaseCleanupUnconfirmed,
-)
+from adb.server.lifecycle.backend_template import AdbServerBackendEventPublisherBinding
+from adb.server.lifecycle.backend import AdbServerBackendReleaseCleanupUnconfirmed
 from adb.server.lifecycle.events import AdbServerActivated, AdbServerDeactivated
 
 __all__ = [
@@ -34,6 +34,8 @@ __all__ = [
     "AdbServerBackendAcquireRevoked",
     "AdbServerBackendAlreadyAcquired",
     "AdbServerBackendAcquireResult",
+    "AdbServerBackendCleanupHandoff",
+    "AdbServerBackendCleanupHandoffError",
     "AdbServerBackendEventPublisherBinding",
     "AdbServerBackendFactory",
     "AdbServerBackendReleased",

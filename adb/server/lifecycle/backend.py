@@ -19,6 +19,51 @@ def _normalize_diagnostic(value: object) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class AdbServerBackendCleanupHandoff:
+    """Transfer unresolved physical cleanup ownership out of the backend.
+
+    ``handle`` is no longer backend-owned. The receiver becomes responsible for either
+    confirming physical cleanup or transferring ownership again to a more capable authority.
+    """
+
+    handle: object
+    diagnostic: str
+
+    def __post_init__(self) -> None:
+        if self.handle is None:
+            raise TypeError("handle cannot be None")
+        object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
+
+
+# Backwards-compatible name retained for callers that consumed the earlier release-only signal.
+AdbServerBackendReleaseCleanupUnconfirmed = AdbServerBackendCleanupHandoff
+
+
+class AdbServerBackendCleanupHandoffError(RuntimeError):
+    """Primary exceptional outcome accompanied by unresolved cleanup ownership.
+
+    The caller must accept ``cleanup_handoff`` even though ``primary_error`` remains the
+    authoritative reason the lifecycle operation failed exceptionally.
+    """
+
+    def __init__(
+        self,
+        primary_error: BaseException,
+        cleanup_handoff: AdbServerBackendCleanupHandoff,
+    ) -> None:
+        if not isinstance(primary_error, BaseException):
+            raise TypeError("primary_error must be BaseException")
+        if not isinstance(cleanup_handoff, AdbServerBackendCleanupHandoff):
+            raise TypeError("cleanup_handoff must be AdbServerBackendCleanupHandoff")
+        self.primary_error = primary_error
+        self.cleanup_handoff = cleanup_handoff
+        super().__init__(
+            f"{primary_error}; unresolved ADB server cleanup ownership was handed off: "
+            f"{cleanup_handoff.diagnostic}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquired:
     """One runtime-scoped usable ADB server acquisition retained by the backend."""
 
@@ -55,12 +100,23 @@ class AdbServerBackendAcquireDeferred:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquireFailed:
-    """Backend acquisition failed to satisfy the request."""
+    """Backend acquisition failed to satisfy the request.
+
+    ``cleanup_handoff`` is present only when acquisition created a physical resource whose
+    cleanup could not be confirmed. Ownership of that resource has left the backend.
+    """
 
     diagnostic: str
+    cleanup_handoff: AdbServerBackendCleanupHandoff | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
+        if self.cleanup_handoff is not None and not isinstance(
+            self.cleanup_handoff, AdbServerBackendCleanupHandoff
+        ):
+            raise TypeError(
+                "cleanup_handoff must be AdbServerBackendCleanupHandoff or None"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,10 +124,17 @@ class AdbServerBackendAcquireRevoked:
     """Evidence that the captured server generation was revoked during acquisition."""
 
     generation: AdbServerGeneration
+    cleanup_handoff: AdbServerBackendCleanupHandoff | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
+        if self.cleanup_handoff is not None and not isinstance(
+            self.cleanup_handoff, AdbServerBackendCleanupHandoff
+        ):
+            raise TypeError(
+                "cleanup_handoff must be AdbServerBackendCleanupHandoff or None"
+            )
 
 
 AdbServerBackendAcquireResult: TypeAlias = (
@@ -88,12 +151,14 @@ class AdbServerBackendReleased:
     """Evidence that matching backend authority was released.
 
     ``generation`` is the generation that was revoked. ``acquisition`` is present only when
-    that generation had committed a usable endpoint before release. Physical cleanup may still
-    be in progress after logical release has advanced the backend generation.
+    that generation had committed a usable endpoint before release. ``cleanup_handoff`` is
+    present only when normal physical cleanup could not be confirmed and ownership of the
+    unresolved resource was transferred to the caller.
     """
 
     generation: AdbServerGeneration
     acquisition: AdbServerBackendAcquired | None = None
+    cleanup_handoff: AdbServerBackendCleanupHandoff | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.generation, AdbServerGeneration):
@@ -103,6 +168,12 @@ class AdbServerBackendReleased:
                 raise TypeError("acquisition must be AdbServerBackendAcquired or None")
             if self.acquisition.generation != self.generation:
                 raise ValueError("acquisition generation must match released generation")
+        if self.cleanup_handoff is not None and not isinstance(
+            self.cleanup_handoff, AdbServerBackendCleanupHandoff
+        ):
+            raise TypeError(
+                "cleanup_handoff must be AdbServerBackendCleanupHandoff or None"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +217,10 @@ class AdbServerBackend(AdbServerStateView, Protocol):
     ``read()`` returns the canonical atomic state snapshot. Generation fences stale lifecycle
     work and advances when matching pending or usable authority is logically released. All views
     and ownership transitions are concurrency-safe and linearizable.
+
+    Every physical resource obtained by the backend follows confirmed-or-handoff cleanup:
+    ownership is retained until cleanup is confirmed, or transferred through a result/exception
+    carrying ``AdbServerBackendCleanupHandoff``.
     """
 
     def acquire(
@@ -182,8 +257,11 @@ __all__ = [
     "AdbServerBackendAcquireRevoked",
     "AdbServerBackendAlreadyAcquired",
     "AdbServerBackendAcquireResult",
+    "AdbServerBackendCleanupHandoff",
+    "AdbServerBackendCleanupHandoffError",
     "AdbServerBackendFactory",
     "AdbServerBackendReleased",
+    "AdbServerBackendReleaseCleanupUnconfirmed",
     "AdbServerBackendReleaseInactive",
     "AdbServerBackendReleaseMismatch",
     "AdbServerBackendReleaseResult",

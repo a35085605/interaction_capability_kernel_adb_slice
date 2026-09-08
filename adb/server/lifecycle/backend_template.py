@@ -19,6 +19,8 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireRevoked,
     AdbServerBackendAcquireResult,
     AdbServerBackendAlreadyAcquired,
+    AdbServerBackendCleanupHandoff,
+    AdbServerBackendCleanupHandoffError,
     AdbServerBackendReleased,
     AdbServerBackendReleaseInactive,
     AdbServerBackendReleaseMismatch,
@@ -35,42 +37,57 @@ def _normalize_diagnostic(value: object) -> str:
     return normalized
 
 
-@dataclass(frozen=True, slots=True)
-class AdbServerBackendReleaseCleanupUnconfirmed:
-    """Signal that backend ownership was released but handle cleanup remains unconfirmed.
+def _cleanup_exception_diagnostic(exc: BaseException) -> str:
+    return str(exc).strip() or type(exc).__name__
 
-    ``handle`` is detached from backend ownership and remains available for diagnostics
-    or implementation-specific cleanup.
-    """
 
-    handle: object
-    diagnostic: str
-
-    def __post_init__(self) -> None:
-        if self.handle is None:
-            raise TypeError("handle cannot be None")
-        object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
+# Backwards-compatible import location retained for existing callers.
+AdbServerBackendReleaseCleanupUnconfirmed = AdbServerBackendCleanupHandoff
 
 
 @runtime_checkable
 class AdbServerBackendEventPublisherBinding(Protocol):
-    """Optional capability for binding backend notifications to a runtime event publisher."""
+    """Optional capability for binding backend state-transition notifications."""
 
     def bind_event_publisher(self, publisher: EventPublisher) -> None:
-        """Bind the publisher used for state-transition notifications and cleanup signals."""
+        """Bind the publisher used for non-authoritative state-transition notifications."""
         ...
 
 
 class AdbServerBackendAcquireError(RuntimeError):
     """Expected failure while obtaining a backend acquisition handle."""
 
-    def __init__(self, diagnostic: str) -> None:
+    def __init__(
+        self,
+        diagnostic: str,
+        cleanup_handoff: AdbServerBackendCleanupHandoff | None = None,
+    ) -> None:
         self.diagnostic = _normalize_diagnostic(diagnostic)
+        if cleanup_handoff is not None and not isinstance(
+            cleanup_handoff, AdbServerBackendCleanupHandoff
+        ):
+            raise TypeError(
+                "cleanup_handoff must be AdbServerBackendCleanupHandoff or None"
+            )
+        self.cleanup_handoff = cleanup_handoff
         super().__init__(self.diagnostic)
 
 
 class AdbServerBackendAcquireInterruptedError(RuntimeError):
     """Cooperative interruption after the captured server generation was released."""
+
+    def __init__(
+        self,
+        cleanup_handoff: AdbServerBackendCleanupHandoff | None = None,
+    ) -> None:
+        if cleanup_handoff is not None and not isinstance(
+            cleanup_handoff, AdbServerBackendCleanupHandoff
+        ):
+            raise TypeError(
+                "cleanup_handoff must be AdbServerBackendCleanupHandoff or None"
+            )
+        self.cleanup_handoff = cleanup_handoff
+        super().__init__("ADB server backend acquisition was interrupted")
 
 
 HandleT = TypeVar("HandleT")
@@ -95,6 +112,11 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
     that current generation before implementation-specific blocking work begins. Failed or
     retried acquisitions do not change it. A matching release advances the generation at the
     logical revocation point, before cancellation or physical handle cleanup completes.
+
+    Physical ownership follows a confirmed-or-handoff invariant. Once the backend no longer
+    owns a resource, unresolved cleanup ownership is carried by the authoritative operation
+    result or by ``AdbServerBackendCleanupHandoffError``; notification delivery is never used
+    as the ownership-transfer mechanism.
     """
 
     def __init__(
@@ -126,9 +148,11 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
             )
 
     def bind_event_publisher(self, publisher: EventPublisher) -> None:
-        """Bind the publisher for subsequent backend notifications.
+        """Bind the publisher for subsequent state-transition notifications.
 
         Call during orchestration while no acquisition or release operation is active.
+        Cleanup ownership handoff is authoritative result/exception data and is never delegated
+        to this best-effort notification channel.
         """
 
         if not isinstance(publisher, EventPublisher):
@@ -148,15 +172,17 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
 
         Implementations should observe ``cancellation`` during blocking startup and raise
         ``AdbServerBackendAcquireInterruptedError`` when cancellation is requested. Raise
-        ``AdbServerBackendAcquireError`` for expected acquisition failures.
+        ``AdbServerBackendAcquireError`` for expected acquisition failures. If implementation
+        startup created a resource whose cleanup could not be confirmed, the raised exception
+        must carry its cleanup handoff.
         """
 
     @abstractmethod
     def _release_handle(
         self,
         handle: HandleT,
-    ) -> AdbServerBackendReleaseCleanupUnconfirmed | None:
-        """Release a previously obtained handle and report unconfirmed cleanup as signal data."""
+    ) -> AdbServerBackendCleanupHandoff | None:
+        """Clean a handle or transfer unresolved physical cleanup ownership to the caller."""
 
     @staticmethod
     def _publish_notification(
@@ -173,32 +199,36 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
         except Exception:
             return
 
-    @staticmethod
-    def _publish_release_signal(
-        publisher: EventPublisher,
-        signal: AdbServerBackendReleaseCleanupUnconfirmed,
-    ) -> None:
-        """Publish cleanup evidence after backend release has linearized.
-
-        Publication is best-effort; the completed release outcome remains authoritative.
-        """
-
-        try:
-            publisher.publish(signal)
-        except Exception:
-            return
-
     def _cleanup_obtained_handle(
         self,
         handle: HandleT,
+    ) -> AdbServerBackendCleanupHandoff | None:
+        """Clean a non-authoritative handle without ever dropping unresolved ownership."""
+
+        try:
+            return self._release_handle(handle)
+        except BaseException as exc:
+            # A cleanup implementation defect must not make the resource disappear from the
+            # ownership model. Fall back to transferring the backend handle itself.
+            return AdbServerBackendCleanupHandoff(
+                handle=handle,
+                diagnostic=(
+                    "ADB server backend cleanup raised unexpectedly: "
+                    f"{_cleanup_exception_diagnostic(exc)}"
+                ),
+            )
+
+    @staticmethod
+    def _raise_primary_with_handoff(
+        primary_error: BaseException,
+        cleanup_handoff: AdbServerBackendCleanupHandoff | None,
     ) -> None:
-        signal = self._release_handle(handle)
-        if signal is None:
-            return
-        with self._state_lock:
-            publisher = self._publisher
-        if publisher is not None:
-            self._publish_release_signal(publisher, signal)
+        if cleanup_handoff is None:
+            raise primary_error
+        raise AdbServerBackendCleanupHandoffError(
+            primary_error,
+            cleanup_handoff,
+        ) from primary_error
 
     def acquire(
         self,
@@ -229,24 +259,34 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                 endpoint_constraint,
                 pending.cancellation,
             )
-        except AdbServerBackendAcquireInterruptedError:
+        except AdbServerBackendAcquireInterruptedError as exc:
             with self._state_lock:
                 revoked = self._generation != pending.generation
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbServerBackendAcquireRevoked(pending.generation)
-            raise RuntimeError(
+                return AdbServerBackendAcquireRevoked(
+                    pending.generation,
+                    cleanup_handoff=exc.cleanup_handoff,
+                )
+            primary = RuntimeError(
                 "ADB server backend acquisition was interrupted without generation revocation"
             )
+            self._raise_primary_with_handoff(primary, exc.cleanup_handoff)
         except AdbServerBackendAcquireError as exc:
             with self._state_lock:
                 revoked = self._generation != pending.generation
                 if self._pending is pending:
                     self._pending = None
             if revoked:
-                return AdbServerBackendAcquireRevoked(pending.generation)
-            return AdbServerBackendAcquireFailed(exc.diagnostic)
+                return AdbServerBackendAcquireRevoked(
+                    pending.generation,
+                    cleanup_handoff=exc.cleanup_handoff,
+                )
+            return AdbServerBackendAcquireFailed(
+                exc.diagnostic,
+                cleanup_handoff=exc.cleanup_handoff,
+            )
         except BaseException:
             with self._state_lock:
                 if self._pending is pending:
@@ -258,24 +298,28 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                 revoked = self._generation != pending.generation
                 if self._pending is pending:
                     self._pending = None
-            self._cleanup_obtained_handle(handle)
+            cleanup_handoff = self._cleanup_obtained_handle(handle)
             if revoked:
-                return AdbServerBackendAcquireRevoked(pending.generation)
-            raise AdbServerLifecycleConsistencyError(
+                return AdbServerBackendAcquireRevoked(
+                    pending.generation,
+                    cleanup_handoff=cleanup_handoff,
+                )
+            primary = AdbServerLifecycleConsistencyError(
                 "endpoint-constrained ADB server backend acquisition returned a different endpoint"
             )
+            self._raise_primary_with_handoff(primary, cleanup_handoff)
 
         try:
             acquisition = AdbServerBackendAcquired(
                 endpoint=endpoint,
                 generation=pending.generation,
             )
-        except BaseException:
+        except BaseException as exc:
             with self._state_lock:
                 if self._pending is pending:
                     self._pending = None
-            self._cleanup_obtained_handle(handle)
-            raise
+            cleanup_handoff = self._cleanup_obtained_handle(handle)
+            self._raise_primary_with_handoff(exc, cleanup_handoff)
 
         committed = False
         publisher: EventPublisher | None = None
@@ -295,8 +339,11 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
 
         # Release won the commit race. The endpoint must remain unavailable and a handle
         # obtained for an old generation is cleanup-only evidence, never a new acquisition.
-        self._cleanup_obtained_handle(handle)
-        return AdbServerBackendAcquireRevoked(pending.generation)
+        cleanup_handoff = self._cleanup_obtained_handle(handle)
+        return AdbServerBackendAcquireRevoked(
+            pending.generation,
+            cleanup_handoff=cleanup_handoff,
+        )
 
     def release(self, expected: AdbServerGeneration) -> AdbServerBackendReleaseResult:
         if not isinstance(expected, AdbServerGeneration):
@@ -336,10 +383,20 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
             self._releasing = ownership
             ownership_to_release = ownership
 
-        signal: AdbServerBackendReleaseCleanupUnconfirmed | None = None
         publisher: EventPublisher | None = None
+        cleanup_handoff: AdbServerBackendCleanupHandoff | None = None
+        cleanup_error: BaseException | None = None
         try:
-            signal = self._release_handle(ownership_to_release.handle)
+            cleanup_handoff = self._release_handle(ownership_to_release.handle)
+        except BaseException as exc:
+            cleanup_error = exc
+            cleanup_handoff = AdbServerBackendCleanupHandoff(
+                handle=ownership_to_release.handle,
+                diagnostic=(
+                    "ADB server backend cleanup raised unexpectedly: "
+                    f"{_cleanup_exception_diagnostic(exc)}"
+                ),
+            )
         finally:
             with self._state_lock:
                 if self._releasing is ownership_to_release:
@@ -351,11 +408,16 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                     AdbServerDeactivated(released_generation),
                 )
 
-        if signal is not None and publisher is not None:
-            self._publish_release_signal(publisher, signal)
+        if cleanup_error is not None:
+            raise AdbServerBackendCleanupHandoffError(
+                cleanup_error,
+                cleanup_handoff,
+            ) from cleanup_error
+
         return AdbServerBackendReleased(
             generation=released_generation,
             acquisition=ownership_to_release.acquisition,
+            cleanup_handoff=cleanup_handoff,
         )
 
 
