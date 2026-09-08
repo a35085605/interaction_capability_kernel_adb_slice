@@ -96,19 +96,13 @@ class AdbServerBackendPendingAcquireReleased:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendReleased:
-    """Evidence that a matching committed server acquisition was released."""
+    """Evidence that a matching committed server generation was released."""
 
-    acquisition: AdbServerBackendAcquired
+    generation: AdbServerGeneration
 
     def __post_init__(self) -> None:
-        if not isinstance(self.acquisition, AdbServerBackendAcquired):
-            raise TypeError("acquisition must be AdbServerBackendAcquired")
-
-    @property
-    def generation(self) -> AdbServerGeneration:
-        """Generation of the released acquisition."""
-
-        return self.acquisition.generation
+        if not isinstance(self.generation, AdbServerGeneration):
+            raise TypeError("generation must be AdbServerGeneration")
 
 
 @dataclass(frozen=True, slots=True)

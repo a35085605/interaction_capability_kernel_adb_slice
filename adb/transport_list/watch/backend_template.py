@@ -313,7 +313,7 @@ class AdbTransportListWatchBackendTemplate(ABC):
             self._ownership = None
             self._schedule_cleanup(ownership.handle, ownership.acquisition.endpoint)
 
-        return AdbTransportListWatchBackendReleased(acquisition=ownership.acquisition)
+        return AdbTransportListWatchBackendReleased(generation=released_generation)
 
 
 __all__ = [

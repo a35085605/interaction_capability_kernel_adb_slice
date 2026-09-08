@@ -105,19 +105,13 @@ class AdbTransportListWatchBackendPendingAcquireReleased:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchBackendReleased:
-    """Evidence that a matching committed watch acquisition was logically released."""
+    """Evidence that a matching committed watch generation was logically released."""
 
-    acquisition: AdbTransportListWatchBackendAcquired
+    generation: AdbTransportListWatchGeneration
 
     def __post_init__(self) -> None:
-        if not isinstance(self.acquisition, AdbTransportListWatchBackendAcquired):
-            raise TypeError("acquisition must be AdbTransportListWatchBackendAcquired")
-
-    @property
-    def generation(self) -> AdbTransportListWatchGeneration:
-        """Generation of the released watch acquisition."""
-
-        return self.acquisition.generation
+        if not isinstance(self.generation, AdbTransportListWatchGeneration):
+            raise TypeError("generation must be AdbTransportListWatchGeneration")
 
 
 @dataclass(frozen=True, slots=True)

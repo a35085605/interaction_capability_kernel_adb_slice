@@ -313,7 +313,6 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                 raise RuntimeError("ADB server backend authority state is inconsistent")
 
             self._ownership = None
-            released_acquisition = ownership.acquisition
             self._schedule_cleanup(ownership.handle, ownership.acquisition.endpoint)
             publisher = self._publisher
 
@@ -323,7 +322,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                 AdbServerDeactivated(released_generation),
             )
 
-        return AdbServerBackendReleased(acquisition=released_acquisition)
+        return AdbServerBackendReleased(generation=released_generation)
 
 
 __all__ = [
