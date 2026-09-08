@@ -5,7 +5,7 @@ from threading import RLock, Thread, current_thread
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
-from adb.server.lifecycle.backend import AdbServerBackend, AdbServerBackendReleaseApplied
+from adb.server.lifecycle.backend import AdbServerLifecycle, AdbServerBackendReleaseApplied
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
@@ -33,7 +33,7 @@ class AdbServerSupervisor:
 
     def __init__(
         self,
-        backend: AdbServerBackend,
+        backend: AdbServerLifecycle,
         *,
         event_bus: EventBus | None,
         scheduler: TemporalScheduler[object] | None,
@@ -41,8 +41,8 @@ class AdbServerSupervisor:
         recovery_enabled: bool,
         endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> None:
-        if not isinstance(backend, AdbServerBackend):
-            raise TypeError("backend must satisfy AdbServerBackend")
+        if not isinstance(backend, AdbServerLifecycle):
+            raise TypeError("backend must satisfy AdbServerLifecycle")
         if event_bus is not None and not _is_event_bus(event_bus):
             raise TypeError("event_bus must satisfy EventBus or be None")
         if scheduler is not None and not isinstance(scheduler, TemporalScheduler):

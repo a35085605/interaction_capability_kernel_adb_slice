@@ -22,7 +22,7 @@ from adb.cleanup import CleanupDelegate
 from adb.transport_list.watch.backend_template import (
     AdbTransportListWatchBackendAcquireError,
     AdbTransportListWatchBackendAcquireInterruptedError,
-    AdbTransportListWatchBackendTemplate,
+    AdbTransportListWatchLifecycleTemplate,
 )
 from adb.transport_list.watch.error import AdbTransportListWatchError
 from adb.transport_list.watch.failure import (
@@ -219,7 +219,7 @@ class _SmartSocketWatchHandle:
         return self.close()
 
 
-class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTemplate):
+class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTemplate):
     """Generation-fenced transport-list watch authority over AOSP track-devices I/O.
 
     Lifecycle authority and resource ownership are linearized by the shared backend
@@ -351,4 +351,4 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
         raise AdbServerConnectionError(f"failed to connect to ADB server: {detail}") from last_error
 
 
-__all__ = ["SmartSocketAdbTransportListWatchBackend"]
+__all__ = ["SmartSocketAdbTransportListWatchLifecycle"]

@@ -11,17 +11,17 @@ from networking import TcpAddress
 from adb.cleanup import BackgroundCleanup, CleanupAttempt, CleanupDelegate
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.backend import (
-    AdbTransportListWatchBackendAcquisition,
+    AdbTransportListWatchAcquisition,
     AdbTransportListWatchBackendAcquireBlocked,
     AdbTransportListWatchBackendAcquireCommitted,
     AdbTransportListWatchBackendAcquireFailed,
     AdbTransportListWatchBackendAcquireSuperseded,
-    AdbTransportListWatchBackendAcquireOutcome,
+    AdbTransportListWatchAcquireOutcome,
     AdbTransportListWatchBackendAcquireExisting,
     AdbTransportListWatchBackendReleaseApplied,
     AdbTransportListWatchBackendReleaseInactive,
     AdbTransportListWatchBackendReleaseGenerationMismatch,
-    AdbTransportListWatchBackendReleaseOutcome,
+    AdbTransportListWatchReleaseOutcome,
 )
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 from adb.transport_list.watch.generation import (
@@ -85,10 +85,10 @@ class _AdbTransportListWatchBackendOwnership:
 
     handle: _AdbTransportListWatchHandle
     stream: AdbTransportListWatchStream
-    acquisition: AdbTransportListWatchBackendAcquisition
+    acquisition: AdbTransportListWatchAcquisition
 
 
-class AdbTransportListWatchBackendTemplate(ABC):
+class AdbTransportListWatchLifecycleTemplate(ABC):
     """Template for one current watch generation and its optional physical handle.
 
     Logical release advances the generation and detaches producer authority immediately. Physical
@@ -178,7 +178,7 @@ class AdbTransportListWatchBackendTemplate(ABC):
     def acquire(
         self,
         endpoint: TcpAddress,
-    ) -> AdbTransportListWatchBackendAcquireOutcome:
+    ) -> AdbTransportListWatchAcquireOutcome:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
 
@@ -243,7 +243,7 @@ class AdbTransportListWatchBackendTemplate(ABC):
             )
 
         try:
-            acquisition = AdbTransportListWatchBackendAcquisition(
+            acquisition = AdbTransportListWatchAcquisition(
                 endpoint=endpoint,
                 generation=pending.generation,
             )
@@ -278,7 +278,7 @@ class AdbTransportListWatchBackendTemplate(ABC):
     def release(
         self,
         expected: AdbTransportListWatchGeneration,
-    ) -> AdbTransportListWatchBackendReleaseOutcome:
+    ) -> AdbTransportListWatchReleaseOutcome:
         if not isinstance(expected, AdbTransportListWatchGeneration):
             raise TypeError("expected must be AdbTransportListWatchGeneration")
 
@@ -326,5 +326,5 @@ class AdbTransportListWatchBackendTemplate(ABC):
 __all__ = [
     "AdbTransportListWatchBackendAcquireError",
     "AdbTransportListWatchBackendAcquireInterruptedError",
-    "AdbTransportListWatchBackendTemplate",
+    "AdbTransportListWatchLifecycleTemplate",
 ]

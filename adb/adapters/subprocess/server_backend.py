@@ -18,7 +18,7 @@ from adb.cleanup import CleanupDelegate
 from adb.server.lifecycle.backend_template import (
     AdbServerBackendAcquireError,
     AdbServerBackendAcquireInterruptedError,
-    AdbServerBackendTemplate,
+    AdbServerLifecycleTemplate,
 )
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
 from eventing import EventPublisher
@@ -406,7 +406,7 @@ class _AdbServerSubprocessFactory:
                 raise _AdbServerSubprocessAcquireInterrupted
 
 
-class SubprocessAdbServerBackend(AdbServerBackendTemplate[_OwnedAdbServerProcess]):
+class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate[_OwnedAdbServerProcess]):
     """Provide ADB server access through an owned foreground subprocess."""
 
     def __init__(
@@ -469,4 +469,4 @@ class SubprocessAdbServerBackend(AdbServerBackendTemplate[_OwnedAdbServerProcess
         return None
 
 
-__all__ = ["SubprocessAdbServerBackend"]
+__all__ = ["SubprocessAdbServerLifecycle"]

@@ -13,7 +13,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireSuperseded,
     AdbServerBackendAcquireExisting,
-    AdbServerBackendAcquireOutcome,
+    AdbServerAcquireOutcome,
 )
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 
@@ -106,7 +106,7 @@ class AdbServerRecovery:
             raise RuntimeError("ADB server recovery has already begun")
         return self._next_attempt(0.0)
 
-    def decide_after(self, result: AdbServerBackendAcquireOutcome) -> AdbServerRecoveryDecision:
+    def decide_after(self, result: AdbServerAcquireOutcome) -> AdbServerRecoveryDecision:
         """Apply retry policy after one selected acquisition attempt completes."""
 
         if self._attempt_number == 0:
@@ -122,7 +122,7 @@ class AdbServerRecovery:
                 AdbServerBackendAcquireSuperseded,
             ),
         ):
-            raise TypeError("result must be AdbServerBackendAcquireOutcome")
+            raise TypeError("result must be AdbServerAcquireOutcome")
 
         if isinstance(
             result,

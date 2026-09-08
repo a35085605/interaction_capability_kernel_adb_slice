@@ -9,19 +9,19 @@ from adb.transport_list.watch.state import (
     AdbTransportListWatchStateView,
 )
 from adb.transport_list.watch.backend import (
-    AdbTransportListWatchBackend,
-    AdbTransportListWatchBackendAcquisition,
+    AdbTransportListWatchLifecycle,
+    AdbTransportListWatchAcquisition,
     AdbTransportListWatchBackendAcquireBlocked,
     AdbTransportListWatchBackendAcquireCommitted,
     AdbTransportListWatchBackendAcquireFailed,
     AdbTransportListWatchBackendAcquireSuperseded,
-    AdbTransportListWatchBackendAcquireOutcome,
+    AdbTransportListWatchAcquireOutcome,
     AdbTransportListWatchBackendAcquireExisting,
-    AdbTransportListWatchBackendFactory,
+    AdbTransportListWatchLifecycleFactory,
     AdbTransportListWatchBackendReleaseApplied,
     AdbTransportListWatchBackendReleaseInactive,
     AdbTransportListWatchBackendReleaseGenerationMismatch,
-    AdbTransportListWatchBackendReleaseOutcome,
+    AdbTransportListWatchReleaseOutcome,
 )
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 from adb.transport_list.watch.error import (
@@ -42,23 +42,23 @@ from adb.transport_list.watch.signal import (
 )
 
 __all__ = [
-    "AdbTransportListWatchBackend",
-    "AdbTransportListWatchBackendAcquisition",
+    "AdbTransportListWatchLifecycle",
+    "AdbTransportListWatchAcquisition",
     "AdbTransportListWatchBackendAcquireBlocked",
     "AdbTransportListWatchBackendAcquireCommitted",
     "AdbTransportListWatchBackendAcquireFailed",
     "AdbTransportListWatchBackendAcquireSuperseded",
-    "AdbTransportListWatchBackendAcquireOutcome",
+    "AdbTransportListWatchAcquireOutcome",
     "AdbTransportListWatchBackendAcquireExisting",
     "AdbTransportListWatchBackendReleaseApplied",
     "AdbTransportListWatchBackendReleaseInactive",
     "AdbTransportListWatchBackendReleaseGenerationMismatch",
-    "AdbTransportListWatchBackendReleaseOutcome",
+    "AdbTransportListWatchReleaseOutcome",
     "AdbTransportListWatchGeneration",
     "AdbTransportListWatchGenerationIssuer",
     "AdbTransportListWatchState",
     "AdbTransportListWatchStateView",
-    "AdbTransportListWatchBackendFactory",
+    "AdbTransportListWatchLifecycleFactory",
     "AdbTransportListWatchCancelledError",
     "AdbTransportListWatchError",
     "AdbTransportListWatchFailed",

@@ -14,17 +14,17 @@ from adb.server.state import AdbServerState
 from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
 from adb.server.lifecycle.events import AdbServerActivated, AdbServerDeactivated
 from adb.server.lifecycle.backend import (
-    AdbServerBackendAcquisition,
+    AdbServerAcquisition,
     AdbServerBackendAcquireBlocked,
     AdbServerBackendAcquireCommitted,
     AdbServerBackendAcquireFailed,
     AdbServerBackendAcquireSuperseded,
-    AdbServerBackendAcquireOutcome,
+    AdbServerAcquireOutcome,
     AdbServerBackendAcquireExisting,
     AdbServerBackendReleaseApplied,
     AdbServerBackendReleaseInactive,
     AdbServerBackendReleaseGenerationMismatch,
-    AdbServerBackendReleaseOutcome,
+    AdbServerReleaseOutcome,
 )
 
 
@@ -67,7 +67,7 @@ HandleT = TypeVar("HandleT")
 @dataclass(frozen=True, slots=True)
 class _AdbServerBackendOwnership(Generic[HandleT]):
     handle: HandleT
-    acquisition: AdbServerBackendAcquisition
+    acquisition: AdbServerAcquisition
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +76,7 @@ class _AdbServerBackendPendingAcquire:
     cancellation: Event
 
 
-class AdbServerBackendTemplate(Generic[HandleT], ABC):
+class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
     """Template for one current server generation and its optional usable endpoint.
 
     Logical release is immediate: matching release advances the generation and detaches the
@@ -172,7 +172,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
     def acquire(
         self,
         endpoint_constraint: AdbServerEndpoint | None = None,
-    ) -> AdbServerBackendAcquireOutcome:
+    ) -> AdbServerAcquireOutcome:
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
             raise TypeError("endpoint_constraint must be TcpAddress or None")
 
@@ -255,7 +255,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
             )
 
         try:
-            acquisition = AdbServerBackendAcquisition(
+            acquisition = AdbServerAcquisition(
                 endpoint=endpoint,
                 generation=pending.generation,
             )
@@ -286,7 +286,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
 
         return AdbServerBackendAcquireSuperseded(pending.generation)
 
-    def release(self, expected: AdbServerGeneration) -> AdbServerBackendReleaseOutcome:
+    def release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
         if not isinstance(expected, AdbServerGeneration):
             raise TypeError("expected must be AdbServerGeneration")
 
@@ -339,5 +339,5 @@ __all__ = [
     "AdbServerBackendAcquireError",
     "AdbServerBackendAcquireInterruptedError",
     "AdbServerBackendEventPublisherBinding",
-    "AdbServerBackendTemplate",
+    "AdbServerLifecycleTemplate",
 ]

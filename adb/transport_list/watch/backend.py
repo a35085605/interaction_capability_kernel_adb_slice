@@ -23,7 +23,7 @@ def _normalize_diagnostic(value: object) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchBackendAcquisition:
+class AdbTransportListWatchAcquisition:
     """One runtime-scoped usable transport-list watch retained by the backend.
 
     This is lifecycle evidence only. The backend retains the physical watch resource; producer
@@ -44,22 +44,22 @@ class AdbTransportListWatchBackendAcquisition:
 class AdbTransportListWatchBackendAcquireCommitted:
     """The requested watch acquisition committed as the backend's current authority."""
 
-    acquisition: AdbTransportListWatchBackendAcquisition
+    acquisition: AdbTransportListWatchAcquisition
 
     def __post_init__(self) -> None:
-        if not isinstance(self.acquisition, AdbTransportListWatchBackendAcquisition):
-            raise TypeError("acquisition must be AdbTransportListWatchBackendAcquisition")
+        if not isinstance(self.acquisition, AdbTransportListWatchAcquisition):
+            raise TypeError("acquisition must be AdbTransportListWatchAcquisition")
 
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchBackendAcquireExisting:
     """The backend already retained a usable watch acquisition; no new one was committed."""
 
-    acquisition: AdbTransportListWatchBackendAcquisition
+    acquisition: AdbTransportListWatchAcquisition
 
     def __post_init__(self) -> None:
-        if not isinstance(self.acquisition, AdbTransportListWatchBackendAcquisition):
-            raise TypeError("acquisition must be AdbTransportListWatchBackendAcquisition")
+        if not isinstance(self.acquisition, AdbTransportListWatchAcquisition):
+            raise TypeError("acquisition must be AdbTransportListWatchAcquisition")
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +94,7 @@ class AdbTransportListWatchBackendAcquireSuperseded:
             raise TypeError("generation must be AdbTransportListWatchGeneration")
 
 
-AdbTransportListWatchBackendAcquireOutcome: TypeAlias = (
+AdbTransportListWatchAcquireOutcome: TypeAlias = (
     AdbTransportListWatchBackendAcquireCommitted
     | AdbTransportListWatchBackendAcquireExisting
     | AdbTransportListWatchBackendAcquireBlocked
@@ -112,16 +112,16 @@ class AdbTransportListWatchBackendReleaseApplied:
     """
 
     generation: AdbTransportListWatchGeneration
-    acquisition: AdbTransportListWatchBackendAcquisition | None = None
+    acquisition: AdbTransportListWatchAcquisition | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.generation, AdbTransportListWatchGeneration):
             raise TypeError("generation must be AdbTransportListWatchGeneration")
         if self.acquisition is not None and not isinstance(
-            self.acquisition, AdbTransportListWatchBackendAcquisition
+            self.acquisition, AdbTransportListWatchAcquisition
         ):
             raise TypeError(
-                "acquisition must be AdbTransportListWatchBackendAcquisition or None"
+                "acquisition must be AdbTransportListWatchAcquisition or None"
             )
         if self.acquisition is not None and self.acquisition.generation != self.generation:
             raise ValueError("released acquisition generation must match generation")
@@ -142,21 +142,21 @@ class AdbTransportListWatchBackendReleaseInactive:
 class AdbTransportListWatchBackendReleaseGenerationMismatch:
     """The requested generation does not match the backend's current watch generation."""
 
-    current: AdbTransportListWatchBackendAcquisition | None
+    current: AdbTransportListWatchAcquisition | None
     current_generation: AdbTransportListWatchGeneration
 
     def __post_init__(self) -> None:
         if self.current is not None and not isinstance(
-            self.current, AdbTransportListWatchBackendAcquisition
+            self.current, AdbTransportListWatchAcquisition
         ):
-            raise TypeError("current must be AdbTransportListWatchBackendAcquisition or None")
+            raise TypeError("current must be AdbTransportListWatchAcquisition or None")
         if not isinstance(self.current_generation, AdbTransportListWatchGeneration):
             raise TypeError("current_generation must be AdbTransportListWatchGeneration")
         if self.current is not None and self.current.generation != self.current_generation:
             raise ValueError("current_generation must match current acquisition generation")
 
 
-AdbTransportListWatchBackendReleaseOutcome: TypeAlias = (
+AdbTransportListWatchReleaseOutcome: TypeAlias = (
     AdbTransportListWatchBackendReleaseApplied
     | AdbTransportListWatchBackendReleaseInactive
     | AdbTransportListWatchBackendReleaseGenerationMismatch
@@ -164,7 +164,7 @@ AdbTransportListWatchBackendReleaseOutcome: TypeAlias = (
 
 
 @runtime_checkable
-class AdbTransportListWatchBackend(AdbTransportListWatchStateView, Protocol):
+class AdbTransportListWatchLifecycle(AdbTransportListWatchStateView, Protocol):
     """Sole authority for one runtime-scoped transport-list watch generation.
 
     ``read()`` returns the canonical atomic state snapshot. Generation fences stale lifecycle
@@ -176,40 +176,40 @@ class AdbTransportListWatchBackend(AdbTransportListWatchStateView, Protocol):
     def acquire(
         self,
         endpoint: TcpAddress,
-    ) -> AdbTransportListWatchBackendAcquireOutcome:
+    ) -> AdbTransportListWatchAcquireOutcome:
         """Attempt to establish one fully usable watch within the current generation."""
         ...
 
     def release(
         self,
         expected: AdbTransportListWatchGeneration,
-    ) -> AdbTransportListWatchBackendReleaseOutcome:
+    ) -> AdbTransportListWatchReleaseOutcome:
         """Release matching authority and advance generation at logical revocation."""
         ...
 
 
-class AdbTransportListWatchBackendFactory(Protocol):
+class AdbTransportListWatchLifecycleFactory(Protocol):
     """Construct one runtime-scoped transport-list watch backend."""
 
     def __call__(
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
-    ) -> AdbTransportListWatchBackend:
+    ) -> AdbTransportListWatchLifecycle:
         ...
 
 
 __all__ = [
-    "AdbTransportListWatchBackend",
-    "AdbTransportListWatchBackendAcquisition",
+    "AdbTransportListWatchLifecycle",
+    "AdbTransportListWatchAcquisition",
     "AdbTransportListWatchBackendAcquireBlocked",
     "AdbTransportListWatchBackendAcquireCommitted",
     "AdbTransportListWatchBackendAcquireExisting",
     "AdbTransportListWatchBackendAcquireFailed",
-    "AdbTransportListWatchBackendAcquireOutcome",
+    "AdbTransportListWatchAcquireOutcome",
     "AdbTransportListWatchBackendAcquireSuperseded",
-    "AdbTransportListWatchBackendFactory",
+    "AdbTransportListWatchLifecycleFactory",
     "AdbTransportListWatchBackendReleaseApplied",
     "AdbTransportListWatchBackendReleaseGenerationMismatch",
     "AdbTransportListWatchBackendReleaseInactive",
-    "AdbTransportListWatchBackendReleaseOutcome",
+    "AdbTransportListWatchReleaseOutcome",
 ]
