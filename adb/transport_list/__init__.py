@@ -1,13 +1,11 @@
 """ADB transport-list values, projection state, readers, queries, and watch authority."""
 
-from adb.transport_list.coordinator import AdbTransportListCoordinator
-from adb.transport_list.identity import (
-    AdbTransportListIdentity,
-    AdbTransportListIdentityIssuer,
+from adb.transport_list.generation import (
+    AdbTransportListGeneration,
+    AdbTransportListGenerationIssuer,
 )
 from adb.transport_list.lookup import AdbTransportLookup, find_transport
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.observation import AdbTransportListObservation
 from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
@@ -32,16 +30,8 @@ from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackendReleaseResult,
 )
 from adb.transport_list.state import (
-    AdbTransportListCoordinatedObservationResult,
-    AdbTransportListInvalidated,
-    AdbTransportListInvalidationResult,
-    AdbTransportListInvalidationStateConflict,
-    AdbTransportListObservationResult,
-    AdbTransportListObservationStateConflict,
-    AdbTransportListObserved,
     AdbTransportListState,
     AdbTransportListStateAuthority,
-    AdbTransportListStateStatus,
     AdbTransportListStateStore,
     AdbTransportListStateView,
     AdbTransportListStateWriter,
@@ -50,21 +40,11 @@ from adb.transport_list.state import (
 __all__ = [
     "AdbTransportLookup",
     "AdbTransportList",
-    "AdbTransportListCoordinator",
-    "AdbTransportListCoordinatedObservationResult",
-    "AdbTransportListIdentity",
-    "AdbTransportListIdentityIssuer",
-    "AdbTransportListInvalidated",
-    "AdbTransportListInvalidationResult",
-    "AdbTransportListInvalidationStateConflict",
-    "AdbTransportListObservation",
-    "AdbTransportListObservationResult",
-    "AdbTransportListObservationStateConflict",
-    "AdbTransportListObserved",
+    "AdbTransportListGeneration",
+    "AdbTransportListGenerationIssuer",
     "AdbTransportListReader",
     "AdbTransportListState",
     "AdbTransportListStateAuthority",
-    "AdbTransportListStateStatus",
     "AdbTransportListStateStore",
     "AdbTransportListStateView",
     "AdbTransportListStateWriter",

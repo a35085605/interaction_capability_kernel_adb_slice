@@ -206,8 +206,8 @@ class _SmartSocketWatchHandle:
                 if error is not None:
                     raise error from exc
                 raise
-            # A release may race after this read and before the yield. Generation fencing at the
-            # coordinator/backend boundary remains authoritative for any resulting observation.
+            # A logical release may race after this read and before the yield. This stream is a
+            # watch data-plane capability only; consumers coordinate any downstream relevance.
             yield transport_list
 
     def cancel(self) -> None:

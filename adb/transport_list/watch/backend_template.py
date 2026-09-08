@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from threading import Event, Lock
 from typing import Protocol
@@ -186,34 +186,6 @@ class AdbTransportListWatchBackendTemplate(ABC):
                 return None
             return ownership.stream
 
-    def _run_if_current(
-        self,
-        expected: AdbTransportListWatchGeneration,
-        operation: Callable[[], None],
-    ) -> bool:
-        """Run one projection mutation while matching usable authority is current.
-
-        This is package-internal coordination plumbing, deliberately excluded from the public
-        backend protocol. The backend lock remains held for ``operation`` so matching release
-        cannot advance the generation until the projection mutation finishes.
-        """
-
-        if not isinstance(expected, AdbTransportListWatchGeneration):
-            raise TypeError("expected must be AdbTransportListWatchGeneration")
-        if not callable(operation):
-            raise TypeError("operation must be callable")
-
-        with self._state_lock:
-            ownership = self._ownership
-            if (
-                expected != self._generation
-                or ownership is None
-                or ownership.acquisition.generation != expected
-            ):
-                return False
-            operation()
-            return True
-
     def acquire(
         self,
         endpoint: TcpAddress,
@@ -322,7 +294,8 @@ class AdbTransportListWatchBackendTemplate(ABC):
                 return AdbTransportListWatchBackendReleaseInactive(expected)
 
             # Logical revocation linearizes here. Once the generation advances, stale producer
-            # commits are fenced by _run_if_current() regardless of when physical I/O unwinds.
+            # the backend generation fences only watch lifecycle work. Downstream consumers
+            # coordinate any cross-capability stale-data policy outside this backend.
             released_generation = self._generation
             self._generation = self._generation_issuer.issue()
 
