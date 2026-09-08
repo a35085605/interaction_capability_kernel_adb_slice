@@ -7,6 +7,14 @@ from numbers import Real
 from random import random
 from typing import TypeAlias
 
+from adb._recovery import (
+    RecoveryAcquired,
+    RecoveryAttempt,
+    RecoveryAttemptOutcome,
+    RecoveryDecisionCore,
+    RecoveryExhausted,
+    RecoveryRetryConfiguration,
+)
 from adb.transport_list.watch.contract import (
     AdbTransportListWatchAcquireBlocked,
     AdbTransportListWatchAcquireCommitted,
@@ -77,11 +85,31 @@ AdbTransportListWatchRecoveryDecision: TypeAlias = (
 )
 
 
+def _configuration_from_policy(
+    policy: AdbTransportListWatchRecoveryPolicy,
+) -> RecoveryRetryConfiguration:
+    return RecoveryRetryConfiguration(
+        retry_initial_seconds=policy.retry_initial_seconds,
+        retry_max_seconds=policy.retry_max_seconds,
+        retry_multiplier=policy.retry_multiplier,
+        retry_jitter_ratio=policy.retry_jitter_ratio,
+        deferred_retry_seconds=policy.deferred_retry_seconds,
+        max_attempts=policy.max_attempts,
+    )
+
+
+def _domain_attempt(attempt: RecoveryAttempt) -> AdbTransportListWatchRecoveryAttempt:
+    return AdbTransportListWatchRecoveryAttempt(
+        attempt.attempt_number,
+        attempt.delay_seconds,
+    )
+
+
 class AdbTransportListWatchRecovery:
     """Decision engine for one bounded transport-list watch recovery cycle.
 
-    Tracks retry budget, backoff, jitter, and exhaustion. The supervisor executes each
-    selected acquisition attempt and feeds its result back into :meth:`decide_after`.
+    Domain acquire outcomes are mapped onto a shared retry decision core. The watch-facing
+    recovery types remain responsible for preserving watch failure causes and public contracts.
     """
 
     def __init__(
@@ -94,25 +122,28 @@ class AdbTransportListWatchRecovery:
             raise TypeError("policy must be AdbTransportListWatchRecoveryPolicy")
         if not callable(_random):
             raise TypeError("_random must be callable")
-        self._policy = policy
-        self._random = _random
-        self._attempt_number = 0
-        self._failed_attempts = 0
+        self._core = RecoveryDecisionCore(
+            _configuration_from_policy(policy),
+            _random=_random,
+            random_source_error=(
+                "transport-list watch recovery random source must return a value in [0, 1]"
+            ),
+        )
 
     @property
     def attempt_number(self) -> int:
-        return self._attempt_number
+        return self._core.attempt_number
 
     @property
     def failed_attempts(self) -> int:
-        return self._failed_attempts
+        return self._core.failed_attempts
 
     def begin(self) -> AdbTransportListWatchRecoveryAttempt:
         """Select the first immediate acquisition attempt for this recovery cycle."""
 
-        if self._attempt_number != 0:
+        if self._core.attempt_number != 0:
             raise RuntimeError("ADB transport-list watch recovery has already begun")
-        return self._next_attempt(0.0)
+        return _domain_attempt(self._core.begin())
 
     def decide_after(
         self,
@@ -120,7 +151,7 @@ class AdbTransportListWatchRecovery:
     ) -> AdbTransportListWatchRecoveryDecision:
         """Apply retry policy after one selected acquisition attempt completes."""
 
-        if self._attempt_number == 0:
+        if self._core.attempt_number == 0:
             raise RuntimeError("ADB transport-list watch recovery has not begun")
 
         if not isinstance(
@@ -139,44 +170,27 @@ class AdbTransportListWatchRecovery:
             result,
             (AdbTransportListWatchAcquireCommitted, AdbTransportListWatchAcquireExisting),
         ):
-            return AdbTransportListWatchRecoveryAcquired()
-
-        if isinstance(
+            outcome = RecoveryAttemptOutcome.ACQUIRED
+        elif isinstance(
             result,
             (AdbTransportListWatchAcquireBlocked, AdbTransportListWatchAcquireSuperseded),
         ):
-            return self._next_attempt(self._policy.deferred_retry_seconds)
+            outcome = RecoveryAttemptOutcome.DEFERRED
+        else:
+            outcome = RecoveryAttemptOutcome.FAILED
 
-        if not isinstance(result, AdbTransportListWatchAcquireFailed):
-            raise TypeError("unsupported budget-consuming transport-list watch acquire outcome")
-
-        self._failed_attempts += 1
-        if (
-            self._policy.max_attempts is not None
-            and self._failed_attempts >= self._policy.max_attempts
-        ):
-            return AdbTransportListWatchRecoveryFailed(self._failed_attempts, result)
-
-        return self._next_attempt(self._retry_delay(self._failed_attempts))
-
-    def _next_attempt(self, delay_seconds: float) -> AdbTransportListWatchRecoveryAttempt:
-        self._attempt_number += 1
-        return AdbTransportListWatchRecoveryAttempt(self._attempt_number, delay_seconds)
-
-    def _retry_delay(self, failed_attempts: int) -> float:
-        base = min(
-            self._policy.retry_initial_seconds
-            * (self._policy.retry_multiplier ** max(0, failed_attempts - 1)),
-            self._policy.retry_max_seconds,
-        )
-        sample = self._random()
-        if not 0.0 <= sample <= 1.0:
-            raise ValueError(
-                "transport-list watch recovery random source must return a value in [0, 1]"
-            )
-        jitter = self._policy.retry_jitter_ratio
-        factor = 1.0 + ((sample * 2.0) - 1.0) * jitter
-        return max(base * factor, 1e-6)
+        decision = self._core.decide_after(outcome)
+        if isinstance(decision, RecoveryAcquired):
+            return AdbTransportListWatchRecoveryAcquired()
+        if isinstance(decision, RecoveryAttempt):
+            return _domain_attempt(decision)
+        if isinstance(decision, RecoveryExhausted):
+            if not isinstance(result, AdbTransportListWatchAcquireFailed):
+                raise TypeError(
+                    "unsupported budget-consuming transport-list watch acquire outcome"
+                )
+            return AdbTransportListWatchRecoveryFailed(decision.failed_attempts, result)
+        raise TypeError("unsupported shared transport-list watch recovery decision")
 
 
 __all__ = [
