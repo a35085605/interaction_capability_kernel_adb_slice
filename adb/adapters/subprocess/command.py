@@ -36,8 +36,6 @@ def run_adb(
     executable: str,
     timeout_seconds: float,
     args: list[str],
-    *,
-    input_text: str | None = None,
 ) -> NativeAttemptResult:
     started_at = datetime.now(timezone.utc)
     run_kwargs: dict[str, object] = {
@@ -46,8 +44,6 @@ def run_adb(
         "check": False,
         "timeout": timeout_seconds,
     }
-    if input_text is not None:
-        run_kwargs["input"] = input_text
     try:
         completed = subprocess.run([executable, *args], **run_kwargs)
     except subprocess.TimeoutExpired as exc:
