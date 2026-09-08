@@ -6,17 +6,10 @@ from adb.adapters.subprocess.command import (
     normalize_executable,
     normalize_timeout,
     run_adb,
-    selector_args,
     server_args,
 )
 from networking import TcpAddress
-from adb.transport.lifecycle.control.port import (
-    AdbDeviceSideReconnect,
-    AdbOfflineTransportsReconnect,
-    AdbTcpConnect,
-    AdbTcpDisconnect,
-    AdbTransportReconnect,
-)
+from adb.transport.lifecycle.control.port import AdbTcpConnect, AdbTcpDisconnect
 from native_attempt import NativeAttemptResult
 
 
@@ -50,38 +43,6 @@ class SubprocessAdbTransportController:
             self.executable,
             self.timeout_seconds,
             [*server_args(self.endpoint), "disconnect", operation.address.value],
-        )
-
-    def reconnect(self, operation: AdbTransportReconnect) -> NativeAttemptResult:
-        if not isinstance(operation, AdbTransportReconnect):
-            raise TypeError("operation must be AdbTransportReconnect")
-        return run_adb(
-            self.executable,
-            self.timeout_seconds,
-            [*server_args(self.endpoint), *selector_args(operation.selector), "reconnect"],
-        )
-
-    def reconnect_device(self, operation: AdbDeviceSideReconnect) -> NativeAttemptResult:
-        if not isinstance(operation, AdbDeviceSideReconnect):
-            raise TypeError("operation must be AdbDeviceSideReconnect")
-        return run_adb(
-            self.executable,
-            self.timeout_seconds,
-            [
-                *server_args(self.endpoint),
-                *selector_args(operation.selector),
-                "reconnect",
-                "device",
-            ],
-        )
-
-    def reconnect_offline(self, operation: AdbOfflineTransportsReconnect) -> NativeAttemptResult:
-        if not isinstance(operation, AdbOfflineTransportsReconnect):
-            raise TypeError("operation must be AdbOfflineTransportsReconnect")
-        return run_adb(
-            self.executable,
-            self.timeout_seconds,
-            [*server_args(self.endpoint), "reconnect", "offline"],
         )
 
 

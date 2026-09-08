@@ -3,13 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import math
 import subprocess
-from typing import TYPE_CHECKING
-
 from networking import TcpAddress
 from native_attempt import NativeAttemptResult, NativeAttemptStatus, NativeCompletionScope
-
-if TYPE_CHECKING:
-    from adb.transport.selection import AdbTransportSelector
 
 
 def normalize_executable(value: object) -> str:
@@ -28,16 +23,6 @@ def normalize_timeout(value: object) -> float:
     if not math.isfinite(normalized) or normalized <= 0:
         raise ValueError("ADB subprocess timeout must be finite and greater than zero")
     return normalized
-
-
-def selector_args(selector: AdbTransportSelector) -> list[str]:
-    from adb.transport.selection import AdbTransportById, AdbTransportBySerial
-
-    if isinstance(selector, AdbTransportBySerial):
-        return ["-s", selector.serial.value]
-    if isinstance(selector, AdbTransportById):
-        return ["-t", str(selector.transport_id.value)]
-    raise TypeError("selector must be an ADB transport selector")
 
 
 def server_args(endpoint: TcpAddress) -> list[str]:
@@ -110,6 +95,5 @@ __all__ = [
     "normalize_executable",
     "normalize_timeout",
     "run_adb",
-    "selector_args",
     "server_args",
 ]
