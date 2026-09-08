@@ -8,8 +8,9 @@ from threading import Event, Lock
 from time import monotonic, sleep
 from typing import Protocol
 
+from adb._resolution import AddressResolutionCancelled, DeadlineResolver
 from adb.adapters.subprocess.command import normalize_executable, normalize_timeout
-from adb.errors import AdbError
+from adb.errors import AdbError, AdbTimeoutError
 from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
@@ -148,7 +149,13 @@ class _OwnedAdbServerProcess:
 
 
 class _AdbServerSubprocessFactory:
-    """Create ready foreground ADB server processes through infrastructure seams."""
+    """Create ready foreground ADB server processes through infrastructure seams.
+
+    DNS waits are bounded and cancellable. Resource-producing factory calls must return in bounded
+    time themselves; they are never detached while they could still bind a listener or spawn a child.
+    Startup uses one deadline across resolution, launch, and readiness, with checks between stages.
+    Injected status readers must also bound their I/O; cancellation is checked between probes.
+    """
 
     def __init__(
         self,
@@ -173,7 +180,7 @@ class _AdbServerSubprocessFactory:
         self.shutdown_timeout_seconds = normalize_timeout(shutdown_timeout_seconds)
         self.probe_interval_seconds = _normalize_probe_interval(probe_interval_seconds)
         self._popen_factory = popen_factory
-        self._resolver = resolver
+        self._resolver = DeadlineResolver(resolver, monotonic_clock)
         self._socket_factory = socket_factory
         self._monotonic = monotonic_clock
         self._sleep = sleeper
@@ -207,7 +214,10 @@ class _AdbServerSubprocessFactory:
                 "a platform-specific server lifecycle implementation is required"
             )
 
-        attachment, resolved_endpoint = self._launch(endpoint)
+        deadline = self._monotonic() + self.startup_timeout_seconds
+        attachment, resolved_endpoint = self._launch(
+            endpoint, deadline=deadline, cancellation=cancellation
+        )
         try:
             if cancellation is not None and cancellation.is_set():
                 raise _AdbServerSubprocessAcquireInterrupted
@@ -215,6 +225,7 @@ class _AdbServerSubprocessFactory:
                 resolved_endpoint,
                 attachment._process,
                 cancellation=cancellation,
+                deadline=deadline,
             )
         except BaseException as startup_error:
             try:
@@ -232,10 +243,16 @@ class _AdbServerSubprocessFactory:
     def _launch(
         self,
         endpoint: AdbServerEndpoint | None,
+        *,
+        deadline: float,
+        cancellation: Event | None,
     ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
-        reservation, resolved_endpoint = self._reserve_listener(endpoint)
+        reservation, resolved_endpoint = self._reserve_listener(
+            endpoint, deadline=deadline, cancellation=cancellation
+        )
         fd = reservation.fileno()
         try:
+            self._check_startup(deadline, cancellation)
             process = self._popen_factory(
                 [
                     self.executable,
@@ -299,12 +316,21 @@ class _AdbServerSubprocessFactory:
     def _reserve_listener(
         self,
         endpoint: AdbServerEndpoint | None,
+        *,
+        deadline: float,
+        cancellation: Event | None,
     ) -> tuple[socket.socket, AdbServerEndpoint]:
         host = endpoint.host if endpoint is not None else "127.0.0.1"
         port = endpoint.port if endpoint is not None else 0
 
         try:
-            addresses = self._resolver(host, port, type=socket.SOCK_STREAM)
+            addresses = self._resolver.resolve(
+                host, port, deadline=deadline, cancellation=cancellation
+            )
+        except AddressResolutionCancelled as exc:
+            raise _AdbServerSubprocessAcquireInterrupted from exc
+        except AdbTimeoutError as exc:
+            raise _AdbServerSubprocessStartError(str(exc)) from exc
         except OSError as exc:
             raise _AdbServerSubprocessStartError(
                 f"failed to resolve ADB server bind address: {exc}"
@@ -316,6 +342,7 @@ class _AdbServerSubprocessFactory:
 
         failures: list[str] = []
         for address in addresses:
+            self._check_startup(deadline, cancellation)
             if len(address) < 5:
                 failures.append("resolver returned malformed address")
                 continue
@@ -359,20 +386,27 @@ class _AdbServerSubprocessFactory:
             f"failed to reserve ADB server listener: {detail}"
         )
 
+    def _check_startup(self, deadline: float, cancellation: Event | None) -> None:
+        if cancellation is not None and cancellation.is_set():
+            raise _AdbServerSubprocessAcquireInterrupted
+        if self._monotonic() >= deadline:
+            raise _AdbServerSubprocessStartError("ADB server startup timed out")
+
     def _wait_until_ready(
         self,
         endpoint: AdbServerEndpoint,
         process: subprocess.Popen[bytes],
         *,
         cancellation: Event | None = None,
+        deadline: float | None = None,
     ) -> None:
         if cancellation is not None and not isinstance(cancellation, Event):
             raise TypeError("cancellation must be threading.Event or None")
-        deadline = self._monotonic() + self.startup_timeout_seconds
+        if deadline is None:
+            deadline = self._monotonic() + self.startup_timeout_seconds
         last_error: AdbError | None = None
         while True:
-            if cancellation is not None and cancellation.is_set():
-                raise _AdbServerSubprocessAcquireInterrupted
+            self._check_startup(deadline, cancellation)
 
             return_code = process.poll()
             if return_code is not None:
@@ -385,8 +419,7 @@ class _AdbServerSubprocessFactory:
             except AdbError as exc:
                 last_error = exc
             else:
-                if cancellation is not None and cancellation.is_set():
-                    raise _AdbServerSubprocessAcquireInterrupted
+                self._check_startup(deadline, cancellation)
                 if process.poll() is not None:
                     raise _AdbServerSubprocessStartError(
                         "ADB server child process exited while startup readiness was being verified"

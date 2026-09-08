@@ -7,6 +7,7 @@ import socket
 from threading import Event, Lock
 from time import monotonic
 
+from adb._resolution import AddressResolutionCancelled, DeadlineResolver
 from adb.aosp.model.track_devices import Devices, parse_devices
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
 from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
@@ -210,7 +211,7 @@ class AospTrackDevicesStreamFactory:
         if not callable(_resolver) or not callable(_socket_factory) or not callable(_clock):
             raise TypeError("resolver, socket factory, and clock must be callable")
         self.startup_timeout_seconds = _normalize_startup_timeout(startup_timeout_seconds)
-        self._resolver = _resolver
+        self._resolver = DeadlineResolver(_resolver, _clock)
         self._socket_factory = _socket_factory
         self._clock = _clock
 
@@ -255,8 +256,14 @@ class AospTrackDevicesStreamFactory:
         endpoint: TcpAddress,
         cancellation: Event | None,
     ) -> tuple[socket.socket, float]:
+        # DNS, connect candidates, handshake, and the initial frame share one deadline.
+        deadline = self._clock() + self.startup_timeout_seconds
         try:
-            addresses = self._resolver(endpoint.host, endpoint.port, type=socket.SOCK_STREAM)
+            addresses = self._resolver.resolve(
+                endpoint.host, endpoint.port, deadline=deadline, cancellation=cancellation
+            )
+        except AddressResolutionCancelled as exc:
+            raise AospTrackDevicesOpenCancelled from exc
         except OSError as exc:
             raise AdbServerConnectionError(
                 f"failed to resolve ADB server address {endpoint.host!r}: {exc}"
@@ -264,9 +271,6 @@ class AospTrackDevicesStreamFactory:
 
         _check_cancelled(cancellation)
 
-        # Synchronous DNS resolution above is not bounded by the socket timeout. Connect
-        # candidates, handshake, and the first complete frame share one deadline.
-        deadline = self._clock() + self.startup_timeout_seconds
         last_error: OSError | None = None
         for family, socktype, proto, _, sockaddr in addresses:
             _check_cancelled(cancellation)

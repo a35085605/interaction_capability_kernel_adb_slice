@@ -13,6 +13,7 @@ from adb._lifecycle import (
     LifecycleAcquireBusy,
     LifecycleAcquireOwned,
     LifecycleAuthorityCore,
+    LifecycleDiagnostics,
     LifecyclePendingAcquire,
     LifecycleReleaseGenerationMismatch,
     LifecycleReleaseInactive,
@@ -129,20 +130,44 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             endpoint=None if ownership is None else ownership.acquisition.endpoint,
         )
 
+    def read_diagnostics(self) -> LifecycleDiagnostics[AdbTransportListWatchGeneration]:
+        """Sample draining work, handoff failures, and cleanup worker health without resources."""
+
+        state = self._core.snapshot()
+        cleanup = self._cleanup.snapshot()
+        return LifecycleDiagnostics(
+            state.generation, state.pending, state.retirement_errors,
+            cleanup.pending_count, cleanup.worker_scheduled, cleanup.start_error,
+        )
+
     @abstractmethod
     def _obtain_handle(
         self,
         endpoint: TcpAddress,
         cancellation: Event,
     ) -> _AdbTransportListWatchHandle:
-        """Obtain a fully usable lifecycle-owned physical watch handle."""
+        """Obtain a fully usable lifecycle-owned physical watch handle.
+
+        Bound blocking operations and honor cancellation between them. Revocation deliberately
+        retains pending until this method returns, preventing overlapping physical acquisitions.
+        """
 
     def _schedule_cleanup(
         self,
         handle: _AdbTransportListWatchHandle,
         endpoint: TcpAddress,
     ) -> None:
-        self._cleanup.submit(handle, handle.close, conflict_key=endpoint)
+        self._register_cleanup(handle, endpoint)
+        self._cleanup.start_pending()
+
+    def _register_cleanup(
+        self,
+        handle: _AdbTransportListWatchHandle,
+        endpoint: TcpAddress,
+    ) -> None:
+        """Locked, idempotent handoff; physical cleanup starts after the core unlocks."""
+
+        self._cleanup.register(handle, lambda: handle.close(), conflict_key=endpoint)
 
     def _schedule_resource_cleanup(
         self,
@@ -185,6 +210,13 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
 
+        self._cleanup.start_pending()
+        try:
+            return self._acquire(endpoint)
+        finally:
+            self._cleanup.start_pending()
+
+    def _acquire(self, endpoint: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
         start = self._core.begin_acquire(
             is_blocked=lambda: self._cleanup.has_conflict(endpoint)
         )
@@ -197,11 +229,14 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             )
         if isinstance(start, LifecycleAcquireBusy):
             return AdbTransportListWatchAcquireBlocked(
-                "ADB transport-list watch lifecycle is busy with another acquisition"
+                "ADB transport-list watch lifecycle is draining a revoked acquisition"
+                if start.draining
+                else "ADB transport-list watch lifecycle is busy with another acquisition"
             )
         if isinstance(start, LifecycleAcquireBlocked):
             return AdbTransportListWatchAcquireBlocked(
-                "ADB transport-list watch lifecycle is cleaning a resource for this endpoint"
+                start.diagnostic
+                or "ADB transport-list watch lifecycle is cleaning a resource for this endpoint"
             )
         if not isinstance(start, LifecyclePendingAcquire):
             raise TypeError("unsupported shared lifecycle acquire start")
@@ -227,8 +262,10 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             raise
 
         if self._cleanup.has_conflict(endpoint):
-            revoked = self._core.abandon_acquire(pending)
-            self._schedule_cleanup(handle, endpoint)
+            revoked = self._core.abandon_acquire(
+                pending,
+                before_clear=lambda: self._register_cleanup(handle, endpoint),
+            )
             if revoked:
                 return AdbTransportListWatchAcquireSuperseded(pending.generation)
             return AdbTransportListWatchAcquireBlocked(
@@ -249,14 +286,14 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         except BaseException:
             self._core.abandon_acquire(
                 pending,
-                before_clear=lambda: self._schedule_cleanup(handle, endpoint),
+                before_clear=lambda: self._register_cleanup(handle, endpoint),
             )
             raise
 
         committed = self._core.commit_acquire(
             pending,
             ownership,
-            on_superseded=lambda: self._schedule_cleanup(handle, endpoint),
+            on_superseded=lambda: self._register_cleanup(handle, endpoint),
         )
         if committed:
             return AdbTransportListWatchAcquireCommitted(acquisition)
@@ -270,8 +307,17 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if not isinstance(expected, AdbTransportListWatchGeneration):
             raise TypeError("expected must be AdbTransportListWatchGeneration")
 
+        self._cleanup.start_pending()
+        try:
+            return self._release(expected)
+        finally:
+            self._cleanup.start_pending()
+
+    def _release(
+        self, expected: AdbTransportListWatchGeneration
+    ) -> AdbTransportListWatchReleaseOutcome:
         def retire_ownership(ownership: _Ownership) -> None:
-            self._schedule_cleanup(ownership.handle, ownership.acquisition.endpoint)
+            self._register_cleanup(ownership.handle, ownership.acquisition.endpoint)
 
         release = self._core.release(
             expected,

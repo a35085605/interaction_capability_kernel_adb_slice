@@ -129,7 +129,10 @@ class AdbTransportListWatchReleaseApplied:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchReleaseInactive:
-    """The matching current generation has no watch authority to release."""
+    """The matching current generation has no watch authority to release.
+
+    An acquisition from a revoked generation may still be draining and block a new acquire.
+    """
 
     generation: AdbTransportListWatchGeneration
 

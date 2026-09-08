@@ -118,7 +118,10 @@ class AdbServerReleaseApplied:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerReleaseInactive:
-    """The matching current generation has no authority to release."""
+    """The matching current generation has no authority to release.
+
+    An acquisition from a revoked generation may still be draining and block a new acquire.
+    """
 
     generation: AdbServerGeneration
 
