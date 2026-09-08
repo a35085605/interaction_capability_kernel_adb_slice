@@ -1,6 +1,6 @@
 """Host-side ADB server, transport-list, transport, and protocol capabilities."""
 
-from adb.cleanup import CleanupDelegate
+from adb.cleanup import CleanupCompletion, CleanupHandoff
 from adb.epoch import Epoch, EpochIssuer, EpochSequence
 from adb.errors import (
     AdbError,
@@ -14,7 +14,6 @@ from adb.errors import (
     AdbTransportSelectionError,
     AdbTransportUnavailableError,
 )
-from adb.runtime import AdbManagedRuntime, AdbRuntimeAuthorityStateStore
 from adb.server import (
     AdbServerActivated,
     AdbServerLifecycle,
@@ -68,7 +67,8 @@ from adb.transport import (
 )
 
 __all__ = [
-    "CleanupDelegate",
+    "CleanupCompletion",
+    "CleanupHandoff",
     "AdbDeviceSerial",
     "AdbTransportListGeneration",
     "AdbTransportListGenerationIssuer",
@@ -87,8 +87,6 @@ __all__ = [
     "EpochIssuer",
     "EpochSequence",
     "AdbError",
-    "AdbManagedRuntime",
-    "AdbRuntimeAuthorityStateStore",
     "AdbProtocolError",
     "AdbRemoteCommandError",
     "AdbServerConnectionError",

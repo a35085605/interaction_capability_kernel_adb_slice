@@ -12,7 +12,7 @@ from adb.aosp.io.track_devices import (
     AospTrackDevicesStream,
     AospTrackDevicesStreamFactory,
 )
-from adb.cleanup import CleanupDelegate
+from adb.cleanup import CleanupHandoff
 from adb.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
@@ -112,7 +112,7 @@ class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTe
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
         *,
-        cleanup_delegate: CleanupDelegate,
+        cleanup_handoff: CleanupHandoff,
         startup_timeout_seconds: float = 5.0,
         _resolver: Callable[..., list[tuple]] = socket.getaddrinfo,
         _socket_factory: Callable[..., socket.socket] = socket.socket,
@@ -122,7 +122,7 @@ class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTe
             raise TypeError("generation_issuer must be AdbTransportListWatchGenerationIssuer")
         if not callable(_resolver) or not callable(_socket_factory) or not callable(_clock):
             raise TypeError("resolver, socket factory, and clock must be callable")
-        super().__init__(generation_issuer, cleanup_delegate=cleanup_delegate)
+        super().__init__(generation_issuer, cleanup_handoff=cleanup_handoff)
         self._stream_factory = AospTrackDevicesStreamFactory(
             startup_timeout_seconds,
             _resolver=_resolver,
@@ -143,7 +143,7 @@ class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTe
                 lambda handle: self._schedule_cleanup(handle, endpoint),
             )
         except AospTrackDevicesOpenCleanupRequired as exc:
-            self._schedule_delegated_cleanup(exc.cleanup_resource, endpoint)
+            self._schedule_unresolved_cleanup(exc.cleanup_resource, endpoint)
             primary_error = exc.primary_error
             if isinstance(primary_error, AospTrackDevicesOpenCancelled):
                 raise AdbTransportListWatchAcquireInterruptedError() from exc

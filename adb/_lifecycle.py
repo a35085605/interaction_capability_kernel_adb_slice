@@ -69,8 +69,8 @@ class LifecycleDiagnostics(Generic[GenerationT]):
     pending: LifecyclePendingSnapshot[GenerationT] | None
     retirement_errors: tuple[str, ...]
     cleanup_pending_count: int
-    cleanup_worker_scheduled: bool
-    cleanup_start_error: str | None
+    cleanup_handoff_accepted_count: int
+    cleanup_handoff_errors: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)

@@ -20,7 +20,7 @@ from adb._lifecycle import (
     LifecycleReleaseOwned,
     LifecycleReleasePending,
 )
-from adb.cleanup import BackgroundCleanup, CleanupAttempt, CleanupDelegate
+from adb.cleanup import CleanupCoordinator, CleanupHandoff, LocalCleanupAttempt
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.contract import (
     AdbTransportListWatchAcquisition,
@@ -65,7 +65,7 @@ class _AdbTransportListWatchHandle(AdbTransportListWatchStream, Protocol):
     """Lifecycle-private physical watch handle with lifecycle cleanup operations."""
 
     def close(self) -> object | None:
-        """Attempt regular cleanup; return unresolved delegate resource or ``None``."""
+        """Attempt local cleanup; return unresolved resource or ``None``."""
         ...
 
 
@@ -98,27 +98,27 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     """Template for one current watch generation and its optional physical handle.
 
     Logical release advances the generation and detaches producer authority immediately. Physical
-    cleanup is tracked independently in the background. A retired handle remains cleanup debt until
-    regular cleanup succeeds or the configured ``CleanupDelegate`` eventually returns ``True``.
-    Cleanup debt blocks a new acquisition only when it belongs to the same server endpoint.
+    cleanup is tracked independently as cleanup debt. Each retired handle gets one backend-local
+    cleanup attempt before unresolved responsibility is offered to ``CleanupHandoff``. Accepted debt
+    remains pending until completion is reported, and blocks only its own server endpoint.
     """
 
     def __init__(
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
         *,
-        cleanup_delegate: CleanupDelegate,
+        cleanup_handoff: CleanupHandoff,
     ) -> None:
         if not isinstance(generation_issuer, AdbTransportListWatchGenerationIssuer):
             raise TypeError(
                 "generation_issuer must be AdbTransportListWatchGenerationIssuer"
             )
-        if not isinstance(cleanup_delegate, CleanupDelegate):
-            raise TypeError("cleanup_delegate must satisfy CleanupDelegate")
+        if not isinstance(cleanup_handoff, CleanupHandoff):
+            raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
         self._core: LifecycleAuthorityCore[
             AdbTransportListWatchGeneration, _Ownership
         ] = LifecycleAuthorityCore(generation_issuer.issue)
-        self._cleanup = BackgroundCleanup(cleanup_delegate)
+        self._cleanup = CleanupCoordinator(cleanup_handoff)
 
     def read(self) -> AdbTransportListWatchState:
         """Atomically return current generation and usable endpoint metadata, if any."""
@@ -131,13 +131,13 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         )
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbTransportListWatchGeneration]:
-        """Sample draining work, handoff failures, and cleanup worker health without resources."""
+        """Sample draining work and cleanup handoff state without exposing resources."""
 
         state = self._core.snapshot()
         cleanup = self._cleanup.snapshot()
         return LifecycleDiagnostics(
             state.generation, state.pending, state.retirement_errors,
-            cleanup.pending_count, cleanup.worker_scheduled, cleanup.start_error,
+            cleanup.pending_count, cleanup.handoff_accepted_count, cleanup.handoff_errors,
         )
 
     @abstractmethod
@@ -158,31 +158,33 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         endpoint: TcpAddress,
     ) -> None:
         self._register_cleanup(handle, endpoint)
-        self._cleanup.start_pending()
+        self._cleanup.process_pending()
 
     def _register_cleanup(
         self,
         handle: _AdbTransportListWatchHandle,
         endpoint: TcpAddress,
     ) -> None:
-        """Locked, idempotent handoff; physical cleanup starts after the core unlocks."""
+        """Locked, idempotent debt registration; cleanup processing starts after core unlock."""
 
         self._cleanup.register(handle, lambda: handle.close(), conflict_key=endpoint)
 
     def _schedule_resource_cleanup(
         self,
         resource: object,
-        regular_cleanup: CleanupAttempt,
+        local_cleanup: LocalCleanupAttempt,
         endpoint: TcpAddress,
     ) -> None:
-        self._cleanup.submit(resource, regular_cleanup, conflict_key=endpoint)
+        self._cleanup.register(resource, local_cleanup, conflict_key=endpoint)
+        self._cleanup.process_pending()
 
-    def _schedule_delegated_cleanup(
+    def _schedule_unresolved_cleanup(
         self,
         resource: object,
         endpoint: TcpAddress,
     ) -> None:
-        self._cleanup.submit_delegated(resource, conflict_key=endpoint)
+        self._cleanup.register_handoff(resource, conflict_key=endpoint)
+        self._cleanup.process_pending()
 
     def _borrow_stream(
         self,
@@ -210,11 +212,11 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
 
-        self._cleanup.start_pending()
+        self._cleanup.process_pending()
         try:
             return self._acquire(endpoint)
         finally:
-            self._cleanup.start_pending()
+            self._cleanup.process_pending()
 
     def _acquire(self, endpoint: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
         start = self._core.begin_acquire(
@@ -307,11 +309,10 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if not isinstance(expected, AdbTransportListWatchGeneration):
             raise TypeError("expected must be AdbTransportListWatchGeneration")
 
-        self._cleanup.start_pending()
         try:
             return self._release(expected)
         finally:
-            self._cleanup.start_pending()
+            self._cleanup.process_pending()
 
     def _release(
         self, expected: AdbTransportListWatchGeneration

@@ -19,7 +19,7 @@ from adb._lifecycle import (
     LifecycleReleaseOwned,
     LifecycleReleasePending,
 )
-from adb.cleanup import BackgroundCleanup, CleanupDelegate
+from adb.cleanup import CleanupCoordinator, CleanupHandoff
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerState
@@ -86,29 +86,29 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
     """Template for one current server generation and its optional usable endpoint.
 
     Logical release is immediate: matching release advances the generation and detaches the
-    current handle before returning. Physical cleanup is tracked independently in a background
-    flow. A retired resource remains cleanup debt until regular cleanup succeeds or the configured
-    ``CleanupDelegate`` eventually returns ``True``. Cleanup debt blocks a new acquisition only
-    when both refer to the same server endpoint.
+    current handle before returning. Physical cleanup is tracked independently as cleanup debt.
+    Each retired resource gets one backend-local cleanup attempt before unresolved responsibility is
+    offered to ``CleanupHandoff``. Accepted debt remains pending until completion is reported.
+    Cleanup debt blocks a new acquisition only when both refer to the same server endpoint.
     """
 
     def __init__(
         self,
         generation_issuer: AdbServerGenerationIssuer,
         *,
-        cleanup_delegate: CleanupDelegate,
+        cleanup_handoff: CleanupHandoff,
         publisher: EventPublisher | None = None,
     ) -> None:
         if not isinstance(generation_issuer, AdbServerGenerationIssuer):
             raise TypeError("generation_issuer must be AdbServerGenerationIssuer")
-        if not isinstance(cleanup_delegate, CleanupDelegate):
-            raise TypeError("cleanup_delegate must satisfy CleanupDelegate")
+        if not isinstance(cleanup_handoff, CleanupHandoff):
+            raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
         if publisher is not None and not isinstance(publisher, EventPublisher):
             raise TypeError("publisher must satisfy EventPublisher or be None")
         self._core: LifecycleAuthorityCore[
             AdbServerGeneration, _Ownership[HandleT]
         ] = LifecycleAuthorityCore(generation_issuer.issue)
-        self._cleanup = BackgroundCleanup(cleanup_delegate)
+        self._cleanup = CleanupCoordinator(cleanup_handoff)
         self._publisher = publisher
 
     def read(self) -> AdbServerState:
@@ -134,13 +134,13 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             raise RuntimeError("cannot bind an event publisher during a server acquisition")
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbServerGeneration]:
-        """Sample draining work, handoff failures, and cleanup worker health without resources."""
+        """Sample draining work and cleanup handoff state without exposing resources."""
 
         state = self._core.snapshot()
         cleanup = self._cleanup.snapshot()
         return LifecycleDiagnostics(
             state.generation, state.pending, state.retirement_errors,
-            cleanup.pending_count, cleanup.worker_scheduled, cleanup.start_error,
+            cleanup.pending_count, cleanup.handoff_accepted_count, cleanup.handoff_errors,
         )
 
     @abstractmethod
@@ -156,8 +156,8 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         """
 
     @abstractmethod
-    def _cleanup_handle(self, handle: HandleT) -> object | None:
-        """Attempt regular cleanup; return unresolved delegate resource or ``None`` on success."""
+    def _attempt_local_cleanup(self, handle: HandleT) -> object | None:
+        """Attempt bounded local cleanup; return unresolved resource or ``None`` on success."""
 
     def _schedule_cleanup(
         self,
@@ -165,27 +165,28 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         endpoint: AdbServerEndpoint,
     ) -> None:
         self._register_cleanup(handle, endpoint)
-        self._cleanup.start_pending()
+        self._cleanup.process_pending()
 
     def _register_cleanup(
         self,
         handle: HandleT,
         endpoint: AdbServerEndpoint,
     ) -> None:
-        """Locked, idempotent handoff; physical cleanup starts after the core unlocks."""
+        """Locked, idempotent debt registration; cleanup processing starts after core unlock."""
 
         self._cleanup.register(
             handle,
-            lambda: self._cleanup_handle(handle),
+            lambda: self._attempt_local_cleanup(handle),
             conflict_key=endpoint,
         )
 
-    def _schedule_delegated_cleanup(
+    def _schedule_unresolved_cleanup(
         self,
         resource: object,
         endpoint: AdbServerEndpoint | None,
     ) -> None:
-        self._cleanup.submit_delegated(resource, conflict_key=endpoint)
+        self._cleanup.register_handoff(resource, conflict_key=endpoint)
+        self._cleanup.process_pending()
 
     @staticmethod
     def _publish_notification(
@@ -206,11 +207,11 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
             raise TypeError("endpoint_constraint must be TcpAddress or None")
 
-        self._cleanup.start_pending()
+        self._cleanup.process_pending()
         try:
             return self._acquire(endpoint_constraint)
         finally:
-            self._cleanup.start_pending()
+            self._cleanup.process_pending()
 
     def _acquire(
         self, endpoint_constraint: AdbServerEndpoint | None
@@ -325,11 +326,10 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         if not isinstance(expected, AdbServerGeneration):
             raise TypeError("expected must be AdbServerGeneration")
 
-        self._cleanup.start_pending()
         try:
             return self._release(expected)
         finally:
-            self._cleanup.start_pending()
+            self._cleanup.process_pending()
 
     def _release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
         publisher: EventPublisher | None = None
@@ -344,9 +344,9 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             on_owned_release=retire_ownership,
             inconsistent_state_error="ADB server lifecycle authority state is inconsistent",
         )
-        # Notification delivery may block or re-enter the lifecycle. Accepted cleanup debt must
-        # already have a worker scheduled, independently of whether publication ever returns.
-        self._cleanup.start_pending()
+        # Notification delivery may block or re-enter the lifecycle. Registered cleanup debt must
+        # be advanced before publication so local cleanup or handoff is not coupled to notification.
+        self._cleanup.process_pending()
         if isinstance(release, LifecycleReleaseGenerationMismatch):
             ownership = release.ownership
             return AdbServerReleaseGenerationMismatch(

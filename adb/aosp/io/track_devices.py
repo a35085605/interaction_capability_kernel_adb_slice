@@ -30,7 +30,7 @@ class AospTrackDevicesOpenCancelled(RuntimeError):
 
 
 class AospTrackDevicesOpenCleanupRequired(RuntimeError):
-    """Opening failed and regular cleanup left one unresolved I/O resource."""
+    """Opening failed and local cleanup left one unresolved I/O resource."""
 
     def __init__(self, primary_error: BaseException, cleanup_resource: object) -> None:
         self.primary_error = primary_error
@@ -182,7 +182,7 @@ class AospTrackDevicesStream:
         """Interrupt the stream and attempt physical socket cleanup.
 
         Return ``None`` when cleanup is confirmed. If socket ``close()`` cannot be confirmed,
-        return the unresolved socket so an owning infrastructure layer can delegate cleanup.
+        return the unresolved socket so an owning infrastructure layer can accept cleanup.
         """
 
         with self._lock:

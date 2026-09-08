@@ -15,7 +15,7 @@ from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGenerationIssuer
-from adb.cleanup import CleanupDelegate
+from adb.cleanup import CleanupHandoff
 from adb.server.lifecycle.template import (
     AdbServerAcquireError,
     AdbServerAcquireInterruptedError,
@@ -49,7 +49,7 @@ class _AdbServerSubprocessTerminationUnconfirmed(RuntimeError):
 
 
 class _AdbServerSubprocessCleanupRequired(_AdbServerSubprocessStartError):
-    """Startup failed with resources whose regular cleanup was not confirmed."""
+    """Startup failed with resources whose local cleanup was not confirmed."""
 
     def __init__(
         self,
@@ -141,7 +141,7 @@ class _OwnedAdbServerProcess:
             self._closed = True
 
     def unresolved_cleanup_resource(self) -> subprocess.Popen[bytes]:
-        """Return the underlying process after regular cleanup could not be confirmed."""
+        """Return the underlying process after local cleanup could not be confirmed."""
 
         with self._lock:
             self._closed = True
@@ -446,7 +446,7 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate[_OwnedAdbServerPro
         self,
         generation_issuer: AdbServerGenerationIssuer,
         *,
-        cleanup_delegate: CleanupDelegate,
+        cleanup_handoff: CleanupHandoff,
         executable: str = "adb",
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
@@ -466,7 +466,7 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate[_OwnedAdbServerPro
 
         self._factory = _factory
         super().__init__(
-            generation_issuer, cleanup_delegate=cleanup_delegate, publisher=publisher
+            generation_issuer, cleanup_handoff=cleanup_handoff, publisher=publisher
         )
 
     def _obtain_handle(
@@ -478,7 +478,7 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate[_OwnedAdbServerPro
             return self._factory.create(endpoint_constraint, cancellation)
         except _AdbServerSubprocessCleanupRequired as exc:
             for resource in exc.cleanup_resources:
-                self._schedule_delegated_cleanup(resource, exc.cleanup_endpoint)
+                self._schedule_unresolved_cleanup(resource, exc.cleanup_endpoint)
             if isinstance(exc.primary_error, _AdbServerSubprocessAcquireInterrupted):
                 raise AdbServerAcquireInterruptedError() from exc
             if isinstance(exc.primary_error, _AdbServerSubprocessStartError):
@@ -491,7 +491,7 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate[_OwnedAdbServerPro
         except _AdbServerSubprocessStartError as exc:
             raise AdbServerAcquireError(str(exc)) from exc
 
-    def _cleanup_handle(
+    def _attempt_local_cleanup(
         self,
         handle: _OwnedAdbServerProcess,
     ) -> object | None:

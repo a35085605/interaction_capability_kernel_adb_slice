@@ -2,23 +2,32 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from math import isfinite
-from threading import Event, Lock, Thread
+from threading import Lock
 from typing import Protocol, runtime_checkable
 
 
-CleanupAttempt = Callable[[], object | None]
+LocalCleanupAttempt = Callable[[], object | None]
 
 
 @runtime_checkable
-class CleanupDelegate(Protocol):
-    """Fallback cleanup port for resources whose regular cleanup was not confirmed."""
+class CleanupCompletion(Protocol):
+    """Completion callback for one accepted cleanup handoff."""
 
-    def cleanup(self, resource: object) -> bool:
-        """Return ``True`` only after cleanup of ``resource`` is confirmed.
+    def succeed(self) -> None:
+        """Confirm cleanup completion; duplicate notifications have no effect."""
+        ...
 
-        ``False`` leaves the resource pending and the background cleanup flow will retry.
-        Raising has the same retry semantics as returning ``False``.
+
+@runtime_checkable
+class CleanupHandoff(Protocol):
+    """Port for transferring unresolved cleanup responsibility to an outer layer."""
+
+    def accept(self, resource: object, completion: CleanupCompletion) -> None:
+        """Accept responsibility for cleanup without implying completion.
+
+        Normal return confirms only that the task was accepted. The implementation must not require
+        cleanup to complete before returning. Repeated calls for the same ``completion`` must be
+        safe because an unconfirmed acceptance may be retried.
         """
         ...
 
@@ -26,61 +35,68 @@ class CleanupDelegate(Protocol):
 @dataclass(slots=True)
 class _CleanupEntry:
     resource: object
-    regular_cleanup: CleanupAttempt | None
+    local_cleanup: LocalCleanupAttempt | None
     conflict_key: object | None
-    delegate_resource: object | None = None
+    handoff_resource: object | None = None
+    local_attempted: bool = False
+    handoff_accepted: bool = False
+    processing: bool = False
+    handoff_error: str | None = None
+    completion: _CleanupCompletion | None = None
+
+
+class _CleanupCompletion:
+    __slots__ = ("_owner", "_entry")
+
+    def __init__(self, owner: CleanupCoordinator, entry: _CleanupEntry) -> None:
+        self._owner = owner
+        self._entry = entry
+
+    def succeed(self) -> None:
+        self._owner._complete(self._entry)
 
 
 @dataclass(frozen=True, slots=True)
 class CleanupSnapshot:
     pending_count: int
-    worker_scheduled: bool
-    start_error: str | None
+    handoff_accepted_count: int
+    handoff_errors: tuple[str, ...]
 
 
-class BackgroundCleanup:
-    """Track retired resources until regular or delegated cleanup is confirmed.
+class CleanupCoordinator:
+    """Track cleanup debt and coordinate one local attempt with an outer handoff.
 
-    Each resource is attempted once with backend-provided regular cleanup. When that attempt
-    cannot confirm cleanup, the unresolved resource is repeatedly passed to ``CleanupDelegate``
-    until it returns ``True``. ``conflict_key`` is backend metadata used only to decide whether a
-    new acquisition conflicts with a still-pending resource; unrelated cleanup debt does not block
-    acquisition.
+    Registration is lock-only bookkeeping and is safe to invoke from lifecycle transition callbacks.
+    ``process_pending`` must run after the lifecycle lock is released. It attempts each registered
+    local cleanup at most once; unresolved resources are offered to ``CleanupHandoff``. A normal
+    ``accept`` return transfers processing responsibility but does not retire cleanup debt. Debt is
+    removed only when local cleanup is confirmed or the corresponding ``CleanupCompletion`` reports
+    success.
 
-    ``register`` only records debt and is suitable for a lifecycle's locked handoff. Call
-    ``start_pending`` after releasing that lock. ``submit`` combines those steps for callers
-    outside lifecycle transitions. Worker startup failures never undo accepted debt; they are
-    exposed by ``snapshot`` and retried by the next ``start_pending`` or submission, including
-    duplicate submissions. Lifecycles also retry on their next acquire/release operation.
+    The coordinator owns no worker, timer, retry policy, or external cleanup execution. A failed or
+    unconfirmed handoff remains pending and may be offered again by a later ``process_pending`` call.
+    Cleanup debt blocks a new acquisition only when its ``conflict_key`` matches that acquisition.
     """
 
-    def __init__(
-        self,
-        delegate: CleanupDelegate,
-        *,
-        retry_interval_seconds: float = 0.05,
-    ) -> None:
-        if not isinstance(delegate, CleanupDelegate):
-            raise TypeError("delegate must satisfy CleanupDelegate")
-        if isinstance(retry_interval_seconds, bool) or not isinstance(
-            retry_interval_seconds, (int, float)
-        ):
-            raise TypeError("retry_interval_seconds must be a number")
-        retry_interval = float(retry_interval_seconds)
-        if not isfinite(retry_interval) or retry_interval <= 0:
-            raise ValueError("retry_interval_seconds must be finite and greater than zero")
-
-        self._delegate = delegate
-        self._retry_interval_seconds = retry_interval
+    def __init__(self, handoff: CleanupHandoff) -> None:
+        if not isinstance(handoff, CleanupHandoff):
+            raise TypeError("handoff must satisfy CleanupHandoff")
+        self._handoff = handoff
         self._lock = Lock()
-        self._wake = Event()
         self._entries: dict[int, _CleanupEntry] = {}
-        self._worker: Thread | None = None
-        self._start_error: str | None = None
 
     def snapshot(self) -> CleanupSnapshot:
         with self._lock:
-            return CleanupSnapshot(len(self._entries), self._worker is not None, self._start_error)
+            entries = tuple(self._entries.values())
+            return CleanupSnapshot(
+                pending_count=len(entries),
+                handoff_accepted_count=sum(entry.handoff_accepted for entry in entries),
+                handoff_errors=tuple(
+                    entry.handoff_error
+                    for entry in entries
+                    if entry.handoff_error is not None
+                ),
+            )
 
     @property
     def has_pending(self) -> bool:
@@ -88,10 +104,10 @@ class BackgroundCleanup:
             return bool(self._entries)
 
     def has_conflict(self, conflict_key: object | None) -> bool:
-        """Return whether cleanup debt exists for this acquisition conflict key.
+        """Return whether incomplete cleanup debt exists for this conflict key.
 
         ``None`` means the backend could not identify an exclusivity domain for that resource;
-        unknown cleanup debt is still tracked and retried but does not globally block acquisition.
+        unknown cleanup debt remains tracked but does not globally block acquisition.
         """
 
         if conflict_key is None:
@@ -99,66 +115,44 @@ class BackgroundCleanup:
         with self._lock:
             return any(entry.conflict_key == conflict_key for entry in self._entries.values())
 
-    def submit(
-        self,
-        resource: object,
-        regular_cleanup: CleanupAttempt,
-        *,
-        conflict_key: object | None = None,
-    ) -> None:
-        """Accept debt and attempt to start its worker, outside any lifecycle state lock."""
-
-        self.register(resource, regular_cleanup, conflict_key=conflict_key)
-        self.start_pending()
-
     def register(
         self,
         resource: object,
-        regular_cleanup: CleanupAttempt,
+        local_cleanup: LocalCleanupAttempt,
         *,
         conflict_key: object | None = None,
     ) -> None:
-        """Idempotently record debt without starting a thread or running resource cleanup."""
+        """Idempotently record cleanup debt without executing cleanup or handoff work."""
 
         if resource is None:
             raise TypeError("resource cannot be None")
-        if not callable(regular_cleanup):
-            raise TypeError("regular_cleanup must be callable")
+        if not callable(local_cleanup):
+            raise TypeError("local_cleanup must be callable")
         self._register(
             _CleanupEntry(
                 resource=resource,
-                regular_cleanup=regular_cleanup,
+                local_cleanup=local_cleanup,
                 conflict_key=conflict_key,
             )
         )
 
-    def submit_delegated(
+    def register_handoff(
         self,
         resource: object,
         *,
         conflict_key: object | None = None,
     ) -> None:
-        """Accept delegated debt and attempt to start its worker outside lifecycle locks."""
-
-        self.register_delegated(resource, conflict_key=conflict_key)
-        self.start_pending()
-
-    def register_delegated(
-        self,
-        resource: object,
-        *,
-        conflict_key: object | None = None,
-    ) -> None:
-        """Record delegated debt without starting the worker."""
+        """Record already-unresolved cleanup debt that should be handed off directly."""
 
         if resource is None:
             raise TypeError("resource cannot be None")
         self._register(
             _CleanupEntry(
                 resource=resource,
-                regular_cleanup=None,
+                local_cleanup=None,
                 conflict_key=conflict_key,
-                delegate_resource=resource,
+                handoff_resource=resource,
+                local_attempted=True,
             )
         )
 
@@ -167,87 +161,85 @@ class BackgroundCleanup:
             key = id(entry.resource)
             if key in self._entries:
                 return
+            entry.completion = _CleanupCompletion(self, entry)
             self._entries[key] = entry
-            self._wake.set()
 
-    def start_pending(self) -> bool:
-        """Ensure a worker is scheduled; return False if startup failed.
-
-        A failed start retains all debt and allows a later call to retry. This method does not
-        wait for physical cleanup and must be called outside lifecycle state locks. If no later
-        operations occur, the recorded failure remains available for a supervisor to inspect and
-        retry; no additional retry thread is required when the system cannot start threads.
-        """
+    def process_pending(self) -> None:
+        """Advance currently pending cleanup tasks once, without scheduling background work."""
 
         with self._lock:
-            if not self._entries or self._worker is not None:
-                return True
-            self._start_error = None
-            try:
-                worker_to_start = Thread(
-                    target=self._run,
-                    name="adb-background-cleanup",
-                    daemon=True,
-                )
-            except Exception as exc:
-                self._start_error = str(exc)
-                return False
-            self._worker = worker_to_start
+            entries = tuple(self._entries.values())
+        for entry in entries:
+            self._process(entry)
+
+    def _process(self, entry: _CleanupEntry) -> None:
+        with self._lock:
+            if self._entries.get(id(entry.resource)) is not entry:
+                return
+            if entry.processing or entry.handoff_accepted:
+                return
+            entry.processing = True
+            attempt_local = not entry.local_attempted
+            if attempt_local:
+                entry.local_attempted = True
+            local_cleanup = entry.local_cleanup
+            handoff_resource = entry.handoff_resource
+            completion = entry.completion
 
         try:
-            worker_to_start.start()
-        except BaseException as exc:
-            with self._lock:
-                # Do not retire a worker that actually started (e.g. an interrupted start()),
-                # or overwrite a successor that was scheduled after this worker completed.
-                if self._worker is worker_to_start and worker_to_start.ident is None:
-                    self._worker = None
-                    self._start_error = str(exc)
-            if not isinstance(exc, Exception):
-                raise
-            return False
-        return True
-
-    def _run(self) -> None:
-        while True:
-            with self._lock:
-                entries = tuple(self._entries.items())
-                if not entries:
-                    self._worker = None
-                    self._wake.clear()
-                    return
-                self._wake.clear()
-
-            for key, entry in entries:
-                if self._attempt(entry):
-                    with self._lock:
-                        if self._entries.get(key) is entry:
-                            del self._entries[key]
-
-            with self._lock:
-                if not self._entries:
-                    continue
-            self._wake.wait(self._retry_interval_seconds)
-
-    def _attempt(self, entry: _CleanupEntry) -> bool:
-        if entry.delegate_resource is None:
-            regular_cleanup = entry.regular_cleanup
-            if regular_cleanup is None:
-                entry.delegate_resource = entry.resource
-            else:
+            if attempt_local:
+                assert local_cleanup is not None
                 try:
-                    unresolved = regular_cleanup()
+                    handoff_resource = local_cleanup()
                 except BaseException:
-                    unresolved = entry.resource
-                if unresolved is None:
-                    return True
-                entry.delegate_resource = unresolved
-                entry.regular_cleanup = None
+                    handoff_resource = entry.resource
+                if handoff_resource is None:
+                    self._complete(entry)
+                    return
+                with self._lock:
+                    if self._entries.get(id(entry.resource)) is not entry:
+                        return
+                    entry.handoff_resource = handoff_resource
+                    entry.local_cleanup = None
 
-        try:
-            return self._delegate.cleanup(entry.delegate_resource) is True
-        except BaseException:
-            return False
+            if handoff_resource is None:
+                with self._lock:
+                    if self._entries.get(id(entry.resource)) is not entry:
+                        return
+                    handoff_resource = entry.handoff_resource
+            if handoff_resource is None or completion is None:
+                raise RuntimeError("cleanup coordinator state is inconsistent")
+
+            try:
+                self._handoff.accept(handoff_resource, completion)
+            except BaseException as exc:
+                with self._lock:
+                    if self._entries.get(id(entry.resource)) is entry:
+                        entry.handoff_error = str(exc).strip() or type(exc).__name__
+                return
+
+            with self._lock:
+                if self._entries.get(id(entry.resource)) is entry:
+                    entry.handoff_accepted = True
+                    entry.handoff_error = None
+        finally:
+            with self._lock:
+                if self._entries.get(id(entry.resource)) is entry:
+                    entry.processing = False
+
+    def _complete(self, entry: _CleanupEntry) -> None:
+        """Idempotently retire one task only if this exact entry is still current."""
+
+        with self._lock:
+            key = id(entry.resource)
+            if self._entries.get(key) is entry:
+                del self._entries[key]
 
 
-__all__ = ["BackgroundCleanup", "CleanupAttempt", "CleanupDelegate", "CleanupSnapshot"]
+__all__ = [
+    "CleanupCompletion",
+    "CleanupCoordinator",
+    "CleanupHandoff",
+    "CleanupSnapshot",
+    "LocalCleanupAttempt",
+]
