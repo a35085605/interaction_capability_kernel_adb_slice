@@ -284,7 +284,6 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
             raise TypeError("expected must be AdbServerGeneration")
 
         publisher: EventPublisher | None = None
-        released_acquisition: AdbServerBackendAcquired | None = None
         with self._state_lock:
             if expected != self._generation:
                 ownership = self._ownership
@@ -324,10 +323,7 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
                 AdbServerDeactivated(released_generation),
             )
 
-        return AdbServerBackendReleased(
-            generation=released_generation,
-            acquisition=released_acquisition,
-        )
+        return AdbServerBackendReleased(acquisition=released_acquisition)
 
 
 __all__ = [
