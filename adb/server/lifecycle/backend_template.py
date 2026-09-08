@@ -20,6 +20,7 @@ from adb.server.lifecycle.backend import (
     AdbServerBackendAcquireRevoked,
     AdbServerBackendAcquireResult,
     AdbServerBackendAlreadyAcquired,
+    AdbServerBackendPendingAcquireReleased,
     AdbServerBackendReleased,
     AdbServerBackendReleaseInactive,
     AdbServerBackendReleaseMismatch,
@@ -305,7 +306,9 @@ class AdbServerBackendTemplate(Generic[HandleT], ABC):
 
             if current_pending is not None:
                 current_pending.cancellation.set()
-                return AdbServerBackendReleased(generation=released_generation)
+                return AdbServerBackendPendingAcquireReleased(
+                    generation=released_generation
+                )
 
             if ownership is None:
                 raise RuntimeError("ADB server backend authority state is inconsistent")

@@ -158,7 +158,7 @@ class AdbServerSupervisor:
                 return
 
         release = self._backend.release(event.server)
-        if not isinstance(release, AdbServerBackendReleased) or release.acquisition is None:
+        if not isinstance(release, AdbServerBackendReleased):
             return
 
         self._request_recovery()

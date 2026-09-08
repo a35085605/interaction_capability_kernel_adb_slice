@@ -84,24 +84,30 @@ AdbServerBackendAcquireResult: TypeAlias = (
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerBackendReleased:
-    """Evidence that matching backend authority was released.
-
-    ``generation`` is the generation that was revoked. ``acquisition`` is present only when
-    that generation had committed a usable endpoint before release.
-    """
+class AdbServerBackendPendingAcquireReleased:
+    """Evidence that matching pending acquisition authority was released."""
 
     generation: AdbServerGeneration
-    acquisition: AdbServerBackendAcquired | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
-        if self.acquisition is not None:
-            if not isinstance(self.acquisition, AdbServerBackendAcquired):
-                raise TypeError("acquisition must be AdbServerBackendAcquired or None")
-            if self.acquisition.generation != self.generation:
-                raise ValueError("acquisition generation must match released generation")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbServerBackendReleased:
+    """Evidence that a matching committed server acquisition was released."""
+
+    generation: AdbServerGeneration
+    acquisition: AdbServerBackendAcquired
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.generation, AdbServerGeneration):
+            raise TypeError("generation must be AdbServerGeneration")
+        if not isinstance(self.acquisition, AdbServerBackendAcquired):
+            raise TypeError("acquisition must be AdbServerBackendAcquired")
+        if self.acquisition.generation != self.generation:
+            raise ValueError("acquisition generation must match released generation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +139,7 @@ class AdbServerBackendReleaseMismatch:
 
 AdbServerBackendReleaseResult: TypeAlias = (
     AdbServerBackendReleased
+    | AdbServerBackendPendingAcquireReleased
     | AdbServerBackendReleaseInactive
     | AdbServerBackendReleaseMismatch
 )
@@ -182,6 +189,7 @@ __all__ = [
     "AdbServerBackendAlreadyAcquired",
     "AdbServerBackendAcquireResult",
     "AdbServerBackendFactory",
+    "AdbServerBackendPendingAcquireReleased",
     "AdbServerBackendReleased",
     "AdbServerBackendReleaseInactive",
     "AdbServerBackendReleaseMismatch",

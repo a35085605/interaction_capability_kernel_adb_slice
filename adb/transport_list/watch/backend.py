@@ -93,26 +93,30 @@ AdbTransportListWatchBackendAcquireResult: TypeAlias = (
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchBackendReleased:
-    """Evidence that matching watch authority was logically released.
-
-    ``generation`` is the revoked generation. ``acquisition`` is present only when
-    that generation had committed a usable watch before release.
-    """
+class AdbTransportListWatchBackendPendingAcquireReleased:
+    """Evidence that matching pending watch acquisition authority was released."""
 
     generation: AdbTransportListWatchGeneration
-    acquisition: AdbTransportListWatchBackendAcquired | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.generation, AdbTransportListWatchGeneration):
             raise TypeError("generation must be AdbTransportListWatchGeneration")
-        if self.acquisition is not None:
-            if not isinstance(self.acquisition, AdbTransportListWatchBackendAcquired):
-                raise TypeError(
-                    "acquisition must be AdbTransportListWatchBackendAcquired or None"
-                )
-            if self.acquisition.generation != self.generation:
-                raise ValueError("acquisition generation must match released generation")
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListWatchBackendReleased:
+    """Evidence that a matching committed watch acquisition was logically released."""
+
+    generation: AdbTransportListWatchGeneration
+    acquisition: AdbTransportListWatchBackendAcquired
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.generation, AdbTransportListWatchGeneration):
+            raise TypeError("generation must be AdbTransportListWatchGeneration")
+        if not isinstance(self.acquisition, AdbTransportListWatchBackendAcquired):
+            raise TypeError("acquisition must be AdbTransportListWatchBackendAcquired")
+        if self.acquisition.generation != self.generation:
+            raise ValueError("acquisition generation must match released generation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +150,7 @@ class AdbTransportListWatchBackendReleaseMismatch:
 
 AdbTransportListWatchBackendReleaseResult: TypeAlias = (
     AdbTransportListWatchBackendReleased
+    | AdbTransportListWatchBackendPendingAcquireReleased
     | AdbTransportListWatchBackendReleaseInactive
     | AdbTransportListWatchBackendReleaseMismatch
 )
@@ -195,6 +200,7 @@ __all__ = [
     "AdbTransportListWatchBackendAcquireResult",
     "AdbTransportListWatchBackendAlreadyAcquired",
     "AdbTransportListWatchBackendFactory",
+    "AdbTransportListWatchBackendPendingAcquireReleased",
     "AdbTransportListWatchBackendReleased",
     "AdbTransportListWatchBackendReleaseInactive",
     "AdbTransportListWatchBackendReleaseMismatch",

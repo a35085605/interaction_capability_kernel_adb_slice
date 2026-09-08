@@ -17,6 +17,7 @@ from adb.transport_list.watch.backend import (
     AdbTransportListWatchBackendAcquireRevoked,
     AdbTransportListWatchBackendAcquireResult,
     AdbTransportListWatchBackendAlreadyAcquired,
+    AdbTransportListWatchBackendPendingAcquireReleased,
     AdbTransportListWatchBackendReleased,
     AdbTransportListWatchBackendReleaseInactive,
     AdbTransportListWatchBackendReleaseMismatch,
@@ -300,7 +301,9 @@ class AdbTransportListWatchBackendTemplate(ABC):
 
             if current_pending is not None:
                 current_pending.cancellation.set()
-                return AdbTransportListWatchBackendReleased(released_generation)
+                return AdbTransportListWatchBackendPendingAcquireReleased(
+                    generation=released_generation
+                )
 
             if ownership is None:
                 raise RuntimeError(
