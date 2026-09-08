@@ -14,7 +14,7 @@ from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGenerationIssuer
-from adb.cleanup import CleanupHandoff, CleanupHandoffError, CleanupSink
+from adb.cleanup import CleanupDelegate
 from adb.server.lifecycle.backend_template import (
     AdbServerBackendAcquireError,
     AdbServerBackendAcquireInterruptedError,
@@ -47,56 +47,36 @@ class _AdbServerSubprocessTerminationUnconfirmed(RuntimeError):
     """Failure to confirm termination of an owned child process."""
 
 
-class _AdbServerSubprocessCleanupHandoffRequired(_AdbServerSubprocessStartError):
-    """Startup failed after unresolved physical cleanup ownership was transferred."""
+class _AdbServerSubprocessCleanupRequired(_AdbServerSubprocessStartError):
+    """Startup failed with resources whose regular cleanup was not confirmed."""
 
     def __init__(
         self,
         primary_error: BaseException,
-        cleanup_handoff: CleanupHandoff,
+        cleanup_resources: tuple[object, ...],
+        cleanup_endpoint: AdbServerEndpoint | None,
     ) -> None:
         if not isinstance(primary_error, BaseException):
             raise TypeError("primary_error must be BaseException")
-        if not isinstance(cleanup_handoff, CleanupHandoff):
-            raise TypeError("cleanup_handoff must be CleanupHandoff")
+        if not cleanup_resources or any(resource is None for resource in cleanup_resources):
+            raise ValueError("cleanup_resources must contain non-None resources")
+        if cleanup_endpoint is not None and not isinstance(cleanup_endpoint, TcpAddress):
+            raise TypeError("cleanup_endpoint must be TcpAddress or None")
         self.primary_error = primary_error
-        self.cleanup_handoff = cleanup_handoff
-        super().__init__(
-            f"{primary_error}; subprocess startup cleanup requires ownership handoff"
-        )
+        self.cleanup_resources = cleanup_resources
+        self.cleanup_endpoint = cleanup_endpoint
+        super().__init__(f"{primary_error}; subprocess startup cleanup remains pending")
 
 
-def _cleanup_diagnostic(prefix: str, exc: BaseException) -> str:
-    detail = str(exc).strip() or type(exc).__name__
-    return f"{prefix}: {detail}"
+def _merge_cleanup_resources(*resources: object | None) -> tuple[object, ...]:
+    return tuple(resource for resource in resources if resource is not None)
 
 
-def _merge_cleanup_handoffs(
-    *handoffs: CleanupHandoff | None,
-) -> CleanupHandoff | None:
-    present = tuple(handoff for handoff in handoffs if handoff is not None)
-    if not present:
-        return None
-    if len(present) == 1:
-        return present[0]
-    return CleanupHandoff(
-        resource=tuple(handoff.resource for handoff in present),
-        diagnostic="; ".join(handoff.diagnostic for handoff in present),
-    )
-
-
-def _close_socket_or_handoff(
-    sock: socket.socket,
-    *,
-    context: str,
-) -> CleanupHandoff | None:
+def _close_socket_or_cleanup_resource(sock: socket.socket) -> object | None:
     try:
         sock.close()
-    except BaseException as exc:
-        return CleanupHandoff(
-            resource=sock,
-            diagnostic=_cleanup_diagnostic(context, exc),
-        )
+    except BaseException:
+        return sock
     return None
 
 
@@ -159,8 +139,8 @@ class _OwnedAdbServerProcess:
                 )
             self._closed = True
 
-    def relinquish_cleanup_handle(self) -> subprocess.Popen[bytes]:
-        """Transfer unresolved child-process cleanup ownership out of this adapter handle."""
+    def unresolved_cleanup_resource(self) -> subprocess.Popen[bytes]:
+        """Return the underlying process after regular cleanup could not be confirmed."""
 
         with self._lock:
             self._closed = True
@@ -240,16 +220,11 @@ class _AdbServerSubprocessFactory:
             try:
                 attachment.close()
             except BaseException as cleanup_error:
-                handoff = CleanupHandoff(
-                    resource=attachment.relinquish_cleanup_handle(),
-                    diagnostic=_cleanup_diagnostic(
-                        "ADB server child startup cleanup was not confirmed",
-                        cleanup_error,
-                    ),
-                )
-                raise _AdbServerSubprocessCleanupHandoffRequired(
+                cleanup_resource = attachment.unresolved_cleanup_resource()
+                raise _AdbServerSubprocessCleanupRequired(
                     startup_error,
-                    handoff,
+                    (cleanup_resource,),
+                    resolved_endpoint,
                 ) from cleanup_error
             raise
         return attachment, resolved_endpoint
@@ -283,14 +258,12 @@ class _AdbServerSubprocessFactory:
                 if isinstance(exc, OSError)
                 else exc
             )
-            handoff = _close_socket_or_handoff(
-                reservation,
-                context="failed to close ADB server listener reservation after launch failure",
-            )
-            if handoff is not None:
-                raise _AdbServerSubprocessCleanupHandoffRequired(
+            cleanup_resource = _close_socket_or_cleanup_resource(reservation)
+            if cleanup_resource is not None:
+                raise _AdbServerSubprocessCleanupRequired(
                     primary,
-                    handoff,
+                    (cleanup_resource,),
+                    resolved_endpoint,
                 ) from exc
             if primary is exc:
                 raise
@@ -300,31 +273,28 @@ class _AdbServerSubprocessFactory:
             process,
             self.shutdown_timeout_seconds,
         )
-        reservation_handoff = _close_socket_or_handoff(
-            reservation,
-            context="failed to close parent ADB server listener reservation after child launch",
-        )
-        if reservation_handoff is None:
+        reservation_cleanup_resource = _close_socket_or_cleanup_resource(reservation)
+        if reservation_cleanup_resource is None:
             return attachment, resolved_endpoint
 
         primary = _AdbServerSubprocessStartError(
             "ADB server child launched but parent listener reservation cleanup was not confirmed"
         )
-        process_handoff: CleanupHandoff | None = None
+        process_cleanup_resource: object | None = None
         try:
             attachment.close()
         except BaseException as cleanup_error:
-            process_handoff = CleanupHandoff(
-                resource=attachment.relinquish_cleanup_handle(),
-                diagnostic=_cleanup_diagnostic(
-                    "ADB server child cleanup after listener-reservation failure was not confirmed",
-                    cleanup_error,
-                ),
-            )
-        combined = _merge_cleanup_handoffs(reservation_handoff, process_handoff)
-        if combined is None:
-            raise RuntimeError("cleanup handoff state is inconsistent")
-        raise _AdbServerSubprocessCleanupHandoffRequired(primary, combined)
+            process_cleanup_resource = attachment.unresolved_cleanup_resource()
+        cleanup_resources = _merge_cleanup_resources(
+            reservation_cleanup_resource, process_cleanup_resource
+        )
+        if not cleanup_resources:
+            raise RuntimeError("cleanup resource state is inconsistent")
+        raise _AdbServerSubprocessCleanupRequired(
+            primary,
+            cleanup_resources,
+            resolved_endpoint,
+        )
 
     def _reserve_listener(
         self,
@@ -366,10 +336,7 @@ class _AdbServerSubprocessFactory:
                 resolved = TcpAddress(str(bound[0]), int(bound[1]))
                 return listener, resolved
             except BaseException as exc:
-                handoff = _close_socket_or_handoff(
-                    listener,
-                    context="failed to close rejected ADB server listener candidate",
-                )
+                cleanup_resource = _close_socket_or_cleanup_resource(listener)
                 primary: BaseException = (
                     _AdbServerSubprocessStartError(
                         f"failed to prepare ADB server listener candidate: {exc}"
@@ -377,10 +344,11 @@ class _AdbServerSubprocessFactory:
                     if isinstance(exc, OSError)
                     else exc
                 )
-                if handoff is not None:
-                    raise _AdbServerSubprocessCleanupHandoffRequired(
+                if cleanup_resource is not None:
+                    raise _AdbServerSubprocessCleanupRequired(
                         primary,
-                        handoff,
+                        (cleanup_resource,),
+                        endpoint,
                     ) from exc
                 if primary is exc:
                     raise
@@ -445,7 +413,7 @@ class SubprocessAdbServerBackend(AdbServerBackendTemplate[_OwnedAdbServerProcess
         self,
         generation_issuer: AdbServerGenerationIssuer,
         *,
-        cleanup_sink: CleanupSink,
+        cleanup_delegate: CleanupDelegate,
         executable: str = "adb",
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
@@ -464,7 +432,9 @@ class SubprocessAdbServerBackend(AdbServerBackendTemplate[_OwnedAdbServerProcess
             raise TypeError("_factory must provide create()")
 
         self._factory = _factory
-        super().__init__(generation_issuer, cleanup_sink=cleanup_sink, publisher=publisher)
+        super().__init__(
+            generation_issuer, cleanup_delegate=cleanup_delegate, publisher=publisher
+        )
 
     def _obtain_handle(
         self,
@@ -473,39 +443,29 @@ class SubprocessAdbServerBackend(AdbServerBackendTemplate[_OwnedAdbServerProcess
     ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
         try:
             return self._factory.create(endpoint_constraint, cancellation)
-        except _AdbServerSubprocessCleanupHandoffRequired as exc:
+        except _AdbServerSubprocessCleanupRequired as exc:
+            for resource in exc.cleanup_resources:
+                self._schedule_delegated_cleanup(resource, exc.cleanup_endpoint)
             if isinstance(exc.primary_error, _AdbServerSubprocessAcquireInterrupted):
-                raise AdbServerBackendAcquireInterruptedError(
-                    exc.cleanup_handoff
-                ) from exc
+                raise AdbServerBackendAcquireInterruptedError() from exc
             if isinstance(exc.primary_error, _AdbServerSubprocessStartError):
                 raise AdbServerBackendAcquireError(
-                    str(exc.primary_error).strip() or type(exc.primary_error).__name__,
-                    cleanup_handoff=exc.cleanup_handoff,
+                    str(exc.primary_error).strip() or type(exc.primary_error).__name__
                 ) from exc
-            raise CleanupHandoffError(
-                exc.primary_error,
-                exc.cleanup_handoff,
-            ) from exc
+            raise exc.primary_error from exc
         except _AdbServerSubprocessAcquireInterrupted as exc:
             raise AdbServerBackendAcquireInterruptedError() from exc
         except _AdbServerSubprocessStartError as exc:
             raise AdbServerBackendAcquireError(str(exc)) from exc
 
-    def _release_handle(
+    def _cleanup_handle(
         self,
         handle: _OwnedAdbServerProcess,
-    ) -> CleanupHandoff | None:
+    ) -> object | None:
         try:
             handle.close()
-        except BaseException as exc:
-            return CleanupHandoff(
-                resource=handle.relinquish_cleanup_handle(),
-                diagnostic=_cleanup_diagnostic(
-                    "ADB server child-process cleanup was not confirmed",
-                    exc,
-                ),
-            )
+        except BaseException:
+            return handle.unresolved_cleanup_resource()
         return None
 
 

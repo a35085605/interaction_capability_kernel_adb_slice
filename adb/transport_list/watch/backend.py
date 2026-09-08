@@ -53,7 +53,7 @@ class AdbTransportListWatchBackendAlreadyAcquired:
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchBackendAcquireDeferred:
-    """Acquisition could not begin because another backend operation is active."""
+    """Acquisition could not begin because acquisition or cleanup work is active."""
 
     diagnostic: str
 

@@ -18,7 +18,7 @@ from adb.errors import (
     AdbTimeoutError,
 )
 from adb.transport_list.model import AdbTransportList
-from adb.cleanup import CleanupHandoff, CleanupHandoffError, CleanupSink
+from adb.cleanup import CleanupDelegate
 from adb.transport_list.watch.backend_template import (
     AdbTransportListWatchBackendAcquireError,
     AdbTransportListWatchBackendAcquireInterruptedError,
@@ -63,34 +63,18 @@ def _watch_error(exc: BaseException) -> AdbTransportListWatchError | None:
     return None if failure is None else AdbTransportListWatchError(failure)
 
 
-def _cleanup_diagnostic(prefix: str, exc: BaseException) -> str:
-    detail = str(exc).strip() or type(exc).__name__
-    return f"{prefix}: {detail}"
-
-
-def _close_after_failure(
-    sock: socket.socket,
-    *,
-    context: str,
-) -> CleanupHandoff | None:
+def _cleanup_socket(sock: socket.socket) -> object | None:
     try:
         sock.close()
-    except BaseException as exc:
-        return CleanupHandoff(
-            resource=sock,
-            diagnostic=_cleanup_diagnostic(context, exc),
-        )
+    except BaseException:
+        return sock
     return None
 
 
-class _WatchStartupCleanupHandoffRequired(RuntimeError):
-    def __init__(
-        self,
-        primary_error: BaseException,
-        cleanup_handoff: CleanupHandoff,
-    ) -> None:
+class _WatchStartupCleanupRequired(RuntimeError):
+    def __init__(self, primary_error: BaseException, cleanup_resource: object) -> None:
         self.primary_error = primary_error
-        self.cleanup_handoff = cleanup_handoff
+        self.cleanup_resource = cleanup_resource
         super().__init__(str(primary_error).strip() or type(primary_error).__name__)
 
 
@@ -153,11 +137,7 @@ def _handshake(sock: socket.socket, deadline: float, clock: _Clock) -> None:
 
 
 class _SmartSocketWatchHandle:
-    """Backend-owned smart-socket physical handle and transport-list data source.
-
-    Producers only receive a narrow stream view exposing ``initial``/``updates()``. ``cancel()``
-    and ``close()`` remain backend-only physical lifecycle operations.
-    """
+    """Backend-owned smart-socket physical handle and transport-list data source."""
 
     __slots__ = (
         "_socket",
@@ -165,7 +145,7 @@ class _SmartSocketWatchHandle:
         "_lock",
         "_cancelled",
         "_closed",
-        "_cleanup_handoff",
+        "_schedule_cleanup",
         "_updates",
     )
 
@@ -173,15 +153,18 @@ class _SmartSocketWatchHandle:
         self,
         sock: socket.socket,
         initial: AdbTransportList,
+        schedule_cleanup: Callable[["_SmartSocketWatchHandle"], None],
     ) -> None:
         if not isinstance(initial, AdbTransportList):
             raise TypeError("initial must be AdbTransportList")
+        if not callable(schedule_cleanup):
+            raise TypeError("schedule_cleanup must be callable")
         self._socket = sock
         self._initial = initial
         self._lock = Lock()
         self._cancelled = False
         self._closed = False
-        self._cleanup_handoff: CleanupHandoff | None = None
+        self._schedule_cleanup = schedule_cleanup
         self._updates = self._iterate_updates()
 
     @property
@@ -204,8 +187,6 @@ class _SmartSocketWatchHandle:
         try:
             sock.shutdown(socket.SHUT_RDWR)
         except OSError:
-            # Shutdown is only used to wake a blocking reader. A disconnected/already-closed
-            # socket is already in an acceptable retirement state.
             pass
 
     def _iterate_updates(self) -> Iterator[AdbTransportList]:
@@ -215,76 +196,27 @@ class _SmartSocketWatchHandle:
             except BaseException as exc:
                 if self._is_cancelled():
                     return
-                # Data-plane failure may opportunistically close the socket, but it cannot
-                # transfer cleanup ownership. Any unresolved cleanup is retained atomically in
-                # this handle until lifecycle release takes it.
-                self._close_or_handoff(cancelled=False, retain_handoff=True)
+                self._schedule_cleanup(self)
                 error = _watch_error(exc)
                 if error is not None:
                     raise error from exc
                 raise
-            # A logical release may race after this read and before the yield. This stream is a
-            # watch data-plane capability only; consumers coordinate any downstream relevance.
             yield transport_list
 
-    def _close_or_handoff(
-        self,
-        *,
-        cancelled: bool,
-        retain_handoff: bool = False,
-    ) -> CleanupHandoff | None:
-        # Keep close/retention/transfer under one handle lock so a data-plane failure cannot
-        # retain unresolved cleanup after a concurrent lifecycle release has already returned.
+    def close(self) -> object | None:
         with self._lock:
-            if cancelled:
-                self._cancelled = True
-
-            retained = self._cleanup_handoff
-            if retained is not None:
-                if retain_handoff:
-                    return None
-                self._cleanup_handoff = None
-                return retained
-
+            self._cancelled = True
             if self._closed:
                 return None
-            self._closed = True
             sock = self._socket
+            self._shutdown(sock)
+            unresolved = _cleanup_socket(sock)
+            if unresolved is None:
+                self._closed = True
+            return unresolved
 
-            shutdown_error: BaseException | None = None
-            try:
-                self._shutdown(sock)
-            except BaseException as exc:
-                shutdown_error = exc
-            try:
-                sock.close()
-            except BaseException as exc:
-                diagnostic = _cleanup_diagnostic(
-                    "ADB track-devices socket cleanup was not confirmed",
-                    exc,
-                )
-                if shutdown_error is not None:
-                    diagnostic += "; " + _cleanup_diagnostic(
-                        "socket shutdown also failed",
-                        shutdown_error,
-                    )
-                handoff = CleanupHandoff(
-                    resource=sock,
-                    diagnostic=diagnostic,
-                )
-                if retain_handoff:
-                    self._cleanup_handoff = handoff
-                    return None
-                return handoff
-            return None
-
-    def cancel(self) -> CleanupHandoff | None:
-        """Request non-blocking retirement or transfer unresolved socket cleanup."""
-
-        return self._close_or_handoff(cancelled=True)
-
-    def close(self) -> CleanupHandoff | None:
-        return self._close_or_handoff(cancelled=True)
+    def cancel(self) -> object | None:
+        return self.close()
 
 
 class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTemplate):
@@ -304,7 +236,7 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
         *,
-        cleanup_sink: CleanupSink,
+        cleanup_delegate: CleanupDelegate,
         startup_timeout_seconds: float = 5.0,
         _resolver: Callable[..., list[tuple]] = socket.getaddrinfo,
         _socket_factory: Callable[..., socket.socket] = socket.socket,
@@ -314,7 +246,7 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
             raise TypeError("generation_issuer must be AdbTransportListWatchGenerationIssuer")
         if not callable(_resolver) or not callable(_socket_factory) or not callable(_clock):
             raise TypeError("resolver, socket factory, and clock must be callable")
-        super().__init__(generation_issuer, cleanup_sink=cleanup_sink)
+        super().__init__(generation_issuer, cleanup_delegate=cleanup_delegate)
         self._startup_timeout_seconds = _normalize_timeout(startup_timeout_seconds)
         self._resolver = _resolver
         self._socket_factory = _socket_factory
@@ -346,52 +278,35 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
             sock.settimeout(None)
             self._check_cancelled(cancellation)
 
-            return _SmartSocketWatchHandle(sock, initial)
-        except _WatchStartupCleanupHandoffRequired as exc:
+            return _SmartSocketWatchHandle(
+                sock,
+                initial,
+                lambda handle: self._schedule_cleanup(handle, endpoint),
+            )
+        except _WatchStartupCleanupRequired as exc:
+            self._schedule_delegated_cleanup(exc.cleanup_resource, endpoint)
             failure = _watch_failure(exc.primary_error)
             if failure is not None:
-                raise AdbTransportListWatchBackendAcquireError(
-                    failure,
-                    cleanup_handoff=exc.cleanup_handoff,
-                ) from exc
-            raise CleanupHandoffError(
-                exc.primary_error,
-                exc.cleanup_handoff,
-            ) from exc
-        except AdbTransportListWatchBackendAcquireInterruptedError as exc:
-            cleanup_handoff = (
-                None
-                if sock is None
-                else _close_after_failure(
+                raise AdbTransportListWatchBackendAcquireError(failure) from exc
+            raise exc.primary_error from exc
+        except AdbTransportListWatchBackendAcquireInterruptedError:
+            if sock is not None:
+                self._schedule_resource_cleanup(
                     sock,
-                    context="ADB watch startup cancellation cleanup was not confirmed",
+                    lambda: _cleanup_socket(sock),
+                    endpoint,
                 )
-            )
-            if cleanup_handoff is None:
-                raise
-            raise AdbTransportListWatchBackendAcquireInterruptedError(
-                cleanup_handoff
-            ) from exc
+            raise
         except BaseException as exc:
-            cleanup_handoff = (
-                None
-                if sock is None
-                else _close_after_failure(
+            if sock is not None:
+                self._schedule_resource_cleanup(
                     sock,
-                    context="ADB watch startup cleanup was not confirmed",
+                    lambda: _cleanup_socket(sock),
+                    endpoint,
                 )
-            )
             failure = _watch_failure(exc)
             if failure is not None:
-                raise AdbTransportListWatchBackendAcquireError(
-                    failure,
-                    cleanup_handoff=cleanup_handoff,
-                ) from exc
-            if cleanup_handoff is not None:
-                raise CleanupHandoffError(
-                    exc,
-                    cleanup_handoff,
-                ) from exc
+                raise AdbTransportListWatchBackendAcquireError(failure) from exc
             raise
 
     def _connect(self, endpoint: TcpAddress, timeout: float) -> tuple[socket.socket, float]:
@@ -415,26 +330,20 @@ class SmartSocketAdbTransportListWatchBackend(AdbTransportListWatchBackendTempla
                 return candidate, deadline
             except OSError as exc:
                 if candidate is not None:
-                    cleanup_handoff = _close_after_failure(
-                        candidate,
-                        context="failed to close rejected ADB watch connection candidate",
-                    )
-                    if cleanup_handoff is not None:
-                        raise _WatchStartupCleanupHandoffRequired(
+                    cleanup_resource = _cleanup_socket(candidate)
+                    if cleanup_resource is not None:
+                        raise _WatchStartupCleanupRequired(
                             exc,
-                            cleanup_handoff,
+                            cleanup_resource,
                         ) from exc
                 last_error = exc
             except BaseException as exc:
                 if candidate is not None:
-                    cleanup_handoff = _close_after_failure(
-                        candidate,
-                        context="failed to close ADB watch connection candidate after exception",
-                    )
-                    if cleanup_handoff is not None:
-                        raise _WatchStartupCleanupHandoffRequired(
+                    cleanup_resource = _cleanup_socket(candidate)
+                    if cleanup_resource is not None:
+                        raise _WatchStartupCleanupRequired(
                             exc,
-                            cleanup_handoff,
+                            cleanup_resource,
                         ) from exc
                 raise
 

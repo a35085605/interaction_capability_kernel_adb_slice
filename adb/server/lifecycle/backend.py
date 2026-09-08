@@ -45,7 +45,7 @@ class AdbServerBackendAlreadyAcquired:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerBackendAcquireDeferred:
-    """Backend acquisition could not begin because another backend operation is active."""
+    """Backend acquisition could not begin because acquisition or cleanup work is active."""
 
     diagnostic: str
 

@@ -1,6 +1,6 @@
 """Host-side ADB server, transport-list, transport, and protocol capabilities."""
 
-from adb.cleanup import CleanupHandoff, CleanupSink, RetainingCleanupSink
+from adb.cleanup import CleanupDelegate
 from adb.epoch import Epoch, EpochIssuer, EpochSequence
 from adb.errors import (
     AdbError,
@@ -76,9 +76,7 @@ from adb.transport import (
 )
 
 __all__ = [
-    "CleanupHandoff",
-    "CleanupSink",
-    "RetainingCleanupSink",
+    "CleanupDelegate",
     "AdbConfiguredTransportHandle",
     "AdbConfiguredTransportRegistration",
     "AdbConfiguredTransportType",
