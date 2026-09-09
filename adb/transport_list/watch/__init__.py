@@ -1,4 +1,4 @@
-"""ADB transport-list watch protocols, lifecycle control, results, and retry signals."""
+"""ADB transport-list watch protocols, lifecycle control, and results."""
 
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
@@ -34,11 +34,6 @@ from adb.transport_list.watch.failure import (
     AdbTransportListWatchServerConnectionFailure,
     AdbTransportListWatchServiceFailure,
 )
-from adb.transport_list.watch.signal import (
-    AdbTransportListWatchRecoveryId,
-    AdbTransportListWatchRecoveryRetryDue,
-)
-
 __all__ = [
     "AdbTransportListWatchLifecycle",
     "AdbTransportListWatchAcquisition",
@@ -64,6 +59,4 @@ __all__ = [
     "AdbTransportListWatchServerConnectionFailure",
     "AdbTransportListWatchServiceFailure",
     "AdbTransportListWatchStream",
-    "AdbTransportListWatchRecoveryId",
-    "AdbTransportListWatchRecoveryRetryDue",
 ]

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from scheduling.models import MisfirePolicy, ScheduleToken
 
 
-ScheduledEventT = TypeVar("ScheduledEventT", contravariant=True)
+ScheduledCallback = Callable[[], None]
 
 
 @runtime_checkable
@@ -19,35 +20,35 @@ class CalendarSchedule(Protocol):
 
 
 @runtime_checkable
-class TemporalScheduler(Protocol[ScheduledEventT]):
-    """Deliver scheduled data events through orchestration or event-queue infrastructure."""
+class TemporalScheduler(Protocol):
+    """Schedule caller-owned callbacks without assigning them notification semantics."""
 
     def schedule_at(
         self,
         deadline: datetime,
-        event: ScheduledEventT,
+        callback: ScheduledCallback,
         *,
         misfire_policy: MisfirePolicy = MisfirePolicy.FIRE_ONCE,
     ) -> ScheduleToken:
-        """Register a one-shot event for a timezone-aware wall-clock deadline."""
+        """Register a one-shot callback for a timezone-aware wall-clock deadline."""
         ...
 
     def schedule_after(
         self,
         delay: timedelta,
-        event: ScheduledEventT,
+        callback: ScheduledCallback,
     ) -> ScheduleToken:
-        """Register a one-shot event after a positive monotonic duration."""
+        """Register a one-shot callback after a positive monotonic duration."""
         ...
 
     def schedule_recurring(
         self,
         schedule: CalendarSchedule,
-        event: ScheduledEventT,
+        callback: ScheduledCallback,
         *,
         misfire_policy: MisfirePolicy = MisfirePolicy.FIRE_ONCE,
     ) -> ScheduleToken:
-        """Register an event for each occurrence produced by ``schedule``."""
+        """Register a callback for each occurrence produced by ``schedule``."""
         ...
 
     def cancel(self, token: ScheduleToken) -> bool:
@@ -55,4 +56,4 @@ class TemporalScheduler(Protocol[ScheduledEventT]):
         ...
 
 
-__all__ = ["CalendarSchedule", "TemporalScheduler"]
+__all__ = ["CalendarSchedule", "ScheduledCallback", "TemporalScheduler"]
