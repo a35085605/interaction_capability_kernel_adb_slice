@@ -19,8 +19,9 @@ from adb._lifecycle import (
     ReleaseGenerationMismatch,
     ReleaseInactive,
     ReleaseResourceDetached,
+    ResourceScope,
 )
-from adb.cleanup import CleanupCoordinator, CleanupHandoff, LocalCleanupAttempt
+from adb.cleanup import CleanupCoordinator, CleanupHandoff
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.contract import (
     AdbTransportListWatchAcquisition,
@@ -87,20 +88,18 @@ class _AdbTransportListWatchStreamView:
 
 @dataclass(frozen=True, slots=True)
 class _WatchResource:
-    """Lifecycle-private resource plus producer-facing data capability."""
+    """Committed producer capability; physical ownership lives in the lifecycle scope."""
 
-    handle: _AdbTransportListWatchHandle
     stream: AdbTransportListWatchStream
     acquisition: AdbTransportListWatchAcquisition
 
 
 class AdbTransportListWatchLifecycleTemplate(ABC):
-    """Template for one current watch generation and its optional physical handle.
+    """Template for one current watch generation and its physical resource scope.
 
-    Logical release advances the generation and detaches producer authority immediately. Physical
-    cleanup is tracked independently as cleanup debt. Each retired handle gets one backend-local
-    cleanup attempt before unresolved responsibility is offered to ``CleanupHandoff``. Accepted debt
-    remains pending until completion is reported, and blocks only its own server endpoint.
+    Watch/client sockets carry no exclusivity claim merely because they connect to the same server
+    endpoint. Cleanup debt is therefore tracked by ownership but does not block a new watch on an
+    equal access endpoint. This avoids treating access information as a resource conflict key.
     """
 
     def __init__(
@@ -145,46 +144,30 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         self,
         endpoint: TcpAddress,
         cancellation: Event,
+        resources: ResourceScope,
     ) -> _AdbTransportListWatchHandle:
-        """Obtain a fully usable lifecycle-owned physical watch handle.
+        """Obtain a fully usable handle while recording any earlier resources in ``resources``."""
 
-        Bound blocking operations and honor cancellation between them. Revocation deliberately
-        retains the in-flight lifecycle state until this method returns, preventing overlapping
-        physical acquisitions.
-        """
+    def _register_resource_scope(self, resources: ResourceScope) -> None:
+        if not isinstance(resources, ResourceScope):
+            raise TypeError("resources must be ResourceScope")
+        for ownership in resources.snapshot():
+            if ownership.handoff_only or ownership.local_cleanup is None:
+                self._cleanup.register_handoff(
+                    ownership.resource,
+                    identity=ownership.identity,
+                    claims=ownership.claims,
+                )
+            else:
+                self._cleanup.register(
+                    ownership.resource,
+                    ownership.local_cleanup,
+                    identity=ownership.identity,
+                    claims=ownership.claims,
+                )
 
-    def _schedule_cleanup(
-        self,
-        handle: _AdbTransportListWatchHandle,
-        endpoint: TcpAddress,
-    ) -> None:
-        self._register_cleanup(handle, endpoint)
-        self._cleanup.process_pending()
-
-    def _register_cleanup(
-        self,
-        handle: _AdbTransportListWatchHandle,
-        endpoint: TcpAddress,
-    ) -> None:
-        """Locked, idempotent debt registration; cleanup processing starts after core unlock."""
-
-        self._cleanup.register(handle, lambda: handle.close(), conflict_key=endpoint)
-
-    def _schedule_resource_cleanup(
-        self,
-        resource: object,
-        local_cleanup: LocalCleanupAttempt,
-        endpoint: TcpAddress,
-    ) -> None:
-        self._cleanup.register(resource, local_cleanup, conflict_key=endpoint)
-        self._cleanup.process_pending()
-
-    def _schedule_unresolved_cleanup(
-        self,
-        resource: object,
-        endpoint: TcpAddress,
-    ) -> None:
-        self._cleanup.register_handoff(resource, conflict_key=endpoint)
+    def _schedule_cleanup(self, handle: _AdbTransportListWatchHandle) -> None:
+        self._cleanup.register(handle, lambda: handle.close())
         self._cleanup.process_pending()
 
     def _borrow_stream(
@@ -220,9 +203,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             self._cleanup.process_pending()
 
     def _acquire(self, endpoint: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
-        start = self._state_machine.begin_acquire(
-            is_blocked=lambda: self._cleanup.has_conflict(endpoint)
-        )
+        start = self._state_machine.begin_acquire()
         if isinstance(start, AcquireExisting):
             resource = start.resource
             if resource.acquisition.endpoint == endpoint:
@@ -238,18 +219,22 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             )
         if isinstance(start, AcquireBlocked):
             return AdbTransportListWatchAcquireBlocked(
-                start.diagnostic
-                or "ADB transport-list watch lifecycle is cleaning a resource for this endpoint"
+                start.diagnostic or "ADB transport-list watch lifecycle acquisition is blocked"
             )
         if not isinstance(start, AcquireStarted):
             raise TypeError("unsupported shared lifecycle acquire start")
         attempt = start
         token = attempt.token
+        resources = attempt.resource_scope
+        register_scope = lambda: self._register_resource_scope(resources)
 
         try:
-            handle = self._obtain_handle(endpoint, attempt.cancellation)
+            handle = self._obtain_handle(endpoint, attempt.cancellation, resources)
+            resources.adopt(handle, lambda: handle.close())
         except AdbTransportListWatchAcquireInterruptedError as exc:
-            revoked = self._state_machine.abandon_acquire(token)
+            revoked = self._state_machine.abandon_acquire(
+                token, before_clear=register_scope
+            )
             if revoked:
                 return AdbTransportListWatchAcquireSuperseded(attempt.generation)
             raise RuntimeError(
@@ -257,25 +242,15 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 "revocation"
             ) from exc
         except AdbTransportListWatchAcquireError as exc:
-            revoked = self._state_machine.abandon_acquire(token)
+            revoked = self._state_machine.abandon_acquire(
+                token, before_clear=register_scope
+            )
             if revoked:
                 return AdbTransportListWatchAcquireSuperseded(attempt.generation)
             return AdbTransportListWatchAcquireFailed(exc.failure)
         except BaseException:
-            self._state_machine.abandon_acquire(token)
+            self._state_machine.abandon_acquire(token, before_clear=register_scope)
             raise
-
-        if self._cleanup.has_conflict(endpoint):
-            revoked = self._state_machine.abandon_acquire(
-                token,
-                before_clear=lambda: self._register_cleanup(handle, endpoint),
-            )
-            if revoked:
-                return AdbTransportListWatchAcquireSuperseded(attempt.generation)
-            return AdbTransportListWatchAcquireBlocked(
-                "ADB transport-list watch lifecycle obtained a resource whose prior endpoint "
-                "is still cleaning"
-            )
 
         try:
             acquisition = AdbTransportListWatchAcquisition(
@@ -283,21 +258,20 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 generation=attempt.generation,
             )
             resource = _WatchResource(
-                handle=handle,
                 stream=_AdbTransportListWatchStreamView(handle),
                 acquisition=acquisition,
             )
         except BaseException:
             self._state_machine.abandon_acquire(
                 token,
-                before_clear=lambda: self._register_cleanup(handle, endpoint),
+                before_clear=register_scope,
             )
             raise
 
         committed = self._state_machine.commit_acquire(
             token,
             resource,
-            on_superseded=lambda: self._register_cleanup(handle, endpoint),
+            on_superseded=register_scope,
         )
         if committed:
             return AdbTransportListWatchAcquireCommitted(acquisition)
@@ -319,8 +293,8 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     def _release(
         self, expected: AdbTransportListWatchGeneration
     ) -> AdbTransportListWatchReleaseOutcome:
-        def retire_resource(resource: _WatchResource) -> None:
-            self._register_cleanup(resource.handle, resource.acquisition.endpoint)
+        def retire_resource(resource: _WatchResource, resources: ResourceScope) -> None:
+            self._register_resource_scope(resources)
 
         release = self._state_machine.release(
             expected,

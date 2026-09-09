@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+from ipaddress import ip_address
 import os
 import socket
 import subprocess
@@ -8,6 +10,7 @@ from threading import Event, Lock
 from time import monotonic, sleep
 from typing import Protocol
 
+from adb._lifecycle import ResourceOwnership, ResourceScope
 from adb._resolution import AddressResolutionCancelled, DeadlineResolver
 from adb.adapters.subprocess.command import normalize_executable, normalize_timeout
 from adb.errors import AdbError, AdbTimeoutError
@@ -47,29 +50,42 @@ class _AdbServerSubprocessTerminationUnconfirmed(RuntimeError):
     """Failure to confirm termination of an owned child process."""
 
 
-class _AdbServerSubprocessCleanupRequired(_AdbServerSubprocessStartError):
-    """Startup failed with resources whose local cleanup was not confirmed."""
+@dataclass(frozen=True, slots=True)
+class _TcpBindClaim:
+    """Adapter-private claim for a local TCP bind exclusivity domain."""
 
-    def __init__(
-        self,
-        primary_error: BaseException,
-        cleanup_resources: tuple[object, ...],
-        cleanup_endpoint: AdbServerEndpoint | None,
-    ) -> None:
-        if not isinstance(primary_error, BaseException):
-            raise TypeError("primary_error must be BaseException")
-        if not cleanup_resources or any(resource is None for resource in cleanup_resources):
-            raise ValueError("cleanup_resources must contain non-None resources")
-        if cleanup_endpoint is not None and not isinstance(cleanup_endpoint, TcpAddress):
-            raise TypeError("cleanup_endpoint must be TcpAddress or None")
-        self.primary_error = primary_error
-        self.cleanup_resources = cleanup_resources
-        self.cleanup_endpoint = cleanup_endpoint
-        super().__init__(f"{primary_error}; subprocess startup cleanup remains pending")
+    family: int | None
+    address: str | None
+    port: int
 
 
-def _merge_cleanup_resources(*resources: object | None) -> tuple[object, ...]:
-    return tuple(resource for resource in resources if resource is not None)
+def _normalize_claim_address(host: str) -> str | None:
+    """Normalize an IP bind address; ``None`` means wildcard or unresolved/unknown."""
+
+    candidate = host.split("%", 1)[0]
+    try:
+        address = ip_address(candidate)
+    except ValueError:
+        return None
+    if address.is_unspecified:
+        return None
+    return str(address)
+
+
+def _bind_claims_conflict(existing: _TcpBindClaim, requested: _TcpBindClaim) -> bool:
+    if existing.port != requested.port:
+        return False
+    if (
+        existing.family is not None
+        and requested.family is not None
+        and existing.family != requested.family
+    ):
+        # Different concrete protocol families are independent unless either side is wildcard or
+        # otherwise unknown (for example an IPv6 dual-stack wildcard listener).
+        return existing.address is None or requested.address is None
+    if existing.address is None or requested.address is None:
+        return True
+    return existing.address == requested.address
 
 
 def _close_socket_or_cleanup_resource(sock: socket.socket) -> object | None:
@@ -147,13 +163,22 @@ class _OwnedAdbServerProcess:
             return self._process
 
 
-class _AdbServerSubprocessFactory:
-    """Create ready foreground ADB server processes through infrastructure seams.
+def _cleanup_owned_process(process: _OwnedAdbServerProcess) -> object | None:
+    try:
+        process.close()
+    except BaseException:
+        return process.unresolved_cleanup_resource()
+    return None
 
-    DNS waits are bounded and cancellable. Resource-producing factory calls must return in bounded
-    time themselves; they are never detached while they could still bind a listener or spawn a child.
-    Startup uses one deadline across resolution, launch, and readiness, with checks between stages.
-    Injected status readers must also bound their I/O; cancellation is checked between probes.
+
+class _AdbServerSubprocessFactory:
+    """Create ready foreground ADB server access while populating a resource scope.
+
+    The listener and child process are adopted at the moment they are obtained. The parent listener
+    ownership is retired only after its close succeeds. The child process retains the listener bind
+    claim because the inherited descriptor may keep that bind occupied after the parent handle is
+    closed. Startup failure therefore needs no synthetic cleanup exception: the acquisition scope
+    already contains every still-owned resource and its claims.
     """
 
     def __init__(
@@ -201,11 +226,14 @@ class _AdbServerSubprocessFactory:
     def create(
         self,
         endpoint: AdbServerEndpoint | None,
-        cancellation: Event | None = None,
-    ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
-        if cancellation is not None and not isinstance(cancellation, Event):
-            raise TypeError("cancellation must be threading.Event or None")
-        if cancellation is not None and cancellation.is_set():
+        cancellation: Event,
+        resources: ResourceScope,
+    ) -> AdbServerEndpoint:
+        if not isinstance(cancellation, Event):
+            raise TypeError("cancellation must be threading.Event")
+        if not isinstance(resources, ResourceScope):
+            raise TypeError("resources must be ResourceScope")
+        if cancellation.is_set():
             raise _AdbServerSubprocessAcquireInterrupted
         if not self._socket_activation_supported:
             raise _AdbServerSubprocessStartError(
@@ -215,39 +243,34 @@ class _AdbServerSubprocessFactory:
 
         deadline = self._monotonic() + self.startup_timeout_seconds
         attachment, resolved_endpoint = self._launch(
-            endpoint, deadline=deadline, cancellation=cancellation
+            endpoint,
+            resources,
+            deadline=deadline,
+            cancellation=cancellation,
         )
-        try:
-            if cancellation is not None and cancellation.is_set():
-                raise _AdbServerSubprocessAcquireInterrupted
-            self._wait_until_ready(
-                resolved_endpoint,
-                attachment._process,
-                cancellation=cancellation,
-                deadline=deadline,
-            )
-        except BaseException as startup_error:
-            try:
-                attachment.close()
-            except BaseException as cleanup_error:
-                cleanup_resource = attachment.unresolved_cleanup_resource()
-                raise _AdbServerSubprocessCleanupRequired(
-                    startup_error,
-                    (cleanup_resource,),
-                    resolved_endpoint,
-                ) from cleanup_error
-            raise
-        return attachment, resolved_endpoint
+        if cancellation.is_set():
+            raise _AdbServerSubprocessAcquireInterrupted
+        self._wait_until_ready(
+            resolved_endpoint,
+            attachment._process,
+            cancellation=cancellation,
+            deadline=deadline,
+        )
+        return resolved_endpoint
 
     def _launch(
         self,
         endpoint: AdbServerEndpoint | None,
+        resources: ResourceScope,
         *,
         deadline: float,
-        cancellation: Event | None,
+        cancellation: Event,
     ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
-        reservation, resolved_endpoint = self._reserve_listener(
-            endpoint, deadline=deadline, cancellation=cancellation
+        reservation, reservation_ownership, resolved_endpoint = self._reserve_listener(
+            endpoint,
+            resources,
+            deadline=deadline,
+            cancellation=cancellation,
         )
         fd = reservation.fileno()
         try:
@@ -274,51 +297,35 @@ class _AdbServerSubprocessFactory:
                 if isinstance(exc, OSError)
                 else exc
             )
-            cleanup_resource = _close_socket_or_cleanup_resource(reservation)
-            if cleanup_resource is not None:
-                raise _AdbServerSubprocessCleanupRequired(
-                    primary,
-                    (cleanup_resource,),
-                    resolved_endpoint,
-                ) from exc
+            if _close_socket_or_cleanup_resource(reservation) is None:
+                resources.release(reservation_ownership)
             if primary is exc:
                 raise
             raise primary from exc
 
-        attachment = _OwnedAdbServerProcess(
-            process,
-            self.shutdown_timeout_seconds,
+        attachment = _OwnedAdbServerProcess(process, self.shutdown_timeout_seconds)
+        resources.adopt(
+            attachment,
+            lambda: _cleanup_owned_process(attachment),
+            claims=reservation_ownership.claims,
         )
-        reservation_cleanup_resource = _close_socket_or_cleanup_resource(reservation)
-        if reservation_cleanup_resource is None:
+
+        if _close_socket_or_cleanup_resource(reservation) is None:
+            resources.release(reservation_ownership)
             return attachment, resolved_endpoint
 
-        primary = _AdbServerSubprocessStartError(
+        raise _AdbServerSubprocessStartError(
             "ADB server child launched but parent listener reservation cleanup was not confirmed"
-        )
-        process_cleanup_resource: object | None = None
-        try:
-            attachment.close()
-        except BaseException as cleanup_error:
-            process_cleanup_resource = attachment.unresolved_cleanup_resource()
-        cleanup_resources = _merge_cleanup_resources(
-            reservation_cleanup_resource, process_cleanup_resource
-        )
-        if not cleanup_resources:
-            raise RuntimeError("cleanup resource state is inconsistent")
-        raise _AdbServerSubprocessCleanupRequired(
-            primary,
-            cleanup_resources,
-            resolved_endpoint,
         )
 
     def _reserve_listener(
         self,
         endpoint: AdbServerEndpoint | None,
+        resources: ResourceScope,
         *,
         deadline: float,
-        cancellation: Event | None,
-    ) -> tuple[socket.socket, AdbServerEndpoint]:
+        cancellation: Event,
+    ) -> tuple[socket.socket, ResourceOwnership, AdbServerEndpoint]:
         host = endpoint.host if endpoint is not None else "127.0.0.1"
         port = endpoint.port if endpoint is not None else 0
 
@@ -354,15 +361,29 @@ class _AdbServerSubprocessFactory:
             except OSError as exc:
                 failures.append(str(exc))
                 continue
+
+            ownership = resources.adopt(
+                listener,
+                lambda listener=listener: _close_socket_or_cleanup_resource(listener),
+            )
             try:
                 listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 listener.bind(sockaddr)
-                listener.listen(socket.SOMAXCONN)
                 bound = listener.getsockname()
                 resolved = TcpAddress(str(bound[0]), int(bound[1]))
-                return listener, resolved
+                resources.replace_claims(
+                    ownership,
+                    (
+                        _TcpBindClaim(
+                            family=family,
+                            address=_normalize_claim_address(resolved.host),
+                            port=resolved.port,
+                        ),
+                    ),
+                )
+                listener.listen(socket.SOMAXCONN)
+                return listener, ownership, resolved
             except BaseException as exc:
-                cleanup_resource = _close_socket_or_cleanup_resource(listener)
                 primary: BaseException = (
                     _AdbServerSubprocessStartError(
                         f"failed to prepare ADB server listener candidate: {exc}"
@@ -370,12 +391,12 @@ class _AdbServerSubprocessFactory:
                     if isinstance(exc, OSError)
                     else exc
                 )
-                if cleanup_resource is not None:
-                    raise _AdbServerSubprocessCleanupRequired(
-                        primary,
-                        (cleanup_resource,),
-                        endpoint,
-                    ) from exc
+                if _close_socket_or_cleanup_resource(listener) is None:
+                    resources.release(ownership)
+                else:
+                    if primary is exc:
+                        raise
+                    raise primary from exc
                 if primary is exc:
                     raise
                 failures.append(str(exc))
@@ -385,8 +406,8 @@ class _AdbServerSubprocessFactory:
             f"failed to reserve ADB server listener: {detail}"
         )
 
-    def _check_startup(self, deadline: float, cancellation: Event | None) -> None:
-        if cancellation is not None and cancellation.is_set():
+    def _check_startup(self, deadline: float, cancellation: Event) -> None:
+        if cancellation.is_set():
             raise _AdbServerSubprocessAcquireInterrupted
         if self._monotonic() >= deadline:
             raise _AdbServerSubprocessStartError("ADB server startup timed out")
@@ -396,11 +417,11 @@ class _AdbServerSubprocessFactory:
         endpoint: AdbServerEndpoint,
         process: subprocess.Popen[bytes],
         *,
-        cancellation: Event | None = None,
+        cancellation: Event,
         deadline: float | None = None,
     ) -> None:
-        if cancellation is not None and not isinstance(cancellation, Event):
-            raise TypeError("cancellation must be threading.Event or None")
+        if not isinstance(cancellation, Event):
+            raise TypeError("cancellation must be threading.Event")
         if deadline is None:
             deadline = self._monotonic() + self.startup_timeout_seconds
         last_error: AdbError | None = None
@@ -432,13 +453,11 @@ class _AdbServerSubprocessFactory:
                     f"timed out waiting for created ADB server readiness{suffix}"
                 )
             delay = min(self.probe_interval_seconds, remaining)
-            if cancellation is None:
-                self._sleep(delay)
-            elif cancellation.wait(delay):
+            if cancellation.wait(delay):
                 raise _AdbServerSubprocessAcquireInterrupted
 
 
-class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate[_OwnedAdbServerProcess]):
+class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate):
     """Provide ADB server access through an owned foreground subprocess."""
 
     def __init__(
@@ -465,37 +484,37 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate[_OwnedAdbServerPro
         self._factory = _factory
         super().__init__(generation_issuer, cleanup_handoff=cleanup_handoff)
 
-    def _obtain_handle(
+    def _obtain_access(
         self,
         endpoint_constraint: AdbServerEndpoint | None,
         cancellation: Event,
-    ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
+        resources: ResourceScope,
+    ) -> AdbServerEndpoint:
         try:
-            return self._factory.create(endpoint_constraint, cancellation)
-        except _AdbServerSubprocessCleanupRequired as exc:
-            for resource in exc.cleanup_resources:
-                self._schedule_unresolved_cleanup(resource, exc.cleanup_endpoint)
-            if isinstance(exc.primary_error, _AdbServerSubprocessAcquireInterrupted):
-                raise AdbServerAcquireInterruptedError() from exc
-            if isinstance(exc.primary_error, _AdbServerSubprocessStartError):
-                raise AdbServerAcquireError(
-                    str(exc.primary_error).strip() or type(exc.primary_error).__name__
-                ) from exc
-            raise exc.primary_error from exc
+            return self._factory.create(endpoint_constraint, cancellation, resources)
         except _AdbServerSubprocessAcquireInterrupted as exc:
             raise AdbServerAcquireInterruptedError() from exc
         except _AdbServerSubprocessStartError as exc:
             raise AdbServerAcquireError(str(exc)) from exc
 
-    def _attempt_local_cleanup(
+    def _requested_resource_claims(
         self,
-        handle: _OwnedAdbServerProcess,
-    ) -> object | None:
-        try:
-            handle.close()
-        except BaseException:
-            return handle.unresolved_cleanup_resource()
-        return None
+        endpoint_constraint: AdbServerEndpoint | None,
+    ) -> tuple[object, ...]:
+        if endpoint_constraint is None:
+            return ()
+        return (
+            _TcpBindClaim(
+                family=None,
+                address=_normalize_claim_address(endpoint_constraint.host),
+                port=endpoint_constraint.port,
+            ),
+        )
+
+    def _resource_claims_conflict(self, existing: object, requested: object) -> bool:
+        if not isinstance(existing, _TcpBindClaim) or not isinstance(requested, _TcpBindClaim):
+            raise TypeError("subprocess ADB server resource claims must be TCP bind claims")
+        return _bind_claims_conflict(existing, requested)
 
 
 __all__ = ["SubprocessAdbServerLifecycle"]

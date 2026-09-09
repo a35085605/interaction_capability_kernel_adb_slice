@@ -12,6 +12,7 @@ from adb.aosp.io.track_devices import (
     AospTrackDevicesStream,
     AospTrackDevicesStreamFactory,
 )
+from adb._lifecycle import ResourceScope
 from adb.cleanup import CleanupHandoff
 from adb.errors import (
     AdbProtocolError,
@@ -134,16 +135,17 @@ class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTe
         self,
         endpoint: TcpAddress,
         cancellation: Event,
+        resources: ResourceScope,
     ) -> _AospTransportListWatchHandle:
         stream: AospTrackDevicesStream | None = None
         try:
             stream = self._stream_factory.open(endpoint, cancellation)
             return _AospTransportListWatchHandle(
                 stream,
-                lambda handle: self._schedule_cleanup(handle, endpoint),
+                lambda handle: self._schedule_cleanup(handle),
             )
         except AospTrackDevicesOpenCleanupRequired as exc:
-            self._schedule_unresolved_cleanup(exc.cleanup_resource, endpoint)
+            resources.adopt_handoff(exc.cleanup_resource)
             primary_error = exc.primary_error
             if isinstance(primary_error, AospTrackDevicesOpenCancelled):
                 raise AdbTransportListWatchAcquireInterruptedError() from exc
@@ -155,7 +157,7 @@ class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTe
             raise AdbTransportListWatchAcquireInterruptedError() from exc
         except BaseException as exc:
             if stream is not None:
-                self._schedule_resource_cleanup(stream, stream.close, endpoint)
+                resources.adopt(stream, stream.close)
             failure = _watch_failure(exc)
             if failure is not None:
                 raise AdbTransportListWatchAcquireError(failure) from exc

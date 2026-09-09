@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from threading import Event
-from typing import Generic, TypeVar
+from typing import Iterable
 
 from networking import TcpAddress
 from adb._lifecycle import (
@@ -17,6 +17,7 @@ from adb._lifecycle import (
     ReleaseGenerationMismatch,
     ReleaseInactive,
     ReleaseResourceDetached,
+    ResourceScope,
 )
 from adb.cleanup import CleanupCoordinator, CleanupHandoff
 from adb.server.endpoint import AdbServerEndpoint
@@ -48,7 +49,7 @@ def _normalize_diagnostic(value: object) -> str:
 
 
 class AdbServerAcquireError(RuntimeError):
-    """Expected failure while obtaining a server acquisition handle."""
+    """Expected failure while obtaining usable ADB server access."""
 
     def __init__(self, diagnostic: str) -> None:
         self.diagnostic = _normalize_diagnostic(diagnostic)
@@ -62,23 +63,25 @@ class AdbServerAcquireInterruptedError(RuntimeError):
         super().__init__("ADB server acquisition was interrupted")
 
 
-HandleT = TypeVar("HandleT")
-
-
 @dataclass(frozen=True, slots=True)
-class _ServerResource(Generic[HandleT]):
-    handle: HandleT
+class _ServerResource:
+    """One committed acquisition; physical ownership lives in its lifecycle resource scope."""
+
     acquisition: AdbServerAcquisition
 
 
-class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
-    """Template for one current server generation and its optional usable endpoint.
+class AdbServerLifecycleTemplate(ABC):
+    """Template for one current ADB server acquisition and its owned resource scope.
 
-    Logical release is immediate: matching release advances the generation and detaches the
-    current handle before returning. Physical cleanup is tracked independently as cleanup debt.
-    Each retired resource gets one backend-local cleanup attempt before unresolved responsibility is
-    offered to ``CleanupHandoff``. Accepted debt remains pending until completion is reported.
-    Cleanup debt blocks a new acquisition only when both refer to the same server endpoint.
+    Access information, physical ownership, and resource claims are deliberately separate. Adapters
+    add resources to the acquisition ``ResourceScope`` as soon as they are obtained and define the
+    claims those resources retain. A committed acquisition stores only caller-facing access data;
+    the shared lifecycle keeps its resource scope associated with that acquisition.
+
+    Logical release is immediate. Matching release advances the generation and atomically registers
+    every still-owned resource as cleanup debt while holding lifecycle authority. Physical cleanup
+    runs after that lock is released. Cleanup completion, not handoff acceptance, retires a resource
+    and therefore its claims.
     """
 
     def __init__(
@@ -92,7 +95,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         if not isinstance(cleanup_handoff, CleanupHandoff):
             raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
         self._state_machine: LifecycleStateMachine[
-            AdbServerGeneration, _ServerResource[HandleT]
+            AdbServerGeneration, _ServerResource
         ] = LifecycleStateMachine(generation_issuer.issue)
         self._cleanup = CleanupCoordinator(cleanup_handoff)
 
@@ -117,50 +120,53 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         )
 
     @abstractmethod
-    def _obtain_handle(
+    def _obtain_access(
         self,
         endpoint_constraint: AdbServerEndpoint | None,
         cancellation: Event,
-    ) -> tuple[HandleT, AdbServerEndpoint]:
-        """Obtain an acquisition handle and its usable endpoint.
+        resources: ResourceScope,
+    ) -> AdbServerEndpoint:
+        """Obtain usable access while recording physical ownership in ``resources``.
 
-        Bound blocking operations and honor cancellation between them. Revocation deliberately
-        retains the in-flight lifecycle state until this method returns, preventing overlapping
-        physical acquisitions.
+        Resource-producing operations must adopt returned resources before later work can fail.
+        Bound blocking operations and honor cancellation between them. Revocation deliberately retains
+        in-flight scope until this method returns, preventing overlapping physical acquisitions.
         """
 
+    def _requested_resource_claims(
+        self,
+        endpoint_constraint: AdbServerEndpoint | None,
+    ) -> tuple[object, ...]:
+        """Return claims known before acquisition starts; empty means no pre-acquire claim."""
+
+        return ()
+
     @abstractmethod
-    def _attempt_local_cleanup(self, handle: HandleT) -> object | None:
-        """Attempt bounded local cleanup; return unresolved resource or ``None`` on success."""
+    def _resource_claims_conflict(self, existing: object, requested: object) -> bool:
+        """Return whether two adapter-defined resource claims are mutually exclusive."""
 
-    def _schedule_cleanup(
-        self,
-        handle: HandleT,
-        endpoint: AdbServerEndpoint,
-    ) -> None:
-        self._register_cleanup(handle, endpoint)
-        self._cleanup.process_pending()
+    def _cleanup_has_conflict(self, claims: Iterable[object]) -> bool:
+        return self._cleanup.has_conflict(claims, self._resource_claims_conflict)
 
-    def _register_cleanup(
-        self,
-        handle: HandleT,
-        endpoint: AdbServerEndpoint,
-    ) -> None:
-        """Locked, idempotent debt registration; cleanup processing starts after core unlock."""
+    def _register_resource_scope(self, resources: ResourceScope) -> None:
+        """Register all still-owned resources without executing cleanup work."""
 
-        self._cleanup.register(
-            handle,
-            lambda: self._attempt_local_cleanup(handle),
-            conflict_key=endpoint,
-        )
-
-    def _schedule_unresolved_cleanup(
-        self,
-        resource: object,
-        endpoint: AdbServerEndpoint | None,
-    ) -> None:
-        self._cleanup.register_handoff(resource, conflict_key=endpoint)
-        self._cleanup.process_pending()
+        if not isinstance(resources, ResourceScope):
+            raise TypeError("resources must be ResourceScope")
+        for ownership in resources.snapshot():
+            if ownership.handoff_only or ownership.local_cleanup is None:
+                self._cleanup.register_handoff(
+                    ownership.resource,
+                    identity=ownership.identity,
+                    claims=ownership.claims,
+                )
+            else:
+                self._cleanup.register(
+                    ownership.resource,
+                    ownership.local_cleanup,
+                    identity=ownership.identity,
+                    claims=ownership.claims,
+                )
 
     def acquire(
         self,
@@ -178,11 +184,12 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
     def _acquire(
         self, endpoint_constraint: AdbServerEndpoint | None
     ) -> AdbServerAcquireOutcome:
+        requested_claims = self._requested_resource_claims(endpoint_constraint)
         start = self._state_machine.begin_acquire(
             is_blocked=(
                 None
-                if endpoint_constraint is None
-                else lambda: self._cleanup.has_conflict(endpoint_constraint)
+                if not requested_claims
+                else lambda: self._cleanup_has_conflict(requested_claims)
             )
         )
         if isinstance(start, AcquireExisting):
@@ -203,46 +210,56 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         if isinstance(start, AcquireBlocked):
             return AdbServerAcquireBlocked(
                 start.diagnostic
-                or "ADB server lifecycle is cleaning a resource for the requested endpoint"
+                or "ADB server lifecycle is cleaning a conflicting owned resource"
             )
         if not isinstance(start, AcquireStarted):
             raise TypeError("unsupported shared lifecycle acquire start")
         attempt = start
         token = attempt.token
+        resources = attempt.resource_scope
+        register_scope = lambda: self._register_resource_scope(resources)
 
         try:
-            handle, endpoint = self._obtain_handle(endpoint_constraint, attempt.cancellation)
+            endpoint = self._obtain_access(
+                endpoint_constraint,
+                attempt.cancellation,
+                resources,
+            )
         except AdbServerAcquireInterruptedError as exc:
-            revoked = self._state_machine.abandon_acquire(token)
+            revoked = self._state_machine.abandon_acquire(
+                token, before_clear=register_scope
+            )
             if revoked:
                 return AdbServerAcquireSuperseded(attempt.generation)
             raise RuntimeError(
                 "ADB server acquisition was interrupted without generation revocation"
             ) from exc
         except AdbServerAcquireError as exc:
-            revoked = self._state_machine.abandon_acquire(token)
+            revoked = self._state_machine.abandon_acquire(
+                token, before_clear=register_scope
+            )
             if revoked:
                 return AdbServerAcquireSuperseded(attempt.generation)
             return AdbServerAcquireFailed(exc.diagnostic)
         except BaseException:
-            self._state_machine.abandon_acquire(token)
+            self._state_machine.abandon_acquire(token, before_clear=register_scope)
             raise
 
-        if self._cleanup.has_conflict(endpoint):
+        if self._cleanup_has_conflict(resources.claims()):
             revoked = self._state_machine.abandon_acquire(
                 token,
-                before_clear=lambda: self._register_cleanup(handle, endpoint),
+                before_clear=register_scope,
             )
             if revoked:
                 return AdbServerAcquireSuperseded(attempt.generation)
             return AdbServerAcquireBlocked(
-                "ADB server lifecycle obtained an endpoint whose prior resource is still cleaning"
+                "ADB server lifecycle obtained resources whose claims conflict with pending cleanup"
             )
 
         if endpoint_constraint is not None and endpoint != endpoint_constraint:
             revoked = self._state_machine.abandon_acquire(
                 token,
-                before_clear=lambda: self._register_cleanup(handle, endpoint),
+                before_clear=register_scope,
             )
             if revoked:
                 return AdbServerAcquireSuperseded(attempt.generation)
@@ -255,18 +272,18 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
                 endpoint=endpoint,
                 generation=attempt.generation,
             )
-            resource = _ServerResource(handle, acquisition)
+            resource = _ServerResource(acquisition)
         except BaseException:
             self._state_machine.abandon_acquire(
                 token,
-                before_clear=lambda: self._register_cleanup(handle, endpoint),
+                before_clear=register_scope,
             )
             raise
 
         committed = self._state_machine.commit_acquire(
             token,
             resource,
-            on_superseded=lambda: self._register_cleanup(handle, endpoint),
+            on_superseded=register_scope,
         )
         if committed:
             return AdbServerAcquireCommitted(acquisition)
@@ -283,15 +300,14 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             self._cleanup.process_pending()
 
     def _release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
-        def retire_resource(resource: _ServerResource[HandleT]) -> None:
-            self._register_cleanup(resource.handle, resource.acquisition.endpoint)
+        def retire_resource(resource: _ServerResource, resources: ResourceScope) -> None:
+            self._register_resource_scope(resources)
 
         release = self._state_machine.release(
             expected,
             on_resource_release=retire_resource,
             inconsistent_state_error="ADB server lifecycle state is inconsistent",
         )
-        self._cleanup.process_pending()
         if isinstance(release, ReleaseGenerationMismatch):
             resource = release.resource
             return AdbServerReleaseGenerationMismatch(

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from threading import Event
 from typing import Generic, TypeAlias, TypeVar
 
+from adb._lifecycle.resource import ResourceScope
+
 
 GenerationT = TypeVar("GenerationT")
 ResourceT = TypeVar("ResourceT")
@@ -22,11 +24,12 @@ class AcquireToken:
 
 @dataclass(frozen=True, slots=True)
 class AcquireStarted(Generic[GenerationT]):
-    """Facts captured when an idle lifecycle state starts one acquisition attempt."""
+    """Facts captured for one attempt, including its mutable physical-resource scope."""
 
     token: AcquireToken
     generation: GenerationT
     cancellation: Event
+    resource_scope: ResourceScope
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from threading import Lock
 from typing import Protocol, runtime_checkable
 
 
 LocalCleanupAttempt = Callable[[], object | None]
+ResourceClaimConflict = Callable[[object, object], bool]
 
 
 @runtime_checkable
@@ -34,9 +35,10 @@ class CleanupHandoff(Protocol):
 
 @dataclass(slots=True)
 class _CleanupEntry:
+    identity: object
     resource: object
     local_cleanup: LocalCleanupAttempt | None
-    conflict_key: object | None
+    claims: tuple[object, ...]
     handoff_resource: object | None = None
     local_attempted: bool = False
     handoff_accepted: bool = False
@@ -64,18 +66,16 @@ class CleanupSnapshot:
 
 
 class CleanupCoordinator:
-    """Track cleanup debt and coordinate one local attempt with an outer handoff.
+    """Track resource cleanup debt independently from access information.
 
-    Registration is lock-only bookkeeping and is safe to invoke from lifecycle transition callbacks.
-    ``process_pending`` must run after the lifecycle lock is released. It attempts each registered
-    local cleanup at most once; unresolved resources are offered to ``CleanupHandoff``. A normal
-    ``accept`` return transfers processing responsibility but does not retire cleanup debt. Debt is
-    removed only when local cleanup is confirmed or the corresponding ``CleanupCompletion`` reports
-    success.
+    Each entry has a stable ownership ``identity``, an actual cleanup resource, and zero or more
+    resource claims. Local cleanup is attempted at most once; unresolved payloads may differ from
+    the owned resource without changing identity. A successful handoff acceptance does not retire
+    either debt or claims. Both remain live until local cleanup or ``CleanupCompletion`` confirms
+    completion.
 
-    The coordinator owns no worker, timer, retry policy, or external cleanup execution. A failed or
-    unconfirmed handoff remains pending and may be offered again by a later ``process_pending`` call.
-    Cleanup debt blocks a new acquisition only when its ``conflict_key`` matches that acquisition.
+    Claim semantics are intentionally adapter-defined. The coordinator only retains claims and asks
+    a supplied predicate whether an existing claim conflicts with a requested claim.
     """
 
     def __init__(self, handoff: CleanupHandoff) -> None:
@@ -84,6 +84,13 @@ class CleanupCoordinator:
         self._handoff = handoff
         self._lock = Lock()
         self._entries: dict[int, _CleanupEntry] = {}
+
+    @staticmethod
+    def _normalize_claims(claims: Iterable[object]) -> tuple[object, ...]:
+        normalized = tuple(claims)
+        if any(claim is None for claim in normalized):
+            raise ValueError("resource claims cannot contain None")
+        return normalized
 
     def snapshot(self) -> CleanupSnapshot:
         with self._lock:
@@ -103,36 +110,53 @@ class CleanupCoordinator:
         with self._lock:
             return bool(self._entries)
 
-    def has_conflict(self, conflict_key: object | None) -> bool:
-        """Return whether incomplete cleanup debt exists for this conflict key.
+    def has_conflict(
+        self,
+        requested_claims: Iterable[object],
+        conflicts: ResourceClaimConflict,
+    ) -> bool:
+        """Return whether pending cleanup retains a claim conflicting with a request."""
 
-        ``None`` means the backend could not identify an exclusivity domain for that resource;
-        unknown cleanup debt remains tracked but does not globally block acquisition.
-        """
-
-        if conflict_key is None:
+        if not callable(conflicts):
+            raise TypeError("conflicts must be callable")
+        requested = self._normalize_claims(requested_claims)
+        if not requested:
             return False
         with self._lock:
-            return any(entry.conflict_key == conflict_key for entry in self._entries.values())
+            existing = tuple(
+                claim
+                for entry in self._entries.values()
+                for claim in entry.claims
+            )
+        return any(
+            conflicts(existing_claim, requested_claim)
+            for existing_claim in existing
+            for requested_claim in requested
+        )
 
     def register(
         self,
         resource: object,
         local_cleanup: LocalCleanupAttempt,
         *,
-        conflict_key: object | None = None,
+        identity: object | None = None,
+        claims: Iterable[object] = (),
     ) -> None:
-        """Idempotently record cleanup debt without executing cleanup or handoff work."""
+        """Idempotently record locally-cleanable ownership debt without doing cleanup work."""
 
         if resource is None:
             raise TypeError("resource cannot be None")
         if not callable(local_cleanup):
             raise TypeError("local_cleanup must be callable")
+        stable_identity = resource if identity is None else identity
+        if stable_identity is None:
+            raise TypeError("identity cannot be None")
         self._register(
             _CleanupEntry(
+                identity=stable_identity,
                 resource=resource,
                 local_cleanup=local_cleanup,
-                conflict_key=conflict_key,
+                claims=self._normalize_claims(claims),
             )
         )
 
@@ -140,17 +164,22 @@ class CleanupCoordinator:
         self,
         resource: object,
         *,
-        conflict_key: object | None = None,
+        identity: object | None = None,
+        claims: Iterable[object] = (),
     ) -> None:
-        """Record already-unresolved cleanup debt that should be handed off directly."""
+        """Record already-unresolved ownership debt for direct handoff."""
 
         if resource is None:
             raise TypeError("resource cannot be None")
+        stable_identity = resource if identity is None else identity
+        if stable_identity is None:
+            raise TypeError("identity cannot be None")
         self._register(
             _CleanupEntry(
+                identity=stable_identity,
                 resource=resource,
                 local_cleanup=None,
-                conflict_key=conflict_key,
+                claims=self._normalize_claims(claims),
                 handoff_resource=resource,
                 local_attempted=True,
             )
@@ -158,8 +187,14 @@ class CleanupCoordinator:
 
     def _register(self, entry: _CleanupEntry) -> None:
         with self._lock:
-            key = id(entry.resource)
-            if key in self._entries:
+            key = id(entry.identity)
+            existing = self._entries.get(key)
+            if existing is not None:
+                if existing.identity is not entry.identity:
+                    raise RuntimeError("cleanup ownership identity collision")
+                # Registration callbacks can be retried. Preserve the original cleanup state while
+                # retaining any claims that became known before the retry.
+                existing.claims = (*existing.claims, *entry.claims)
                 return
             entry.completion = _CleanupCompletion(self, entry)
             self._entries[key] = entry
@@ -172,9 +207,12 @@ class CleanupCoordinator:
         for entry in entries:
             self._process(entry)
 
+    def _is_current(self, entry: _CleanupEntry) -> bool:
+        return self._entries.get(id(entry.identity)) is entry
+
     def _process(self, entry: _CleanupEntry) -> None:
         with self._lock:
-            if self._entries.get(id(entry.resource)) is not entry:
+            if not self._is_current(entry):
                 return
             if entry.processing or entry.handoff_accepted:
                 return
@@ -197,14 +235,14 @@ class CleanupCoordinator:
                     self._complete(entry)
                     return
                 with self._lock:
-                    if self._entries.get(id(entry.resource)) is not entry:
+                    if not self._is_current(entry):
                         return
                     entry.handoff_resource = handoff_resource
                     entry.local_cleanup = None
 
             if handoff_resource is None:
                 with self._lock:
-                    if self._entries.get(id(entry.resource)) is not entry:
+                    if not self._is_current(entry):
                         return
                     handoff_resource = entry.handoff_resource
             if handoff_resource is None or completion is None:
@@ -214,24 +252,24 @@ class CleanupCoordinator:
                 self._handoff.accept(handoff_resource, completion)
             except BaseException as exc:
                 with self._lock:
-                    if self._entries.get(id(entry.resource)) is entry:
+                    if self._is_current(entry):
                         entry.handoff_error = str(exc).strip() or type(exc).__name__
                 return
 
             with self._lock:
-                if self._entries.get(id(entry.resource)) is entry:
+                if self._is_current(entry):
                     entry.handoff_accepted = True
                     entry.handoff_error = None
         finally:
             with self._lock:
-                if self._entries.get(id(entry.resource)) is entry:
+                if self._is_current(entry):
                     entry.processing = False
 
     def _complete(self, entry: _CleanupEntry) -> None:
-        """Idempotently retire one task only if this exact entry is still current."""
+        """Idempotently retire one ownership and its claims after confirmed cleanup."""
 
         with self._lock:
-            key = id(entry.resource)
+            key = id(entry.identity)
             if self._entries.get(key) is entry:
                 del self._entries[key]
 
@@ -242,4 +280,5 @@ __all__ = [
     "CleanupHandoff",
     "CleanupSnapshot",
     "LocalCleanupAttempt",
+    "ResourceClaimConflict",
 ]

@@ -6,6 +6,7 @@ from threading import Event, Lock
 from time import monotonic
 from typing import Generic, TypeAlias, TypeVar
 
+from adb._lifecycle.resource import ResourceScope
 from adb._lifecycle.result import (
     AcquireBlocked,
     AcquireBusy,
@@ -40,6 +41,7 @@ class _Acquiring(Generic[GenerationT]):
     generation: GenerationT
     token: AcquireToken
     cancellation: Event
+    resource_scope: ResourceScope
     started_at: float = field(default_factory=monotonic, repr=False, compare=False)
 
 
@@ -49,6 +51,7 @@ class _Current(Generic[GenerationT, ResourceT]):
 
     generation: GenerationT
     resource: ResourceT
+    resource_scope: ResourceScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +67,7 @@ class _Draining(Generic[GenerationT]):
     revoked_generation: GenerationT
     token: AcquireToken
     cancellation: Event
+    resource_scope: ResourceScope
     started_at: float = field(repr=False, compare=False)
 
 
@@ -107,12 +111,13 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
     is expressed by state transitions, especially
     ``_Acquiring(G1) -> _Draining(G2, revoked_generation=G1)``.
 
-    Domain lifecycles retain responsibility for validating acquisition constraints, obtaining and
-    cleaning physical resources, constructing domain acquisition values, and publishing domain
-    notifications. This state machine owns only the concurrency-sensitive lifecycle state and
-    invokes narrow callbacks while holding its state lock when cleanup-debt registration must stay
-    atomic
-    with that state transition.
+    Every in-flight acquisition owns a ``ResourceScope`` that follows it through revocation,
+    commit, or abandonment. Domain adapters populate that scope as physical resources are obtained;
+    the state machine keeps the committed value and its scope associated in ``_Current``. Domain
+    lifecycles retain responsibility for acquisition constraints, cleanup implementation, claim
+    semantics, domain values, and notifications. This state machine owns the concurrency-sensitive
+    authority/ownership relationship and invokes narrow callbacks while holding its state lock when
+    cleanup-debt registration must stay atomic with a state transition.
 
     All callbacks (including the issuer) must be short, non-reentrant, and perform no I/O, thread
     startup, or waits for external work. Nested state locks must follow a consistent lock order.
@@ -215,16 +220,19 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
 
             token = AcquireToken()
             cancellation = Event()
+            resource_scope = ResourceScope()
             acquiring = _Acquiring(
                 generation=state.generation,
                 token=token,
                 cancellation=cancellation,
+                resource_scope=resource_scope,
             )
             self._state = acquiring
             return AcquireStarted(
                 token=token,
                 generation=acquiring.generation,
                 cancellation=cancellation,
+                resource_scope=resource_scope,
             )
 
     def abandon_acquire(
@@ -254,6 +262,7 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
                 raise RuntimeError("acquisition token is not current")
 
             revoked = matches_draining
+            state.resource_scope.seal()
             try:
                 if before_clear is not None:
                     self._register_cleanup_locked(before_clear)
@@ -279,8 +288,10 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
 
         with self._lock:
             state = self._state
+            if isinstance(state, (_Acquiring, _Draining)) and state.token is token:
+                state.resource_scope.seal()
             if isinstance(state, _Acquiring) and state.token is token:
-                self._state = _Current(state.generation, resource)
+                self._state = _Current(state.generation, resource, state.resource_scope)
                 return True
 
             try:
@@ -295,7 +306,7 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
         self,
         expected: GenerationT,
         *,
-        on_resource_release: Callable[[ResourceT], None] | None = None,
+        on_resource_release: Callable[[ResourceT, ResourceScope], None] | None = None,
         inconsistent_state_error: str = "lifecycle state is inconsistent",
     ) -> ReleaseResult[GenerationT, ResourceT]:
         """Release matching lifecycle state, advance generation, and fence stale acquisition work."""
@@ -334,6 +345,7 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
                     revoked_generation=released_generation,
                     token=state.token,
                     cancellation=state.cancellation,
+                    resource_scope=state.resource_scope,
                     started_at=state.started_at,
                 )
                 return ReleaseAcquisitionRevoked(released_generation)
@@ -346,7 +358,9 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
             outcome = ReleaseResourceDetached(released_generation, resource)
             if on_resource_release is not None:
                 try:
-                    self._register_cleanup_locked(lambda: on_resource_release(resource))
+                    self._register_cleanup_locked(
+                        lambda: on_resource_release(resource, state.resource_scope)
+                    )
                 except Exception as exc:
                     raise CleanupRegistrationError(outcome) from exc
             return outcome
