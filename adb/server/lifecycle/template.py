@@ -10,7 +10,7 @@ from adb._lifecycle import (
     AcquireBlocked,
     AcquireBusy,
     AcquireExisting,
-    AcquireStarted,
+    AcquireAttempt,
     LifecycleStateMachine,
     LifecycleDiagnostics,
     ReleaseAcquisitionRevoked,
@@ -212,10 +212,9 @@ class AdbServerLifecycleTemplate(ABC):
                 start.diagnostic
                 or "ADB server lifecycle is cleaning a conflicting owned resource"
             )
-        if not isinstance(start, AcquireStarted):
+        if not isinstance(start, AcquireAttempt):
             raise TypeError("unsupported shared lifecycle acquire start")
         attempt = start
-        token = attempt.token
         resources = attempt.resource_scope
         register_scope = lambda: self._register_resource_scope(resources)
 
@@ -227,7 +226,7 @@ class AdbServerLifecycleTemplate(ABC):
             )
         except AdbServerAcquireInterruptedError as exc:
             revoked = self._state_machine.abandon_acquire(
-                token, before_clear=register_scope
+                attempt, before_clear=register_scope
             )
             if revoked:
                 return AdbServerAcquireSuperseded(attempt.generation)
@@ -236,18 +235,18 @@ class AdbServerLifecycleTemplate(ABC):
             ) from exc
         except AdbServerAcquireError as exc:
             revoked = self._state_machine.abandon_acquire(
-                token, before_clear=register_scope
+                attempt, before_clear=register_scope
             )
             if revoked:
                 return AdbServerAcquireSuperseded(attempt.generation)
             return AdbServerAcquireFailed(exc.diagnostic)
         except BaseException:
-            self._state_machine.abandon_acquire(token, before_clear=register_scope)
+            self._state_machine.abandon_acquire(attempt, before_clear=register_scope)
             raise
 
         if self._cleanup_has_conflict(resources.claims()):
             revoked = self._state_machine.abandon_acquire(
-                token,
+                attempt,
                 before_clear=register_scope,
             )
             if revoked:
@@ -258,7 +257,7 @@ class AdbServerLifecycleTemplate(ABC):
 
         if endpoint_constraint is not None and endpoint != endpoint_constraint:
             revoked = self._state_machine.abandon_acquire(
-                token,
+                attempt,
                 before_clear=register_scope,
             )
             if revoked:
@@ -275,13 +274,13 @@ class AdbServerLifecycleTemplate(ABC):
             resource = _ServerResource(acquisition)
         except BaseException:
             self._state_machine.abandon_acquire(
-                token,
+                attempt,
                 before_clear=register_scope,
             )
             raise
 
         committed = self._state_machine.commit_acquire(
-            token,
+            attempt,
             resource,
             on_superseded=register_scope,
         )

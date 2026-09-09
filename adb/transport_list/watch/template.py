@@ -12,7 +12,7 @@ from adb._lifecycle import (
     AcquireBlocked,
     AcquireBusy,
     AcquireExisting,
-    AcquireStarted,
+    AcquireAttempt,
     LifecycleStateMachine,
     LifecycleDiagnostics,
     ReleaseAcquisitionRevoked,
@@ -221,10 +221,9 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             return AdbTransportListWatchAcquireBlocked(
                 start.diagnostic or "ADB transport-list watch lifecycle acquisition is blocked"
             )
-        if not isinstance(start, AcquireStarted):
+        if not isinstance(start, AcquireAttempt):
             raise TypeError("unsupported shared lifecycle acquire start")
         attempt = start
-        token = attempt.token
         resources = attempt.resource_scope
         register_scope = lambda: self._register_resource_scope(resources)
 
@@ -233,7 +232,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             resources.adopt(handle, lambda: handle.close())
         except AdbTransportListWatchAcquireInterruptedError as exc:
             revoked = self._state_machine.abandon_acquire(
-                token, before_clear=register_scope
+                attempt, before_clear=register_scope
             )
             if revoked:
                 return AdbTransportListWatchAcquireSuperseded(attempt.generation)
@@ -243,13 +242,13 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             ) from exc
         except AdbTransportListWatchAcquireError as exc:
             revoked = self._state_machine.abandon_acquire(
-                token, before_clear=register_scope
+                attempt, before_clear=register_scope
             )
             if revoked:
                 return AdbTransportListWatchAcquireSuperseded(attempt.generation)
             return AdbTransportListWatchAcquireFailed(exc.failure)
         except BaseException:
-            self._state_machine.abandon_acquire(token, before_clear=register_scope)
+            self._state_machine.abandon_acquire(attempt, before_clear=register_scope)
             raise
 
         try:
@@ -263,13 +262,13 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             )
         except BaseException:
             self._state_machine.abandon_acquire(
-                token,
+                attempt,
                 before_clear=register_scope,
             )
             raise
 
         committed = self._state_machine.commit_acquire(
-            token,
+            attempt,
             resource,
             on_superseded=register_scope,
         )

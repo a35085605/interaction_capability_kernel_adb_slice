@@ -8,12 +8,11 @@ from typing import Generic, TypeAlias, TypeVar
 
 from adb._lifecycle.resource import ResourceScope
 from adb._lifecycle.result import (
+    AcquireAttempt,
     AcquireBlocked,
     AcquireBusy,
     AcquireExisting,
-    AcquireStarted,
     AcquireStartResult,
-    AcquireToken,
     CleanupRegistrationError,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
@@ -38,11 +37,12 @@ class _Idle(Generic[GenerationT]):
 class _Acquiring(Generic[GenerationT]):
     """Current generation has one in-flight acquisition with commit authority."""
 
-    generation: GenerationT
-    token: AcquireToken
-    cancellation: Event
-    resource_scope: ResourceScope
+    attempt: AcquireAttempt[GenerationT]
     started_at: float = field(default_factory=monotonic, repr=False, compare=False)
+
+    @property
+    def generation(self) -> GenerationT:
+        return self.attempt.generation
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,16 +58,13 @@ class _Current(Generic[GenerationT, ResourceT]):
 class _Draining(Generic[GenerationT]):
     """A revoked acquisition is draining after the state machine advanced to a new generation.
 
-    ``generation`` is the current generation exposed by the state machine. ``revoked_generation`` is
+    ``generation`` is the current generation exposed by the state machine. ``attempt.generation`` is
     the generation of the in-flight attempt that has already lost commit authority but has not yet
     returned to the state machine.
     """
 
     generation: GenerationT
-    revoked_generation: GenerationT
-    token: AcquireToken
-    cancellation: Event
-    resource_scope: ResourceScope
+    attempt: AcquireAttempt[GenerationT]
     started_at: float = field(repr=False, compare=False)
 
 
@@ -107,9 +104,9 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
 
     Lifecycle state is represented as one explicit private state: ``_Idle``, ``_Acquiring``,
     ``_Current``, or ``_Draining``. This makes in-flight acquisition and a current usable resource
-    mutually exclusive by construction. An ``AcquireToken`` is identity-only; generation fencing
-    is expressed by state transitions, especially
-    ``_Acquiring(G1) -> _Draining(G2, revoked_generation=G1)``.
+    mutually exclusive by construction. An ``AcquireAttempt`` is identity-bearing and captures the
+    context for one in-flight acquisition; generation fencing is expressed by state transitions,
+    especially ``_Acquiring(A1@G1) -> _Draining(G2, A1@G1)``.
 
     Every in-flight acquisition owns a ``ResourceScope`` that follows it through revocation,
     commit, or abandonment. Domain adapters populate that scope as physical resources are obtained;
@@ -163,12 +160,11 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
     def _pending_snapshot(
         state: _Acquiring[GenerationT] | _Draining[GenerationT],
     ) -> PendingSnapshot[GenerationT]:
-        generation = (
-            state.revoked_generation if isinstance(state, _Draining) else state.generation
-        )
         return PendingSnapshot(
-            generation=generation,
-            cancelled=isinstance(state, _Draining) or state.cancellation.is_set(),
+            generation=state.attempt.generation,
+            cancelled=(
+                isinstance(state, _Draining) or state.attempt.cancellation.is_set()
+            ),
             age_seconds=max(0.0, monotonic() - state.started_at),
         )
 
@@ -218,26 +214,17 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
             if is_blocked is not None and is_blocked():
                 return AcquireBlocked()
 
-            token = AcquireToken()
-            cancellation = Event()
-            resource_scope = ResourceScope()
-            acquiring = _Acquiring(
+            attempt = AcquireAttempt(
                 generation=state.generation,
-                token=token,
-                cancellation=cancellation,
-                resource_scope=resource_scope,
+                cancellation=Event(),
+                resource_scope=ResourceScope(),
             )
-            self._state = acquiring
-            return AcquireStarted(
-                token=token,
-                generation=acquiring.generation,
-                cancellation=cancellation,
-                resource_scope=resource_scope,
-            )
+            self._state = _Acquiring(attempt=attempt)
+            return attempt
 
     def abandon_acquire(
         self,
-        token: AcquireToken,
+        attempt: AcquireAttempt[GenerationT],
         *,
         before_clear: Callable[[], None] | None = None,
     ) -> bool:
@@ -245,24 +232,23 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
 
         A failing ``before_clear`` still retires the matching in-flight state. Its
         resource-retaining cleanup registration remains queued for retry and blocks new acquisitions
-        until registration
-        succeeds.
+        until registration succeeds.
         """
 
-        if not isinstance(token, AcquireToken):
-            raise TypeError("token must be AcquireToken")
+        if not isinstance(attempt, AcquireAttempt):
+            raise TypeError("attempt must be AcquireAttempt")
         if before_clear is not None and not callable(before_clear):
             raise TypeError("before_clear must be callable or None")
 
         with self._lock:
             state = self._state
-            matches_acquiring = isinstance(state, _Acquiring) and state.token is token
-            matches_draining = isinstance(state, _Draining) and state.token is token
+            matches_acquiring = isinstance(state, _Acquiring) and state.attempt is attempt
+            matches_draining = isinstance(state, _Draining) and state.attempt is attempt
             if not matches_acquiring and not matches_draining:
-                raise RuntimeError("acquisition token is not current")
+                raise RuntimeError("acquisition attempt is not current")
 
             revoked = matches_draining
-            state.resource_scope.seal()
+            attempt.resource_scope.seal()
             try:
                 if before_clear is not None:
                     self._register_cleanup_locked(before_clear)
@@ -272,15 +258,15 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
 
     def commit_acquire(
         self,
-        token: AcquireToken,
+        attempt: AcquireAttempt[GenerationT],
         resource: ResourceT,
         *,
         on_superseded: Callable[[], None] | None = None,
     ) -> bool:
-        """Commit ``resource`` iff ``token`` still has commit authority; otherwise register cleanup."""
+        """Commit ``resource`` iff ``attempt`` still has authority; otherwise register cleanup."""
 
-        if not isinstance(token, AcquireToken):
-            raise TypeError("token must be AcquireToken")
+        if not isinstance(attempt, AcquireAttempt):
+            raise TypeError("attempt must be AcquireAttempt")
         if resource is None:
             raise ValueError("resource cannot be None")
         if on_superseded is not None and not callable(on_superseded):
@@ -288,17 +274,17 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
 
         with self._lock:
             state = self._state
-            if isinstance(state, (_Acquiring, _Draining)) and state.token is token:
-                state.resource_scope.seal()
-            if isinstance(state, _Acquiring) and state.token is token:
-                self._state = _Current(state.generation, resource, state.resource_scope)
+            if isinstance(state, (_Acquiring, _Draining)) and state.attempt is attempt:
+                attempt.resource_scope.seal()
+            if isinstance(state, _Acquiring) and state.attempt is attempt:
+                self._state = _Current(state.generation, resource, attempt.resource_scope)
                 return True
 
             try:
                 if on_superseded is not None:
                     self._register_cleanup_locked(on_superseded)
             finally:
-                if isinstance(state, _Draining) and state.token is token:
+                if isinstance(state, _Draining) and state.attempt is attempt:
                     self._state = _Idle(state.generation)
             return False
 
@@ -339,13 +325,10 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
                 # Logical revocation is immediate, but the old attempt remains represented until
                 # obtain returns. New acquisition is therefore blocked without comparing
                 # generations.
-                state.cancellation.set()
+                state.attempt.cancellation.set()
                 self._state = _Draining(
                     generation=next_generation,
-                    revoked_generation=released_generation,
-                    token=state.token,
-                    cancellation=state.cancellation,
-                    resource_scope=state.resource_scope,
+                    attempt=state.attempt,
                     started_at=state.started_at,
                 )
                 return ReleaseAcquisitionRevoked(released_generation)

@@ -12,21 +12,14 @@ ResourceT = TypeVar("ResourceT")
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class AcquireToken:
-    """Opaque identity token for one in-flight acquisition attempt.
+class AcquireAttempt(Generic[GenerationT]):
+    """One in-flight acquisition attempt and its captured lifecycle context.
 
-    The token deliberately carries no generation, cancellation, timing, or commit-authority
-    state. Those facts belong to the lifecycle state machine and the ``AcquireStarted`` result. Token
-    identity is
-    used only to correlate a returning acquisition with the state that started it.
+    Attempt identity correlates returning acquisition work with the state that started it.
+    Generation fencing and commit authority remain state-machine concerns; the captured generation,
+    cancellation, and resource scope are the context for this specific attempt.
     """
 
-
-@dataclass(frozen=True, slots=True)
-class AcquireStarted(Generic[GenerationT]):
-    """Facts captured for one attempt, including its mutable physical-resource scope."""
-
-    token: AcquireToken
     generation: GenerationT
     cancellation: Event
     resource_scope: ResourceScope
@@ -54,7 +47,7 @@ class AcquireBlocked:
 
 
 AcquireStartResult: TypeAlias = (
-    AcquireStarted[GenerationT]
+    AcquireAttempt[GenerationT]
     | AcquireExisting[ResourceT]
     | AcquireBusy
     | AcquireBlocked
@@ -111,12 +104,11 @@ class CleanupRegistrationError(RuntimeError):
 
 
 __all__ = [
+    "AcquireAttempt",
     "AcquireBlocked",
     "AcquireBusy",
     "AcquireExisting",
-    "AcquireStarted",
     "AcquireStartResult",
-    "AcquireToken",
     "CleanupRegistrationError",
     "ReleaseAcquisitionRevoked",
     "ReleaseGenerationMismatch",
