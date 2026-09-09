@@ -1,7 +1,6 @@
 """ADB server lifecycle contracts, acquisition, and recovery."""
 
 from adb.server.lifecycle.errors import (
-    AdbServerBootstrapError,
     AdbServerLifecycleConsistencyError,
     AdbServerLifecycleError,
 )
@@ -35,7 +34,6 @@ __all__ = [
     "AdbServerReleaseInactive",
     "AdbServerReleaseGenerationMismatch",
     "AdbServerReleaseOutcome",
-    "AdbServerBootstrapError",
     "AdbServerLifecycleConsistencyError",
     "AdbServerLifecycleError",
 ]

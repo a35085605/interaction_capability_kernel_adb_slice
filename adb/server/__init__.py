@@ -14,7 +14,6 @@ from adb.server.lifecycle import (
     AdbServerReleaseInactive,
     AdbServerReleaseGenerationMismatch,
     AdbServerReleaseOutcome,
-    AdbServerBootstrapError,
     AdbServerLifecycleConsistencyError,
     AdbServerLifecycleError,
 )
@@ -48,7 +47,6 @@ __all__ = [
     "AdbServerReleaseInactive",
     "AdbServerReleaseGenerationMismatch",
     "AdbServerReleaseOutcome",
-    "AdbServerBootstrapError",
     "AdbServerConnectionFailure",
     "AdbServerEndpoint",
     "AdbServerFailure",
