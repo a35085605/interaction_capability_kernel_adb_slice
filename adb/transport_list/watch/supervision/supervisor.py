@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
-from threading import RLock, Thread, current_thread
+from threading import Event, RLock, Thread, current_thread
 
 from networking import TcpAddress
 from adb.transport_list.watch.contract import (
@@ -16,16 +15,14 @@ from adb.transport_list.watch.supervision.recovery import (
     AdbTransportListWatchRecovery,
     AdbTransportListWatchRecoveryAcquired,
     AdbTransportListWatchRecoveryAttempt,
-    AdbTransportListWatchRecoveryDecision,
     AdbTransportListWatchRecoveryFailed,
 )
-from scheduling import ScheduleToken, TemporalScheduler
 
 
 class AdbTransportListWatchSupervisor:
     """Run explicitly reconciled transport-list watch recovery cycles.
 
-    Owns generation-fenced reconciliation commands, private retry scheduling, and recovery worker
+    Owns generation-fenced reconciliation commands, interruptible retry waits, and recovery worker
     lifetimes. Watch authority remains in the lifecycle. Retry timing is execution plumbing rather
     than an externally observable notification stream.
     """
@@ -34,29 +31,24 @@ class AdbTransportListWatchSupervisor:
         self,
         lifecycle: AdbTransportListWatchLifecycle,
         *,
-        scheduler: TemporalScheduler | None,
         policy: AdbTransportListWatchRecoveryPolicy,
         recovery_enabled: bool,
     ) -> None:
         if not isinstance(lifecycle, AdbTransportListWatchLifecycle):
             raise TypeError("lifecycle must satisfy AdbTransportListWatchLifecycle")
-        if scheduler is not None and not isinstance(scheduler, TemporalScheduler):
-            raise TypeError("scheduler must satisfy TemporalScheduler or be None")
         if not isinstance(policy, AdbTransportListWatchRecoveryPolicy):
             raise TypeError("policy must be AdbTransportListWatchRecoveryPolicy")
         if not isinstance(recovery_enabled, bool):
             raise TypeError("recovery_enabled must be bool")
         self._lifecycle = lifecycle
-        self._scheduler = scheduler
         self._policy = policy
         self._recovery_enabled = recovery_enabled
 
         self._lock = RLock()
+        self._stop_event = Event()
         self._recovery: AdbTransportListWatchRecovery | None = None
-        self._recovery_attempt: AdbTransportListWatchRecoveryAttempt | None = None
         self._recovery_endpoint: TcpAddress | None = None
-        self._retry_token: ScheduleToken | None = None
-        self._attempt_threads: set[Thread] = set()
+        self._recovery_threads: set[Thread] = set()
         self._pending_recovery_endpoint: TcpAddress | None = None
         self._started = False
         self._closed = False
@@ -89,10 +81,10 @@ class AdbTransportListWatchSupervisor:
                 return
             self._closed = True
             self._started = False
-            retry_token, attempt_threads = self._clear_recovery_locked()
+            recovery_threads = self._clear_recovery_locked()
 
-        self._cancel_retry(retry_token)
-        self._join_attempt_threads(attempt_threads)
+        self._stop_event.set()
+        self._join_recovery_threads(recovery_threads)
 
     def reconcile(self, generation: AdbTransportListWatchGeneration) -> None:
         """Release one expected generation and recover its detached watch endpoint."""
@@ -122,11 +114,7 @@ class AdbTransportListWatchSupervisor:
             raise TypeError("endpoint must be TcpAddress")
 
         with self._lock:
-            if (
-                not self._running_locked()
-                or not self._recovery_enabled
-                or self._scheduler is None
-            ):
+            if not self._running_locked() or not self._recovery_enabled:
                 return
 
             if self._recovery is not None:
@@ -134,118 +122,77 @@ class AdbTransportListWatchSupervisor:
                 return
 
             recovery = AdbTransportListWatchRecovery(self._policy)
+            attempt = recovery.begin()
             self._recovery = recovery
             self._recovery_endpoint = endpoint
             self._pending_recovery_endpoint = None
-            attempt = recovery.begin()
 
-        self._apply_recovery_attempt(recovery, attempt)
+        self._launch_recovery_worker(recovery, attempt)
 
-    def _apply_recovery_attempt(
-        self,
-        recovery: AdbTransportListWatchRecovery,
-        attempt: AdbTransportListWatchRecoveryAttempt,
-    ) -> None:
-        """Execute immediately or arrange one private watch recovery acquisition attempt."""
-
-        with self._lock:
-            if not self._is_current_recovery_locked(recovery):
-                return
-
-        if attempt.delay_seconds > 0.0:
-            scheduler = self._scheduler
-            if scheduler is None:
-                return
-
-            with self._lock:
-                if not self._is_current_recovery_locked(recovery):
-                    return
-                old_token = self._retry_token
-                self._retry_token = None
-                self._recovery_attempt = attempt
-
-            if old_token is not None:
-                scheduler.cancel(old_token)
-
-            try:
-                token = scheduler.schedule_after(
-                    timedelta(seconds=attempt.delay_seconds),
-                    lambda: self._on_recovery_retry_due(recovery, attempt),
-                )
-            except BaseException:
-                with self._lock:
-                    if (
-                        self._is_current_recovery_locked(recovery)
-                        and self._recovery_attempt is attempt
-                    ):
-                        self._recovery_attempt = None
-                raise
-
-            with self._lock:
-                if (
-                    self._is_current_recovery_locked(recovery)
-                    and self._recovery_attempt is attempt
-                ):
-                    self._retry_token = token
-                    return
-
-            scheduler.cancel(token)
-            return
-
-        self._launch_recovery_attempt(recovery, attempt)
-
-    def _on_recovery_retry_due(
-        self,
-        recovery: AdbTransportListWatchRecovery,
-        attempt: AdbTransportListWatchRecoveryAttempt,
-    ) -> None:
-        with self._lock:
-            if (
-                not self._is_current_recovery_locked(recovery)
-                or self._recovery_attempt is not attempt
-            ):
-                return
-            self._retry_token = None
-            self._recovery_attempt = None
-
-        self._launch_recovery_attempt(recovery, attempt)
-
-    def _launch_recovery_attempt(
+    def _launch_recovery_worker(
         self,
         recovery: AdbTransportListWatchRecovery,
         attempt: AdbTransportListWatchRecoveryAttempt,
     ) -> None:
         thread = Thread(
-            target=self._run_recovery_attempt,
-            args=(recovery,),
-            name=f"adb-transport-list-watch-recovery-{attempt.attempt_number}",
+            target=self._run_recovery,
+            args=(recovery, attempt),
+            name="adb-transport-list-watch-recovery",
             daemon=True,
         )
         with self._lock:
             if not self._is_current_recovery_locked(recovery):
                 return
-            self._attempt_threads.add(thread)
+            self._recovery_threads.add(thread)
             try:
                 thread.start()
             except BaseException:
-                self._attempt_threads.discard(thread)
+                self._recovery_threads.discard(thread)
+                if self._recovery is recovery:
+                    self._recovery = None
+                    self._recovery_endpoint = None
+                    self._pending_recovery_endpoint = None
                 raise
 
-    def _run_recovery_attempt(self, recovery: AdbTransportListWatchRecovery) -> None:
+    def _run_recovery(
+        self,
+        recovery: AdbTransportListWatchRecovery,
+        attempt: AdbTransportListWatchRecoveryAttempt,
+    ) -> None:
         active_thread = current_thread()
         try:
-            with self._lock:
-                if not self._is_current_recovery_locked(recovery):
+            while True:
+                if (
+                    attempt.delay_seconds > 0.0
+                    and self._stop_event.wait(attempt.delay_seconds)
+                ):
                     return
-                endpoint = self._recovery_endpoint
-                if endpoint is None:
-                    raise RuntimeError(
-                        "ADB transport-list watch recovery endpoint state is inconsistent"
-                    )
 
-            result = self._lifecycle.acquire(endpoint)
-            decision = recovery.decide_after(result)
-            self._apply_recovery_decision(recovery, decision)
+                with self._lock:
+                    if not self._is_current_recovery_locked(recovery):
+                        return
+                    endpoint = self._recovery_endpoint
+                    if endpoint is None:
+                        raise RuntimeError(
+                            "ADB transport-list watch recovery endpoint state is inconsistent"
+                        )
+
+                result = self._lifecycle.acquire(endpoint)
+                decision = recovery.decide_after(result)
+
+                if isinstance(decision, AdbTransportListWatchRecoveryAttempt):
+                    attempt = decision
+                    continue
+                if isinstance(
+                    decision,
+                    (
+                        AdbTransportListWatchRecoveryAcquired,
+                        AdbTransportListWatchRecoveryFailed,
+                    ),
+                ):
+                    self._finish_recovery(recovery)
+                    return
+                raise TypeError("decision must be AdbTransportListWatchRecoveryDecision")
         except BaseException:
             # Contract/invariant failures are not retryable lifecycle outcomes. Release this cycle
             # so later explicit reconciliations cannot become permanently pending behind a dead
@@ -254,61 +201,30 @@ class AdbTransportListWatchSupervisor:
             raise
         finally:
             with self._lock:
-                self._attempt_threads.discard(active_thread)
-
-    def _apply_recovery_decision(
-        self,
-        recovery: AdbTransportListWatchRecovery,
-        decision: AdbTransportListWatchRecoveryDecision,
-    ) -> None:
-        """Apply one stateful watch recovery decision through supervisor-owned effects."""
-
-        if isinstance(decision, AdbTransportListWatchRecoveryAcquired):
-            self._finish_recovery(recovery)
-            return
-        if isinstance(decision, AdbTransportListWatchRecoveryAttempt):
-            self._apply_recovery_attempt(recovery, decision)
-            return
-        if isinstance(decision, AdbTransportListWatchRecoveryFailed):
-            self._finish_recovery(recovery)
-            return
-        raise TypeError("decision must be AdbTransportListWatchRecoveryDecision")
+                self._recovery_threads.discard(active_thread)
 
     def _abort_recovery(self, recovery: AdbTransportListWatchRecovery) -> None:
-        """Terminate a broken recovery cycle and clear its scheduled work."""
+        """Terminate a broken recovery cycle and clear its queued work."""
 
-        scheduler = self._scheduler
         with self._lock:
             if self._recovery is not recovery:
                 return
-            retry_token = self._retry_token
             self._recovery = None
-            self._recovery_attempt = None
             self._recovery_endpoint = None
-            self._retry_token = None
             self._pending_recovery_endpoint = None
-
-        if retry_token is not None and scheduler is not None:
-            scheduler.cancel(retry_token)
 
     def _finish_recovery(self, recovery: AdbTransportListWatchRecovery) -> None:
         """Release one terminal recovery cycle and consume queued recovery demand."""
 
-        scheduler = self._scheduler
         with self._lock:
             if not self._is_current_recovery_locked(recovery):
                 return
-            retry_token = self._retry_token
             self._recovery = None
-            self._recovery_attempt = None
             self._recovery_endpoint = None
-            self._retry_token = None
             pending_endpoint = self._pending_recovery_endpoint
             self._pending_recovery_endpoint = None
             running = self._running_locked()
 
-        if retry_token is not None and scheduler is not None:
-            scheduler.cancel(retry_token)
         if pending_endpoint is not None and running:
             self._request_recovery(pending_endpoint)
 
@@ -321,24 +237,14 @@ class AdbTransportListWatchSupervisor:
     def _running_locked(self) -> bool:
         return not self._closed and self._started
 
-    def _clear_recovery_locked(
-        self,
-    ) -> tuple[ScheduleToken | None, tuple[Thread, ...]]:
-        retry_token = self._retry_token
+    def _clear_recovery_locked(self) -> tuple[Thread, ...]:
         self._recovery = None
-        self._recovery_attempt = None
         self._recovery_endpoint = None
-        self._retry_token = None
         self._pending_recovery_endpoint = None
-        return retry_token, tuple(self._attempt_threads)
-
-    def _cancel_retry(self, token: ScheduleToken | None) -> None:
-        scheduler = self._scheduler
-        if token is not None and scheduler is not None:
-            scheduler.cancel(token)
+        return tuple(self._recovery_threads)
 
     @staticmethod
-    def _join_attempt_threads(threads: tuple[Thread, ...]) -> None:
+    def _join_recovery_threads(threads: tuple[Thread, ...]) -> None:
         for thread in threads:
             if thread is not current_thread():
                 thread.join()
