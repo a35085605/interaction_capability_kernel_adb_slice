@@ -3,23 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from adb._lifecycle import LifecycleSnapshot
 from adb.transport_list.watch.access import AdbTransportListWatchAccess
 from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchState(
-    LifecycleSnapshot[
-        AdbTransportListWatchGeneration, AdbTransportListWatchAccess | None
-    ]
-):
+class AdbTransportListWatchState:
     """Watch-facing generation/access state with runtime validation."""
 
+    generation: AdbTransportListWatchGeneration
     access: AdbTransportListWatchAccess | None = None
 
     def __post_init__(self) -> None:
-        LifecycleSnapshot.__post_init__(self)
         if not isinstance(self.generation, AdbTransportListWatchGeneration):
             raise TypeError("generation must be AdbTransportListWatchGeneration")
         if self.access is not None and not isinstance(
