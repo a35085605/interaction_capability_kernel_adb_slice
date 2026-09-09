@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
@@ -11,12 +10,12 @@ from adb._lifecycle import (
     AcquireExisting,
     AcquireFailed,
     AcquireSuperseded,
-    EndpointAccess,
     ReleaseAccessDetached,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
 )
+from adb.transport_list.watch.access import AdbTransportListWatchAccess
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
@@ -25,19 +24,9 @@ from adb.transport_list.watch.generation import (
 from adb.transport_list.watch.state import AdbTransportListWatchStateView
 
 
-@dataclass(frozen=True, slots=True)
-class AdbTransportListWatchAccess(EndpointAccess[AdbTransportListWatchGeneration]):
-    """Watch lifecycle evidence: generation plus endpoint, without the private stream handle."""
-
-    def __post_init__(self) -> None:
-        EndpointAccess.__post_init__(self)
-        if not isinstance(self.generation, AdbTransportListWatchGeneration):
-            raise TypeError("generation must be AdbTransportListWatchGeneration")
-
-
 AdbTransportListWatchAcquireOutcome: TypeAlias = (
-    AcquireCommitted[AdbTransportListWatchAccess]
-    | AcquireExisting[AdbTransportListWatchAccess]
+    AcquireCommitted[AdbTransportListWatchGeneration, AdbTransportListWatchAccess]
+    | AcquireExisting[AdbTransportListWatchGeneration, AdbTransportListWatchAccess]
     | AcquireBlocked
     | AcquireFailed[AdbTransportListWatchFailure]
     | AcquireSuperseded[AdbTransportListWatchGeneration]

@@ -16,6 +16,7 @@ from adb._lifecycle import (
     AcquireStartExisting,
     AcquireSuperseded,
     LifecycleDiagnostics,
+    LifecycleSnapshot,
     ManagedLifecycle,
     ReleaseAccessDetached,
     ReleaseAcquisitionRevoked,
@@ -98,7 +99,7 @@ class AdbServerLifecycleTemplate(ABC):
         access = state.access
         return AdbServerState(
             generation=state.generation,
-            endpoint=None if access is None else access.endpoint,
+            access=access,
         )
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbServerGeneration]:
@@ -158,9 +159,10 @@ class AdbServerLifecycleTemplate(ABC):
             )
         )
         if isinstance(start, AcquireStartExisting):
-            access = start.access
+            snapshot = start.snapshot
+            access = snapshot.access
             if access.endpoint == endpoint:
-                return AcquireExisting(access)
+                return AcquireExisting(snapshot)
             return AcquireBlocked(
                 "ADB server lifecycle already retains a different endpoint"
             )
@@ -217,17 +219,14 @@ class AdbServerLifecycleTemplate(ABC):
             )
 
         try:
-            access = AdbServerAccess(
-                endpoint=obtained_endpoint,
-                generation=attempt.generation,
-            )
+            access = AdbServerAccess(endpoint=obtained_endpoint)
         except BaseException:
             self._managed.abandon_acquire(attempt)
             raise
 
         committed = self._managed.commit_acquire(attempt, access)
         if committed:
-            return AcquireCommitted(access)
+            return AcquireCommitted(LifecycleSnapshot(attempt.generation, access))
 
         return AcquireSuperseded(attempt.generation)
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from adb._lifecycle import (
@@ -9,31 +8,21 @@ from adb._lifecycle import (
     AcquireExisting,
     AcquireFailed,
     AcquireSuperseded,
-    EndpointAccess,
     ReleaseAccessDetached,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
 )
+from adb.server.access import AdbServerAccess
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerStateView
 
 
-@dataclass(frozen=True, slots=True)
-class AdbServerAccess(EndpointAccess[AdbServerGeneration]):
-    """Usable ADB server endpoint access retained by one server generation."""
-
-    def __post_init__(self) -> None:
-        EndpointAccess.__post_init__(self)
-        if not isinstance(self.generation, AdbServerGeneration):
-            raise TypeError("generation must be AdbServerGeneration")
-
-
 AdbServerAcquireOutcome: TypeAlias = (
-    AcquireCommitted[AdbServerAccess]
-    | AcquireExisting[AdbServerAccess]
+    AcquireCommitted[AdbServerGeneration, AdbServerAccess]
+    | AcquireExisting[AdbServerGeneration, AdbServerAccess]
     | AcquireBlocked
     | AcquireFailed[AdbServerLaunchFailure]
     | AcquireSuperseded[AdbServerGeneration]

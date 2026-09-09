@@ -4,17 +4,20 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from adb._lifecycle import EndpointState
+from adb.server.access import AdbServerAccess
 from adb.server.generation import AdbServerGeneration
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerState(EndpointState[AdbServerGeneration]):
-    """Server-facing endpoint state with server-generation runtime validation."""
+class AdbServerState(EndpointState[AdbServerGeneration, AdbServerAccess]):
+    """Server-facing generation/access state with runtime validation."""
 
     def __post_init__(self) -> None:
         EndpointState.__post_init__(self)
         if not isinstance(self.generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
+        if self.access is not None and not isinstance(self.access, AdbServerAccess):
+            raise TypeError("access must be AdbServerAccess or None")
 
 
 @runtime_checkable

@@ -19,6 +19,7 @@ from adb._lifecycle import (
     AcquireStartExisting,
     AcquireSuperseded,
     LifecycleDiagnostics,
+    LifecycleSnapshot,
     ManagedLifecycle,
     ReleaseAccessDetached,
     ReleaseAcquisitionRevoked,
@@ -125,7 +126,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         access = state.access
         return AdbTransportListWatchState(
             generation=state.generation,
-            endpoint=None if access is None else access.access.endpoint,
+            access=None if access is None else access.access,
         )
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbTransportListWatchGeneration]:
@@ -157,11 +158,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
 
         state = self._managed.snapshot()
         access = state.access
-        if (
-            expected != state.generation
-            or access is None
-            or access.access.generation != expected
-        ):
+        if expected != state.generation or access is None:
             return None
         return access.stream
 
@@ -181,9 +178,12 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     def _acquire(self, endpoint: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
         start = self._managed.begin_acquire()
         if isinstance(start, AcquireStartExisting):
-            access = start.access
+            snapshot = start.snapshot
+            access = snapshot.access
             if access.access.endpoint == endpoint:
-                return AcquireExisting(access.access)
+                return AcquireExisting(
+                    LifecycleSnapshot(snapshot.generation, access.access)
+                )
             return AcquireBlocked(
                 "ADB transport-list watch lifecycle already retains a different endpoint"
             )
@@ -222,10 +222,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             raise
 
         try:
-            public_access = AdbTransportListWatchAccess(
-                endpoint=endpoint,
-                generation=attempt.generation,
-            )
+            public_access = AdbTransportListWatchAccess(endpoint=endpoint)
             access = _WatchAccess(
                 stream=_AdbTransportListWatchStreamView(handle),
                 access=public_access,
@@ -236,7 +233,9 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
 
         committed = self._managed.commit_acquire(attempt, access)
         if committed:
-            return AcquireCommitted(public_access)
+            return AcquireCommitted(
+                LifecycleSnapshot(attempt.generation, public_access)
+            )
 
         return AcquireSuperseded(attempt.generation)
 

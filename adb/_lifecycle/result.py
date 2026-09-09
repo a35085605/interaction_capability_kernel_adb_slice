@@ -5,6 +5,7 @@ from threading import Event
 from typing import Generic, TypeAlias, TypeVar
 
 from adb._lifecycle.resource import ResourceScope
+from adb._lifecycle.snapshot import LifecycleSnapshot
 
 
 GenerationT = TypeVar("GenerationT")
@@ -31,17 +32,20 @@ class AcquireAttempt(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class AcquireStartExisting(Generic[AccessT]):
+class AcquireStartExisting(Generic[GenerationT, AccessT]):
     """Acquire cannot start because the lifecycle already retains usable access.
 
-    This is a kernel start decision only. Domain request constraints have not yet been checked.
+    The snapshot is captured atomically while the lifecycle lock is held. Domain request constraints
+    have not yet been checked.
     """
 
-    access: AccessT
+    snapshot: LifecycleSnapshot[GenerationT, AccessT]
 
     def __post_init__(self) -> None:
-        if self.access is None:
-            raise TypeError("access cannot be None")
+        if not isinstance(self.snapshot, LifecycleSnapshot):
+            raise TypeError("snapshot must be LifecycleSnapshot")
+        if self.snapshot.access is None:
+            raise TypeError("snapshot access cannot be None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,32 +73,36 @@ class AcquireStartBlocked:
 
 AcquireStartResult: TypeAlias = (
     AcquireAttempt[GenerationT]
-    | AcquireStartExisting[AccessT]
+    | AcquireStartExisting[GenerationT, AccessT]
     | AcquireStartBusy
     | AcquireStartBlocked
 )
 
 
 @dataclass(frozen=True, slots=True)
-class AcquireCommitted(Generic[AccessT]):
+class AcquireCommitted(Generic[GenerationT, AccessT]):
     """The requested access committed as the lifecycle's current authority."""
 
-    access: AccessT
+    snapshot: LifecycleSnapshot[GenerationT, AccessT]
 
     def __post_init__(self) -> None:
-        if self.access is None:
-            raise TypeError("access cannot be None")
+        if not isinstance(self.snapshot, LifecycleSnapshot):
+            raise TypeError("snapshot must be LifecycleSnapshot")
+        if self.snapshot.access is None:
+            raise TypeError("snapshot access cannot be None")
 
 
 @dataclass(frozen=True, slots=True)
-class AcquireExisting(Generic[AccessT]):
+class AcquireExisting(Generic[GenerationT, AccessT]):
     """Existing lifecycle access satisfies the completed acquire request."""
 
-    access: AccessT
+    snapshot: LifecycleSnapshot[GenerationT, AccessT]
 
     def __post_init__(self) -> None:
-        if self.access is None:
-            raise TypeError("access cannot be None")
+        if not isinstance(self.snapshot, LifecycleSnapshot):
+            raise TypeError("snapshot must be LifecycleSnapshot")
+        if self.snapshot.access is None:
+            raise TypeError("snapshot access cannot be None")
 
 
 @dataclass(frozen=True, slots=True)

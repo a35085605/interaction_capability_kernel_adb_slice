@@ -7,6 +7,7 @@ from time import monotonic
 from typing import Generic, TypeAlias, TypeVar
 
 from adb._lifecycle.resource import ResourceScope
+from adb._lifecycle.snapshot import LifecycleSnapshot
 from adb._lifecycle.result import (
     AcquireAttempt,
     AcquireStartBlocked,
@@ -84,8 +85,8 @@ class PendingSnapshot(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class LifecycleSnapshot(Generic[GenerationT, AccessT]):
-    """Atomic lifecycle snapshot for domain-facing state projection."""
+class _LifecycleStateSnapshot(Generic[GenerationT, AccessT]):
+    """Internal lifecycle state sample retaining diagnostics alongside public state."""
 
     generation: GenerationT
     access: AccessT | None
@@ -168,23 +169,37 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
             age_seconds=max(0.0, monotonic() - state.started_at),
         )
 
-    def snapshot(self) -> LifecycleSnapshot[GenerationT, AccessT]:
+    def _snapshot_locked(self) -> _LifecycleStateSnapshot[GenerationT, AccessT]:
+        state = self._state
+        access = state.access if isinstance(state, _Current) else None
+        pending = (
+            self._pending_snapshot(state)
+            if isinstance(state, (_Acquiring, _Draining))
+            else None
+        )
+        return _LifecycleStateSnapshot(
+            generation=state.generation,
+            access=access,
+            pending=pending,
+            cleanup_registration_errors=tuple(
+                item.diagnostic for item in self._failed_cleanup_registrations
+            ),
+        )
+
+    def snapshot(self) -> LifecycleSnapshot[GenerationT, AccessT | None]:
+        """Return one atomic public generation/access pairing."""
+
         with self._lock:
-            state = self._state
-            access = state.access if isinstance(state, _Current) else None
-            pending = (
-                self._pending_snapshot(state)
-                if isinstance(state, (_Acquiring, _Draining))
-                else None
-            )
-            return LifecycleSnapshot(
-                generation=state.generation,
-                access=access,
-                pending=pending,
-                cleanup_registration_errors=tuple(
-                    item.diagnostic for item in self._failed_cleanup_registrations
-                ),
-            )
+            state = self._snapshot_locked()
+            return LifecycleSnapshot(state.generation, state.access)
+
+    def read_diagnostics_snapshot(
+        self,
+    ) -> _LifecycleStateSnapshot[GenerationT, AccessT]:
+        """Return internal lifecycle diagnostics without exposing cleanup resources."""
+
+        with self._lock:
+            return self._snapshot_locked()
 
     def begin_acquire(
         self,
@@ -199,7 +214,7 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
         with self._lock:
             state = self._state
             if isinstance(state, _Current):
-                return AcquireStartExisting(state.access)
+                return AcquireStartExisting(LifecycleSnapshot(state.generation, state.access))
             if isinstance(state, _Acquiring):
                 return AcquireStartBusy(draining=False)
             if isinstance(state, _Draining):
@@ -350,7 +365,6 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
 
 
 __all__ = [
-    "LifecycleSnapshot",
     "LifecycleStateMachine",
     "PendingSnapshot",
 ]

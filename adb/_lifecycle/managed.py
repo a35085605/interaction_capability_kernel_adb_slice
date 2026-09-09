@@ -6,7 +6,8 @@ from typing import Generic, TypeVar
 from adb._lifecycle.diagnostics import LifecycleDiagnostics
 from adb._lifecycle.resource import ResourceScope
 from adb._lifecycle.result import AcquireAttempt, AcquireStartResult, ReleaseResult
-from adb._lifecycle.state_machine import LifecycleSnapshot, LifecycleStateMachine
+from adb._lifecycle.snapshot import LifecycleSnapshot
+from adb._lifecycle.state_machine import LifecycleStateMachine
 from adb.cleanup import (
     CleanupCoordinator,
     CleanupHandoff,
@@ -40,13 +41,13 @@ class ManagedLifecycle(Generic[GenerationT, AccessT]):
         ] = LifecycleStateMachine(issue_generation)
         self._cleanup = CleanupCoordinator(cleanup_handoff)
 
-    def snapshot(self) -> LifecycleSnapshot[GenerationT, AccessT]:
+    def snapshot(self) -> LifecycleSnapshot[GenerationT, AccessT | None]:
         return self._state_machine.snapshot()
 
     def read_diagnostics(self) -> LifecycleDiagnostics[GenerationT]:
         """Sample lifecycle and cleanup state without treating the samples as one transaction."""
 
-        state = self._state_machine.snapshot()
+        state = self._state_machine.read_diagnostics_snapshot()
         cleanup = self._cleanup.snapshot()
         return LifecycleDiagnostics(
             state.generation,

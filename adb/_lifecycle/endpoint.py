@@ -5,40 +5,45 @@ from typing import Generic, TypeVar
 
 from networking import TcpAddress
 
+from adb._lifecycle.snapshot import LifecycleSnapshot
+
 
 GenerationT = TypeVar("GenerationT")
+EndpointAccessT = TypeVar("EndpointAccessT", bound="EndpointAccess")
 
 
 @dataclass(frozen=True, slots=True)
-class EndpointAccess(Generic[GenerationT]):
-    """Usable endpoint access retained by one lifecycle generation."""
+class EndpointAccess:
+    """Usable endpoint access information, independent of lifecycle authority generation."""
 
-    generation: GenerationT
     endpoint: TcpAddress
 
     def __post_init__(self) -> None:
-        if self.generation is None:
-            raise TypeError("generation cannot be None")
         if not isinstance(self.endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
 
 
 @dataclass(frozen=True, slots=True)
-class EndpointState(Generic[GenerationT]):
-    """Public authority state: current generation plus an optional usable endpoint."""
+class EndpointState(
+    LifecycleSnapshot[GenerationT, EndpointAccessT | None],
+    Generic[GenerationT, EndpointAccessT],
+):
+    """Public authority state: current generation plus optional endpoint access."""
 
-    generation: GenerationT
-    endpoint: TcpAddress | None = None
+    access: EndpointAccessT | None = None
 
     def __post_init__(self) -> None:
-        if self.generation is None:
-            raise TypeError("generation cannot be None")
-        if self.endpoint is not None and not isinstance(self.endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress or None")
+        LifecycleSnapshot.__post_init__(self)
+        if self.access is not None and not isinstance(self.access, EndpointAccess):
+            raise TypeError("access must be EndpointAccess or None")
+
+    @property
+    def endpoint(self) -> TcpAddress | None:
+        return None if self.access is None else self.access.endpoint
 
     @property
     def active(self) -> bool:
-        return self.endpoint is not None
+        return self.access is not None
 
 
 __all__ = ["EndpointAccess", "EndpointState"]

@@ -108,10 +108,15 @@ class AdbTransportListWatchRecovery:
             ),
         ):
             raise TypeError("result must be AdbTransportListWatchAcquireOutcome")
-        if isinstance(result, (AcquireCommitted, AcquireExisting)) and not isinstance(
-            result.access, AdbTransportListWatchAccess
-        ):
-            raise TypeError("watch acquire access must be AdbTransportListWatchAccess")
+        if isinstance(result, (AcquireCommitted, AcquireExisting)):
+            if not isinstance(
+                result.snapshot.generation, AdbTransportListWatchGeneration
+            ):
+                raise TypeError(
+                    "watch acquire generation must be AdbTransportListWatchGeneration"
+                )
+            if not isinstance(result.snapshot.access, AdbTransportListWatchAccess):
+                raise TypeError("watch acquire access must be AdbTransportListWatchAccess")
         if isinstance(result, AcquireFailed) and not isinstance(
             result.failure, AdbTransportListWatchFailure
         ):

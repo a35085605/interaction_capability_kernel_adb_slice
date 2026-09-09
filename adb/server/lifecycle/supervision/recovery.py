@@ -96,10 +96,15 @@ class AdbServerRecovery:
             ),
         ):
             raise TypeError("result must be AdbServerAcquireOutcome")
-        if isinstance(result, (AcquireCommitted, AcquireExisting)) and not isinstance(
-            result.access, AdbServerAccess
-        ):
-            raise TypeError("server acquire access must be AdbServerAccess")
+        if isinstance(result, (AcquireCommitted, AcquireExisting)):
+            if not isinstance(
+                result.snapshot.generation, AdbServerGeneration
+            ):
+                raise TypeError(
+                    "server acquire generation must be AdbServerGeneration"
+                )
+            if not isinstance(result.snapshot.access, AdbServerAccess):
+                raise TypeError("server acquire access must be AdbServerAccess")
         if isinstance(result, AcquireFailed) and not isinstance(
             result.failure, AdbServerLaunchFailure
         ):
