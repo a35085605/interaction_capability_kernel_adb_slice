@@ -225,10 +225,12 @@ class _AdbServerSubprocessFactory:
 
     def create(
         self,
-        endpoint: AdbServerEndpoint | None,
+        endpoint: AdbServerEndpoint,
         cancellation: Event,
         resources: ResourceScope,
     ) -> AdbServerEndpoint:
+        if not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
         if not isinstance(cancellation, Event):
             raise TypeError("cancellation must be threading.Event")
         if not isinstance(resources, ResourceScope):
@@ -260,7 +262,7 @@ class _AdbServerSubprocessFactory:
 
     def _launch(
         self,
-        endpoint: AdbServerEndpoint | None,
+        endpoint: AdbServerEndpoint,
         resources: ResourceScope,
         *,
         deadline: float,
@@ -320,18 +322,18 @@ class _AdbServerSubprocessFactory:
 
     def _reserve_listener(
         self,
-        endpoint: AdbServerEndpoint | None,
+        endpoint: AdbServerEndpoint,
         resources: ResourceScope,
         *,
         deadline: float,
         cancellation: Event,
     ) -> tuple[socket.socket, ResourceOwnership, AdbServerEndpoint]:
-        host = endpoint.host if endpoint is not None else "127.0.0.1"
-        port = endpoint.port if endpoint is not None else 0
-
         try:
             addresses = self._resolver.resolve(
-                host, port, deadline=deadline, cancellation=cancellation
+                endpoint.host,
+                endpoint.port,
+                deadline=deadline,
+                cancellation=cancellation,
             )
         except AddressResolutionCancelled as exc:
             raise _AdbServerSubprocessAcquireInterrupted from exc
@@ -486,12 +488,12 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate):
 
     def _obtain_access(
         self,
-        endpoint_constraint: AdbServerEndpoint | None,
+        endpoint: AdbServerEndpoint,
         cancellation: Event,
         resources: ResourceScope,
     ) -> AdbServerEndpoint:
         try:
-            return self._factory.create(endpoint_constraint, cancellation, resources)
+            return self._factory.create(endpoint, cancellation, resources)
         except _AdbServerSubprocessAcquireInterrupted as exc:
             raise AdbServerAcquireInterruptedError() from exc
         except _AdbServerSubprocessStartError as exc:
@@ -499,15 +501,13 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate):
 
     def _requested_resource_claims(
         self,
-        endpoint_constraint: AdbServerEndpoint | None,
+        endpoint: AdbServerEndpoint,
     ) -> tuple[object, ...]:
-        if endpoint_constraint is None:
-            return ()
         return (
             _TcpBindClaim(
                 family=None,
-                address=_normalize_claim_address(endpoint_constraint.host),
-                port=endpoint_constraint.port,
+                address=_normalize_claim_address(endpoint.host),
+                port=endpoint.port,
             ),
         )
 

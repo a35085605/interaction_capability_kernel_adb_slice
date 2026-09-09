@@ -109,7 +109,7 @@ class AdbServerLifecycleTemplate(ABC):
     @abstractmethod
     def _obtain_access(
         self,
-        endpoint_constraint: AdbServerEndpoint | None,
+        endpoint: AdbServerEndpoint,
         cancellation: Event,
         resources: ResourceScope,
     ) -> AdbServerEndpoint:
@@ -122,7 +122,7 @@ class AdbServerLifecycleTemplate(ABC):
 
     def _requested_resource_claims(
         self,
-        endpoint_constraint: AdbServerEndpoint | None,
+        endpoint: AdbServerEndpoint,
     ) -> tuple[object, ...]:
         """Return claims known before acquisition starts; empty means no pre-acquire claim."""
 
@@ -137,21 +137,19 @@ class AdbServerLifecycleTemplate(ABC):
 
     def acquire(
         self,
-        endpoint_constraint: AdbServerEndpoint | None = None,
+        endpoint: AdbServerEndpoint,
     ) -> AdbServerAcquireOutcome:
-        if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
-            raise TypeError("endpoint_constraint must be TcpAddress or None")
+        if not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
 
         self._managed.process_cleanup()
         try:
-            return self._acquire(endpoint_constraint)
+            return self._acquire(endpoint)
         finally:
             self._managed.process_cleanup()
 
-    def _acquire(
-        self, endpoint_constraint: AdbServerEndpoint | None
-    ) -> AdbServerAcquireOutcome:
-        requested_claims = self._requested_resource_claims(endpoint_constraint)
+    def _acquire(self, endpoint: AdbServerEndpoint) -> AdbServerAcquireOutcome:
+        requested_claims = self._requested_resource_claims(endpoint)
         start = self._managed.begin_acquire(
             is_blocked=(
                 None
@@ -161,10 +159,7 @@ class AdbServerLifecycleTemplate(ABC):
         )
         if isinstance(start, AcquireStartExisting):
             access = start.access
-            if (
-                endpoint_constraint is None
-                or access.endpoint == endpoint_constraint
-            ):
+            if access.endpoint == endpoint:
                 return AcquireExisting(access)
             return AcquireBlocked(
                 "ADB server lifecycle already retains a different endpoint"
@@ -184,8 +179,8 @@ class AdbServerLifecycleTemplate(ABC):
         attempt = start
         resources = attempt.resource_scope
         try:
-            endpoint = self._obtain_access(
-                endpoint_constraint,
+            obtained_endpoint = self._obtain_access(
+                endpoint,
                 attempt.cancellation,
                 resources,
             )
@@ -213,17 +208,17 @@ class AdbServerLifecycleTemplate(ABC):
                 "ADB server lifecycle obtained resources whose claims conflict with pending cleanup"
             )
 
-        if endpoint_constraint is not None and endpoint != endpoint_constraint:
+        if obtained_endpoint != endpoint:
             revoked = self._managed.abandon_acquire(attempt)
             if revoked:
                 return AcquireSuperseded(attempt.generation)
             raise AdbServerLifecycleConsistencyError(
-                "endpoint-constrained ADB server acquisition returned a different endpoint"
+                "ADB server acquisition returned a different endpoint"
             )
 
         try:
             access = AdbServerAccess(
-                endpoint=endpoint,
+                endpoint=obtained_endpoint,
                 generation=attempt.generation,
             )
         except BaseException:

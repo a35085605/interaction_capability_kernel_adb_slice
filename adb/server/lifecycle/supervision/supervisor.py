@@ -3,7 +3,6 @@ from __future__ import annotations
 from threading import Event, RLock, Thread, current_thread
 
 from networking import TcpAddress
-from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGeneration
 from adb.server.lifecycle.contract import AdbServerLifecycle, ReleaseAccessDetached
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
@@ -29,7 +28,6 @@ class AdbServerSupervisor:
         *,
         policy: AdbServerRecoveryPolicy,
         recovery_enabled: bool,
-        endpoint_constraint: AdbServerEndpoint | None = None,
     ) -> None:
         if not isinstance(lifecycle, AdbServerLifecycle):
             raise TypeError("lifecycle must satisfy AdbServerLifecycle")
@@ -37,18 +35,16 @@ class AdbServerSupervisor:
             raise TypeError("policy must be AdbServerRecoveryPolicy")
         if not isinstance(recovery_enabled, bool):
             raise TypeError("recovery_enabled must be bool")
-        if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
-            raise TypeError("endpoint_constraint must be TcpAddress or None")
         self._lifecycle = lifecycle
         self._policy = policy
         self._recovery_enabled = recovery_enabled
-        self._endpoint_constraint = endpoint_constraint
 
         self._lock = RLock()
         self._stop_event = Event()
         self._recovery: AdbServerRecovery | None = None
+        self._recovery_endpoint: TcpAddress | None = None
         self._recovery_threads: set[Thread] = set()
-        self._reconciliation_pending = False
+        self._pending_recovery_endpoint: TcpAddress | None = None
         self._started = False
         self._closed = False
 
@@ -101,23 +97,27 @@ class AdbServerSupervisor:
         if not isinstance(release, ReleaseAccessDetached):
             return
 
-        self._request_recovery()
+        self._request_recovery(release.access.endpoint)
 
-    def _request_recovery(self) -> None:
-        """Start recovery for a committed reconciliation request."""
+    def _request_recovery(self, endpoint: TcpAddress) -> None:
+        """Start recovery for one committed server release."""
+
+        if not isinstance(endpoint, TcpAddress):
+            raise TypeError("endpoint must be TcpAddress")
 
         with self._lock:
             if not self._running_locked() or not self._recovery_enabled:
                 return
 
             if self._recovery is not None:
-                self._reconciliation_pending = True
+                self._pending_recovery_endpoint = endpoint
                 return
 
             recovery = AdbServerRecovery(self._policy)
             attempt = recovery.begin()
             self._recovery = recovery
-            self._reconciliation_pending = False
+            self._recovery_endpoint = endpoint
+            self._pending_recovery_endpoint = None
 
         self._launch_recovery_worker(recovery, attempt)
 
@@ -142,7 +142,8 @@ class AdbServerSupervisor:
                 self._recovery_threads.discard(thread)
                 if self._recovery is recovery:
                     self._recovery = None
-                    self._reconciliation_pending = False
+                    self._recovery_endpoint = None
+                    self._pending_recovery_endpoint = None
                 raise
 
     def _run_recovery(
@@ -162,8 +163,13 @@ class AdbServerSupervisor:
                 with self._lock:
                     if not self._is_current_recovery_locked(recovery):
                         return
+                    endpoint = self._recovery_endpoint
+                    if endpoint is None:
+                        raise RuntimeError(
+                            "ADB server recovery endpoint state is inconsistent"
+                        )
 
-                result = self._lifecycle.acquire(self._endpoint_constraint)
+                result = self._lifecycle.acquire(endpoint)
                 decision = recovery.decide_after(result)
 
                 if isinstance(decision, RecoveryAttempt):
@@ -190,21 +196,23 @@ class AdbServerSupervisor:
             if self._recovery is not recovery:
                 return
             self._recovery = None
-            self._reconciliation_pending = False
+            self._recovery_endpoint = None
+            self._pending_recovery_endpoint = None
 
     def _finish_recovery(self, recovery: AdbServerRecovery) -> None:
-        """Release one terminal recovery cycle and consume queued reconciliation demand."""
+        """Release one terminal recovery cycle and consume queued recovery demand."""
 
         with self._lock:
             if not self._is_current_recovery_locked(recovery):
                 return
             self._recovery = None
-            pending_reconciliation = self._reconciliation_pending
-            self._reconciliation_pending = False
+            self._recovery_endpoint = None
+            pending_endpoint = self._pending_recovery_endpoint
+            self._pending_recovery_endpoint = None
             running = self._running_locked()
 
-        if pending_reconciliation and running:
-            self._request_recovery()
+        if pending_endpoint is not None and running:
+            self._request_recovery(pending_endpoint)
 
     def _is_current_recovery_locked(self, recovery: AdbServerRecovery) -> bool:
         return self._running_locked() and self._recovery is recovery
@@ -214,7 +222,8 @@ class AdbServerSupervisor:
 
     def _clear_recovery_locked(self) -> tuple[Thread, ...]:
         self._recovery = None
-        self._reconciliation_pending = False
+        self._recovery_endpoint = None
+        self._pending_recovery_endpoint = None
         return tuple(self._recovery_threads)
 
     @staticmethod

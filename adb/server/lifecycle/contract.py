@@ -57,9 +57,9 @@ class AdbServerLifecycle(AdbServerStateView, Protocol):
 
     def acquire(
         self,
-        endpoint_constraint: AdbServerEndpoint | None = None,
+        endpoint: AdbServerEndpoint,
     ) -> AdbServerAcquireOutcome:
-        """Attempt to establish usable ADB server access within the current generation."""
+        """Attempt to establish usable ADB server access at the requested endpoint."""
         ...
 
     def release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
