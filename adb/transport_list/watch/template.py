@@ -29,7 +29,7 @@ from adb._lifecycle import (
 )
 from adb.cleanup import CleanupHandoff
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.watch.contract import (
+from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchAccess,
     AdbTransportListWatchAcquireOutcome,
     AdbTransportListWatchReleaseOutcome,

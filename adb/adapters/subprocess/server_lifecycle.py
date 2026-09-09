@@ -18,7 +18,7 @@ from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress
 from adb.server.generation import AdbServerGenerationIssuer
 from adb.cleanup import CleanupHandoff
-from adb.server.lifecycle.template import (
+from adb.server.template import (
     AdbServerAcquireError,
     AdbServerAcquireInterruptedError,
     AdbServerLifecycleTemplate,

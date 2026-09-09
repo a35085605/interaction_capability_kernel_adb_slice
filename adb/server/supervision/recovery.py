@@ -22,8 +22,8 @@ from adb._recovery import (
 )
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.generation import AdbServerGeneration
-from adb.server.lifecycle.contract import AdbServerAccess, AdbServerAcquireOutcome
-from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
+from adb.server.lifecycle import AdbServerAccess, AdbServerAcquireOutcome
+from adb.server.supervision.policy import AdbServerRecoveryPolicy
 
 
 _RandomSource = Callable[[], float]

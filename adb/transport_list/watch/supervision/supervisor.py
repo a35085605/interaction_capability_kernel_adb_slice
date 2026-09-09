@@ -3,7 +3,7 @@ from __future__ import annotations
 from threading import Event, RLock, Thread, current_thread
 
 from networking import TcpAddress
-from adb.transport_list.watch.contract import (
+from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchLifecycle,
     ReleaseAccessDetached,
 )

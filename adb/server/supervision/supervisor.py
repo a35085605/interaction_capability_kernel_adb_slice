@@ -4,9 +4,9 @@ from threading import Event, RLock, Thread, current_thread
 
 from networking import TcpAddress
 from adb.server.generation import AdbServerGeneration
-from adb.server.lifecycle.contract import AdbServerLifecycle, ReleaseAccessDetached
-from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
-from adb.server.lifecycle.supervision.recovery import (
+from adb.server.lifecycle import AdbServerLifecycle, ReleaseAccessDetached
+from adb.server.supervision.policy import AdbServerRecoveryPolicy
+from adb.server.supervision.recovery import (
     AdbServerRecovery,
     RecoveryAcquired,
     RecoveryAttempt,

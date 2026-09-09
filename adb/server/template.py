@@ -28,8 +28,8 @@ from adb.cleanup import CleanupHandoff
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerState
-from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
-from adb.server.lifecycle.contract import (
+from adb.server.errors import AdbServerLifecycleConsistencyError
+from adb.server.lifecycle import (
     AdbServerAccess,
     AdbServerAcquireOutcome,
     AdbServerReleaseOutcome,

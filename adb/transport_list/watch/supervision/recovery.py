@@ -20,7 +20,7 @@ from adb._recovery import (
     RecoveryFailed,
     RecoveryRetryConfiguration,
 )
-from adb.transport_list.watch.contract import (
+from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchAccess,
     AdbTransportListWatchAcquireOutcome,
 )

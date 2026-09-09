@@ -20,7 +20,7 @@ from adb.transport_list.watch.state import (
     AdbTransportListWatchState,
     AdbTransportListWatchStateView,
 )
-from adb.transport_list.watch.contract import (
+from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchAccess,
     AdbTransportListWatchAcquireOutcome,
     AdbTransportListWatchLifecycle,
