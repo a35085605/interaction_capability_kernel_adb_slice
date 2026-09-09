@@ -1,39 +1,43 @@
-"""ADB server lifecycle contracts, acquisition, and recovery."""
+"""ADB server lifecycle contracts, endpoint access, results, and recovery."""
 
+from adb._lifecycle import (
+    AcquireBlocked,
+    AcquireCommitted,
+    AcquireExisting,
+    AcquireFailed,
+    AcquireSuperseded,
+    ReleaseAccessDetached,
+    ReleaseAcquisitionRevoked,
+    ReleaseGenerationMismatch,
+    ReleaseInactive,
+)
 from adb.server.lifecycle.errors import (
     AdbServerLifecycleConsistencyError,
     AdbServerLifecycleError,
 )
 from adb.server.lifecycle.contract import (
-    AdbServerLifecycle,
-    AdbServerAcquisition,
-    AdbServerAcquireBlocked,
-    AdbServerAcquireCommitted,
-    AdbServerAcquireFailed,
-    AdbServerAcquireSuperseded,
-    AdbServerAcquireExisting,
+    AdbServerAccess,
     AdbServerAcquireOutcome,
+    AdbServerLifecycle,
     AdbServerLifecycleFactory,
-    AdbServerReleaseApplied,
-    AdbServerReleaseInactive,
-    AdbServerReleaseGenerationMismatch,
     AdbServerReleaseOutcome,
 )
 
 __all__ = [
-    "AdbServerLifecycle",
-    "AdbServerAcquisition",
-    "AdbServerAcquireBlocked",
-    "AdbServerAcquireCommitted",
-    "AdbServerAcquireFailed",
-    "AdbServerAcquireSuperseded",
-    "AdbServerAcquireExisting",
+    "AcquireBlocked",
+    "AcquireCommitted",
+    "AcquireExisting",
+    "AcquireFailed",
+    "AcquireSuperseded",
+    "AdbServerAccess",
     "AdbServerAcquireOutcome",
+    "AdbServerLifecycle",
     "AdbServerLifecycleFactory",
-    "AdbServerReleaseApplied",
-    "AdbServerReleaseInactive",
-    "AdbServerReleaseGenerationMismatch",
-    "AdbServerReleaseOutcome",
     "AdbServerLifecycleConsistencyError",
     "AdbServerLifecycleError",
+    "AdbServerReleaseOutcome",
+    "ReleaseAccessDetached",
+    "ReleaseAcquisitionRevoked",
+    "ReleaseGenerationMismatch",
+    "ReleaseInactive",
 ]

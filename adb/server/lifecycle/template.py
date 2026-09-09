@@ -6,34 +6,32 @@ from typing import Iterable
 
 from networking import TcpAddress
 from adb._lifecycle import (
-    AcquireBlocked,
-    AcquireBusy,
-    AcquireExisting,
     AcquireAttempt,
-    LifecycleStateMachine,
+    AcquireBlocked,
+    AcquireCommitted,
+    AcquireExisting,
+    AcquireFailed,
+    AcquireStartBlocked,
+    AcquireStartBusy,
+    AcquireStartExisting,
+    AcquireSuperseded,
     LifecycleDiagnostics,
+    LifecycleStateMachine,
+    ReleaseAccessDetached,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
-    ReleaseAccessDetached,
     ResourceScope,
 )
 from adb.cleanup import CleanupCoordinator, CleanupHandoff
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.failure import AdbServerLaunchFailure
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerState
 from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
 from adb.server.lifecycle.contract import (
-    AdbServerAcquisition,
-    AdbServerAcquireBlocked,
-    AdbServerAcquireCommitted,
-    AdbServerAcquireFailed,
-    AdbServerAcquireSuperseded,
+    AdbServerAccess,
     AdbServerAcquireOutcome,
-    AdbServerAcquireExisting,
-    AdbServerReleaseApplied,
-    AdbServerReleaseInactive,
-    AdbServerReleaseGenerationMismatch,
     AdbServerReleaseOutcome,
 )
 
@@ -63,12 +61,12 @@ class AdbServerAcquireInterruptedError(RuntimeError):
 
 
 class AdbServerLifecycleTemplate(ABC):
-    """Template for one current ADB server acquisition and its owned resource scope.
+    """Template for one current ADB server access and its owned resource scope.
 
     Access information, physical ownership, and resource claims are deliberately separate. Adapters
-    add resources to the acquisition ``ResourceScope`` as soon as they are obtained and define the
-    claims those resources retain. A committed acquisition stores only caller-facing access data;
-    the shared lifecycle keeps its resource scope associated with that acquisition.
+    add resources to the attempt ``ResourceScope`` as soon as they are obtained and define the claims
+    those resources retain. Committed access stores only caller-facing endpoint metadata; the shared
+    lifecycle keeps its resource scope associated with that access.
 
     Logical release is immediate. Matching release advances the generation and atomically registers
     every still-owned resource as cleanup debt while holding lifecycle authority. Physical cleanup
@@ -87,7 +85,7 @@ class AdbServerLifecycleTemplate(ABC):
         if not isinstance(cleanup_handoff, CleanupHandoff):
             raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
         self._state_machine: LifecycleStateMachine[
-            AdbServerGeneration, AdbServerAcquisition
+            AdbServerGeneration, AdbServerAccess
         ] = LifecycleStateMachine(generation_issuer.issue)
         self._cleanup = CleanupCoordinator(cleanup_handoff)
 
@@ -184,23 +182,23 @@ class AdbServerLifecycleTemplate(ABC):
                 else lambda: self._cleanup_has_conflict(requested_claims)
             )
         )
-        if isinstance(start, AcquireExisting):
+        if isinstance(start, AcquireStartExisting):
             access = start.access
             if (
                 endpoint_constraint is None
                 or access.endpoint == endpoint_constraint
             ):
-                return AdbServerAcquireExisting(access)
-            return AdbServerAcquireBlocked(
+                return AcquireExisting(access)
+            return AcquireBlocked(
                 "ADB server lifecycle already retains a different endpoint"
             )
-        if isinstance(start, AcquireBusy):
-            return AdbServerAcquireBlocked(
+        if isinstance(start, AcquireStartBusy):
+            return AcquireBlocked(
                 "ADB server lifecycle is draining a revoked acquisition"
                 if start.draining else "ADB server lifecycle is busy with another acquisition"
             )
-        if isinstance(start, AcquireBlocked):
-            return AdbServerAcquireBlocked(
+        if isinstance(start, AcquireStartBlocked):
+            return AcquireBlocked(
                 start.diagnostic
                 or "ADB server lifecycle is cleaning a conflicting owned resource"
             )
@@ -221,7 +219,7 @@ class AdbServerLifecycleTemplate(ABC):
                 attempt, before_clear=register_scope
             )
             if revoked:
-                return AdbServerAcquireSuperseded(attempt.generation)
+                return AcquireSuperseded(attempt.generation)
             raise RuntimeError(
                 "ADB server acquisition was interrupted without generation revocation"
             ) from exc
@@ -230,8 +228,8 @@ class AdbServerLifecycleTemplate(ABC):
                 attempt, before_clear=register_scope
             )
             if revoked:
-                return AdbServerAcquireSuperseded(attempt.generation)
-            return AdbServerAcquireFailed(exc.diagnostic)
+                return AcquireSuperseded(attempt.generation)
+            return AcquireFailed(AdbServerLaunchFailure(exc.diagnostic))
         except BaseException:
             self._state_machine.abandon_acquire(attempt, before_clear=register_scope)
             raise
@@ -242,8 +240,8 @@ class AdbServerLifecycleTemplate(ABC):
                 before_clear=register_scope,
             )
             if revoked:
-                return AdbServerAcquireSuperseded(attempt.generation)
-            return AdbServerAcquireBlocked(
+                return AcquireSuperseded(attempt.generation)
+            return AcquireBlocked(
                 "ADB server lifecycle obtained resources whose claims conflict with pending cleanup"
             )
 
@@ -253,13 +251,13 @@ class AdbServerLifecycleTemplate(ABC):
                 before_clear=register_scope,
             )
             if revoked:
-                return AdbServerAcquireSuperseded(attempt.generation)
+                return AcquireSuperseded(attempt.generation)
             raise AdbServerLifecycleConsistencyError(
                 "endpoint-constrained ADB server acquisition returned a different endpoint"
             )
 
         try:
-            acquisition = AdbServerAcquisition(
+            access = AdbServerAccess(
                 endpoint=endpoint,
                 generation=attempt.generation,
             )
@@ -272,13 +270,13 @@ class AdbServerLifecycleTemplate(ABC):
 
         committed = self._state_machine.commit_acquire(
             attempt,
-            acquisition,
+            access,
             on_superseded=register_scope,
         )
         if committed:
-            return AdbServerAcquireCommitted(acquisition)
+            return AcquireCommitted(access)
 
-        return AdbServerAcquireSuperseded(attempt.generation)
+        return AcquireSuperseded(attempt.generation)
 
     def release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
         if not isinstance(expected, AdbServerGeneration):
@@ -290,7 +288,7 @@ class AdbServerLifecycleTemplate(ABC):
             self._cleanup.process_pending()
 
     def _release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
-        def retire_access(access: AdbServerAcquisition, resources: ResourceScope) -> None:
+        def retire_access(access: AdbServerAccess, resources: ResourceScope) -> None:
             self._register_resource_scope(resources)
 
         release = self._state_machine.release(
@@ -298,22 +296,16 @@ class AdbServerLifecycleTemplate(ABC):
             on_access_release=retire_access,
             inconsistent_state_error="ADB server lifecycle state is inconsistent",
         )
-        if isinstance(release, ReleaseGenerationMismatch):
-            access = release.access
-            return AdbServerReleaseGenerationMismatch(
-                current=access,
-                current_generation=release.current_generation,
-            )
-        if isinstance(release, ReleaseInactive):
-            return AdbServerReleaseInactive(generation=release.generation)
-        if isinstance(release, ReleaseAcquisitionRevoked):
-            return AdbServerReleaseApplied(generation=release.generation)
-        if isinstance(release, ReleaseAccessDetached):
-            access = release.access
-            return AdbServerReleaseApplied(
-                generation=release.generation,
-                acquisition=access,
-            )
+        if isinstance(
+            release,
+            (
+                ReleaseGenerationMismatch,
+                ReleaseInactive,
+                ReleaseAcquisitionRevoked,
+                ReleaseAccessDetached,
+            ),
+        ):
+            return release
         raise TypeError("unsupported shared lifecycle release decision")
 
 

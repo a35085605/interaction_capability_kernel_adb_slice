@@ -9,9 +9,9 @@ from typing import Generic, TypeAlias, TypeVar
 from adb._lifecycle.resource import ResourceScope
 from adb._lifecycle.result import (
     AcquireAttempt,
-    AcquireBlocked,
-    AcquireBusy,
-    AcquireExisting,
+    AcquireStartBlocked,
+    AcquireStartBusy,
+    AcquireStartExisting,
     AcquireStartResult,
     CleanupRegistrationError,
     ReleaseAcquisitionRevoked,
@@ -199,20 +199,20 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
         with self._lock:
             state = self._state
             if isinstance(state, _Current):
-                return AcquireExisting(state.access)
+                return AcquireStartExisting(state.access)
             if isinstance(state, _Acquiring):
-                return AcquireBusy(draining=False)
+                return AcquireStartBusy(draining=False)
             if isinstance(state, _Draining):
-                return AcquireBusy(draining=True)
+                return AcquireStartBusy(draining=True)
             if not isinstance(state, _Idle):
                 raise RuntimeError("unsupported lifecycle state")
 
             if not self._retry_cleanup_registrations_locked():
-                return AcquireBlocked(
+                return AcquireStartBlocked(
                     "lifecycle cleanup registration failed; retry required"
                 )
             if is_blocked is not None and is_blocked():
-                return AcquireBlocked()
+                return AcquireStartBlocked()
 
             attempt = AcquireAttempt(
                 generation=state.generation,

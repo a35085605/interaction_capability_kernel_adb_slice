@@ -1,14 +1,20 @@
-"""Shared private lifecycle state-machine, result, and diagnostic primitives."""
+"""Shared private lifecycle state-machine, result, state, and diagnostic primitives."""
 
+from adb._lifecycle.endpoint import EndpointAccess, EndpointState
 from adb._lifecycle.resource import ResourceCleanupAttempt, ResourceOwnership, ResourceScope
 from adb._lifecycle.state_machine import LifecycleSnapshot, LifecycleStateMachine, PendingSnapshot
 from adb._lifecycle.diagnostics import LifecycleDiagnostics
 from adb._lifecycle.result import (
     AcquireAttempt,
     AcquireBlocked,
-    AcquireBusy,
+    AcquireCommitted,
     AcquireExisting,
+    AcquireFailed,
+    AcquireStartBlocked,
+    AcquireStartBusy,
+    AcquireStartExisting,
     AcquireStartResult,
+    AcquireSuperseded,
     CleanupRegistrationError,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
@@ -21,13 +27,20 @@ from adb._lifecycle.result import (
 __all__ = [
     "AcquireAttempt",
     "AcquireBlocked",
-    "AcquireBusy",
+    "AcquireCommitted",
     "AcquireExisting",
+    "AcquireFailed",
+    "AcquireStartBlocked",
+    "AcquireStartBusy",
+    "AcquireStartExisting",
     "AcquireStartResult",
-    "LifecycleSnapshot",
+    "AcquireSuperseded",
     "CleanupRegistrationError",
-    "LifecycleStateMachine",
+    "EndpointAccess",
+    "EndpointState",
     "LifecycleDiagnostics",
+    "LifecycleSnapshot",
+    "LifecycleStateMachine",
     "PendingSnapshot",
     "ReleaseAcquisitionRevoked",
     "ReleaseGenerationMismatch",

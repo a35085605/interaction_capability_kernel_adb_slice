@@ -1,87 +1,42 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from math import isfinite
-from numbers import Real
 from random import random
 from typing import TypeAlias
 
+from adb._lifecycle import (
+    AcquireBlocked,
+    AcquireCommitted,
+    AcquireExisting,
+    AcquireFailed,
+    AcquireSuperseded,
+)
 from adb._recovery import (
     RecoveryAcquired,
     RecoveryAttempt,
     RecoveryAttemptOutcome,
     RecoveryDecisionCore,
     RecoveryExhausted,
+    RecoveryFailed,
     RecoveryRetryConfiguration,
 )
 from adb.transport_list.watch.contract import (
-    AdbTransportListWatchAcquireBlocked,
-    AdbTransportListWatchAcquireCommitted,
-    AdbTransportListWatchAcquireExisting,
-    AdbTransportListWatchAcquireFailed,
+    AdbTransportListWatchAccess,
     AdbTransportListWatchAcquireOutcome,
-    AdbTransportListWatchAcquireSuperseded,
 )
-from adb.transport_list.watch.supervision.policy import (
-    AdbTransportListWatchRecoveryPolicy,
-)
+from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
+from adb.transport_list.watch.failure import AdbTransportListWatchFailure
+from adb.transport_list.watch.supervision.policy import AdbTransportListWatchRecoveryPolicy
 
 
 _RandomSource = Callable[[], float]
 
-
-@dataclass(frozen=True, slots=True)
-class AdbTransportListWatchRecoveryAttempt:
-    """One acquisition attempt selected by the watch recovery state machine."""
-
-    attempt_number: int
-    delay_seconds: float = 0.0
-
-    def __post_init__(self) -> None:
-        if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
-            raise TypeError("attempt_number must be an integer")
-        if self.attempt_number <= 0:
-            raise ValueError("attempt_number must be greater than zero")
-        if isinstance(self.delay_seconds, bool) or not isinstance(self.delay_seconds, Real):
-            raise TypeError("delay_seconds must be a real number")
-        delay = float(self.delay_seconds)
-        if not isfinite(delay) or delay < 0.0:
-            raise ValueError(
-                "delay_seconds must be finite and greater than or equal to zero"
-            )
-        object.__setattr__(self, "delay_seconds", delay)
-
-
-@dataclass(frozen=True, slots=True)
-class AdbTransportListWatchRecoveryAcquired:
-    """Terminal decision that a usable watch acquisition exists after this attempt."""
-
-
-AdbTransportListWatchRecoveryFailureCause: TypeAlias = AdbTransportListWatchAcquireFailed
-
-
-@dataclass(frozen=True, slots=True)
-class AdbTransportListWatchRecoveryFailed:
-    """Terminal recovery result after budget-consuming unsuccessful attempts are exhausted."""
-
-    attempts: int
-    cause: AdbTransportListWatchRecoveryFailureCause
-
-    def __post_init__(self) -> None:
-        if isinstance(self.attempts, bool) or not isinstance(self.attempts, int):
-            raise TypeError("attempts must be an integer")
-        if self.attempts <= 0:
-            raise ValueError("attempts must be greater than zero")
-        if not isinstance(self.cause, AdbTransportListWatchAcquireFailed):
-            raise TypeError("cause must be AdbTransportListWatchAcquireFailed")
-
-
+AdbTransportListWatchRecoveryFailureCause: TypeAlias = AdbTransportListWatchFailure
 AdbTransportListWatchRecoveryResult: TypeAlias = (
-    AdbTransportListWatchRecoveryAcquired | AdbTransportListWatchRecoveryFailed
+    RecoveryAcquired | RecoveryFailed[AdbTransportListWatchRecoveryFailureCause]
 )
 AdbTransportListWatchRecoveryDecision: TypeAlias = (
-    AdbTransportListWatchRecoveryAttempt | AdbTransportListWatchRecoveryResult
+    RecoveryAttempt | AdbTransportListWatchRecoveryResult
 )
 
 
@@ -98,19 +53,8 @@ def _configuration_from_policy(
     )
 
 
-def _domain_attempt(attempt: RecoveryAttempt) -> AdbTransportListWatchRecoveryAttempt:
-    return AdbTransportListWatchRecoveryAttempt(
-        attempt.attempt_number,
-        attempt.delay_seconds,
-    )
-
-
 class AdbTransportListWatchRecovery:
-    """Decision engine for one bounded transport-list watch recovery cycle.
-
-    Domain acquire outcomes are mapped onto a shared retry decision core. The watch-facing
-    recovery types remain responsible for preserving watch failure causes and public contracts.
-    """
+    """Decision engine for one bounded transport-list watch recovery cycle."""
 
     def __init__(
         self,
@@ -138,12 +82,12 @@ class AdbTransportListWatchRecovery:
     def failed_attempts(self) -> int:
         return self._core.failed_attempts
 
-    def begin(self) -> AdbTransportListWatchRecoveryAttempt:
+    def begin(self) -> RecoveryAttempt:
         """Select the first immediate acquisition attempt for this recovery cycle."""
 
         if self._core.attempt_number != 0:
             raise RuntimeError("ADB transport-list watch recovery has already begun")
-        return _domain_attempt(self._core.begin())
+        return self._core.begin()
 
     def decide_after(
         self,
@@ -153,52 +97,62 @@ class AdbTransportListWatchRecovery:
 
         if self._core.attempt_number == 0:
             raise RuntimeError("ADB transport-list watch recovery has not begun")
-
         if not isinstance(
             result,
             (
-                AdbTransportListWatchAcquireCommitted,
-                AdbTransportListWatchAcquireExisting,
-                AdbTransportListWatchAcquireBlocked,
-                AdbTransportListWatchAcquireFailed,
-                AdbTransportListWatchAcquireSuperseded,
+                AcquireCommitted,
+                AcquireExisting,
+                AcquireBlocked,
+                AcquireFailed,
+                AcquireSuperseded,
             ),
         ):
             raise TypeError("result must be AdbTransportListWatchAcquireOutcome")
+        if isinstance(result, (AcquireCommitted, AcquireExisting)) and not isinstance(
+            result.access, AdbTransportListWatchAccess
+        ):
+            raise TypeError("watch acquire access must be AdbTransportListWatchAccess")
+        if isinstance(result, AcquireFailed) and not isinstance(
+            result.failure, AdbTransportListWatchFailure
+        ):
+            raise TypeError("watch acquire failure must be AdbTransportListWatchFailure")
+        if isinstance(result, AcquireSuperseded) and not isinstance(
+            result.generation, AdbTransportListWatchGeneration
+        ):
+            raise TypeError(
+                "watch superseded generation must be AdbTransportListWatchGeneration"
+            )
 
-        if isinstance(
-            result,
-            (AdbTransportListWatchAcquireCommitted, AdbTransportListWatchAcquireExisting),
-        ):
+        if isinstance(result, (AcquireCommitted, AcquireExisting)):
             outcome = RecoveryAttemptOutcome.ACQUIRED
-        elif isinstance(
-            result,
-            (AdbTransportListWatchAcquireBlocked, AdbTransportListWatchAcquireSuperseded),
-        ):
+        elif isinstance(result, (AcquireBlocked, AcquireSuperseded)):
             outcome = RecoveryAttemptOutcome.DEFERRED
         else:
             outcome = RecoveryAttemptOutcome.FAILED
 
         decision = self._core.decide_after(outcome)
-        if isinstance(decision, RecoveryAcquired):
-            return AdbTransportListWatchRecoveryAcquired()
-        if isinstance(decision, RecoveryAttempt):
-            return _domain_attempt(decision)
+        if isinstance(decision, (RecoveryAcquired, RecoveryAttempt)):
+            return decision
         if isinstance(decision, RecoveryExhausted):
-            if not isinstance(result, AdbTransportListWatchAcquireFailed):
+            if not isinstance(result, AcquireFailed) or not isinstance(
+                result.failure, AdbTransportListWatchFailure
+            ):
                 raise TypeError(
                     "unsupported budget-consuming transport-list watch acquire outcome"
                 )
-            return AdbTransportListWatchRecoveryFailed(decision.failed_attempts, result)
+            return RecoveryFailed(
+                failed_attempts=decision.failed_attempts,
+                cause=result.failure,
+            )
         raise TypeError("unsupported shared transport-list watch recovery decision")
 
 
 __all__ = [
     "AdbTransportListWatchRecovery",
-    "AdbTransportListWatchRecoveryAcquired",
-    "AdbTransportListWatchRecoveryAttempt",
     "AdbTransportListWatchRecoveryDecision",
-    "AdbTransportListWatchRecoveryFailed",
     "AdbTransportListWatchRecoveryFailureCause",
     "AdbTransportListWatchRecoveryResult",
+    "RecoveryAcquired",
+    "RecoveryAttempt",
+    "RecoveryFailed",
 ]

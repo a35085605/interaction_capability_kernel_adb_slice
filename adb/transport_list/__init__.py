@@ -1,5 +1,16 @@
 """ADB transport-list values, resolution, projection state, readers, queries, and watch authority."""
 
+from adb._lifecycle import (
+    AcquireBlocked,
+    AcquireCommitted,
+    AcquireExisting,
+    AcquireFailed,
+    AcquireSuperseded,
+    ReleaseAccessDetached,
+    ReleaseAcquisitionRevoked,
+    ReleaseGenerationMismatch,
+    ReleaseInactive,
+)
 from adb.transport_list.generation import (
     AdbTransportListGeneration,
     AdbTransportListGenerationIssuer,
@@ -16,18 +27,10 @@ from adb.transport_list.watch.state import (
     AdbTransportListWatchStateView,
 )
 from adb.transport_list.watch.contract import (
-    AdbTransportListWatchLifecycle,
-    AdbTransportListWatchAcquisition,
-    AdbTransportListWatchAcquireBlocked,
-    AdbTransportListWatchAcquireCommitted,
-    AdbTransportListWatchAcquireFailed,
-    AdbTransportListWatchAcquireSuperseded,
+    AdbTransportListWatchAccess,
     AdbTransportListWatchAcquireOutcome,
-    AdbTransportListWatchAcquireExisting,
+    AdbTransportListWatchLifecycle,
     AdbTransportListWatchLifecycleFactory,
-    AdbTransportListWatchReleaseApplied,
-    AdbTransportListWatchReleaseInactive,
-    AdbTransportListWatchReleaseGenerationMismatch,
     AdbTransportListWatchReleaseOutcome,
 )
 from adb.transport_list.state import (
@@ -39,6 +42,11 @@ from adb.transport_list.state import (
 )
 
 __all__ = [
+    "AcquireBlocked",
+    "AcquireCommitted",
+    "AcquireExisting",
+    "AcquireFailed",
+    "AcquireSuperseded",
     "AdbTransportList",
     "AdbTransportListGeneration",
     "AdbTransportListGenerationIssuer",
@@ -48,22 +56,18 @@ __all__ = [
     "AdbTransportListStateStore",
     "AdbTransportListStateView",
     "AdbTransportListStateWriter",
-    "AdbTransportListWatchLifecycle",
-    "AdbTransportListWatchAcquisition",
-    "AdbTransportListWatchAcquireBlocked",
-    "AdbTransportListWatchAcquireCommitted",
-    "AdbTransportListWatchAcquireFailed",
-    "AdbTransportListWatchAcquireSuperseded",
+    "AdbTransportListWatchAccess",
     "AdbTransportListWatchAcquireOutcome",
-    "AdbTransportListWatchAcquireExisting",
-    "AdbTransportListWatchReleaseApplied",
-    "AdbTransportListWatchReleaseInactive",
-    "AdbTransportListWatchReleaseGenerationMismatch",
-    "AdbTransportListWatchReleaseOutcome",
     "AdbTransportListWatchGeneration",
     "AdbTransportListWatchGenerationIssuer",
+    "AdbTransportListWatchLifecycle",
+    "AdbTransportListWatchLifecycleFactory",
+    "AdbTransportListWatchReleaseOutcome",
     "AdbTransportListWatchState",
     "AdbTransportListWatchStateView",
-    "AdbTransportListWatchLifecycleFactory",
+    "ReleaseAccessDetached",
+    "ReleaseAcquisitionRevoked",
+    "ReleaseGenerationMismatch",
+    "ReleaseInactive",
     "find_transport",
 ]

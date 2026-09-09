@@ -5,13 +5,13 @@ from threading import Event, RLock, Thread, current_thread
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGeneration
-from adb.server.lifecycle.contract import AdbServerLifecycle, AdbServerReleaseApplied
+from adb.server.lifecycle.contract import AdbServerLifecycle, ReleaseAccessDetached
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecovery,
-    AdbServerRecoveryAcquired,
-    AdbServerRecoveryAttempt,
-    AdbServerRecoveryFailed,
+    RecoveryAcquired,
+    RecoveryAttempt,
+    RecoveryFailed,
 )
 
 
@@ -98,10 +98,7 @@ class AdbServerSupervisor:
                 raise RuntimeError("ADB server supervisor is not started")
 
         release = self._lifecycle.release(generation)
-        if (
-            not isinstance(release, AdbServerReleaseApplied)
-            or release.acquisition is None
-        ):
+        if not isinstance(release, ReleaseAccessDetached):
             return
 
         self._request_recovery()
@@ -127,7 +124,7 @@ class AdbServerSupervisor:
     def _launch_recovery_worker(
         self,
         recovery: AdbServerRecovery,
-        attempt: AdbServerRecoveryAttempt,
+        attempt: RecoveryAttempt,
     ) -> None:
         thread = Thread(
             target=self._run_recovery,
@@ -151,7 +148,7 @@ class AdbServerSupervisor:
     def _run_recovery(
         self,
         recovery: AdbServerRecovery,
-        attempt: AdbServerRecoveryAttempt,
+        attempt: RecoveryAttempt,
     ) -> None:
         active_thread = current_thread()
         try:
@@ -169,10 +166,10 @@ class AdbServerSupervisor:
                 result = self._lifecycle.acquire(self._endpoint_constraint)
                 decision = recovery.decide_after(result)
 
-                if isinstance(decision, AdbServerRecoveryAttempt):
+                if isinstance(decision, RecoveryAttempt):
                     attempt = decision
                     continue
-                if isinstance(decision, (AdbServerRecoveryAcquired, AdbServerRecoveryFailed)):
+                if isinstance(decision, (RecoveryAcquired, RecoveryFailed)):
                     self._finish_recovery(recovery)
                     return
                 raise TypeError("decision must be AdbServerRecoveryDecision")

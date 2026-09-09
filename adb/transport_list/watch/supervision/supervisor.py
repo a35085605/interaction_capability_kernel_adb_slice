@@ -5,7 +5,7 @@ from threading import Event, RLock, Thread, current_thread
 from networking import TcpAddress
 from adb.transport_list.watch.contract import (
     AdbTransportListWatchLifecycle,
-    AdbTransportListWatchReleaseApplied,
+    ReleaseAccessDetached,
 )
 from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
 from adb.transport_list.watch.supervision.policy import (
@@ -13,9 +13,9 @@ from adb.transport_list.watch.supervision.policy import (
 )
 from adb.transport_list.watch.supervision.recovery import (
     AdbTransportListWatchRecovery,
-    AdbTransportListWatchRecoveryAcquired,
-    AdbTransportListWatchRecoveryAttempt,
-    AdbTransportListWatchRecoveryFailed,
+    RecoveryAcquired,
+    RecoveryAttempt,
+    RecoveryFailed,
 )
 
 
@@ -99,13 +99,10 @@ class AdbTransportListWatchSupervisor:
                 raise RuntimeError("ADB transport-list watch supervisor is not started")
 
         release = self._lifecycle.release(generation)
-        if (
-            not isinstance(release, AdbTransportListWatchReleaseApplied)
-            or release.acquisition is None
-        ):
+        if not isinstance(release, ReleaseAccessDetached):
             return
 
-        self._request_recovery(release.acquisition.endpoint)
+        self._request_recovery(release.access.endpoint)
 
     def _request_recovery(self, endpoint: TcpAddress) -> None:
         """Start recovery for one committed failed-watch release."""
@@ -132,7 +129,7 @@ class AdbTransportListWatchSupervisor:
     def _launch_recovery_worker(
         self,
         recovery: AdbTransportListWatchRecovery,
-        attempt: AdbTransportListWatchRecoveryAttempt,
+        attempt: RecoveryAttempt,
     ) -> None:
         thread = Thread(
             target=self._run_recovery,
@@ -157,7 +154,7 @@ class AdbTransportListWatchSupervisor:
     def _run_recovery(
         self,
         recovery: AdbTransportListWatchRecovery,
-        attempt: AdbTransportListWatchRecoveryAttempt,
+        attempt: RecoveryAttempt,
     ) -> None:
         active_thread = current_thread()
         try:
@@ -180,14 +177,14 @@ class AdbTransportListWatchSupervisor:
                 result = self._lifecycle.acquire(endpoint)
                 decision = recovery.decide_after(result)
 
-                if isinstance(decision, AdbTransportListWatchRecoveryAttempt):
+                if isinstance(decision, RecoveryAttempt):
                     attempt = decision
                     continue
                 if isinstance(
                     decision,
                     (
-                        AdbTransportListWatchRecoveryAcquired,
-                        AdbTransportListWatchRecoveryFailed,
+                        RecoveryAcquired,
+                        RecoveryFailed,
                     ),
                 ):
                     self._finish_recovery(recovery)

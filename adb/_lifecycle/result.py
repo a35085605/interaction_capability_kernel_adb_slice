@@ -9,16 +9,21 @@ from adb._lifecycle.resource import ResourceScope
 
 GenerationT = TypeVar("GenerationT")
 AccessT = TypeVar("AccessT")
+FailureT = TypeVar("FailureT")
+
+
+def _normalize_diagnostic(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("diagnostic must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("diagnostic cannot be empty")
+    return normalized
 
 
 @dataclass(frozen=True, slots=True, eq=False)
 class AcquireAttempt(Generic[GenerationT]):
-    """One in-flight acquisition attempt and its captured lifecycle context.
-
-    Attempt identity correlates returning acquisition work with the state that started it.
-    Generation fencing and commit authority remain state-machine concerns; the captured generation,
-    cancellation, and resource scope are the context for this specific attempt.
-    """
+    """One in-flight acquisition attempt and its captured lifecycle context."""
 
     generation: GenerationT
     cancellation: Event
@@ -26,38 +31,112 @@ class AcquireAttempt(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class AcquireExisting(Generic[AccessT]):
-    """An acquisition cannot start because a current usable access already exists."""
+class AcquireStartExisting(Generic[AccessT]):
+    """Acquire cannot start because the lifecycle already retains usable access.
+
+    This is a kernel start decision only. Domain request constraints have not yet been checked.
+    """
 
     access: AccessT
 
+    def __post_init__(self) -> None:
+        if self.access is None:
+            raise TypeError("access cannot be None")
+
 
 @dataclass(frozen=True, slots=True)
-class AcquireBusy:
-    """An acquisition cannot start because another acquisition is still in flight."""
+class AcquireStartBusy:
+    """Acquire cannot start because another attempt is still in flight."""
 
     draining: bool = False
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.draining, bool):
+            raise TypeError("draining must be bool")
+
 
 @dataclass(frozen=True, slots=True)
-class AcquireBlocked:
-    """An acquisition cannot start because a domain precondition currently blocks it."""
+class AcquireStartBlocked:
+    """Acquire cannot start because a kernel/domain precondition currently blocks it."""
 
     diagnostic: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.diagnostic is None:
+            return
+        object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
 
 
 AcquireStartResult: TypeAlias = (
     AcquireAttempt[GenerationT]
-    | AcquireExisting[AccessT]
-    | AcquireBusy
-    | AcquireBlocked
+    | AcquireStartExisting[AccessT]
+    | AcquireStartBusy
+    | AcquireStartBlocked
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AcquireCommitted(Generic[AccessT]):
+    """The requested access committed as the lifecycle's current authority."""
+
+    access: AccessT
+
+    def __post_init__(self) -> None:
+        if self.access is None:
+            raise TypeError("access cannot be None")
+
+
+@dataclass(frozen=True, slots=True)
+class AcquireExisting(Generic[AccessT]):
+    """Existing lifecycle access satisfies the completed acquire request."""
+
+    access: AccessT
+
+    def __post_init__(self) -> None:
+        if self.access is None:
+            raise TypeError("access cannot be None")
+
+
+@dataclass(frozen=True, slots=True)
+class AcquireBlocked:
+    """The completed acquire request cannot currently proceed."""
+
+    diagnostic: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "diagnostic", _normalize_diagnostic(self.diagnostic))
+
+
+@dataclass(frozen=True, slots=True)
+class AcquireFailed(Generic[FailureT]):
+    """The acquire request failed with a domain-specific typed failure."""
+
+    failure: FailureT
+
+    def __post_init__(self) -> None:
+        if self.failure is None:
+            raise TypeError("failure cannot be None")
+
+
+@dataclass(frozen=True, slots=True)
+class AcquireSuperseded(Generic[GenerationT]):
+    """The captured generation ceased to be current before access could commit."""
+
+    generation: GenerationT
+
+    def __post_init__(self) -> None:
+        if self.generation is None:
+            raise TypeError("generation cannot be None")
 
 
 @dataclass(frozen=True, slots=True)
 class ReleaseGenerationMismatch(Generic[GenerationT, AccessT]):
     current_generation: GenerationT
     access: AccessT | None
+
+    def __post_init__(self) -> None:
+        if self.current_generation is None:
+            raise TypeError("current_generation cannot be None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,12 +145,20 @@ class ReleaseInactive(Generic[GenerationT]):
 
     generation: GenerationT
 
+    def __post_init__(self) -> None:
+        if self.generation is None:
+            raise TypeError("generation cannot be None")
+
 
 @dataclass(frozen=True, slots=True)
 class ReleaseAcquisitionRevoked(Generic[GenerationT]):
     """Matching in-flight acquisition lost commit authority and is now draining."""
 
     generation: GenerationT
+
+    def __post_init__(self) -> None:
+        if self.generation is None:
+            raise TypeError("generation cannot be None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +167,12 @@ class ReleaseAccessDetached(Generic[GenerationT, AccessT]):
 
     generation: GenerationT
     access: AccessT
+
+    def __post_init__(self) -> None:
+        if self.generation is None:
+            raise TypeError("generation cannot be None")
+        if self.access is None:
+            raise TypeError("access cannot be None")
 
 
 ReleaseResult: TypeAlias = (
@@ -91,12 +184,7 @@ ReleaseResult: TypeAlias = (
 
 
 class CleanupRegistrationError(RuntimeError):
-    """Cleanup registration failed after the lifecycle transition was already applied.
-
-    ``outcome`` records the applied access-detach result even if another thread has since changed
-    lifecycle state. The failed registration remains retained by the state machine and is retried
-    before another acquisition can begin.
-    """
+    """Cleanup registration failed after the lifecycle transition was already applied."""
 
     def __init__(self, outcome: ReleaseAccessDetached) -> None:
         self.outcome = outcome
@@ -106,9 +194,14 @@ class CleanupRegistrationError(RuntimeError):
 __all__ = [
     "AcquireAttempt",
     "AcquireBlocked",
-    "AcquireBusy",
+    "AcquireCommitted",
     "AcquireExisting",
+    "AcquireFailed",
+    "AcquireStartBlocked",
+    "AcquireStartBusy",
+    "AcquireStartExisting",
     "AcquireStartResult",
+    "AcquireSuperseded",
     "CleanupRegistrationError",
     "ReleaseAccessDetached",
     "ReleaseAcquisitionRevoked",

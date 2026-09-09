@@ -1,80 +1,38 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from math import isfinite
-from numbers import Real
 from random import random
 from typing import TypeAlias
 
+from adb._lifecycle import (
+    AcquireBlocked,
+    AcquireCommitted,
+    AcquireExisting,
+    AcquireFailed,
+    AcquireSuperseded,
+)
 from adb._recovery import (
     RecoveryAcquired,
     RecoveryAttempt,
     RecoveryAttemptOutcome,
     RecoveryDecisionCore,
     RecoveryExhausted,
+    RecoveryFailed,
     RecoveryRetryConfiguration,
 )
-from adb.server.lifecycle.contract import (
-    AdbServerAcquireBlocked,
-    AdbServerAcquireCommitted,
-    AdbServerAcquireExisting,
-    AdbServerAcquireFailed,
-    AdbServerAcquireOutcome,
-    AdbServerAcquireSuperseded,
-)
+from adb.server.failure import AdbServerLaunchFailure
+from adb.server.generation import AdbServerGeneration
+from adb.server.lifecycle.contract import AdbServerAccess, AdbServerAcquireOutcome
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 
 
 _RandomSource = Callable[[], float]
 
-
-@dataclass(frozen=True, slots=True)
-class AdbServerRecoveryAttempt:
-    """One acquisition attempt selected by the recovery state machine."""
-
-    attempt_number: int
-    delay_seconds: float = 0.0
-
-    def __post_init__(self) -> None:
-        if isinstance(self.attempt_number, bool) or not isinstance(self.attempt_number, int):
-            raise TypeError("attempt_number must be an integer")
-        if self.attempt_number <= 0:
-            raise ValueError("attempt_number must be greater than zero")
-        if isinstance(self.delay_seconds, bool) or not isinstance(self.delay_seconds, Real):
-            raise TypeError("delay_seconds must be a real number")
-        delay = float(self.delay_seconds)
-        if not isfinite(delay) or delay < 0.0:
-            raise ValueError("delay_seconds must be finite and greater than or equal to zero")
-        object.__setattr__(self, "delay_seconds", delay)
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerRecoveryAcquired:
-    """Terminal decision that a usable server acquisition exists after this attempt."""
-
-
-AdbServerRecoveryFailureCause: TypeAlias = AdbServerAcquireFailed
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerRecoveryFailed:
-    """Terminal recovery result after budget-consuming unsuccessful attempts are exhausted."""
-
-    attempts: int
-    cause: AdbServerRecoveryFailureCause
-
-    def __post_init__(self) -> None:
-        if isinstance(self.attempts, bool) or not isinstance(self.attempts, int):
-            raise TypeError("attempts must be an integer")
-        if self.attempts <= 0:
-            raise ValueError("attempts must be greater than zero")
-        if not isinstance(self.cause, AdbServerAcquireFailed):
-            raise TypeError("cause must be AdbServerAcquireFailed")
-
-
-AdbServerRecoveryResult: TypeAlias = AdbServerRecoveryAcquired | AdbServerRecoveryFailed
-AdbServerRecoveryDecision: TypeAlias = AdbServerRecoveryAttempt | AdbServerRecoveryResult
+AdbServerRecoveryFailureCause: TypeAlias = AdbServerLaunchFailure
+AdbServerRecoveryResult: TypeAlias = (
+    RecoveryAcquired | RecoveryFailed[AdbServerRecoveryFailureCause]
+)
+AdbServerRecoveryDecision: TypeAlias = RecoveryAttempt | AdbServerRecoveryResult
 
 
 def _configuration_from_policy(policy: AdbServerRecoveryPolicy) -> RecoveryRetryConfiguration:
@@ -88,16 +46,8 @@ def _configuration_from_policy(policy: AdbServerRecoveryPolicy) -> RecoveryRetry
     )
 
 
-def _domain_attempt(attempt: RecoveryAttempt) -> AdbServerRecoveryAttempt:
-    return AdbServerRecoveryAttempt(attempt.attempt_number, attempt.delay_seconds)
-
-
 class AdbServerRecovery:
-    """Decision engine for one bounded ADB server recovery cycle.
-
-    Domain acquire outcomes are mapped onto a shared retry decision core. The server-facing
-    recovery types remain responsible for preserving server failure causes and public contracts.
-    """
+    """Decision engine for one bounded ADB server recovery cycle."""
 
     def __init__(
         self,
@@ -123,56 +73,70 @@ class AdbServerRecovery:
     def failed_attempts(self) -> int:
         return self._core.failed_attempts
 
-    def begin(self) -> AdbServerRecoveryAttempt:
+    def begin(self) -> RecoveryAttempt:
         """Select the first immediate acquisition attempt for this recovery cycle."""
 
         if self._core.attempt_number != 0:
             raise RuntimeError("ADB server recovery has already begun")
-        return _domain_attempt(self._core.begin())
+        return self._core.begin()
 
     def decide_after(self, result: AdbServerAcquireOutcome) -> AdbServerRecoveryDecision:
         """Apply retry policy after one selected acquisition attempt completes."""
 
         if self._core.attempt_number == 0:
             raise RuntimeError("ADB server recovery has not begun")
-
         if not isinstance(
             result,
             (
-                AdbServerAcquireCommitted,
-                AdbServerAcquireExisting,
-                AdbServerAcquireBlocked,
-                AdbServerAcquireFailed,
-                AdbServerAcquireSuperseded,
+                AcquireCommitted,
+                AcquireExisting,
+                AcquireBlocked,
+                AcquireFailed,
+                AcquireSuperseded,
             ),
         ):
             raise TypeError("result must be AdbServerAcquireOutcome")
+        if isinstance(result, (AcquireCommitted, AcquireExisting)) and not isinstance(
+            result.access, AdbServerAccess
+        ):
+            raise TypeError("server acquire access must be AdbServerAccess")
+        if isinstance(result, AcquireFailed) and not isinstance(
+            result.failure, AdbServerLaunchFailure
+        ):
+            raise TypeError("server acquire failure must be AdbServerLaunchFailure")
+        if isinstance(result, AcquireSuperseded) and not isinstance(
+            result.generation, AdbServerGeneration
+        ):
+            raise TypeError("server superseded generation must be AdbServerGeneration")
 
-        if isinstance(result, (AdbServerAcquireCommitted, AdbServerAcquireExisting)):
+        if isinstance(result, (AcquireCommitted, AcquireExisting)):
             outcome = RecoveryAttemptOutcome.ACQUIRED
-        elif isinstance(result, (AdbServerAcquireBlocked, AdbServerAcquireSuperseded)):
+        elif isinstance(result, (AcquireBlocked, AcquireSuperseded)):
             outcome = RecoveryAttemptOutcome.DEFERRED
         else:
             outcome = RecoveryAttemptOutcome.FAILED
 
         decision = self._core.decide_after(outcome)
-        if isinstance(decision, RecoveryAcquired):
-            return AdbServerRecoveryAcquired()
-        if isinstance(decision, RecoveryAttempt):
-            return _domain_attempt(decision)
+        if isinstance(decision, (RecoveryAcquired, RecoveryAttempt)):
+            return decision
         if isinstance(decision, RecoveryExhausted):
-            if not isinstance(result, AdbServerAcquireFailed):
+            if not isinstance(result, AcquireFailed) or not isinstance(
+                result.failure, AdbServerLaunchFailure
+            ):
                 raise TypeError("unsupported budget-consuming server acquire outcome")
-            return AdbServerRecoveryFailed(decision.failed_attempts, result)
+            return RecoveryFailed(
+                failed_attempts=decision.failed_attempts,
+                cause=result.failure,
+            )
         raise TypeError("unsupported shared server recovery decision")
 
 
 __all__ = [
     "AdbServerRecovery",
-    "AdbServerRecoveryAcquired",
-    "AdbServerRecoveryAttempt",
     "AdbServerRecoveryDecision",
-    "AdbServerRecoveryFailed",
     "AdbServerRecoveryFailureCause",
     "AdbServerRecoveryResult",
+    "RecoveryAcquired",
+    "RecoveryAttempt",
+    "RecoveryFailed",
 ]

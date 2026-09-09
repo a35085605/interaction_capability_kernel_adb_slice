@@ -3,29 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from networking import TcpAddress
-
-from adb.server.endpoint import AdbServerEndpoint
+from adb._lifecycle import EndpointState
 from adb.server.generation import AdbServerGeneration
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerState:
-    """Atomic view of the current runtime-scoped ADB server authority.
-
-    ``generation`` identifies the current authority lifetime. ``endpoint`` is present only
-    while that generation owns a usable server endpoint. Pending acquisition, idle state,
-    and post-revocation cleanup therefore all appear with ``endpoint`` set to ``None``.
-    """
-
-    generation: AdbServerGeneration
-    endpoint: AdbServerEndpoint | None
+class AdbServerState(EndpointState[AdbServerGeneration]):
+    """Server-facing endpoint state with server-generation runtime validation."""
 
     def __post_init__(self) -> None:
+        EndpointState.__post_init__(self)
         if not isinstance(self.generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
-        if self.endpoint is not None and not isinstance(self.endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress or None")
 
 
 @runtime_checkable

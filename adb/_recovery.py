@@ -6,10 +6,11 @@ from enum import Enum, auto
 import math
 from numbers import Real
 from random import random
-from typing import TypeAlias
+from typing import Generic, TypeAlias, TypeVar
 
 
 RandomSource = Callable[[], float]
+CauseT = TypeVar("CauseT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +111,23 @@ class RecoveryAttempt:
 
 @dataclass(frozen=True, slots=True)
 class RecoveryAcquired:
-    """Terminal decision that recovery has a usable acquisition."""
+    """Terminal decision that recovery has usable access."""
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryFailed(Generic[CauseT]):
+    """Terminal recovery result after budget-consuming failures exhaust the policy."""
+
+    failed_attempts: int
+    cause: CauseT
+
+    def __post_init__(self) -> None:
+        if isinstance(self.failed_attempts, bool) or not isinstance(self.failed_attempts, int):
+            raise TypeError("failed_attempts must be an integer")
+        if self.failed_attempts <= 0:
+            raise ValueError("failed_attempts must be greater than zero")
+        if self.cause is None:
+            raise TypeError("cause cannot be None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +225,7 @@ __all__ = [
     "RecoveryDecision",
     "RecoveryDecisionCore",
     "RecoveryExhausted",
+    "RecoveryFailed",
     "RecoveryRetryConfiguration",
     "normalize_recovery_retry_configuration",
 ]

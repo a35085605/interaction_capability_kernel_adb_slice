@@ -3,34 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from networking import TcpAddress
-
+from adb._lifecycle import EndpointState
 from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchState:
-    """Atomic view of current runtime-scoped transport-list watch authority.
-
-    ``generation`` always identifies the current authority lifetime. ``endpoint`` is present
-    only while that generation has usable watch access. Pending acquisition, idle state,
-    and post-revocation cleanup expose no endpoint.
-    """
-
-    generation: AdbTransportListWatchGeneration
-    endpoint: TcpAddress | None = None
+class AdbTransportListWatchState(EndpointState[AdbTransportListWatchGeneration]):
+    """Watch-facing endpoint state with watch-generation runtime validation."""
 
     def __post_init__(self) -> None:
+        EndpointState.__post_init__(self)
         if not isinstance(self.generation, AdbTransportListWatchGeneration):
             raise TypeError("generation must be AdbTransportListWatchGeneration")
-        if self.endpoint is not None and not isinstance(self.endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress or None")
-
-    @property
-    def active(self) -> bool:
-        """Whether this generation currently owns a usable watch resource."""
-
-        return self.endpoint is not None
 
 
 @runtime_checkable
