@@ -15,7 +15,6 @@ from adb.errors import (
     AdbTransportUnavailableError,
 )
 from adb.server import (
-    AdbServerActivated,
     AdbServerLifecycle,
     AdbServerAcquisition,
     AdbServerAcquireBlocked,
@@ -32,7 +31,6 @@ from adb.server import (
     AdbServerBootstrapError,
     AdbServerLifecycleConsistencyError,
     AdbServerLifecycleError,
-    AdbServerDeactivated,
     AdbServerState,
     AdbServerStateView,
     AdbServerGeneration,
@@ -90,7 +88,6 @@ __all__ = [
     "AdbProtocolError",
     "AdbRemoteCommandError",
     "AdbServerConnectionError",
-    "AdbServerActivated",
     "AdbServerLifecycle",
     "AdbServerAcquisition",
     "AdbServerAcquireBlocked",
@@ -107,7 +104,6 @@ __all__ = [
     "AdbServerBootstrapError",
     "AdbServerLifecycleConsistencyError",
     "AdbServerLifecycleError",
-    "AdbServerDeactivated",
     "AdbServerState",
     "AdbServerStateView",
     "AdbServerGeneration",

@@ -2,7 +2,6 @@
 
 from adb.server.availability import AdbServerUnavailableError
 from adb.server.lifecycle import (
-    AdbServerActivated,
     AdbServerLifecycle,
     AdbServerAcquisition,
     AdbServerAcquireBlocked,
@@ -11,14 +10,12 @@ from adb.server.lifecycle import (
     AdbServerAcquireSuperseded,
     AdbServerAcquireExisting,
     AdbServerAcquireOutcome,
-    AdbServerLifecycleEventPublisherBinding,
     AdbServerLifecycleFactory,
     AdbServerReleaseApplied,
     AdbServerReleaseInactive,
     AdbServerReleaseGenerationMismatch,
     AdbServerReleaseOutcome,
     AdbServerBootstrapError,
-    AdbServerDeactivated,
     AdbServerLifecycleConsistencyError,
     AdbServerLifecycleError,
 )
@@ -39,7 +36,6 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.state import AdbServerState, AdbServerStateView
 
 __all__ = [
-    "AdbServerActivated",
     "AdbServerLifecycle",
     "AdbServerAcquisition",
     "AdbServerAcquireBlocked",
@@ -48,7 +44,6 @@ __all__ = [
     "AdbServerAcquireSuperseded",
     "AdbServerAcquireExisting",
     "AdbServerAcquireOutcome",
-    "AdbServerLifecycleEventPublisherBinding",
     "AdbServerLifecycleFactory",
     "AdbServerReleaseApplied",
     "AdbServerReleaseInactive",
@@ -56,7 +51,6 @@ __all__ = [
     "AdbServerReleaseOutcome",
     "AdbServerBootstrapError",
     "AdbServerConnectionFailure",
-    "AdbServerDeactivated",
     "AdbServerEndpoint",
     "AdbServerFailure",
     "AdbServerGeneration",

@@ -158,14 +158,13 @@ class LifecycleReleaseOwned(Generic[GenerationT, OwnershipT]):
 
 
 class LifecycleTransitionCallbackError(RuntimeError):
-    """A callback failed AFTER an authority transition was applied.
+    """A release callback failed AFTER the authority transition was applied.
 
     ``outcome`` records that applied transition even if another thread has since changed state.
-    A commit failure does not return resource ownership to the caller: release it through the core.
     A failed release handoff is retained by the core and retried on the next acquisition attempt.
     """
 
-    def __init__(self, outcome: LifecycleAcquireOwned | LifecycleReleaseOwned) -> None:
+    def __init__(self, outcome: LifecycleReleaseOwned) -> None:
         self.outcome = outcome
         super().__init__("lifecycle transition applied, but its locked callback failed")
 
@@ -261,17 +260,6 @@ class LifecycleAuthorityCore(Generic[GenerationT, OwnershipT]):
                 retirement_errors=tuple(item.diagnostic for item in self._failed_retirements),
             )
 
-    def run_if_no_pending(self, action: Callable[[], None]) -> bool:
-        """Run ``action`` atomically only while no acquisition is in flight."""
-
-        if not callable(action):
-            raise TypeError("action must be callable")
-        with self._lock:
-            if isinstance(self._state, (LifecycleAcquiring, LifecycleCancelling)):
-                return False
-            action()
-            return True
-
     def begin_acquire(
         self,
         *,
@@ -358,7 +346,6 @@ class LifecycleAuthorityCore(Generic[GenerationT, OwnershipT]):
         pending: LifecyclePendingAcquire,
         ownership: OwnershipT,
         *,
-        on_commit: Callable[[], None] | None = None,
         on_superseded: Callable[[], None] | None = None,
     ) -> bool:
         """Commit ownership iff ``pending`` still has authority; otherwise retire the resource."""
@@ -367,8 +354,6 @@ class LifecycleAuthorityCore(Generic[GenerationT, OwnershipT]):
             raise TypeError("pending must be LifecyclePendingAcquire")
         if ownership is None:
             raise ValueError("ownership cannot be None")
-        if on_commit is not None and not callable(on_commit):
-            raise TypeError("on_commit must be callable or None")
         if on_superseded is not None and not callable(on_superseded):
             raise TypeError("on_superseded must be callable or None")
 
@@ -376,13 +361,6 @@ class LifecycleAuthorityCore(Generic[GenerationT, OwnershipT]):
             state = self._state
             if isinstance(state, LifecycleAcquiring) and state.pending is pending:
                 self._state = LifecycleAcquired(state.generation, ownership)
-                if on_commit is not None:
-                    try:
-                        on_commit()
-                    except Exception as exc:
-                        raise LifecycleTransitionCallbackError(
-                            LifecycleAcquireOwned(ownership)
-                        ) from exc
                 return True
 
             try:

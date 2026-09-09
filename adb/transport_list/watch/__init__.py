@@ -36,12 +36,8 @@ from adb.transport_list.watch.failure import (
 )
 from adb.transport_list.watch.signal import (
     AdbTransportListWatchFailed,
-    AdbTransportListWatchLifecycleSignal,
-    AdbTransportListWatchReady,
-    AdbTransportListWatchEnded,
     AdbTransportListWatchRecoveryId,
     AdbTransportListWatchRecoveryRetryDue,
-    AdbTransportListWatchSignal,
 )
 
 __all__ = [
@@ -70,10 +66,6 @@ __all__ = [
     "AdbTransportListWatchServerConnectionFailure",
     "AdbTransportListWatchServiceFailure",
     "AdbTransportListWatchStream",
-    "AdbTransportListWatchLifecycleSignal",
-    "AdbTransportListWatchReady",
-    "AdbTransportListWatchEnded",
     "AdbTransportListWatchRecoveryId",
     "AdbTransportListWatchRecoveryRetryDue",
-    "AdbTransportListWatchSignal",
 ]

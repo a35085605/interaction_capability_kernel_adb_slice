@@ -22,7 +22,6 @@ from adb.server.lifecycle.template import (
     AdbServerLifecycleTemplate,
 )
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
-from eventing import EventPublisher
 
 
 _MonotonicClock = Callable[[], float]
@@ -451,7 +450,6 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate[_OwnedAdbServerPro
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
         probe_interval_seconds: float = 0.05,
-        publisher: EventPublisher | None = None,
         _factory: _AdbServerSubprocessFactory | None = None,
     ) -> None:
         if _factory is None:
@@ -465,9 +463,7 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate[_OwnedAdbServerPro
             raise TypeError("_factory must provide create()")
 
         self._factory = _factory
-        super().__init__(
-            generation_issuer, cleanup_handoff=cleanup_handoff, publisher=publisher
-        )
+        super().__init__(generation_issuer, cleanup_handoff=cleanup_handoff)
 
     def _obtain_handle(
         self,

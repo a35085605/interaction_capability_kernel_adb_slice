@@ -20,11 +20,8 @@ from adb.server.lifecycle.contract import (
     AdbServerReleaseGenerationMismatch,
     AdbServerReleaseOutcome,
 )
-from adb.server.lifecycle.template import AdbServerLifecycleEventPublisherBinding
-from adb.server.lifecycle.events import AdbServerActivated, AdbServerDeactivated
 
 __all__ = [
-    "AdbServerActivated",
     "AdbServerLifecycle",
     "AdbServerAcquisition",
     "AdbServerAcquireBlocked",
@@ -33,14 +30,12 @@ __all__ = [
     "AdbServerAcquireSuperseded",
     "AdbServerAcquireExisting",
     "AdbServerAcquireOutcome",
-    "AdbServerLifecycleEventPublisherBinding",
     "AdbServerLifecycleFactory",
     "AdbServerReleaseApplied",
     "AdbServerReleaseInactive",
     "AdbServerReleaseGenerationMismatch",
     "AdbServerReleaseOutcome",
     "AdbServerBootstrapError",
-    "AdbServerDeactivated",
     "AdbServerLifecycleConsistencyError",
     "AdbServerLifecycleError",
 ]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
 from uuid import uuid4
 
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
@@ -37,26 +36,6 @@ class AdbTransportListWatchRecoveryId:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchReady:
-    """Signal that one watch generation committed its initial transport list."""
-
-    generation: AdbTransportListWatchGeneration
-
-    def __post_init__(self) -> None:
-        _require_generation(self.generation)
-
-
-@dataclass(frozen=True, slots=True)
-class AdbTransportListWatchEnded:
-    """Signal that one watch generation ended and its authority was revoked."""
-
-    generation: AdbTransportListWatchGeneration
-
-    def __post_init__(self) -> None:
-        _require_generation(self.generation)
-
-
-@dataclass(frozen=True, slots=True)
 class AdbTransportListWatchFailed:
     """Signal a transport-list watch failure for one watch generation."""
 
@@ -85,23 +64,9 @@ class AdbTransportListWatchRecoveryRetryDue:
             raise ValueError("attempt_number must be greater than zero")
 
 
-AdbTransportListWatchLifecycleSignal: TypeAlias = (
-    AdbTransportListWatchReady
-    | AdbTransportListWatchEnded
-    | AdbTransportListWatchFailed
-)
-AdbTransportListWatchSignal: TypeAlias = (
-    AdbTransportListWatchLifecycleSignal | AdbTransportListWatchRecoveryRetryDue
-)
-
-
 __all__ = [
     "AdbTransportListWatchFailed",
     "AdbTransportListWatchFailure",
-    "AdbTransportListWatchLifecycleSignal",
-    "AdbTransportListWatchReady",
-    "AdbTransportListWatchEnded",
     "AdbTransportListWatchRecoveryId",
     "AdbTransportListWatchRecoveryRetryDue",
-    "AdbTransportListWatchSignal",
 ]

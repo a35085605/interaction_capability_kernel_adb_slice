@@ -3,9 +3,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from threading import Event
-from typing import Generic, Protocol, TypeVar, runtime_checkable
+from typing import Generic, TypeVar
 
-from eventing import EventPublisher
 from networking import TcpAddress
 from adb._lifecycle import (
     LifecycleAcquireBlocked,
@@ -24,7 +23,6 @@ from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerState
 from adb.server.lifecycle.errors import AdbServerLifecycleConsistencyError
-from adb.server.lifecycle.events import AdbServerActivated, AdbServerDeactivated
 from adb.server.lifecycle.contract import (
     AdbServerAcquisition,
     AdbServerAcquireBlocked,
@@ -47,15 +45,6 @@ def _normalize_diagnostic(value: object) -> str:
     if not normalized:
         raise ValueError("diagnostic cannot be empty")
     return normalized
-
-
-@runtime_checkable
-class AdbServerLifecycleEventPublisherBinding(Protocol):
-    """Optional capability for binding lifecycle state-transition notifications."""
-
-    def bind_event_publisher(self, publisher: EventPublisher) -> None:
-        """Bind the publisher used for non-authoritative state-transition notifications."""
-        ...
 
 
 class AdbServerAcquireError(RuntimeError):
@@ -97,19 +86,15 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         generation_issuer: AdbServerGenerationIssuer,
         *,
         cleanup_handoff: CleanupHandoff,
-        publisher: EventPublisher | None = None,
     ) -> None:
         if not isinstance(generation_issuer, AdbServerGenerationIssuer):
             raise TypeError("generation_issuer must be AdbServerGenerationIssuer")
         if not isinstance(cleanup_handoff, CleanupHandoff):
             raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
-        if publisher is not None and not isinstance(publisher, EventPublisher):
-            raise TypeError("publisher must satisfy EventPublisher or be None")
         self._core: LifecycleAuthorityCore[
             AdbServerGeneration, _Ownership[HandleT]
         ] = LifecycleAuthorityCore(generation_issuer.issue)
         self._cleanup = CleanupCoordinator(cleanup_handoff)
-        self._publisher = publisher
 
     def read(self) -> AdbServerState:
         """Atomically return the current generation and its usable endpoint, if any."""
@@ -120,18 +105,6 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             generation=state.generation,
             endpoint=None if ownership is None else ownership.acquisition.endpoint,
         )
-
-    def bind_event_publisher(self, publisher: EventPublisher) -> None:
-        """Bind the publisher for subsequent state-transition notifications."""
-
-        if not isinstance(publisher, EventPublisher):
-            raise TypeError("publisher must satisfy EventPublisher")
-
-        def bind() -> None:
-            self._publisher = publisher
-
-        if not self._core.run_if_no_pending(bind):
-            raise RuntimeError("cannot bind an event publisher during a server acquisition")
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbServerGeneration]:
         """Sample draining work and cleanup handoff state without exposing resources."""
@@ -187,18 +160,6 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
     ) -> None:
         self._cleanup.register_handoff(resource, conflict_key=endpoint)
         self._cleanup.process_pending()
-
-    @staticmethod
-    def _publish_notification(
-        publisher: EventPublisher,
-        event: AdbServerActivated | AdbServerDeactivated,
-    ) -> None:
-        """Publish a non-authoritative state-transition notification after commit."""
-
-        try:
-            publisher.publish(event)
-        except Exception:
-            return
 
     def acquire(
         self,
@@ -301,24 +262,12 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             )
             raise
 
-        publisher: EventPublisher | None = None
-
-        def capture_publisher() -> None:
-            nonlocal publisher
-            publisher = self._publisher
-
         committed = self._core.commit_acquire(
             pending,
             ownership,
-            on_commit=capture_publisher,
             on_superseded=lambda: self._register_cleanup(handle, endpoint),
         )
         if committed:
-            if publisher is not None:
-                self._publish_notification(
-                    publisher,
-                    AdbServerActivated(acquisition.generation),
-                )
             return AdbServerAcquireCommitted(acquisition)
 
         return AdbServerAcquireSuperseded(attempt.generation)
@@ -333,20 +282,14 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             self._cleanup.process_pending()
 
     def _release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
-        publisher: EventPublisher | None = None
-
         def retire_ownership(ownership: _Ownership[HandleT]) -> None:
-            nonlocal publisher
             self._register_cleanup(ownership.handle, ownership.acquisition.endpoint)
-            publisher = self._publisher
 
         release = self._core.release(
             expected,
             on_owned_release=retire_ownership,
             inconsistent_state_error="ADB server lifecycle authority state is inconsistent",
         )
-        # Notification delivery may block or re-enter the lifecycle. Registered cleanup debt must
-        # be advanced before publication so local cleanup or handoff is not coupled to notification.
         self._cleanup.process_pending()
         if isinstance(release, LifecycleReleaseGenerationMismatch):
             ownership = release.ownership
@@ -360,11 +303,6 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             return AdbServerReleaseApplied(generation=release.generation)
         if isinstance(release, LifecycleReleaseOwned):
             ownership = release.ownership
-            if publisher is not None:
-                self._publish_notification(
-                    publisher,
-                    AdbServerDeactivated(release.generation),
-                )
             return AdbServerReleaseApplied(
                 generation=release.generation,
                 acquisition=ownership.acquisition,
@@ -375,6 +313,5 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
 __all__ = [
     "AdbServerAcquireError",
     "AdbServerAcquireInterruptedError",
-    "AdbServerLifecycleEventPublisherBinding",
     "AdbServerLifecycleTemplate",
 ]
