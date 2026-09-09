@@ -1,6 +1,6 @@
-"""Shared private lifecycle authority, result, and diagnostic primitives."""
+"""Shared private lifecycle state-machine, result, and diagnostic primitives."""
 
-from adb._lifecycle.authority import AuthoritySnapshot, LifecycleAuthority, PendingSnapshot
+from adb._lifecycle.state_machine import LifecycleSnapshot, LifecycleStateMachine, PendingSnapshot
 from adb._lifecycle.diagnostics import LifecycleDiagnostics
 from adb._lifecycle.result import (
     AcquireBlocked,
@@ -13,7 +13,7 @@ from adb._lifecycle.result import (
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
-    ReleaseOwnershipDetached,
+    ReleaseResourceDetached,
     ReleaseResult,
 )
 
@@ -25,14 +25,14 @@ __all__ = [
     "AcquireStarted",
     "AcquireStartResult",
     "AcquireToken",
-    "AuthoritySnapshot",
+    "LifecycleSnapshot",
     "CleanupRegistrationError",
-    "LifecycleAuthority",
+    "LifecycleStateMachine",
     "LifecycleDiagnostics",
     "PendingSnapshot",
     "ReleaseAcquisitionRevoked",
     "ReleaseGenerationMismatch",
     "ReleaseInactive",
-    "ReleaseOwnershipDetached",
+    "ReleaseResourceDetached",
     "ReleaseResult",
 ]

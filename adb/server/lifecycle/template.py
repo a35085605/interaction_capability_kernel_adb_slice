@@ -11,12 +11,12 @@ from adb._lifecycle import (
     AcquireBusy,
     AcquireExisting,
     AcquireStarted,
-    LifecycleAuthority,
+    LifecycleStateMachine,
     LifecycleDiagnostics,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
-    ReleaseOwnershipDetached,
+    ReleaseResourceDetached,
 )
 from adb.cleanup import CleanupCoordinator, CleanupHandoff
 from adb.server.endpoint import AdbServerEndpoint
@@ -66,7 +66,7 @@ HandleT = TypeVar("HandleT")
 
 
 @dataclass(frozen=True, slots=True)
-class _Ownership(Generic[HandleT]):
+class _ServerResource(Generic[HandleT]):
     handle: HandleT
     acquisition: AdbServerAcquisition
 
@@ -91,25 +91,25 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             raise TypeError("generation_issuer must be AdbServerGenerationIssuer")
         if not isinstance(cleanup_handoff, CleanupHandoff):
             raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
-        self._authority: LifecycleAuthority[
-            AdbServerGeneration, _Ownership[HandleT]
-        ] = LifecycleAuthority(generation_issuer.issue)
+        self._state_machine: LifecycleStateMachine[
+            AdbServerGeneration, _ServerResource[HandleT]
+        ] = LifecycleStateMachine(generation_issuer.issue)
         self._cleanup = CleanupCoordinator(cleanup_handoff)
 
     def read(self) -> AdbServerState:
         """Atomically return the current generation and its usable endpoint, if any."""
 
-        state = self._authority.snapshot()
-        ownership = state.ownership
+        state = self._state_machine.snapshot()
+        resource = state.resource
         return AdbServerState(
             generation=state.generation,
-            endpoint=None if ownership is None else ownership.acquisition.endpoint,
+            endpoint=None if resource is None else resource.acquisition.endpoint,
         )
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbServerGeneration]:
         """Sample draining work and cleanup handoff state without exposing resources."""
 
-        state = self._authority.snapshot()
+        state = self._state_machine.snapshot()
         cleanup = self._cleanup.snapshot()
         return LifecycleDiagnostics(
             state.generation, state.pending, state.cleanup_registration_errors,
@@ -125,7 +125,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         """Obtain an acquisition handle and its usable endpoint.
 
         Bound blocking operations and honor cancellation between them. Revocation deliberately
-        retains the in-flight authority state until this method returns, preventing overlapping
+        retains the in-flight lifecycle state until this method returns, preventing overlapping
         physical acquisitions.
         """
 
@@ -178,7 +178,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
     def _acquire(
         self, endpoint_constraint: AdbServerEndpoint | None
     ) -> AdbServerAcquireOutcome:
-        start = self._authority.begin_acquire(
+        start = self._state_machine.begin_acquire(
             is_blocked=(
                 None
                 if endpoint_constraint is None
@@ -186,12 +186,12 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             )
         )
         if isinstance(start, AcquireExisting):
-            ownership = start.ownership
+            resource = start.resource
             if (
                 endpoint_constraint is None
-                or ownership.acquisition.endpoint == endpoint_constraint
+                or resource.acquisition.endpoint == endpoint_constraint
             ):
-                return AdbServerAcquireExisting(ownership.acquisition)
+                return AdbServerAcquireExisting(resource.acquisition)
             return AdbServerAcquireBlocked(
                 "ADB server lifecycle already retains a different endpoint"
             )
@@ -213,23 +213,23 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
         try:
             handle, endpoint = self._obtain_handle(endpoint_constraint, attempt.cancellation)
         except AdbServerAcquireInterruptedError as exc:
-            revoked = self._authority.abandon_acquire(token)
+            revoked = self._state_machine.abandon_acquire(token)
             if revoked:
                 return AdbServerAcquireSuperseded(attempt.generation)
             raise RuntimeError(
                 "ADB server acquisition was interrupted without generation revocation"
             ) from exc
         except AdbServerAcquireError as exc:
-            revoked = self._authority.abandon_acquire(token)
+            revoked = self._state_machine.abandon_acquire(token)
             if revoked:
                 return AdbServerAcquireSuperseded(attempt.generation)
             return AdbServerAcquireFailed(exc.diagnostic)
         except BaseException:
-            self._authority.abandon_acquire(token)
+            self._state_machine.abandon_acquire(token)
             raise
 
         if self._cleanup.has_conflict(endpoint):
-            revoked = self._authority.abandon_acquire(
+            revoked = self._state_machine.abandon_acquire(
                 token,
                 before_clear=lambda: self._register_cleanup(handle, endpoint),
             )
@@ -240,7 +240,7 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             )
 
         if endpoint_constraint is not None and endpoint != endpoint_constraint:
-            revoked = self._authority.abandon_acquire(
+            revoked = self._state_machine.abandon_acquire(
                 token,
                 before_clear=lambda: self._register_cleanup(handle, endpoint),
             )
@@ -255,17 +255,17 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
                 endpoint=endpoint,
                 generation=attempt.generation,
             )
-            ownership = _Ownership(handle, acquisition)
+            resource = _ServerResource(handle, acquisition)
         except BaseException:
-            self._authority.abandon_acquire(
+            self._state_machine.abandon_acquire(
                 token,
                 before_clear=lambda: self._register_cleanup(handle, endpoint),
             )
             raise
 
-        committed = self._authority.commit_acquire(
+        committed = self._state_machine.commit_acquire(
             token,
-            ownership,
+            resource,
             on_superseded=lambda: self._register_cleanup(handle, endpoint),
         )
         if committed:
@@ -283,30 +283,30 @@ class AdbServerLifecycleTemplate(Generic[HandleT], ABC):
             self._cleanup.process_pending()
 
     def _release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
-        def retire_ownership(ownership: _Ownership[HandleT]) -> None:
-            self._register_cleanup(ownership.handle, ownership.acquisition.endpoint)
+        def retire_resource(resource: _ServerResource[HandleT]) -> None:
+            self._register_cleanup(resource.handle, resource.acquisition.endpoint)
 
-        release = self._authority.release(
+        release = self._state_machine.release(
             expected,
-            on_owned_release=retire_ownership,
-            inconsistent_state_error="ADB server lifecycle authority state is inconsistent",
+            on_resource_release=retire_resource,
+            inconsistent_state_error="ADB server lifecycle state is inconsistent",
         )
         self._cleanup.process_pending()
         if isinstance(release, ReleaseGenerationMismatch):
-            ownership = release.ownership
+            resource = release.resource
             return AdbServerReleaseGenerationMismatch(
-                current=None if ownership is None else ownership.acquisition,
+                current=None if resource is None else resource.acquisition,
                 current_generation=release.current_generation,
             )
         if isinstance(release, ReleaseInactive):
             return AdbServerReleaseInactive(generation=release.generation)
         if isinstance(release, ReleaseAcquisitionRevoked):
             return AdbServerReleaseApplied(generation=release.generation)
-        if isinstance(release, ReleaseOwnershipDetached):
-            ownership = release.ownership
+        if isinstance(release, ReleaseResourceDetached):
+            resource = release.resource
             return AdbServerReleaseApplied(
                 generation=release.generation,
-                acquisition=ownership.acquisition,
+                acquisition=resource.acquisition,
             )
         raise TypeError("unsupported shared lifecycle release decision")
 

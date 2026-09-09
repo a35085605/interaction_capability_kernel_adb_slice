@@ -6,22 +6,23 @@ from typing import Generic, TypeAlias, TypeVar
 
 
 GenerationT = TypeVar("GenerationT")
-OwnershipT = TypeVar("OwnershipT")
+ResourceT = TypeVar("ResourceT")
 
 
 @dataclass(frozen=True, slots=True, eq=False)
 class AcquireToken:
     """Opaque identity token for one in-flight acquisition attempt.
 
-    The token deliberately carries no generation, cancellation, timing, or authority state. Those
-    facts belong to the authority state machine and the ``AcquireStarted`` result. Token identity is
+    The token deliberately carries no generation, cancellation, timing, or commit-authority
+    state. Those facts belong to the lifecycle state machine and the ``AcquireStarted`` result. Token
+    identity is
     used only to correlate a returning acquisition with the state that started it.
     """
 
 
 @dataclass(frozen=True, slots=True)
 class AcquireStarted(Generic[GenerationT]):
-    """Facts captured when an idle authority starts one acquisition attempt."""
+    """Facts captured when an idle lifecycle state starts one acquisition attempt."""
 
     token: AcquireToken
     generation: GenerationT
@@ -29,10 +30,10 @@ class AcquireStarted(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class AcquireExisting(Generic[OwnershipT]):
-    """An acquisition cannot start because usable ownership already exists."""
+class AcquireExisting(Generic[ResourceT]):
+    """An acquisition cannot start because a current usable resource already exists."""
 
-    ownership: OwnershipT
+    resource: ResourceT
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,21 +52,21 @@ class AcquireBlocked:
 
 AcquireStartResult: TypeAlias = (
     AcquireStarted[GenerationT]
-    | AcquireExisting[OwnershipT]
+    | AcquireExisting[ResourceT]
     | AcquireBusy
     | AcquireBlocked
 )
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseGenerationMismatch(Generic[GenerationT, OwnershipT]):
+class ReleaseGenerationMismatch(Generic[GenerationT, ResourceT]):
     current_generation: GenerationT
-    ownership: OwnershipT | None
+    resource: ResourceT | None
 
 
 @dataclass(frozen=True, slots=True)
 class ReleaseInactive(Generic[GenerationT]):
-    """No current authority; a revoked acquisition may still be draining."""
+    """No current resource; a revoked acquisition may still be draining."""
 
     generation: GenerationT
 
@@ -78,32 +79,32 @@ class ReleaseAcquisitionRevoked(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseOwnershipDetached(Generic[GenerationT, OwnershipT]):
-    """Matching ownership was detached from current authority."""
+class ReleaseResourceDetached(Generic[GenerationT, ResourceT]):
+    """Matching resource was detached from the current lifecycle state."""
 
     generation: GenerationT
-    ownership: OwnershipT
+    resource: ResourceT
 
 
 ReleaseResult: TypeAlias = (
-    ReleaseGenerationMismatch[GenerationT, OwnershipT]
+    ReleaseGenerationMismatch[GenerationT, ResourceT]
     | ReleaseInactive[GenerationT]
     | ReleaseAcquisitionRevoked[GenerationT]
-    | ReleaseOwnershipDetached[GenerationT, OwnershipT]
+    | ReleaseResourceDetached[GenerationT, ResourceT]
 )
 
 
 class CleanupRegistrationError(RuntimeError):
-    """Cleanup registration failed after the authority transition was already applied.
+    """Cleanup registration failed after the lifecycle transition was already applied.
 
-    ``outcome`` records the applied ownership-detach result even if another thread has since changed
-    authority state. The failed registration remains retained by the authority and is retried before
-    another acquisition can begin.
+    ``outcome`` records the applied resource-detach result even if another thread has since changed
+    lifecycle state. The failed registration remains retained by the state machine and is retried
+    before another acquisition can begin.
     """
 
-    def __init__(self, outcome: ReleaseOwnershipDetached) -> None:
+    def __init__(self, outcome: ReleaseResourceDetached) -> None:
         self.outcome = outcome
-        super().__init__("authority transition applied, but cleanup registration failed")
+        super().__init__("lifecycle transition applied, but cleanup registration failed")
 
 
 __all__ = [
@@ -117,6 +118,6 @@ __all__ = [
     "ReleaseAcquisitionRevoked",
     "ReleaseGenerationMismatch",
     "ReleaseInactive",
-    "ReleaseOwnershipDetached",
+    "ReleaseResourceDetached",
     "ReleaseResult",
 ]

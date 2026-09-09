@@ -17,18 +17,18 @@ from adb._lifecycle.result import (
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
-    ReleaseOwnershipDetached,
+    ReleaseResourceDetached,
     ReleaseResult,
 )
 
 
 GenerationT = TypeVar("GenerationT")
-OwnershipT = TypeVar("OwnershipT")
+ResourceT = TypeVar("ResourceT")
 
 
 @dataclass(frozen=True, slots=True)
 class _Idle(Generic[GenerationT]):
-    """Current generation has no acquisition work or usable ownership."""
+    """Current generation has no acquisition work or usable resource."""
 
     generation: GenerationT
 
@@ -44,20 +44,20 @@ class _Acquiring(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class _Owned(Generic[GenerationT, OwnershipT]):
-    """Current generation owns one usable resource."""
+class _Current(Generic[GenerationT, ResourceT]):
+    """Current generation retains one usable resource."""
 
     generation: GenerationT
-    ownership: OwnershipT
+    resource: ResourceT
 
 
 @dataclass(frozen=True, slots=True)
 class _Draining(Generic[GenerationT]):
-    """A revoked acquisition is draining after authority advanced to a new generation.
+    """A revoked acquisition is draining after the state machine advanced to a new generation.
 
-    ``generation`` is the current generation exposed by the authority. ``revoked_generation`` is
+    ``generation`` is the current generation exposed by the state machine. ``revoked_generation`` is
     the generation of the in-flight attempt that has already lost commit authority but has not yet
-    returned to the authority.
+    returned to the state machine.
     """
 
     generation: GenerationT
@@ -70,7 +70,7 @@ class _Draining(Generic[GenerationT]):
 _State: TypeAlias = (
     _Idle[GenerationT]
     | _Acquiring[GenerationT]
-    | _Owned[GenerationT, OwnershipT]
+    | _Current[GenerationT, ResourceT]
     | _Draining[GenerationT]
 )
 
@@ -83,11 +83,11 @@ class PendingSnapshot(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class AuthoritySnapshot(Generic[GenerationT, OwnershipT]):
-    """Atomic lifecycle authority snapshot for domain-facing state projection."""
+class LifecycleSnapshot(Generic[GenerationT, ResourceT]):
+    """Atomic lifecycle snapshot for domain-facing state projection."""
 
     generation: GenerationT
-    ownership: OwnershipT | None
+    resource: ResourceT | None
     pending: PendingSnapshot[GenerationT] | None = None
     cleanup_registration_errors: tuple[str, ...] = ()
 
@@ -98,28 +98,30 @@ class _FailedCleanupRegistration:
     diagnostic: str
 
 
-class LifecycleAuthority(Generic[GenerationT, OwnershipT]):
-    """Shared lifecycle authority state machine.
+class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
+    """Shared acquire/commit/release lifecycle state machine.
 
-    Authority is represented as one explicit private state: ``_Idle``, ``_Acquiring``, ``_Owned``,
-    or ``_Draining``. This makes in-flight acquisition and usable ownership mutually exclusive by
-    construction. An ``AcquireToken`` is identity-only; generation fencing is expressed by state
-    transitions, especially ``_Acquiring(G1) -> _Draining(G2, revoked_generation=G1)``.
+    Lifecycle state is represented as one explicit private state: ``_Idle``, ``_Acquiring``,
+    ``_Current``, or ``_Draining``. This makes in-flight acquisition and a current usable resource
+    mutually exclusive by construction. An ``AcquireToken`` is identity-only; generation fencing
+    is expressed by state transitions, especially
+    ``_Acquiring(G1) -> _Draining(G2, revoked_generation=G1)``.
 
     Domain lifecycles retain responsibility for validating acquisition constraints, obtaining and
     cleaning physical resources, constructing domain acquisition values, and publishing domain
-    notifications. This authority owns only the concurrency-sensitive authority state and invokes
-    narrow callbacks while holding its state lock when cleanup-debt registration must stay atomic
+    notifications. This state machine owns only the concurrency-sensitive lifecycle state and
+    invokes narrow callbacks while holding its state lock when cleanup-debt registration must stay
+    atomic
     with that state transition.
 
     All callbacks (including the issuer) must be short, non-reentrant, and perform no I/O, thread
     startup, or waits for external work. Nested state locks must follow a consistent lock order.
     Cleanup-registration callbacks must retain the resource in their closure and be idempotent: a
     failed registration is retained and retried before another acquisition can begin. Physical
-    cleanup and notifications belong outside this authority's lock.
+    cleanup and notifications belong outside this state machine's lock.
 
-    The issuer must never reuse a generation within this authority scope. The adjacent-value check
-    is a defensive check, not a replacement for that contract (it cannot detect ABA reuse).
+    The issuer must never reuse a generation within this state-machine scope. The adjacent-value
+    check is a defensive check, not a replacement for that contract (it cannot detect ABA reuse).
     """
 
     def __init__(self, issue_generation: Callable[[], GenerationT]) -> None:
@@ -127,7 +129,7 @@ class LifecycleAuthority(Generic[GenerationT, OwnershipT]):
             raise TypeError("issue_generation must be callable")
         self._issue_generation = issue_generation
         self._lock = Lock()
-        self._state: _State[GenerationT, OwnershipT] = _Idle(issue_generation())
+        self._state: _State[GenerationT, ResourceT] = _Idle(issue_generation())
         self._failed_cleanup_registrations: list[_FailedCleanupRegistration] = []
 
     def _register_cleanup_locked(self, callback: Callable[[], None]) -> None:
@@ -165,18 +167,18 @@ class LifecycleAuthority(Generic[GenerationT, OwnershipT]):
             age_seconds=max(0.0, monotonic() - state.started_at),
         )
 
-    def snapshot(self) -> AuthoritySnapshot[GenerationT, OwnershipT]:
+    def snapshot(self) -> LifecycleSnapshot[GenerationT, ResourceT]:
         with self._lock:
             state = self._state
-            ownership = state.ownership if isinstance(state, _Owned) else None
+            resource = state.resource if isinstance(state, _Current) else None
             pending = (
                 self._pending_snapshot(state)
                 if isinstance(state, (_Acquiring, _Draining))
                 else None
             )
-            return AuthoritySnapshot(
+            return LifecycleSnapshot(
                 generation=state.generation,
-                ownership=ownership,
+                resource=resource,
                 pending=pending,
                 cleanup_registration_errors=tuple(
                     item.diagnostic for item in self._failed_cleanup_registrations
@@ -187,22 +189,22 @@ class LifecycleAuthority(Generic[GenerationT, OwnershipT]):
         self,
         *,
         is_blocked: Callable[[], bool] | None = None,
-    ) -> AcquireStartResult[GenerationT, OwnershipT]:
-        """Atomically inspect authority and, when allowed, start one acquisition attempt."""
+    ) -> AcquireStartResult[GenerationT, ResourceT]:
+        """Atomically inspect lifecycle state and, when allowed, start one acquisition attempt."""
 
         if is_blocked is not None and not callable(is_blocked):
             raise TypeError("is_blocked must be callable or None")
 
         with self._lock:
             state = self._state
-            if isinstance(state, _Owned):
-                return AcquireExisting(state.ownership)
+            if isinstance(state, _Current):
+                return AcquireExisting(state.resource)
             if isinstance(state, _Acquiring):
                 return AcquireBusy(draining=False)
             if isinstance(state, _Draining):
                 return AcquireBusy(draining=True)
             if not isinstance(state, _Idle):
-                raise RuntimeError("unsupported lifecycle authority state")
+                raise RuntimeError("unsupported lifecycle state")
 
             if not self._retry_cleanup_registrations_locked():
                 return AcquireBlocked(
@@ -262,23 +264,23 @@ class LifecycleAuthority(Generic[GenerationT, OwnershipT]):
     def commit_acquire(
         self,
         token: AcquireToken,
-        ownership: OwnershipT,
+        resource: ResourceT,
         *,
         on_superseded: Callable[[], None] | None = None,
     ) -> bool:
-        """Commit ownership iff ``token`` still has authority; otherwise register cleanup."""
+        """Commit ``resource`` iff ``token`` still has commit authority; otherwise register cleanup."""
 
         if not isinstance(token, AcquireToken):
             raise TypeError("token must be AcquireToken")
-        if ownership is None:
-            raise ValueError("ownership cannot be None")
+        if resource is None:
+            raise ValueError("resource cannot be None")
         if on_superseded is not None and not callable(on_superseded):
             raise TypeError("on_superseded must be callable or None")
 
         with self._lock:
             state = self._state
             if isinstance(state, _Acquiring) and state.token is token:
-                self._state = _Owned(state.generation, ownership)
+                self._state = _Current(state.generation, resource)
                 return True
 
             try:
@@ -293,13 +295,13 @@ class LifecycleAuthority(Generic[GenerationT, OwnershipT]):
         self,
         expected: GenerationT,
         *,
-        on_owned_release: Callable[[OwnershipT], None] | None = None,
-        inconsistent_state_error: str = "lifecycle authority state is inconsistent",
-    ) -> ReleaseResult[GenerationT, OwnershipT]:
-        """Release matching authority, advance generation, and fence stale acquisition work."""
+        on_resource_release: Callable[[ResourceT], None] | None = None,
+        inconsistent_state_error: str = "lifecycle state is inconsistent",
+    ) -> ReleaseResult[GenerationT, ResourceT]:
+        """Release matching lifecycle state, advance generation, and fence stale acquisition work."""
 
-        if on_owned_release is not None and not callable(on_owned_release):
-            raise TypeError("on_owned_release must be callable or None")
+        if on_resource_release is not None and not callable(on_resource_release):
+            raise TypeError("on_resource_release must be callable or None")
         if not isinstance(inconsistent_state_error, str):
             raise TypeError("inconsistent_state_error must be a string")
         normalized_error = inconsistent_state_error.strip()
@@ -311,7 +313,7 @@ class LifecycleAuthority(Generic[GenerationT, OwnershipT]):
             if expected != state.generation:
                 return ReleaseGenerationMismatch(
                     current_generation=state.generation,
-                    ownership=state.ownership if isinstance(state, _Owned) else None,
+                    resource=state.resource if isinstance(state, _Current) else None,
                 )
 
             if isinstance(state, (_Idle, _Draining)):
@@ -336,22 +338,22 @@ class LifecycleAuthority(Generic[GenerationT, OwnershipT]):
                 )
                 return ReleaseAcquisitionRevoked(released_generation)
 
-            if not isinstance(state, _Owned):
+            if not isinstance(state, _Current):
                 raise RuntimeError(normalized_error)
 
-            ownership = state.ownership
+            resource = state.resource
             self._state = _Idle(next_generation)
-            outcome = ReleaseOwnershipDetached(released_generation, ownership)
-            if on_owned_release is not None:
+            outcome = ReleaseResourceDetached(released_generation, resource)
+            if on_resource_release is not None:
                 try:
-                    self._register_cleanup_locked(lambda: on_owned_release(ownership))
+                    self._register_cleanup_locked(lambda: on_resource_release(resource))
                 except Exception as exc:
                     raise CleanupRegistrationError(outcome) from exc
             return outcome
 
 
 __all__ = [
-    "AuthoritySnapshot",
-    "LifecycleAuthority",
+    "LifecycleSnapshot",
+    "LifecycleStateMachine",
     "PendingSnapshot",
 ]
