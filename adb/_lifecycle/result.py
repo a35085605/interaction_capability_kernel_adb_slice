@@ -8,7 +8,7 @@ from adb._lifecycle.resource import ResourceScope
 
 
 GenerationT = TypeVar("GenerationT")
-ResourceT = TypeVar("ResourceT")
+AccessT = TypeVar("AccessT")
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -26,10 +26,10 @@ class AcquireAttempt(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class AcquireExisting(Generic[ResourceT]):
-    """An acquisition cannot start because a current usable resource already exists."""
+class AcquireExisting(Generic[AccessT]):
+    """An acquisition cannot start because a current usable access already exists."""
 
-    resource: ResourceT
+    access: AccessT
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,21 +48,21 @@ class AcquireBlocked:
 
 AcquireStartResult: TypeAlias = (
     AcquireAttempt[GenerationT]
-    | AcquireExisting[ResourceT]
+    | AcquireExisting[AccessT]
     | AcquireBusy
     | AcquireBlocked
 )
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseGenerationMismatch(Generic[GenerationT, ResourceT]):
+class ReleaseGenerationMismatch(Generic[GenerationT, AccessT]):
     current_generation: GenerationT
-    resource: ResourceT | None
+    access: AccessT | None
 
 
 @dataclass(frozen=True, slots=True)
 class ReleaseInactive(Generic[GenerationT]):
-    """No current resource; a revoked acquisition may still be draining."""
+    """No current access; a revoked acquisition may still be draining."""
 
     generation: GenerationT
 
@@ -75,30 +75,30 @@ class ReleaseAcquisitionRevoked(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseResourceDetached(Generic[GenerationT, ResourceT]):
-    """Matching resource was detached from the current lifecycle state."""
+class ReleaseAccessDetached(Generic[GenerationT, AccessT]):
+    """Matching access was detached from the current lifecycle state."""
 
     generation: GenerationT
-    resource: ResourceT
+    access: AccessT
 
 
 ReleaseResult: TypeAlias = (
-    ReleaseGenerationMismatch[GenerationT, ResourceT]
+    ReleaseGenerationMismatch[GenerationT, AccessT]
     | ReleaseInactive[GenerationT]
     | ReleaseAcquisitionRevoked[GenerationT]
-    | ReleaseResourceDetached[GenerationT, ResourceT]
+    | ReleaseAccessDetached[GenerationT, AccessT]
 )
 
 
 class CleanupRegistrationError(RuntimeError):
     """Cleanup registration failed after the lifecycle transition was already applied.
 
-    ``outcome`` records the applied resource-detach result even if another thread has since changed
+    ``outcome`` records the applied access-detach result even if another thread has since changed
     lifecycle state. The failed registration remains retained by the state machine and is retried
     before another acquisition can begin.
     """
 
-    def __init__(self, outcome: ReleaseResourceDetached) -> None:
+    def __init__(self, outcome: ReleaseAccessDetached) -> None:
         self.outcome = outcome
         super().__init__("lifecycle transition applied, but cleanup registration failed")
 
@@ -110,9 +110,9 @@ __all__ = [
     "AcquireExisting",
     "AcquireStartResult",
     "CleanupRegistrationError",
+    "ReleaseAccessDetached",
     "ReleaseAcquisitionRevoked",
     "ReleaseGenerationMismatch",
     "ReleaseInactive",
-    "ReleaseResourceDetached",
     "ReleaseResult",
 ]

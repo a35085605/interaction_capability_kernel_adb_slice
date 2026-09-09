@@ -13,7 +13,7 @@ class AdbTransportListWatchState:
     """Atomic view of current runtime-scoped transport-list watch authority.
 
     ``generation`` always identifies the current authority lifetime. ``endpoint`` is present
-    only while that generation owns a usable resource session. Pending acquisition, idle state,
+    only while that generation has usable watch access. Pending acquisition, idle state,
     and post-revocation cleanup expose no endpoint.
     """
 

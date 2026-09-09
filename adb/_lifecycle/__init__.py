@@ -13,7 +13,7 @@ from adb._lifecycle.result import (
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
-    ReleaseResourceDetached,
+    ReleaseAccessDetached,
     ReleaseResult,
 )
 
@@ -32,7 +32,7 @@ __all__ = [
     "ReleaseAcquisitionRevoked",
     "ReleaseGenerationMismatch",
     "ReleaseInactive",
-    "ReleaseResourceDetached",
+    "ReleaseAccessDetached",
     "ReleaseResult",
     "ResourceCleanupAttempt",
     "ResourceOwnership",

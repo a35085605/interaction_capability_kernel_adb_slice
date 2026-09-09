@@ -17,18 +17,18 @@ from adb._lifecycle.result import (
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
-    ReleaseResourceDetached,
+    ReleaseAccessDetached,
     ReleaseResult,
 )
 
 
 GenerationT = TypeVar("GenerationT")
-ResourceT = TypeVar("ResourceT")
+AccessT = TypeVar("AccessT")
 
 
 @dataclass(frozen=True, slots=True)
 class _Idle(Generic[GenerationT]):
-    """Current generation has no acquisition work or usable resource."""
+    """Current generation has no acquisition work or usable access."""
 
     generation: GenerationT
 
@@ -46,11 +46,11 @@ class _Acquiring(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class _Current(Generic[GenerationT, ResourceT]):
-    """Current generation retains one usable resource."""
+class _Current(Generic[GenerationT, AccessT]):
+    """Current generation retains one usable access."""
 
     generation: GenerationT
-    resource: ResourceT
+    access: AccessT
     resource_scope: ResourceScope
 
 
@@ -71,7 +71,7 @@ class _Draining(Generic[GenerationT]):
 _State: TypeAlias = (
     _Idle[GenerationT]
     | _Acquiring[GenerationT]
-    | _Current[GenerationT, ResourceT]
+    | _Current[GenerationT, AccessT]
     | _Draining[GenerationT]
 )
 
@@ -84,11 +84,11 @@ class PendingSnapshot(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class LifecycleSnapshot(Generic[GenerationT, ResourceT]):
+class LifecycleSnapshot(Generic[GenerationT, AccessT]):
     """Atomic lifecycle snapshot for domain-facing state projection."""
 
     generation: GenerationT
-    resource: ResourceT | None
+    access: AccessT | None
     pending: PendingSnapshot[GenerationT] | None = None
     cleanup_registration_errors: tuple[str, ...] = ()
 
@@ -99,11 +99,11 @@ class _FailedCleanupRegistration:
     diagnostic: str
 
 
-class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
+class LifecycleStateMachine(Generic[GenerationT, AccessT]):
     """Shared acquire/commit/release lifecycle state machine.
 
     Lifecycle state is represented as one explicit private state: ``_Idle``, ``_Acquiring``,
-    ``_Current``, or ``_Draining``. This makes in-flight acquisition and a current usable resource
+    ``_Current``, or ``_Draining``. This makes in-flight acquisition and a current usable access
     mutually exclusive by construction. An ``AcquireAttempt`` is identity-bearing and captures the
     context for one in-flight acquisition; generation fencing is expressed by state transitions,
     especially ``_Acquiring(A1@G1) -> _Draining(G2, A1@G1)``.
@@ -118,9 +118,9 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
 
     All callbacks (including the issuer) must be short, non-reentrant, and perform no I/O, thread
     startup, or waits for external work. Nested state locks must follow a consistent lock order.
-    Cleanup-registration callbacks must retain the resource in their closure and be idempotent: a
-    failed registration is retained and retried before another acquisition can begin. Physical
-    cleanup and notifications belong outside this state machine's lock.
+    Cleanup-registration callbacks must retain supporting resources in their closure and be
+    idempotent: a failed registration is retained and retried before another acquisition can begin.
+    Physical cleanup and notifications belong outside this state machine's lock.
 
     The issuer must never reuse a generation within this state-machine scope. The adjacent-value
     check is a defensive check, not a replacement for that contract (it cannot detect ABA reuse).
@@ -131,7 +131,7 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
             raise TypeError("issue_generation must be callable")
         self._issue_generation = issue_generation
         self._lock = Lock()
-        self._state: _State[GenerationT, ResourceT] = _Idle(issue_generation())
+        self._state: _State[GenerationT, AccessT] = _Idle(issue_generation())
         self._failed_cleanup_registrations: list[_FailedCleanupRegistration] = []
 
     def _register_cleanup_locked(self, callback: Callable[[], None]) -> None:
@@ -168,10 +168,10 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
             age_seconds=max(0.0, monotonic() - state.started_at),
         )
 
-    def snapshot(self) -> LifecycleSnapshot[GenerationT, ResourceT]:
+    def snapshot(self) -> LifecycleSnapshot[GenerationT, AccessT]:
         with self._lock:
             state = self._state
-            resource = state.resource if isinstance(state, _Current) else None
+            access = state.access if isinstance(state, _Current) else None
             pending = (
                 self._pending_snapshot(state)
                 if isinstance(state, (_Acquiring, _Draining))
@@ -179,7 +179,7 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
             )
             return LifecycleSnapshot(
                 generation=state.generation,
-                resource=resource,
+                access=access,
                 pending=pending,
                 cleanup_registration_errors=tuple(
                     item.diagnostic for item in self._failed_cleanup_registrations
@@ -190,7 +190,7 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
         self,
         *,
         is_blocked: Callable[[], bool] | None = None,
-    ) -> AcquireStartResult[GenerationT, ResourceT]:
+    ) -> AcquireStartResult[GenerationT, AccessT]:
         """Atomically inspect lifecycle state and, when allowed, start one acquisition attempt."""
 
         if is_blocked is not None and not callable(is_blocked):
@@ -199,7 +199,7 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
         with self._lock:
             state = self._state
             if isinstance(state, _Current):
-                return AcquireExisting(state.resource)
+                return AcquireExisting(state.access)
             if isinstance(state, _Acquiring):
                 return AcquireBusy(draining=False)
             if isinstance(state, _Draining):
@@ -259,16 +259,16 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
     def commit_acquire(
         self,
         attempt: AcquireAttempt[GenerationT],
-        resource: ResourceT,
+        access: AccessT,
         *,
         on_superseded: Callable[[], None] | None = None,
     ) -> bool:
-        """Commit ``resource`` iff ``attempt`` still has authority; otherwise register cleanup."""
+        """Commit ``access`` iff ``attempt`` still has authority; otherwise register cleanup."""
 
         if not isinstance(attempt, AcquireAttempt):
             raise TypeError("attempt must be AcquireAttempt")
-        if resource is None:
-            raise ValueError("resource cannot be None")
+        if access is None:
+            raise ValueError("access cannot be None")
         if on_superseded is not None and not callable(on_superseded):
             raise TypeError("on_superseded must be callable or None")
 
@@ -277,7 +277,7 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
             if isinstance(state, (_Acquiring, _Draining)) and state.attempt is attempt:
                 attempt.resource_scope.seal()
             if isinstance(state, _Acquiring) and state.attempt is attempt:
-                self._state = _Current(state.generation, resource, attempt.resource_scope)
+                self._state = _Current(state.generation, access, attempt.resource_scope)
                 return True
 
             try:
@@ -292,13 +292,13 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
         self,
         expected: GenerationT,
         *,
-        on_resource_release: Callable[[ResourceT, ResourceScope], None] | None = None,
+        on_access_release: Callable[[AccessT, ResourceScope], None] | None = None,
         inconsistent_state_error: str = "lifecycle state is inconsistent",
-    ) -> ReleaseResult[GenerationT, ResourceT]:
+    ) -> ReleaseResult[GenerationT, AccessT]:
         """Release matching lifecycle state, advance generation, and fence stale acquisition work."""
 
-        if on_resource_release is not None and not callable(on_resource_release):
-            raise TypeError("on_resource_release must be callable or None")
+        if on_access_release is not None and not callable(on_access_release):
+            raise TypeError("on_access_release must be callable or None")
         if not isinstance(inconsistent_state_error, str):
             raise TypeError("inconsistent_state_error must be a string")
         normalized_error = inconsistent_state_error.strip()
@@ -310,7 +310,7 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
             if expected != state.generation:
                 return ReleaseGenerationMismatch(
                     current_generation=state.generation,
-                    resource=state.resource if isinstance(state, _Current) else None,
+                    access=state.access if isinstance(state, _Current) else None,
                 )
 
             if isinstance(state, (_Idle, _Draining)):
@@ -336,13 +336,13 @@ class LifecycleStateMachine(Generic[GenerationT, ResourceT]):
             if not isinstance(state, _Current):
                 raise RuntimeError(normalized_error)
 
-            resource = state.resource
+            access = state.access
             self._state = _Idle(next_generation)
-            outcome = ReleaseResourceDetached(released_generation, resource)
-            if on_resource_release is not None:
+            outcome = ReleaseAccessDetached(released_generation, access)
+            if on_access_release is not None:
                 try:
                     self._register_cleanup_locked(
-                        lambda: on_resource_release(resource, state.resource_scope)
+                        lambda: on_access_release(access, state.resource_scope)
                     )
                 except Exception as exc:
                     raise CleanupRegistrationError(outcome) from exc

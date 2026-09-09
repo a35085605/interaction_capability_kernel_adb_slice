@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from threading import Event
 from typing import Iterable
 
@@ -16,7 +15,7 @@ from adb._lifecycle import (
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
-    ReleaseResourceDetached,
+    ReleaseAccessDetached,
     ResourceScope,
 )
 from adb.cleanup import CleanupCoordinator, CleanupHandoff
@@ -63,13 +62,6 @@ class AdbServerAcquireInterruptedError(RuntimeError):
         super().__init__("ADB server acquisition was interrupted")
 
 
-@dataclass(frozen=True, slots=True)
-class _ServerResource:
-    """One committed acquisition; physical ownership lives in its lifecycle resource scope."""
-
-    acquisition: AdbServerAcquisition
-
-
 class AdbServerLifecycleTemplate(ABC):
     """Template for one current ADB server acquisition and its owned resource scope.
 
@@ -95,7 +87,7 @@ class AdbServerLifecycleTemplate(ABC):
         if not isinstance(cleanup_handoff, CleanupHandoff):
             raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
         self._state_machine: LifecycleStateMachine[
-            AdbServerGeneration, _ServerResource
+            AdbServerGeneration, AdbServerAcquisition
         ] = LifecycleStateMachine(generation_issuer.issue)
         self._cleanup = CleanupCoordinator(cleanup_handoff)
 
@@ -103,10 +95,10 @@ class AdbServerLifecycleTemplate(ABC):
         """Atomically return the current generation and its usable endpoint, if any."""
 
         state = self._state_machine.snapshot()
-        resource = state.resource
+        access = state.access
         return AdbServerState(
             generation=state.generation,
-            endpoint=None if resource is None else resource.acquisition.endpoint,
+            endpoint=None if access is None else access.endpoint,
         )
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbServerGeneration]:
@@ -193,12 +185,12 @@ class AdbServerLifecycleTemplate(ABC):
             )
         )
         if isinstance(start, AcquireExisting):
-            resource = start.resource
+            access = start.access
             if (
                 endpoint_constraint is None
-                or resource.acquisition.endpoint == endpoint_constraint
+                or access.endpoint == endpoint_constraint
             ):
-                return AdbServerAcquireExisting(resource.acquisition)
+                return AdbServerAcquireExisting(access)
             return AdbServerAcquireBlocked(
                 "ADB server lifecycle already retains a different endpoint"
             )
@@ -271,7 +263,6 @@ class AdbServerLifecycleTemplate(ABC):
                 endpoint=endpoint,
                 generation=attempt.generation,
             )
-            resource = _ServerResource(acquisition)
         except BaseException:
             self._state_machine.abandon_acquire(
                 attempt,
@@ -281,7 +272,7 @@ class AdbServerLifecycleTemplate(ABC):
 
         committed = self._state_machine.commit_acquire(
             attempt,
-            resource,
+            acquisition,
             on_superseded=register_scope,
         )
         if committed:
@@ -299,29 +290,29 @@ class AdbServerLifecycleTemplate(ABC):
             self._cleanup.process_pending()
 
     def _release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
-        def retire_resource(resource: _ServerResource, resources: ResourceScope) -> None:
+        def retire_access(access: AdbServerAcquisition, resources: ResourceScope) -> None:
             self._register_resource_scope(resources)
 
         release = self._state_machine.release(
             expected,
-            on_resource_release=retire_resource,
+            on_access_release=retire_access,
             inconsistent_state_error="ADB server lifecycle state is inconsistent",
         )
         if isinstance(release, ReleaseGenerationMismatch):
-            resource = release.resource
+            access = release.access
             return AdbServerReleaseGenerationMismatch(
-                current=None if resource is None else resource.acquisition,
+                current=access,
                 current_generation=release.current_generation,
             )
         if isinstance(release, ReleaseInactive):
             return AdbServerReleaseInactive(generation=release.generation)
         if isinstance(release, ReleaseAcquisitionRevoked):
             return AdbServerReleaseApplied(generation=release.generation)
-        if isinstance(release, ReleaseResourceDetached):
-            resource = release.resource
+        if isinstance(release, ReleaseAccessDetached):
+            access = release.access
             return AdbServerReleaseApplied(
                 generation=release.generation,
-                acquisition=resource.acquisition,
+                acquisition=access,
             )
         raise TypeError("unsupported shared lifecycle release decision")
 

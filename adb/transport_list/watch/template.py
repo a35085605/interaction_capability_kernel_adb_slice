@@ -18,7 +18,7 @@ from adb._lifecycle import (
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
-    ReleaseResourceDetached,
+    ReleaseAccessDetached,
     ResourceScope,
 )
 from adb.cleanup import CleanupCoordinator, CleanupHandoff
@@ -87,7 +87,7 @@ class _AdbTransportListWatchStreamView:
 
 
 @dataclass(frozen=True, slots=True)
-class _WatchResource:
+class _WatchAccess:
     """Committed producer capability; physical ownership lives in the lifecycle scope."""
 
     stream: AdbTransportListWatchStream
@@ -115,7 +115,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if not isinstance(cleanup_handoff, CleanupHandoff):
             raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
         self._state_machine: LifecycleStateMachine[
-            AdbTransportListWatchGeneration, _WatchResource
+            AdbTransportListWatchGeneration, _WatchAccess
         ] = LifecycleStateMachine(generation_issuer.issue)
         self._cleanup = CleanupCoordinator(cleanup_handoff)
 
@@ -123,10 +123,10 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         """Atomically return current generation and usable endpoint metadata, if any."""
 
         state = self._state_machine.snapshot()
-        resource = state.resource
+        access = state.access
         return AdbTransportListWatchState(
             generation=state.generation,
-            endpoint=None if resource is None else resource.acquisition.endpoint,
+            endpoint=None if access is None else access.acquisition.endpoint,
         )
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbTransportListWatchGeneration]:
@@ -180,14 +180,14 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             raise TypeError("expected must be AdbTransportListWatchGeneration")
 
         state = self._state_machine.snapshot()
-        resource = state.resource
+        access = state.access
         if (
             expected != state.generation
-            or resource is None
-            or resource.acquisition.generation != expected
+            or access is None
+            or access.acquisition.generation != expected
         ):
             return None
-        return resource.stream
+        return access.stream
 
     def acquire(
         self,
@@ -205,9 +205,9 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     def _acquire(self, endpoint: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
         start = self._state_machine.begin_acquire()
         if isinstance(start, AcquireExisting):
-            resource = start.resource
-            if resource.acquisition.endpoint == endpoint:
-                return AdbTransportListWatchAcquireExisting(resource.acquisition)
+            access = start.access
+            if access.acquisition.endpoint == endpoint:
+                return AdbTransportListWatchAcquireExisting(access.acquisition)
             return AdbTransportListWatchAcquireBlocked(
                 "ADB transport-list watch lifecycle already retains a different endpoint"
             )
@@ -256,7 +256,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 endpoint=endpoint,
                 generation=attempt.generation,
             )
-            resource = _WatchResource(
+            access = _WatchAccess(
                 stream=_AdbTransportListWatchStreamView(handle),
                 acquisition=acquisition,
             )
@@ -269,7 +269,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
 
         committed = self._state_machine.commit_acquire(
             attempt,
-            resource,
+            access,
             on_superseded=register_scope,
         )
         if committed:
@@ -292,31 +292,31 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     def _release(
         self, expected: AdbTransportListWatchGeneration
     ) -> AdbTransportListWatchReleaseOutcome:
-        def retire_resource(resource: _WatchResource, resources: ResourceScope) -> None:
+        def retire_access(access: _WatchAccess, resources: ResourceScope) -> None:
             self._register_resource_scope(resources)
 
         release = self._state_machine.release(
             expected,
-            on_resource_release=retire_resource,
+            on_access_release=retire_access,
             inconsistent_state_error=(
                 "ADB transport-list watch lifecycle state is inconsistent"
             ),
         )
         if isinstance(release, ReleaseGenerationMismatch):
-            resource = release.resource
+            access = release.access
             return AdbTransportListWatchReleaseGenerationMismatch(
-                current=None if resource is None else resource.acquisition,
+                current=None if access is None else access.acquisition,
                 current_generation=release.current_generation,
             )
         if isinstance(release, ReleaseInactive):
             return AdbTransportListWatchReleaseInactive(release.generation)
         if isinstance(release, ReleaseAcquisitionRevoked):
             return AdbTransportListWatchReleaseApplied(generation=release.generation)
-        if isinstance(release, ReleaseResourceDetached):
-            resource = release.resource
+        if isinstance(release, ReleaseAccessDetached):
+            access = release.access
             return AdbTransportListWatchReleaseApplied(
                 generation=release.generation,
-                acquisition=resource.acquisition,
+                acquisition=access.acquisition,
             )
         raise TypeError("unsupported shared lifecycle release decision")
 
