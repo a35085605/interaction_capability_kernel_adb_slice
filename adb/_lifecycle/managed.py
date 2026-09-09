@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from threading import Event
+from types import TracebackType
 from typing import Generic, TypeVar
 
 from adb._lifecycle.diagnostics import LifecycleDiagnostics
@@ -18,6 +20,77 @@ from adb.cleanup import (
 
 GenerationT = TypeVar("GenerationT")
 AccessT = TypeVar("AccessT")
+
+
+class AcquireAttemptGuard(Generic[GenerationT, AccessT]):
+    """Ensure one managed acquisition attempt is terminated exactly once.
+
+    The guard owns only attempt finalization. Domain acquisition, validation, failure mapping, and
+    access construction remain with the caller. Leaving the context without an explicit commit or
+    abandon automatically abandons the attempt so unexpected exceptions cannot strand lifecycle
+    state or owned resources.
+    """
+
+    __slots__ = ("_managed", "_attempt", "_finished")
+
+    def __init__(
+        self,
+        managed: ManagedLifecycle[GenerationT, AccessT],
+        attempt: AcquireAttempt[GenerationT],
+    ) -> None:
+        if not isinstance(attempt, AcquireAttempt):
+            raise TypeError("attempt must be AcquireAttempt")
+        self._managed = managed
+        self._attempt = attempt
+        self._finished = False
+
+    @property
+    def generation(self) -> GenerationT:
+        return self._attempt.generation
+
+    @property
+    def cancellation(self) -> Event:
+        return self._attempt.cancellation
+
+    @property
+    def resources(self) -> ResourceScope:
+        return self._attempt.resource_scope
+
+    def __enter__(self) -> AcquireAttemptGuard[GenerationT, AccessT]:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        if not self._finished:
+            self._finish_before_call()
+            self._managed.abandon_acquire(self._attempt)
+        return False
+
+    def abandon(self) -> bool:
+        """Abandon this attempt and report whether release had already revoked it."""
+
+        self._finish_before_call()
+        return self._managed.abandon_acquire(self._attempt)
+
+    def commit(self, access: AccessT) -> bool:
+        """Commit access if this attempt still has authority; otherwise finalize as superseded."""
+
+        if access is None:
+            # Keep the guard open so context exit still abandons the attempt.
+            raise ValueError("access cannot be None")
+        self._finish_before_call()
+        return self._managed.commit_acquire(self._attempt, access)
+
+    def _finish_before_call(self) -> None:
+        if self._finished:
+            raise RuntimeError("acquisition attempt guard is already finished")
+        # State-machine finalization can apply its transition and then raise while registering
+        # cleanup debt. Mark the guard first so __exit__ never attempts a second finalization.
+        self._finished = True
 
 
 class ManagedLifecycle(Generic[GenerationT, AccessT]):
@@ -64,6 +137,14 @@ class ManagedLifecycle(Generic[GenerationT, AccessT]):
         is_blocked: Callable[[], bool] | None = None,
     ) -> AcquireStartResult[GenerationT, AccessT]:
         return self._state_machine.begin_acquire(is_blocked=is_blocked)
+
+    def guard_acquire(
+        self,
+        attempt: AcquireAttempt[GenerationT],
+    ) -> AcquireAttemptGuard[GenerationT, AccessT]:
+        """Guard one started attempt so every scope exit finalizes it exactly once."""
+
+        return AcquireAttemptGuard(self, attempt)
 
     def abandon_acquire(self, attempt: AcquireAttempt[GenerationT]) -> bool:
         """Abandon an attempt and atomically register every still-owned resource for cleanup."""
@@ -152,4 +233,4 @@ class ManagedLifecycle(Generic[GenerationT, AccessT]):
                 )
 
 
-__all__ = ["ManagedLifecycle"]
+__all__ = ["AcquireAttemptGuard", "ManagedLifecycle"]

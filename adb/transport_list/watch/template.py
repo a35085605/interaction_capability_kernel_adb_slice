@@ -199,45 +199,40 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             )
         if not isinstance(start, AcquireAttempt):
             raise TypeError("unsupported shared lifecycle acquire start")
-        attempt = start
-        resources = attempt.resource_scope
-        try:
-            handle = self._obtain_handle(endpoint, attempt.cancellation, resources)
-            resources.adopt(handle, lambda: handle.close())
-        except AdbTransportListWatchAcquireInterruptedError as exc:
-            revoked = self._managed.abandon_acquire(attempt)
-            if revoked:
-                return AcquireSuperseded(attempt.generation)
-            raise RuntimeError(
-                "ADB transport-list watch acquisition was interrupted without generation "
-                "revocation"
-            ) from exc
-        except AdbTransportListWatchAcquireError as exc:
-            revoked = self._managed.abandon_acquire(attempt)
-            if revoked:
-                return AcquireSuperseded(attempt.generation)
-            return AcquireFailed(exc.failure)
-        except BaseException:
-            self._managed.abandon_acquire(attempt)
-            raise
+        with self._managed.guard_acquire(start) as attempt:
+            try:
+                handle = self._obtain_handle(
+                    endpoint,
+                    attempt.cancellation,
+                    attempt.resources,
+                )
+                attempt.resources.adopt(handle, lambda: handle.close())
+            except AdbTransportListWatchAcquireInterruptedError as exc:
+                revoked = attempt.abandon()
+                if revoked:
+                    return AcquireSuperseded(attempt.generation)
+                raise RuntimeError(
+                    "ADB transport-list watch acquisition was interrupted without generation "
+                    "revocation"
+                ) from exc
+            except AdbTransportListWatchAcquireError as exc:
+                revoked = attempt.abandon()
+                if revoked:
+                    return AcquireSuperseded(attempt.generation)
+                return AcquireFailed(exc.failure)
 
-        try:
             public_access = AdbTransportListWatchAccess(endpoint=endpoint)
             access = _WatchAccess(
                 stream=_AdbTransportListWatchStreamView(handle),
                 access=public_access,
             )
-        except BaseException:
-            self._managed.abandon_acquire(attempt)
-            raise
+            committed = attempt.commit(access)
+            if committed:
+                return AcquireCommitted(
+                    LifecycleSnapshot(attempt.generation, public_access)
+                )
 
-        committed = self._managed.commit_acquire(attempt, access)
-        if committed:
-            return AcquireCommitted(
-                LifecycleSnapshot(attempt.generation, public_access)
-            )
-
-        return AcquireSuperseded(attempt.generation)
+            return AcquireSuperseded(attempt.generation)
 
     def release(
         self,
