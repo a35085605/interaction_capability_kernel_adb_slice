@@ -1,6 +1,5 @@
 """ADB server endpoint, generation, lifecycle, failure, and availability contracts."""
 
-from adb.server.availability import AdbServerUnavailableError
 from adb.server.lifecycle import (
     AdbServerLifecycle,
     AdbServerAcquisition,
@@ -67,5 +66,4 @@ __all__ = [
     "AdbServerState",
     "AdbServerStateView",
     "AdbServerTimeoutFailure",
-    "AdbServerUnavailableError",
 ]

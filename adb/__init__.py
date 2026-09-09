@@ -35,7 +35,6 @@ from adb.server import (
     AdbServerStateView,
     AdbServerGeneration,
     AdbServerGenerationIssuer,
-    AdbServerUnavailableError,
 )
 from adb.transport_list import (
     AdbTransportList,
@@ -108,7 +107,6 @@ __all__ = [
     "AdbServerStateView",
     "AdbServerGeneration",
     "AdbServerGenerationIssuer",
-    "AdbServerUnavailableError",
     "AdbServiceError",
     "AdbTimeoutError",
     "AdbTransport",
