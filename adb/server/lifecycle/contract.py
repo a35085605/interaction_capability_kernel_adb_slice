@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol, TypeAlias, runtime_checkable
 
+from networking import TcpAddress
+
 from adb._lifecycle import (
     AcquireBlocked,
     AcquireCommitted,
@@ -14,7 +16,6 @@ from adb._lifecycle import (
     ReleaseInactive,
 )
 from adb.server.access import AdbServerAccess
-from adb.server.endpoint import AdbServerEndpoint
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerStateView
@@ -46,7 +47,7 @@ class AdbServerLifecycle(AdbServerStateView, Protocol):
 
     def acquire(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
     ) -> AdbServerAcquireOutcome:
         """Attempt to establish usable ADB server access at the requested endpoint."""
         ...

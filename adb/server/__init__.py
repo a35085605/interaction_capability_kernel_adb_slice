@@ -6,7 +6,6 @@ from adb._lifecycle import (
     AcquireExisting,
     AcquireFailed,
     AcquireSuperseded,
-    EndpointAccess,
     LifecycleSnapshot,
     ReleaseAccessDetached,
     ReleaseAcquisitionRevoked,
@@ -35,7 +34,6 @@ from adb.server.failure import (
     AdbServerTimeoutFailure,
 )
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
-from adb.server.endpoint import AdbServerEndpoint
 from adb.server.state import AdbServerState, AdbServerStateView
 
 __all__ = [
@@ -47,7 +45,6 @@ __all__ = [
     "AdbServerAccess",
     "AdbServerAcquireOutcome",
     "AdbServerConnectionFailure",
-    "AdbServerEndpoint",
     "AdbServerFailure",
     "AdbServerGeneration",
     "AdbServerGenerationIssuer",
@@ -66,7 +63,6 @@ __all__ = [
     "AdbServerState",
     "AdbServerStateView",
     "AdbServerTimeoutFailure",
-    "EndpointAccess",
     "LifecycleSnapshot",
     "ReleaseAccessDetached",
     "ReleaseAcquisitionRevoked",

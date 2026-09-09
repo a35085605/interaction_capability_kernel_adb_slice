@@ -1,6 +1,5 @@
 """Shared private lifecycle state-machine, result, state, and diagnostic primitives."""
 
-from adb._lifecycle.endpoint import EndpointAccess
 from adb._lifecycle.resource import ResourceCleanupAttempt, ResourceOwnership, ResourceScope
 from adb._lifecycle.snapshot import LifecycleSnapshot
 from adb._lifecycle.state_machine import LifecycleStateMachine, PendingSnapshot
@@ -38,7 +37,6 @@ __all__ = [
     "AcquireStartResult",
     "AcquireSuperseded",
     "CleanupRegistrationError",
-    "EndpointAccess",
     "LifecycleDiagnostics",
     "LifecycleSnapshot",
     "LifecycleStateMachine",

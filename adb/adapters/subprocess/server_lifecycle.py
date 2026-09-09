@@ -16,7 +16,6 @@ from adb.adapters.subprocess.command import normalize_executable, normalize_time
 from adb.errors import AdbError, AdbTimeoutError
 from adb.aosp.io.smart_socket import AdbServiceClient
 from networking import TcpAddress
-from adb.server.endpoint import AdbServerEndpoint
 from adb.server.generation import AdbServerGenerationIssuer
 from adb.cleanup import CleanupHandoff
 from adb.server.lifecycle.template import (
@@ -35,7 +34,7 @@ _SocketFactory = Callable[[int, int, int], socket.socket]
 
 
 class _ServerStatusReader(Protocol):
-    def read(self, endpoint: AdbServerEndpoint) -> object: ...
+    def read(self, endpoint: TcpAddress) -> object: ...
 
 
 class _AdbServerSubprocessStartError(RuntimeError):
@@ -225,10 +224,10 @@ class _AdbServerSubprocessFactory:
 
     def create(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
         cancellation: Event,
         resources: ResourceScope,
-    ) -> AdbServerEndpoint:
+    ) -> TcpAddress:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
         if not isinstance(cancellation, Event):
@@ -262,12 +261,12 @@ class _AdbServerSubprocessFactory:
 
     def _launch(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
         resources: ResourceScope,
         *,
         deadline: float,
         cancellation: Event,
-    ) -> tuple[_OwnedAdbServerProcess, AdbServerEndpoint]:
+    ) -> tuple[_OwnedAdbServerProcess, TcpAddress]:
         reservation, reservation_ownership, resolved_endpoint = self._reserve_listener(
             endpoint,
             resources,
@@ -322,12 +321,12 @@ class _AdbServerSubprocessFactory:
 
     def _reserve_listener(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
         resources: ResourceScope,
         *,
         deadline: float,
         cancellation: Event,
-    ) -> tuple[socket.socket, ResourceOwnership, AdbServerEndpoint]:
+    ) -> tuple[socket.socket, ResourceOwnership, TcpAddress]:
         try:
             addresses = self._resolver.resolve(
                 endpoint.host,
@@ -416,7 +415,7 @@ class _AdbServerSubprocessFactory:
 
     def _wait_until_ready(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
         process: subprocess.Popen[bytes],
         *,
         cancellation: Event,
@@ -488,10 +487,10 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate):
 
     def _obtain_access(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
         cancellation: Event,
         resources: ResourceScope,
-    ) -> AdbServerEndpoint:
+    ) -> TcpAddress:
         try:
             return self._factory.create(endpoint, cancellation, resources)
         except _AdbServerSubprocessAcquireInterrupted as exc:
@@ -501,7 +500,7 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate):
 
     def _requested_resource_claims(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
     ) -> tuple[object, ...]:
         return (
             _TcpBindClaim(

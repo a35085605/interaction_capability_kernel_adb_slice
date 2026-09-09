@@ -25,7 +25,6 @@ from adb._lifecycle import (
     ResourceScope,
 )
 from adb.cleanup import CleanupHandoff
-from adb.server.endpoint import AdbServerEndpoint
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerState
@@ -110,10 +109,10 @@ class AdbServerLifecycleTemplate(ABC):
     @abstractmethod
     def _obtain_access(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
         cancellation: Event,
         resources: ResourceScope,
-    ) -> AdbServerEndpoint:
+    ) -> TcpAddress:
         """Obtain usable access while recording physical ownership in ``resources``.
 
         Resource-producing operations must adopt returned resources before later work can fail.
@@ -123,7 +122,7 @@ class AdbServerLifecycleTemplate(ABC):
 
     def _requested_resource_claims(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
     ) -> tuple[object, ...]:
         """Return claims known before acquisition starts; empty means no pre-acquire claim."""
 
@@ -138,7 +137,7 @@ class AdbServerLifecycleTemplate(ABC):
 
     def acquire(
         self,
-        endpoint: AdbServerEndpoint,
+        endpoint: TcpAddress,
     ) -> AdbServerAcquireOutcome:
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
@@ -149,7 +148,7 @@ class AdbServerLifecycleTemplate(ABC):
         finally:
             self._managed.process_cleanup()
 
-    def _acquire(self, endpoint: AdbServerEndpoint) -> AdbServerAcquireOutcome:
+    def _acquire(self, endpoint: TcpAddress) -> AdbServerAcquireOutcome:
         requested_claims = self._requested_resource_claims(endpoint)
         start = self._managed.begin_acquire(
             is_blocked=(
