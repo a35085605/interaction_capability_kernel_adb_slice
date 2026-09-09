@@ -3,15 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import uuid4
 
-from adb.transport_list.watch.failure import AdbTransportListWatchFailure
-from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
-
-
-def _require_generation(value: object) -> AdbTransportListWatchGeneration:
-    if not isinstance(value, AdbTransportListWatchGeneration):
-        raise TypeError("generation must be AdbTransportListWatchGeneration")
-    return value
-
 
 @dataclass(frozen=True, slots=True, order=True)
 class AdbTransportListWatchRecoveryId:
@@ -36,19 +27,6 @@ class AdbTransportListWatchRecoveryId:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbTransportListWatchFailed:
-    """Signal a transport-list watch failure for one watch generation."""
-
-    generation: AdbTransportListWatchGeneration
-    failure: AdbTransportListWatchFailure
-
-    def __post_init__(self) -> None:
-        _require_generation(self.generation)
-        if not isinstance(self.failure, AdbTransportListWatchFailure):
-            raise TypeError("failure must be AdbTransportListWatchFailure")
-
-
-@dataclass(frozen=True, slots=True)
 class AdbTransportListWatchRecoveryRetryDue:
     """Runtime-supervision signal that one scheduled watch recovery attempt became due."""
 
@@ -65,8 +43,6 @@ class AdbTransportListWatchRecoveryRetryDue:
 
 
 __all__ = [
-    "AdbTransportListWatchFailed",
-    "AdbTransportListWatchFailure",
     "AdbTransportListWatchRecoveryId",
     "AdbTransportListWatchRecoveryRetryDue",
 ]

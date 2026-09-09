@@ -8,8 +8,8 @@ from adb.transport_list.watch.contract import (
     AdbTransportListWatchLifecycle,
     AdbTransportListWatchReleaseApplied,
 )
+from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
 from adb.transport_list.watch.signal import (
-    AdbTransportListWatchFailed,
     AdbTransportListWatchRecoveryId,
     AdbTransportListWatchRecoveryRetryDue,
 )
@@ -28,11 +28,12 @@ from scheduling import ScheduleToken, TemporalScheduler
 
 
 class AdbTransportListWatchSupervisor:
-    """Run failure-driven transport-list watch recovery cycles.
+    """Run explicitly reconciled transport-list watch recovery cycles.
 
-    Owns watch-failure subscriptions, retry scheduling, and recovery worker lifetimes. Watch
-    authority remains in the lifecycle. A failed generation is released through the lifecycle's
-    generation fence, and the detached acquisition's endpoint becomes the recovery target.
+    Owns generation-fenced reconciliation commands, retry scheduling, and recovery worker
+    lifetimes. Watch authority remains in the lifecycle. A reconciled generation is released
+    through the lifecycle's generation fence, and the detached acquisition's endpoint becomes the
+    recovery target.
     """
 
     def __init__(
@@ -86,7 +87,7 @@ class AdbTransportListWatchSupervisor:
             return self._closed
 
     def start(self) -> None:
-        """Start watch failure reconciliation and recovery supervision."""
+        """Start transport-list watch recovery supervision."""
 
         with self._lock:
             if self._closed:
@@ -98,20 +99,13 @@ class AdbTransportListWatchSupervisor:
         subscription_tokens: list[EventSubscriptionToken] = []
         try:
             event_bus = self._event_bus
-            if event_bus is not None:
+            if event_bus is not None and self._scheduler is not None:
                 subscription_tokens.append(
                     event_bus.subscribe(
-                        AdbTransportListWatchFailed,
-                        self._on_watch_failed,
+                        AdbTransportListWatchRecoveryRetryDue,
+                        self._on_recovery_retry_due,
                     )
                 )
-                if self._scheduler is not None:
-                    subscription_tokens.append(
-                        event_bus.subscribe(
-                            AdbTransportListWatchRecoveryRetryDue,
-                            self._on_recovery_retry_due,
-                        )
-                    )
         except BaseException:
             if self._event_bus is not None:
                 for token in subscription_tokens:
@@ -148,14 +142,19 @@ class AdbTransportListWatchSupervisor:
         self._cancel_retry(retry_token)
         self._join_attempt_threads(attempt_threads)
 
-    def _on_watch_failed(self, event: AdbTransportListWatchFailed) -> None:
-        """Release the failed generation, then recover the endpoint that was detached."""
+    def reconcile(self, generation: AdbTransportListWatchGeneration) -> None:
+        """Release one expected generation and recover its detached watch endpoint."""
+
+        if not isinstance(generation, AdbTransportListWatchGeneration):
+            raise TypeError("generation must be AdbTransportListWatchGeneration")
 
         with self._lock:
-            if not self._running_locked():
-                return
+            if self._closed:
+                raise RuntimeError("ADB transport-list watch supervisor is closed")
+            if not self._started:
+                raise RuntimeError("ADB transport-list watch supervisor is not started")
 
-        release = self._lifecycle.release(event.generation)
+        release = self._lifecycle.release(generation)
         if (
             not isinstance(release, AdbTransportListWatchReleaseApplied)
             or release.acquisition is None
@@ -296,7 +295,7 @@ class AdbTransportListWatchSupervisor:
             self._apply_recovery_decision(recovery, recovery_id, decision)
         except BaseException:
             # Contract/invariant failures are not retryable lifecycle outcomes. Release this cycle
-            # so later explicit recovery requests cannot become permanently pending behind a dead
+            # so later explicit reconciliations cannot become permanently pending behind a dead
             # worker, but do not automatically restart the broken cycle.
             self._abort_recovery(recovery, recovery_id)
             raise

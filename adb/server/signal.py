@@ -1,15 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
 from uuid import uuid4
-
-from adb.server.failure import (
-    AdbServerConnectionFailure,
-    AdbServerLivenessFailure,
-    AdbServerProcessExitedFailure,
-)
-from adb.server.generation import AdbServerGeneration
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -34,42 +26,6 @@ class AdbServerRecoveryId:
         return cls(uuid4().hex)
 
 
-_LIVENESS_FAILURE_TYPES = (
-    AdbServerConnectionFailure,
-    AdbServerProcessExitedFailure,
-)
-
-
-def _require_server(value: object) -> AdbServerGeneration:
-    if not isinstance(value, AdbServerGeneration):
-        raise TypeError("server must be AdbServerGeneration")
-    return value
-
-
-class _ServerSignalProjection:
-    server: AdbServerGeneration
-
-    @property
-    def generation(self) -> AdbServerGeneration:
-        return self.server
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerReconciliationRequested(_ServerSignalProjection):
-    """Request reconciliation after terminal server liveness failure."""
-
-    server: AdbServerGeneration
-    failure: AdbServerLivenessFailure
-
-    def __post_init__(self) -> None:
-        _require_server(self.server)
-        if not isinstance(self.failure, _LIVENESS_FAILURE_TYPES):
-            raise TypeError(
-                "failure must be AdbServerConnectionFailure or "
-                "AdbServerProcessExitedFailure"
-            )
-
-
 @dataclass(frozen=True, slots=True)
 class AdbServerRecoveryRetryDue:
     """Runtime-supervision signal that one scheduled recovery acquisition attempt became due."""
@@ -86,12 +42,7 @@ class AdbServerRecoveryRetryDue:
             raise ValueError("attempt_number must be greater than zero")
 
 
-AdbServerSignal: TypeAlias = AdbServerReconciliationRequested | AdbServerRecoveryRetryDue
-
-
 __all__ = [
-    "AdbServerReconciliationRequested",
     "AdbServerRecoveryId",
     "AdbServerRecoveryRetryDue",
-    "AdbServerSignal",
 ]

@@ -5,6 +5,7 @@ from threading import RLock, Thread, current_thread
 
 from networking import TcpAddress
 from adb.server.endpoint import AdbServerEndpoint
+from adb.server.generation import AdbServerGeneration
 from adb.server.lifecycle.contract import AdbServerLifecycle, AdbServerReleaseApplied
 from adb.server.lifecycle.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.lifecycle.supervision.recovery import (
@@ -14,21 +15,17 @@ from adb.server.lifecycle.supervision.recovery import (
     AdbServerRecoveryDecision,
     AdbServerRecoveryFailed,
 )
-from adb.server.signal import (
-    AdbServerReconciliationRequested,
-    AdbServerRecoveryId,
-    AdbServerRecoveryRetryDue,
-)
+from adb.server.signal import AdbServerRecoveryId, AdbServerRecoveryRetryDue
 from eventing import EventBus, EventSubscriptionToken
 from scheduling import ScheduleToken, TemporalScheduler
 
 
 class AdbServerSupervisor:
-    """Run reconcile-driven ADB server recovery cycles.
+    """Run explicitly reconciled ADB server recovery cycles.
 
-    Owns reconciliation subscriptions, retry scheduling, and recovery worker lifetimes. Server
-    authority remains in the lifecycle; manual mutation and desired-state coordination belong to
-    the owning orchestration layer rather than this supervisor.
+    Owns generation-fenced reconciliation commands, retry scheduling, and recovery worker
+    lifetimes. Server authority remains in the lifecycle; failure detection and desired-state
+    coordination belong to the owning orchestration layer rather than this supervisor.
     """
 
     def __init__(
@@ -85,7 +82,7 @@ class AdbServerSupervisor:
             return self._closed
 
     def start(self) -> None:
-        """Start server reconciliation and recovery supervision."""
+        """Start server recovery supervision."""
 
         with self._lock:
             if self._closed:
@@ -97,20 +94,13 @@ class AdbServerSupervisor:
         subscription_tokens: list[EventSubscriptionToken] = []
         try:
             event_bus = self._event_bus
-            if event_bus is not None:
+            if event_bus is not None and self._scheduler is not None:
                 subscription_tokens.append(
                     event_bus.subscribe(
-                        AdbServerReconciliationRequested,
-                        self._on_reconciliation_requested,
+                        AdbServerRecoveryRetryDue,
+                        self._on_recovery_retry_due,
                     )
                 )
-                if self._scheduler is not None:
-                    subscription_tokens.append(
-                        event_bus.subscribe(
-                            AdbServerRecoveryRetryDue,
-                            self._on_recovery_retry_due,
-                        )
-                    )
         except BaseException:
             if self._event_bus is not None:
                 for token in subscription_tokens:
@@ -147,17 +137,19 @@ class AdbServerSupervisor:
         self._cancel_retry(retry_token)
         self._join_attempt_threads(attempt_threads)
 
-    def _on_reconciliation_requested(
-        self,
-        event: AdbServerReconciliationRequested,
-    ) -> None:
-        """Commit a generation-fenced release, then start recovery when an endpoint was removed."""
+    def reconcile(self, generation: AdbServerGeneration) -> None:
+        """Release one expected generation and recover when it owned a usable server."""
+
+        if not isinstance(generation, AdbServerGeneration):
+            raise TypeError("generation must be AdbServerGeneration")
 
         with self._lock:
-            if not self._running_locked():
-                return
+            if self._closed:
+                raise RuntimeError("ADB server supervisor is closed")
+            if not self._started:
+                raise RuntimeError("ADB server supervisor is not started")
 
-        release = self._lifecycle.release(event.server)
+        release = self._lifecycle.release(generation)
         if (
             not isinstance(release, AdbServerReleaseApplied)
             or release.acquisition is None
@@ -280,7 +272,7 @@ class AdbServerSupervisor:
             self._apply_recovery_decision(recovery, recovery_id, decision)
         except BaseException:
             # Contract/invariant failures are not retryable lifecycle outcomes. Release this cycle so
-            # later explicit recovery requests cannot become permanently pending behind a dead
+            # later explicit reconciliations cannot become permanently pending behind a dead
             # worker, but do not automatically restart the broken cycle.
             self._abort_recovery(recovery, recovery_id)
             raise
