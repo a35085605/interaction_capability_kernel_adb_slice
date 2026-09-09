@@ -19,14 +19,14 @@ from adb._lifecycle import (
     AcquireStartExisting,
     AcquireSuperseded,
     LifecycleDiagnostics,
-    LifecycleStateMachine,
+    ManagedLifecycle,
     ReleaseAccessDetached,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
     ResourceScope,
 )
-from adb.cleanup import CleanupCoordinator, CleanupHandoff
+from adb.cleanup import CleanupHandoff
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.contract import (
     AdbTransportListWatchAccess,
@@ -111,15 +111,17 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             )
         if not isinstance(cleanup_handoff, CleanupHandoff):
             raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
-        self._state_machine: LifecycleStateMachine[
+        self._managed: ManagedLifecycle[
             AdbTransportListWatchGeneration, _WatchAccess
-        ] = LifecycleStateMachine(generation_issuer.issue)
-        self._cleanup = CleanupCoordinator(cleanup_handoff)
+        ] = ManagedLifecycle(
+            generation_issuer.issue,
+            cleanup_handoff=cleanup_handoff,
+        )
 
     def read(self) -> AdbTransportListWatchState:
         """Atomically return current generation and usable endpoint metadata, if any."""
 
-        state = self._state_machine.snapshot()
+        state = self._managed.snapshot()
         access = state.access
         return AdbTransportListWatchState(
             generation=state.generation,
@@ -129,12 +131,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbTransportListWatchGeneration]:
         """Sample draining work and cleanup handoff state without exposing resources."""
 
-        state = self._state_machine.snapshot()
-        cleanup = self._cleanup.snapshot()
-        return LifecycleDiagnostics(
-            state.generation, state.pending, state.cleanup_registration_errors,
-            cleanup.pending_count, cleanup.handoff_accepted_count, cleanup.handoff_errors,
-        )
+        return self._managed.read_diagnostics()
 
     @abstractmethod
     def _obtain_handle(
@@ -145,27 +142,9 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     ) -> _AdbTransportListWatchHandle:
         """Obtain a fully usable handle while recording any earlier resources in ``resources``."""
 
-    def _register_resource_scope(self, resources: ResourceScope) -> None:
-        if not isinstance(resources, ResourceScope):
-            raise TypeError("resources must be ResourceScope")
-        for ownership in resources.snapshot():
-            if ownership.handoff_only or ownership.local_cleanup is None:
-                self._cleanup.register_handoff(
-                    ownership.resource,
-                    identity=ownership.identity,
-                    claims=ownership.claims,
-                )
-            else:
-                self._cleanup.register(
-                    ownership.resource,
-                    ownership.local_cleanup,
-                    identity=ownership.identity,
-                    claims=ownership.claims,
-                )
-
     def _schedule_cleanup(self, handle: _AdbTransportListWatchHandle) -> None:
-        self._cleanup.register(handle, lambda: handle.close())
-        self._cleanup.process_pending()
+        self._managed.register_cleanup(handle, lambda: handle.close())
+        self._managed.process_cleanup()
 
     def _borrow_stream(
         self,
@@ -176,7 +155,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if not isinstance(expected, AdbTransportListWatchGeneration):
             raise TypeError("expected must be AdbTransportListWatchGeneration")
 
-        state = self._state_machine.snapshot()
+        state = self._managed.snapshot()
         access = state.access
         if (
             expected != state.generation
@@ -193,14 +172,14 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if not isinstance(endpoint, TcpAddress):
             raise TypeError("endpoint must be TcpAddress")
 
-        self._cleanup.process_pending()
+        self._managed.process_cleanup()
         try:
             return self._acquire(endpoint)
         finally:
-            self._cleanup.process_pending()
+            self._managed.process_cleanup()
 
     def _acquire(self, endpoint: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
-        start = self._state_machine.begin_acquire()
+        start = self._managed.begin_acquire()
         if isinstance(start, AcquireStartExisting):
             access = start.access
             if access.access.endpoint == endpoint:
@@ -222,15 +201,11 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             raise TypeError("unsupported shared lifecycle acquire start")
         attempt = start
         resources = attempt.resource_scope
-        register_scope = lambda: self._register_resource_scope(resources)
-
         try:
             handle = self._obtain_handle(endpoint, attempt.cancellation, resources)
             resources.adopt(handle, lambda: handle.close())
         except AdbTransportListWatchAcquireInterruptedError as exc:
-            revoked = self._state_machine.abandon_acquire(
-                attempt, before_clear=register_scope
-            )
+            revoked = self._managed.abandon_acquire(attempt)
             if revoked:
                 return AcquireSuperseded(attempt.generation)
             raise RuntimeError(
@@ -238,14 +213,12 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 "revocation"
             ) from exc
         except AdbTransportListWatchAcquireError as exc:
-            revoked = self._state_machine.abandon_acquire(
-                attempt, before_clear=register_scope
-            )
+            revoked = self._managed.abandon_acquire(attempt)
             if revoked:
                 return AcquireSuperseded(attempt.generation)
             return AcquireFailed(exc.failure)
         except BaseException:
-            self._state_machine.abandon_acquire(attempt, before_clear=register_scope)
+            self._managed.abandon_acquire(attempt)
             raise
 
         try:
@@ -258,17 +231,10 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 access=public_access,
             )
         except BaseException:
-            self._state_machine.abandon_acquire(
-                attempt,
-                before_clear=register_scope,
-            )
+            self._managed.abandon_acquire(attempt)
             raise
 
-        committed = self._state_machine.commit_acquire(
-            attempt,
-            access,
-            on_superseded=register_scope,
-        )
+        committed = self._managed.commit_acquire(attempt, access)
         if committed:
             return AcquireCommitted(public_access)
 
@@ -284,17 +250,13 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         try:
             return self._release(expected)
         finally:
-            self._cleanup.process_pending()
+            self._managed.process_cleanup()
 
     def _release(
         self, expected: AdbTransportListWatchGeneration
     ) -> AdbTransportListWatchReleaseOutcome:
-        def retire_access(access: _WatchAccess, resources: ResourceScope) -> None:
-            self._register_resource_scope(resources)
-
-        release = self._state_machine.release(
+        release = self._managed.release(
             expected,
-            on_access_release=retire_access,
             inconsistent_state_error=(
                 "ADB transport-list watch lifecycle state is inconsistent"
             ),

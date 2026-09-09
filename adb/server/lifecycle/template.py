@@ -16,14 +16,14 @@ from adb._lifecycle import (
     AcquireStartExisting,
     AcquireSuperseded,
     LifecycleDiagnostics,
-    LifecycleStateMachine,
+    ManagedLifecycle,
     ReleaseAccessDetached,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
     ResourceScope,
 )
-from adb.cleanup import CleanupCoordinator, CleanupHandoff
+from adb.cleanup import CleanupHandoff
 from adb.server.endpoint import AdbServerEndpoint
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
@@ -84,15 +84,17 @@ class AdbServerLifecycleTemplate(ABC):
             raise TypeError("generation_issuer must be AdbServerGenerationIssuer")
         if not isinstance(cleanup_handoff, CleanupHandoff):
             raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
-        self._state_machine: LifecycleStateMachine[
+        self._managed: ManagedLifecycle[
             AdbServerGeneration, AdbServerAccess
-        ] = LifecycleStateMachine(generation_issuer.issue)
-        self._cleanup = CleanupCoordinator(cleanup_handoff)
+        ] = ManagedLifecycle(
+            generation_issuer.issue,
+            cleanup_handoff=cleanup_handoff,
+        )
 
     def read(self) -> AdbServerState:
         """Atomically return the current generation and its usable endpoint, if any."""
 
-        state = self._state_machine.snapshot()
+        state = self._managed.snapshot()
         access = state.access
         return AdbServerState(
             generation=state.generation,
@@ -102,12 +104,7 @@ class AdbServerLifecycleTemplate(ABC):
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbServerGeneration]:
         """Sample draining work and cleanup handoff state without exposing resources."""
 
-        state = self._state_machine.snapshot()
-        cleanup = self._cleanup.snapshot()
-        return LifecycleDiagnostics(
-            state.generation, state.pending, state.cleanup_registration_errors,
-            cleanup.pending_count, cleanup.handoff_accepted_count, cleanup.handoff_errors,
-        )
+        return self._managed.read_diagnostics()
 
     @abstractmethod
     def _obtain_access(
@@ -136,27 +133,7 @@ class AdbServerLifecycleTemplate(ABC):
         """Return whether two adapter-defined resource claims are mutually exclusive."""
 
     def _cleanup_has_conflict(self, claims: Iterable[object]) -> bool:
-        return self._cleanup.has_conflict(claims, self._resource_claims_conflict)
-
-    def _register_resource_scope(self, resources: ResourceScope) -> None:
-        """Register all still-owned resources without executing cleanup work."""
-
-        if not isinstance(resources, ResourceScope):
-            raise TypeError("resources must be ResourceScope")
-        for ownership in resources.snapshot():
-            if ownership.handoff_only or ownership.local_cleanup is None:
-                self._cleanup.register_handoff(
-                    ownership.resource,
-                    identity=ownership.identity,
-                    claims=ownership.claims,
-                )
-            else:
-                self._cleanup.register(
-                    ownership.resource,
-                    ownership.local_cleanup,
-                    identity=ownership.identity,
-                    claims=ownership.claims,
-                )
+        return self._managed.has_cleanup_conflict(claims, self._resource_claims_conflict)
 
     def acquire(
         self,
@@ -165,17 +142,17 @@ class AdbServerLifecycleTemplate(ABC):
         if endpoint_constraint is not None and not isinstance(endpoint_constraint, TcpAddress):
             raise TypeError("endpoint_constraint must be TcpAddress or None")
 
-        self._cleanup.process_pending()
+        self._managed.process_cleanup()
         try:
             return self._acquire(endpoint_constraint)
         finally:
-            self._cleanup.process_pending()
+            self._managed.process_cleanup()
 
     def _acquire(
         self, endpoint_constraint: AdbServerEndpoint | None
     ) -> AdbServerAcquireOutcome:
         requested_claims = self._requested_resource_claims(endpoint_constraint)
-        start = self._state_machine.begin_acquire(
+        start = self._managed.begin_acquire(
             is_blocked=(
                 None
                 if not requested_claims
@@ -206,8 +183,6 @@ class AdbServerLifecycleTemplate(ABC):
             raise TypeError("unsupported shared lifecycle acquire start")
         attempt = start
         resources = attempt.resource_scope
-        register_scope = lambda: self._register_resource_scope(resources)
-
         try:
             endpoint = self._obtain_access(
                 endpoint_constraint,
@@ -215,30 +190,23 @@ class AdbServerLifecycleTemplate(ABC):
                 resources,
             )
         except AdbServerAcquireInterruptedError as exc:
-            revoked = self._state_machine.abandon_acquire(
-                attempt, before_clear=register_scope
-            )
+            revoked = self._managed.abandon_acquire(attempt)
             if revoked:
                 return AcquireSuperseded(attempt.generation)
             raise RuntimeError(
                 "ADB server acquisition was interrupted without generation revocation"
             ) from exc
         except AdbServerAcquireError as exc:
-            revoked = self._state_machine.abandon_acquire(
-                attempt, before_clear=register_scope
-            )
+            revoked = self._managed.abandon_acquire(attempt)
             if revoked:
                 return AcquireSuperseded(attempt.generation)
             return AcquireFailed(AdbServerLaunchFailure(exc.diagnostic))
         except BaseException:
-            self._state_machine.abandon_acquire(attempt, before_clear=register_scope)
+            self._managed.abandon_acquire(attempt)
             raise
 
         if self._cleanup_has_conflict(resources.claims()):
-            revoked = self._state_machine.abandon_acquire(
-                attempt,
-                before_clear=register_scope,
-            )
+            revoked = self._managed.abandon_acquire(attempt)
             if revoked:
                 return AcquireSuperseded(attempt.generation)
             return AcquireBlocked(
@@ -246,10 +214,7 @@ class AdbServerLifecycleTemplate(ABC):
             )
 
         if endpoint_constraint is not None and endpoint != endpoint_constraint:
-            revoked = self._state_machine.abandon_acquire(
-                attempt,
-                before_clear=register_scope,
-            )
+            revoked = self._managed.abandon_acquire(attempt)
             if revoked:
                 return AcquireSuperseded(attempt.generation)
             raise AdbServerLifecycleConsistencyError(
@@ -262,17 +227,10 @@ class AdbServerLifecycleTemplate(ABC):
                 generation=attempt.generation,
             )
         except BaseException:
-            self._state_machine.abandon_acquire(
-                attempt,
-                before_clear=register_scope,
-            )
+            self._managed.abandon_acquire(attempt)
             raise
 
-        committed = self._state_machine.commit_acquire(
-            attempt,
-            access,
-            on_superseded=register_scope,
-        )
+        committed = self._managed.commit_acquire(attempt, access)
         if committed:
             return AcquireCommitted(access)
 
@@ -285,15 +243,11 @@ class AdbServerLifecycleTemplate(ABC):
         try:
             return self._release(expected)
         finally:
-            self._cleanup.process_pending()
+            self._managed.process_cleanup()
 
     def _release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
-        def retire_access(access: AdbServerAccess, resources: ResourceScope) -> None:
-            self._register_resource_scope(resources)
-
-        release = self._state_machine.release(
+        release = self._managed.release(
             expected,
-            on_access_release=retire_access,
             inconsistent_state_error="ADB server lifecycle state is inconsistent",
         )
         if isinstance(
