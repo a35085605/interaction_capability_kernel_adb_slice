@@ -46,11 +46,11 @@ AdbTransportListWatchReleaseOutcome: TypeAlias = (
 class AdbTransportListWatchLifecycle(AdbTransportListWatchStateView, Protocol):
     """Sole authority for one runtime-scoped transport-list watch generation.
 
-    The public access value contains endpoint metadata only. The lifecycle-private stream resource and
+    The public access value contains server address metadata only. The lifecycle-private stream resource and
     cleanup ownership remain separate from this contract.
     """
 
-    def acquire(self, endpoint: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
+    def acquire(self, server_address: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
         """Attempt to establish one fully usable watch within the current generation."""
         ...
 

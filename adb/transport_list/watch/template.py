@@ -96,8 +96,8 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     """Template for one current watch generation and its physical resource scope.
 
     Watch/client sockets carry no exclusivity claim merely because they connect to the same server
-    endpoint. Cleanup debt is therefore tracked by ownership but does not block a new watch on an
-    equal access endpoint. This avoids treating access information as a resource conflict key.
+    server address. Cleanup debt is therefore tracked by ownership but does not block a new watch on an
+    equal access server address. This avoids treating access information as a resource conflict key.
     """
 
     def __init__(
@@ -120,7 +120,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         )
 
     def read(self) -> AdbTransportListWatchState:
-        """Atomically return current generation and usable endpoint metadata, if any."""
+        """Atomically return current generation and usable server address metadata, if any."""
 
         state = self._managed.snapshot()
         access = state.access
@@ -137,7 +137,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     @abstractmethod
     def _obtain_resource(
         self,
-        endpoint: TcpAddress,
+        server_address: TcpAddress,
         cancellation: Event,
         resources: ResourceScope,
     ) -> _AdbTransportListWatchResource:
@@ -164,28 +164,28 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
 
     def acquire(
         self,
-        endpoint: TcpAddress,
+        server_address: TcpAddress,
     ) -> AdbTransportListWatchAcquireOutcome:
-        if not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
+        if not isinstance(server_address, TcpAddress):
+            raise TypeError("server_address must be TcpAddress")
 
         self._managed.process_cleanup()
         try:
-            return self._acquire(endpoint)
+            return self._acquire(server_address)
         finally:
             self._managed.process_cleanup()
 
-    def _acquire(self, endpoint: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
+    def _acquire(self, server_address: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
         start = self._managed.begin_acquire()
         if isinstance(start, AcquireStartExisting):
             snapshot = start.snapshot
             access = snapshot.access
-            if access.access.endpoint == endpoint:
+            if access.access.server_address == server_address:
                 return AcquireExisting(
                     LifecycleSnapshot(snapshot.generation, access.access)
                 )
             return AcquireBlocked(
-                "ADB transport-list watch lifecycle already retains a different endpoint"
+                "ADB transport-list watch lifecycle already retains a different server address"
             )
         if isinstance(start, AcquireStartBusy):
             return AcquireBlocked(
@@ -202,7 +202,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         with self._managed.guard_acquire(start) as attempt:
             try:
                 resource = self._obtain_resource(
-                    endpoint,
+                    server_address,
                     attempt.cancellation,
                     attempt.resources,
                 )
@@ -221,7 +221,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                     return AcquireSuperseded(attempt.generation)
                 return AcquireFailed(exc.failure)
 
-            public_access = AdbTransportListWatchAccess(endpoint=endpoint)
+            public_access = AdbTransportListWatchAccess(server_address=server_address)
             access = _WatchAccess(
                 stream=_AdbTransportListWatchStreamView(resource),
                 access=public_access,

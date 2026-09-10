@@ -47,9 +47,9 @@ class AdbTransportListWatchSupervisor:
         self._lock = RLock()
         self._stop_event = Event()
         self._recovery: AdbTransportListWatchRecovery | None = None
-        self._recovery_endpoint: TcpAddress | None = None
+        self._recovery_server_address: TcpAddress | None = None
         self._recovery_threads: set[Thread] = set()
-        self._pending_recovery_endpoint: TcpAddress | None = None
+        self._pending_recovery_server_address: TcpAddress | None = None
         self._started = False
         self._closed = False
 
@@ -87,7 +87,7 @@ class AdbTransportListWatchSupervisor:
         self._join_recovery_threads(recovery_threads)
 
     def reconcile(self, generation: AdbTransportListWatchGeneration) -> None:
-        """Release one expected generation and recover its detached watch endpoint."""
+        """Release one expected generation and recover its detached watch server address."""
 
         if not isinstance(generation, AdbTransportListWatchGeneration):
             raise TypeError("generation must be AdbTransportListWatchGeneration")
@@ -102,27 +102,27 @@ class AdbTransportListWatchSupervisor:
         if not isinstance(release, ReleaseAccessDetached):
             return
 
-        self._request_recovery(release.access.endpoint)
+        self._request_recovery(release.access.server_address)
 
-    def _request_recovery(self, endpoint: TcpAddress) -> None:
+    def _request_recovery(self, server_address: TcpAddress) -> None:
         """Start recovery for one committed failed-watch release."""
 
-        if not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
+        if not isinstance(server_address, TcpAddress):
+            raise TypeError("server_address must be TcpAddress")
 
         with self._lock:
             if not self._running_locked() or not self._recovery_enabled:
                 return
 
             if self._recovery is not None:
-                self._pending_recovery_endpoint = endpoint
+                self._pending_recovery_server_address = server_address
                 return
 
             recovery = AdbTransportListWatchRecovery(self._policy)
             attempt = recovery.begin()
             self._recovery = recovery
-            self._recovery_endpoint = endpoint
-            self._pending_recovery_endpoint = None
+            self._recovery_server_address = server_address
+            self._pending_recovery_server_address = None
 
         self._launch_recovery_worker(recovery, attempt)
 
@@ -147,8 +147,8 @@ class AdbTransportListWatchSupervisor:
                 self._recovery_threads.discard(thread)
                 if self._recovery is recovery:
                     self._recovery = None
-                    self._recovery_endpoint = None
-                    self._pending_recovery_endpoint = None
+                    self._recovery_server_address = None
+                    self._pending_recovery_server_address = None
                 raise
 
     def _run_recovery(
@@ -168,13 +168,13 @@ class AdbTransportListWatchSupervisor:
                 with self._lock:
                     if not self._is_current_recovery_locked(recovery):
                         return
-                    endpoint = self._recovery_endpoint
-                    if endpoint is None:
+                    server_address = self._recovery_server_address
+                    if server_address is None:
                         raise RuntimeError(
-                            "ADB transport-list watch recovery endpoint state is inconsistent"
+                            "ADB transport-list watch recovery server address state is inconsistent"
                         )
 
-                result = self._lifecycle.acquire(endpoint)
+                result = self._lifecycle.acquire(server_address)
                 decision = recovery.decide_after(result)
 
                 if isinstance(decision, RecoveryAttempt):
@@ -207,8 +207,8 @@ class AdbTransportListWatchSupervisor:
             if self._recovery is not recovery:
                 return
             self._recovery = None
-            self._recovery_endpoint = None
-            self._pending_recovery_endpoint = None
+            self._recovery_server_address = None
+            self._pending_recovery_server_address = None
 
     def _finish_recovery(self, recovery: AdbTransportListWatchRecovery) -> None:
         """Release one terminal recovery cycle and consume queued recovery demand."""
@@ -217,13 +217,13 @@ class AdbTransportListWatchSupervisor:
             if not self._is_current_recovery_locked(recovery):
                 return
             self._recovery = None
-            self._recovery_endpoint = None
-            pending_endpoint = self._pending_recovery_endpoint
-            self._pending_recovery_endpoint = None
+            self._recovery_server_address = None
+            pending_server_address = self._pending_recovery_server_address
+            self._pending_recovery_server_address = None
             running = self._running_locked()
 
-        if pending_endpoint is not None and running:
-            self._request_recovery(pending_endpoint)
+        if pending_server_address is not None and running:
+            self._request_recovery(pending_server_address)
 
     def _is_current_recovery_locked(
         self,
@@ -236,8 +236,8 @@ class AdbTransportListWatchSupervisor:
 
     def _clear_recovery_locked(self) -> tuple[Thread, ...]:
         self._recovery = None
-        self._recovery_endpoint = None
-        self._pending_recovery_endpoint = None
+        self._recovery_server_address = None
+        self._pending_recovery_server_address = None
         return tuple(self._recovery_threads)
 
     @staticmethod

@@ -7,16 +7,16 @@ from networking import TcpAddress
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchAccess:
-    """Endpoint metadata published by a transport-list watch lifecycle.
+    """Server address metadata published by a transport-list watch lifecycle.
 
     The enclosing state or snapshot pairs this value with its authority generation.
     """
 
-    endpoint: TcpAddress
+    server_address: TcpAddress
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
+        if not isinstance(self.server_address, TcpAddress):
+            raise TypeError("server_address must be TcpAddress")
 
 
 __all__ = ["AdbTransportListWatchAccess"]

@@ -65,7 +65,7 @@ class AdbServerLifecycleTemplate(ABC):
 
     Access information, physical ownership, and resource claims are deliberately separate. Adapters
     add resources to the attempt ``ResourceScope`` as soon as they are obtained and define the claims
-    those resources retain. Committed access stores only caller-facing endpoint metadata; the shared
+    those resources retain. Committed access stores only caller-facing server address metadata; the shared
     lifecycle keeps its resource scope associated with that access.
 
     Logical release is immediate. Matching release advances the generation and atomically registers
@@ -92,7 +92,7 @@ class AdbServerLifecycleTemplate(ABC):
         )
 
     def read(self) -> AdbServerState:
-        """Atomically return the current generation and its usable endpoint, if any."""
+        """Atomically return the current generation and its usable server address, if any."""
 
         state = self._managed.snapshot()
         access = state.access
@@ -109,7 +109,7 @@ class AdbServerLifecycleTemplate(ABC):
     @abstractmethod
     def _obtain_access(
         self,
-        endpoint: TcpAddress,
+        server_address: TcpAddress,
         cancellation: Event,
         resources: ResourceScope,
     ) -> TcpAddress:
@@ -122,7 +122,7 @@ class AdbServerLifecycleTemplate(ABC):
 
     def _requested_resource_claims(
         self,
-        endpoint: TcpAddress,
+        server_address: TcpAddress,
     ) -> tuple[object, ...]:
         """Return claims known before acquisition starts; empty means no pre-acquire claim."""
 
@@ -137,19 +137,19 @@ class AdbServerLifecycleTemplate(ABC):
 
     def acquire(
         self,
-        endpoint: TcpAddress,
+        server_address: TcpAddress,
     ) -> AdbServerAcquireOutcome:
-        if not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
+        if not isinstance(server_address, TcpAddress):
+            raise TypeError("server_address must be TcpAddress")
 
         self._managed.process_cleanup()
         try:
-            return self._acquire(endpoint)
+            return self._acquire(server_address)
         finally:
             self._managed.process_cleanup()
 
-    def _acquire(self, endpoint: TcpAddress) -> AdbServerAcquireOutcome:
-        requested_claims = self._requested_resource_claims(endpoint)
+    def _acquire(self, server_address: TcpAddress) -> AdbServerAcquireOutcome:
+        requested_claims = self._requested_resource_claims(server_address)
         start = self._managed.begin_acquire(
             is_blocked=(
                 None
@@ -160,10 +160,10 @@ class AdbServerLifecycleTemplate(ABC):
         if isinstance(start, AcquireStartExisting):
             snapshot = start.snapshot
             access = snapshot.access
-            if access.endpoint == endpoint:
+            if access.server_address == server_address:
                 return AcquireExisting(snapshot)
             return AcquireBlocked(
-                "ADB server lifecycle already retains a different endpoint"
+                "ADB server lifecycle already retains a different server address"
             )
         if isinstance(start, AcquireStartBusy):
             return AcquireBlocked(
@@ -179,8 +179,8 @@ class AdbServerLifecycleTemplate(ABC):
             raise TypeError("unsupported shared lifecycle acquire start")
         with self._managed.guard_acquire(start) as attempt:
             try:
-                obtained_endpoint = self._obtain_access(
-                    endpoint,
+                obtained_server_address = self._obtain_access(
+                    server_address,
                     attempt.cancellation,
                     attempt.resources,
                 )
@@ -206,15 +206,15 @@ class AdbServerLifecycleTemplate(ABC):
                     "pending cleanup"
                 )
 
-            if obtained_endpoint != endpoint:
+            if obtained_server_address != server_address:
                 revoked = attempt.abandon()
                 if revoked:
                     return AcquireSuperseded(attempt.generation)
                 raise AdbServerLifecycleConsistencyError(
-                    "ADB server acquisition returned a different endpoint"
+                    "ADB server acquisition returned a different server address"
                 )
 
-            access = AdbServerAccess(endpoint=obtained_endpoint)
+            access = AdbServerAccess(server_address=obtained_server_address)
             committed = attempt.commit(access)
             if committed:
                 return AcquireCommitted(LifecycleSnapshot(attempt.generation, access))

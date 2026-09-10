@@ -47,15 +47,15 @@ def _control_failure_from_attempt(
 
 @dataclass(frozen=True, slots=True)
 class SubprocessAdbTransportController:
-    """Execute transport lifecycle commands through the configured server endpoint."""
+    """Execute transport lifecycle commands through the configured server address."""
 
-    endpoint: TcpAddress
+    server_address: TcpAddress
     executable: str = "adb"
     timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
-        if not isinstance(self.endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
+        if not isinstance(self.server_address, TcpAddress):
+            raise TypeError("server_address must be TcpAddress")
         object.__setattr__(self, "executable", normalize_executable(self.executable))
         object.__setattr__(self, "timeout_seconds", normalize_timeout(self.timeout_seconds))
 
@@ -65,7 +65,7 @@ class SubprocessAdbTransportController:
         attempt = run_adb(
             self.executable,
             self.timeout_seconds,
-            [*server_args(self.endpoint), "connect", address.value],
+            [*server_args(self.server_address), "connect", address.value],
         )
         failure = _control_failure_from_attempt(attempt)
         if failure is not None:
@@ -78,7 +78,7 @@ class SubprocessAdbTransportController:
         attempt = run_adb(
             self.executable,
             self.timeout_seconds,
-            [*server_args(self.endpoint), "disconnect", address.value],
+            [*server_args(self.server_address), "disconnect", address.value],
         )
         failure = _control_failure_from_attempt(attempt)
         if failure is not None:

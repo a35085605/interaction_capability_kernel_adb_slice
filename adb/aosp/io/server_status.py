@@ -9,7 +9,7 @@ from networking import TcpAddress
 
 
 class AdbServerStatusReader(Protocol):
-    """Read the current AOSP host-side ADB server status for one TCP endpoint."""
+    """Read the current AOSP host-side ADB server status for one TCP server address."""
 
     def read(self, address: TcpAddress) -> AdbServerStatus:
         ...
@@ -18,8 +18,8 @@ class AdbServerStatusReader(Protocol):
 _ClientFactory = Callable[[TcpAddress], AdbServiceClient]
 
 
-def _default_client_factory(endpoint: TcpAddress) -> AdbServiceClient:
-    return AdbServiceClient(endpoint.host, endpoint.port)
+def _default_client_factory(server_address: TcpAddress) -> AdbServiceClient:
+    return AdbServiceClient(server_address.host, server_address.port)
 
 
 class SmartSocketAdbServerStatusReader:

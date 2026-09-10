@@ -217,20 +217,20 @@ class AospTrackDevicesStreamFactory:
 
     def open(
         self,
-        endpoint: TcpAddress,
+        server_address: TcpAddress,
         cancellation: Event | None = None,
     ) -> AospTrackDevicesStream:
         """Connect, handshake, and read the initial complete track-devices record."""
 
-        if not isinstance(endpoint, TcpAddress):
-            raise TypeError("endpoint must be TcpAddress")
+        if not isinstance(server_address, TcpAddress):
+            raise TypeError("server_address must be TcpAddress")
         if cancellation is not None and not isinstance(cancellation, Event):
             raise TypeError("cancellation must be threading.Event or None")
 
         _check_cancelled(cancellation)
         sock: socket.socket | None = None
         try:
-            sock, deadline = self._connect(endpoint, cancellation)
+            sock, deadline = self._connect(server_address, cancellation)
             _check_cancelled(cancellation)
             _handshake(sock, deadline, self._clock)
             _check_cancelled(cancellation)
@@ -253,20 +253,20 @@ class AospTrackDevicesStreamFactory:
 
     def _connect(
         self,
-        endpoint: TcpAddress,
+        server_address: TcpAddress,
         cancellation: Event | None,
     ) -> tuple[socket.socket, float]:
         # DNS, connect candidates, handshake, and the initial frame share one deadline.
         deadline = self._clock() + self.startup_timeout_seconds
         try:
             addresses = self._resolver.resolve(
-                endpoint.host, endpoint.port, deadline=deadline, cancellation=cancellation
+                server_address.host, server_address.port, deadline=deadline, cancellation=cancellation
             )
         except AddressResolutionCancelled as exc:
             raise AospTrackDevicesOpenCancelled from exc
         except OSError as exc:
             raise AdbServerConnectionError(
-                f"failed to resolve ADB server address {endpoint.host!r}: {exc}"
+                f"failed to resolve ADB server address {server_address.host!r}: {exc}"
             ) from exc
 
         _check_cancelled(cancellation)

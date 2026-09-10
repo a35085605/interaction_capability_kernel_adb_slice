@@ -25,10 +25,10 @@ def normalize_timeout(value: object) -> float:
     return normalized
 
 
-def server_args(endpoint: TcpAddress) -> list[str]:
-    if not isinstance(endpoint, TcpAddress):
-        raise TypeError("endpoint must be TcpAddress")
-    return ["-H", endpoint.host, "-P", str(endpoint.port)]
+def server_args(server_address: TcpAddress) -> list[str]:
+    if not isinstance(server_address, TcpAddress):
+        raise TypeError("server_address must be TcpAddress")
+    return ["-H", server_address.host, "-P", str(server_address.port)]
 
 
 

@@ -35,7 +35,7 @@ def _default_client_factory(address: TcpAddress) -> AdbServiceClient:
 
 
 class SmartSocketAdbTransportListReader:
-    """Read and translate the first AOSP track-devices record for one endpoint."""
+    """Read and translate the first AOSP track-devices record for one server address."""
 
     def __init__(self, *, _client_factory: _ClientFactory = _default_client_factory) -> None:
         self._client_factory = _client_factory

@@ -39,7 +39,7 @@ class AdbTransportFeaturesReader(Protocol):
 
     def read(
         self,
-        endpoint: TcpAddress,
+        server_address: TcpAddress,
         selector: AdbTransportSelector,
     ) -> AdbTransportFeatures:
         ...

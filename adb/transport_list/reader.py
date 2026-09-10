@@ -9,7 +9,7 @@ from networking import TcpAddress
 class AdbTransportListReader(Protocol):
     """Read one non-authoritative complete transport-list snapshot."""
 
-    def read(self, endpoint: TcpAddress) -> AdbTransportList:
+    def read(self, server_address: TcpAddress) -> AdbTransportList:
         ...
 
 

@@ -133,13 +133,13 @@ class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTe
 
     def _obtain_resource(
         self,
-        endpoint: TcpAddress,
+        server_address: TcpAddress,
         cancellation: Event,
         resources: ResourceScope,
     ) -> _AospTransportListWatchResource:
         stream: AospTrackDevicesStream | None = None
         try:
-            stream = self._stream_factory.open(endpoint, cancellation)
+            stream = self._stream_factory.open(server_address, cancellation)
             return _AospTransportListWatchResource(
                 stream,
                 lambda resource: self._schedule_cleanup(resource),

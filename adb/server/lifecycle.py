@@ -45,15 +45,15 @@ AdbServerReleaseOutcome: TypeAlias = (
 class AdbServerLifecycle(AdbServerStateView, Protocol):
     """Sole authority for one runtime-scoped ADB server generation.
 
-    ``read()`` exposes public endpoint state only. Pending work, cleanup diagnostics, physical
+    ``read()`` exposes public server address state only. Pending work, cleanup diagnostics, physical
     resources, and resource claims remain lifecycle implementation details.
     """
 
     def acquire(
         self,
-        endpoint: TcpAddress,
+        server_address: TcpAddress,
     ) -> AdbServerAcquireOutcome:
-        """Attempt to establish usable ADB server access at the requested endpoint."""
+        """Attempt to establish usable ADB server access at the requested server address."""
         ...
 
     def release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
