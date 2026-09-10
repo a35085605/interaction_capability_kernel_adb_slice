@@ -9,16 +9,20 @@ from typing import Generic, TypeAlias, TypeVar
 from adb._lifecycle.resource import ResourceScope
 from adb._lifecycle.snapshot import Snapshot
 from adb._lifecycle.result import (
+    AcquireAbandonResult,
     AcquireAttempt,
-    AcquireGenerationMismatch,
+    AcquireAttemptAbandoned,
+    AcquireAttemptCommitted,
+    AcquireAttemptRevoked,
+    AcquireCommitResult,
     AcquireStartBlocked,
     AcquireStartBusy,
-    AcquireStartExisting,
+    AcquireStartCurrent,
     AcquireStartResult,
     CleanupRegistrationError,
+    GenerationMismatch,
     ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
-    ReleaseGenerationMismatch,
     ReleaseInactive,
     ReleaseAccessDetached,
     ReleaseResult,
@@ -251,9 +255,9 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
         with self._lock:
             state = self._state
             if expected != state.generation:
-                return AcquireGenerationMismatch(self._public_snapshot(state))
+                return GenerationMismatch(state.generation)
             if isinstance(state, _Current):
-                return AcquireStartExisting(self._public_snapshot(state))
+                return AcquireStartCurrent(self._public_snapshot(state))
             if isinstance(state, _Acquiring):
                 return AcquireStartBusy(draining=False)
             if isinstance(state, _Draining):
@@ -282,8 +286,8 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
         attempt: AcquireAttempt[GenerationT, AccessT],
         *,
         before_clear: Callable[[], None] | None = None,
-    ) -> bool:
-        """Finish a failed/abandoned acquisition and report whether it was already revoked.
+    ) -> AcquireAbandonResult[GenerationT]:
+        """Finish an acquisition and report whether it still owned commit authority.
 
         A failing ``before_clear`` still retires the matching in-flight state. Its
         resource-retaining cleanup registration remains queued for retry and blocks new
@@ -302,14 +306,18 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
             if not matches_acquiring and not matches_draining:
                 raise RuntimeError("acquisition attempt is not current")
 
-            revoked = matches_draining
+            outcome: AcquireAbandonResult[GenerationT] = (
+                AcquireAttemptRevoked(state.generation)
+                if matches_draining
+                else AcquireAttemptAbandoned()
+            )
             attempt.resource_scope.seal()
             try:
                 if before_clear is not None:
                     self._register_cleanup_locked(before_clear)
             finally:
                 self._state = _Idle(state.generation)
-            return revoked
+            return outcome
 
     def commit_acquire(
         self,
@@ -317,8 +325,8 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
         capability: CapabilityT,
         *,
         on_superseded: Callable[[], None] | None = None,
-    ) -> Snapshot[GenerationT, AccessT, CapabilityT] | None:
-        """Commit capability for the attempt's requested access iff authority is still current."""
+    ) -> AcquireCommitResult[GenerationT, AccessT, CapabilityT]:
+        """Finalize a commit and report the authority fact observed at linearization."""
 
         if not isinstance(attempt, AcquireAttempt):
             raise TypeError("attempt must be AcquireAttempt")
@@ -339,15 +347,16 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
                     capability,
                     attempt.resource_scope,
                 )
-                return committed
+                return AcquireAttemptCommitted(committed)
 
+            if not isinstance(state, _Draining) or state.attempt is not attempt:
+                raise RuntimeError("acquisition attempt is not current")
             try:
                 if on_superseded is not None:
                     self._register_cleanup_locked(on_superseded)
             finally:
-                if isinstance(state, _Draining) and state.attempt is attempt:
-                    self._state = _Idle(state.generation)
-            return None
+                self._state = _Idle(state.generation)
+            return AcquireAttemptRevoked(state.generation)
 
     def release(
         self,
@@ -374,19 +383,16 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
         with self._lock:
             state = self._state
             if expected != state.generation:
-                return ReleaseGenerationMismatch(
-                    current_generation=state.generation,
-                    access=state.access if isinstance(state, _Current) else None,
-                )
+                return GenerationMismatch(state.generation)
 
             if isinstance(state, (_Idle, _Draining)):
-                return ReleaseInactive(expected)
+                return ReleaseInactive()
 
             released_generation = state.generation
             if isinstance(state, _Acquiring):
                 current_access = state.attempt.access
                 if current_access != access:
-                    return ReleaseAccessMismatch(released_generation, current_access)
+                    return ReleaseAccessMismatch(current_access)
 
                 next_generation = self._issue_generation()
                 if next_generation == released_generation:
@@ -401,16 +407,12 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
                     attempt=state.attempt,
                     started_at=state.started_at,
                 )
-                return ReleaseAcquisitionRevoked(
-                    released_generation,
-                    current_access,
-                    next_generation,
-                )
+                return ReleaseAcquisitionRevoked(next_generation)
 
             if not isinstance(state, _Current):
                 raise RuntimeError(normalized_error)
             if state.access != access:
-                return ReleaseAccessMismatch(released_generation, state.access)
+                return ReleaseAccessMismatch(state.access)
 
             next_generation = self._issue_generation()
             if next_generation == released_generation:
@@ -418,7 +420,6 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
 
             self._state = _Idle(next_generation)
             outcome = ReleaseAccessDetached(
-                released_generation,
                 state.access,
                 next_generation,
             )

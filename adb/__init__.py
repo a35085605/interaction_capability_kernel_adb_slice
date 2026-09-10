@@ -5,13 +5,12 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
-    AcquireGenerationMismatch,
+    GenerationMismatch,
     AcquireSuperseded,
     Snapshot,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
-    ReleaseGenerationMismatch,
     ReleaseInactive,
 )
 from adb.cleanup import CleanupCompletion, CleanupHandoff
@@ -71,7 +70,7 @@ __all__ = [
     "AcquireCommitted",
     "AcquireExisting",
     "AcquireFailed",
-    "AcquireGenerationMismatch",
+    "GenerationMismatch",
     "AcquireSuperseded",
     "AdbDeviceSerial",
     "AdbError",
@@ -123,6 +122,5 @@ __all__ = [
     "ReleaseAccessDetached",
     "ReleaseAccessMismatch",
     "ReleaseAcquisitionRevoked",
-    "ReleaseGenerationMismatch",
     "ReleaseInactive",
 ]

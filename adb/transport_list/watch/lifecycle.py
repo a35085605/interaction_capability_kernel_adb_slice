@@ -7,12 +7,11 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
-    AcquireGenerationMismatch,
     AcquireSuperseded,
+    GenerationMismatch,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
-    ReleaseGenerationMismatch,
     ReleaseInactive,
 )
 from adb.transport_list.watch.access import AdbTransportListWatchAccess
@@ -36,34 +35,21 @@ AdbTransportListWatchAcquireOutcome: TypeAlias = (
         AdbTransportListWatchAccess,
         AdbTransportListWatchStream,
     ]
-    | AcquireGenerationMismatch[
-        AdbTransportListWatchGeneration,
-        AdbTransportListWatchAccess,
-        AdbTransportListWatchStream,
-    ]
+    | GenerationMismatch[AdbTransportListWatchGeneration]
     | AcquireBlocked
     | AcquireFailed[AdbTransportListWatchFailure]
     | AcquireSuperseded[AdbTransportListWatchGeneration]
 )
 
 AdbTransportListWatchReleaseOutcome: TypeAlias = (
-    ReleaseAcquisitionRevoked[
-        AdbTransportListWatchGeneration,
-        AdbTransportListWatchAccess,
-    ]
+    ReleaseAcquisitionRevoked[AdbTransportListWatchGeneration]
     | ReleaseAccessDetached[
         AdbTransportListWatchGeneration,
         AdbTransportListWatchAccess,
     ]
-    | ReleaseAccessMismatch[
-        AdbTransportListWatchGeneration,
-        AdbTransportListWatchAccess,
-    ]
-    | ReleaseInactive[AdbTransportListWatchGeneration]
-    | ReleaseGenerationMismatch[
-        AdbTransportListWatchGeneration,
-        AdbTransportListWatchAccess,
-    ]
+    | ReleaseAccessMismatch[AdbTransportListWatchAccess]
+    | ReleaseInactive
+    | GenerationMismatch[AdbTransportListWatchGeneration]
 )
 
 
@@ -108,16 +94,15 @@ __all__ = [
     "AcquireCommitted",
     "AcquireExisting",
     "AcquireFailed",
-    "AcquireGenerationMismatch",
     "AcquireSuperseded",
     "AdbTransportListWatchAccess",
     "AdbTransportListWatchAcquireOutcome",
     "AdbTransportListWatchLifecycle",
     "AdbTransportListWatchLifecycleFactory",
     "AdbTransportListWatchReleaseOutcome",
+    "GenerationMismatch",
     "ReleaseAccessDetached",
     "ReleaseAccessMismatch",
     "ReleaseAcquisitionRevoked",
-    "ReleaseGenerationMismatch",
     "ReleaseInactive",
 ]

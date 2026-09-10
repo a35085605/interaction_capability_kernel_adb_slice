@@ -6,7 +6,7 @@ from threading import Event, RLock, Thread, current_thread
 from adb.server.access import AdbServerAccess
 from adb.server.generation import AdbServerGeneration
 from adb.server.lifecycle import (
-    AcquireGenerationMismatch,
+    GenerationMismatch,
     AdbServerLifecycle,
     ReleaseAccessDetached,
 )
@@ -37,7 +37,7 @@ class AdbServerSupervisor:
     Reconciliation releases one exact ``(generation, access)`` target. A successful detach provides
     the next generation directly, which is carried through recovery attempts so reacquisition never
     needs a separate read between release and acquire. Generation mismatches resynchronize the
-    recovery target from the returned atomic snapshot.
+    recovery target from the returned current generation.
     """
 
     def __init__(
@@ -192,11 +192,11 @@ class AdbServerSupervisor:
                         raise RuntimeError("ADB server recovery target state is inconsistent")
 
                 result = self._lifecycle.acquire(target.generation, target.access)
-                if isinstance(result, AcquireGenerationMismatch):
+                if isinstance(result, GenerationMismatch):
                     with self._lock:
                         if self._is_current_recovery_locked(recovery):
                             self._recovery_target = _RecoveryTarget(
-                                result.snapshot.generation,
+                                result.current_generation,
                                 target.access,
                             )
 

@@ -5,13 +5,12 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
-    AcquireGenerationMismatch,
+    GenerationMismatch,
     AcquireSuperseded,
     Snapshot,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
-    ReleaseGenerationMismatch,
     ReleaseInactive,
 )
 from adb.transport_list.watch.generation import (
@@ -43,7 +42,7 @@ __all__ = [
     "AcquireCommitted",
     "AcquireExisting",
     "AcquireFailed",
-    "AcquireGenerationMismatch",
+    "GenerationMismatch",
     "AcquireSuperseded",
     "Snapshot",
     "AdbTransportListWatchAccess",
@@ -64,6 +63,5 @@ __all__ = [
     "ReleaseAccessDetached",
     "ReleaseAccessMismatch",
     "ReleaseAcquisitionRevoked",
-    "ReleaseGenerationMismatch",
     "ReleaseInactive",
 ]

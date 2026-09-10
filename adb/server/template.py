@@ -6,22 +6,25 @@ from typing import Iterable
 
 from networking import TcpAddress
 from adb._lifecycle import (
+    AcquireAbandonResult,
     AcquireAttempt,
+    AcquireAttemptAbandoned,
+    AcquireAttemptCommitted,
+    AcquireAttemptRevoked,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
-    AcquireGenerationMismatch,
     AcquireStartBlocked,
     AcquireStartBusy,
-    AcquireStartExisting,
+    AcquireStartCurrent,
     AcquireSuperseded,
+    GenerationMismatch,
     LifecycleDiagnostics,
     ManagedLifecycle,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
-    ReleaseGenerationMismatch,
     ReleaseInactive,
     ResourceScope,
 )
@@ -58,6 +61,18 @@ class AdbServerAcquireInterruptedError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("ADB server acquisition was interrupted")
+
+
+def _superseded_after_abandon(
+    result: AcquireAbandonResult[AdbServerGeneration],
+) -> AcquireSuperseded[AdbServerGeneration] | None:
+    """Translate a shared finalization fact into the server acquire outcome, if revoked."""
+
+    if isinstance(result, AcquireAttemptRevoked):
+        return AcquireSuperseded(result.current_generation)
+    if isinstance(result, AcquireAttemptAbandoned):
+        return None
+    raise TypeError("unsupported shared lifecycle acquire abandonment")
 
 
 class AdbServerLifecycleTemplate(ABC):
@@ -165,9 +180,9 @@ class AdbServerLifecycleTemplate(ABC):
                 else lambda: self._cleanup_has_conflict(requested_claims)
             ),
         )
-        if isinstance(start, AcquireGenerationMismatch):
+        if isinstance(start, GenerationMismatch):
             return start
-        if isinstance(start, AcquireStartExisting):
+        if isinstance(start, AcquireStartCurrent):
             snapshot = start.snapshot
             if snapshot.access == access:
                 return AcquireExisting(snapshot)
@@ -194,40 +209,41 @@ class AdbServerLifecycleTemplate(ABC):
                     attempt.resources,
                 )
             except AdbServerAcquireInterruptedError as exc:
-                revoked = attempt.abandon()
-                if revoked:
-                    return AcquireSuperseded(attempt.generation)
+                superseded = _superseded_after_abandon(attempt.abandon())
+                if superseded is not None:
+                    return superseded
                 raise RuntimeError(
                     "ADB server acquisition was interrupted without generation revocation"
                 ) from exc
             except AdbServerAcquireError as exc:
-                revoked = attempt.abandon()
-                if revoked:
-                    return AcquireSuperseded(attempt.generation)
+                superseded = _superseded_after_abandon(attempt.abandon())
+                if superseded is not None:
+                    return superseded
                 return AcquireFailed(AdbServerLaunchFailure(exc.diagnostic))
 
             if self._cleanup_has_conflict(attempt.resources.claims()):
-                revoked = attempt.abandon()
-                if revoked:
-                    return AcquireSuperseded(attempt.generation)
+                superseded = _superseded_after_abandon(attempt.abandon())
+                if superseded is not None:
+                    return superseded
                 return AcquireBlocked(
                     "ADB server lifecycle obtained resources whose claims conflict with "
                     "pending cleanup"
                 )
 
             if obtained_server_address != server_address:
-                revoked = attempt.abandon()
-                if revoked:
-                    return AcquireSuperseded(attempt.generation)
+                superseded = _superseded_after_abandon(attempt.abandon())
+                if superseded is not None:
+                    return superseded
                 raise RuntimeError(
                     "ADB server acquisition returned a different server address"
                 )
 
-            committed = attempt.commit(capability=obtained_server_address)
-            if committed is not None:
-                return AcquireCommitted(committed)
-
-            return AcquireSuperseded(attempt.generation)
+            finalized = attempt.commit(capability=obtained_server_address)
+            if isinstance(finalized, AcquireAttemptCommitted):
+                return AcquireCommitted(finalized.snapshot)
+            if isinstance(finalized, AcquireAttemptRevoked):
+                return AcquireSuperseded(finalized.current_generation)
+            raise TypeError("unsupported shared lifecycle acquire commit")
 
     def release(
         self,
@@ -257,7 +273,7 @@ class AdbServerLifecycleTemplate(ABC):
         if isinstance(
             release,
             (
-                ReleaseGenerationMismatch,
+                GenerationMismatch,
                 ReleaseAccessMismatch,
                 ReleaseInactive,
                 ReleaseAcquisitionRevoked,

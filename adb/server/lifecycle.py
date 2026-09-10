@@ -9,12 +9,11 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
-    AcquireGenerationMismatch,
     AcquireSuperseded,
+    GenerationMismatch,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
-    ReleaseGenerationMismatch,
     ReleaseInactive,
 )
 from adb.server.access import AdbServerAccess
@@ -26,18 +25,18 @@ from adb.server.state import AdbServerStateView
 AdbServerAcquireOutcome: TypeAlias = (
     AcquireCommitted[AdbServerGeneration, AdbServerAccess, TcpAddress]
     | AcquireExisting[AdbServerGeneration, AdbServerAccess, TcpAddress]
-    | AcquireGenerationMismatch[AdbServerGeneration, AdbServerAccess, TcpAddress]
+    | GenerationMismatch[AdbServerGeneration]
     | AcquireBlocked
     | AcquireFailed[AdbServerLaunchFailure]
     | AcquireSuperseded[AdbServerGeneration]
 )
 
 AdbServerReleaseOutcome: TypeAlias = (
-    ReleaseAcquisitionRevoked[AdbServerGeneration, AdbServerAccess]
+    ReleaseAcquisitionRevoked[AdbServerGeneration]
     | ReleaseAccessDetached[AdbServerGeneration, AdbServerAccess]
-    | ReleaseAccessMismatch[AdbServerGeneration, AdbServerAccess]
-    | ReleaseInactive[AdbServerGeneration]
-    | ReleaseGenerationMismatch[AdbServerGeneration, AdbServerAccess]
+    | ReleaseAccessMismatch[AdbServerAccess]
+    | ReleaseInactive
+    | GenerationMismatch[AdbServerGeneration]
 )
 
 
@@ -82,16 +81,15 @@ __all__ = [
     "AcquireCommitted",
     "AcquireExisting",
     "AcquireFailed",
-    "AcquireGenerationMismatch",
     "AcquireSuperseded",
     "AdbServerAccess",
     "AdbServerAcquireOutcome",
     "AdbServerLifecycle",
     "AdbServerLifecycleFactory",
     "AdbServerReleaseOutcome",
+    "GenerationMismatch",
     "ReleaseAccessDetached",
     "ReleaseAccessMismatch",
     "ReleaseAcquisitionRevoked",
-    "ReleaseGenerationMismatch",
     "ReleaseInactive",
 ]

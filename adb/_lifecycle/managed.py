@@ -8,7 +8,9 @@ from typing import Generic, TypeVar
 from adb._lifecycle.diagnostics import LifecycleDiagnostics
 from adb._lifecycle.resource import ResourceScope
 from adb._lifecycle.result import (
+    AcquireAbandonResult,
     AcquireAttempt,
+    AcquireCommitResult,
     AcquireStartResult,
     ReleaseResult,
 )
@@ -79,8 +81,8 @@ class AcquireAttemptGuard(Generic[GenerationT, AccessT, CapabilityT]):
             self._managed.abandon_acquire(self._attempt)
         return False
 
-    def abandon(self) -> bool:
-        """Abandon this attempt and report whether release had already revoked it."""
+    def abandon(self) -> AcquireAbandonResult[GenerationT]:
+        """Abandon this attempt and return the lifecycle authority fact at finalization."""
 
         self._finish_before_call()
         return self._managed.abandon_acquire(self._attempt)
@@ -89,8 +91,8 @@ class AcquireAttemptGuard(Generic[GenerationT, AccessT, CapabilityT]):
         self,
         *,
         capability: CapabilityT,
-    ) -> Snapshot[GenerationT, AccessT, CapabilityT] | None:
-        """Commit the capability for this attempt's access if it still has authority."""
+    ) -> AcquireCommitResult[GenerationT, AccessT, CapabilityT]:
+        """Finalize commit and return the lifecycle authority fact."""
 
         if capability is None:
             # Keep the guard open so context exit still abandons the attempt.
@@ -172,7 +174,10 @@ class ManagedLifecycle(Generic[GenerationT, AccessT, CapabilityT]):
 
         return AcquireAttemptGuard(self, attempt)
 
-    def abandon_acquire(self, attempt: AcquireAttempt[GenerationT, AccessT]) -> bool:
+    def abandon_acquire(
+        self,
+        attempt: AcquireAttempt[GenerationT, AccessT],
+    ) -> AcquireAbandonResult[GenerationT]:
         """Abandon an attempt and atomically register every still-owned resource for cleanup."""
 
         return self._state_machine.abandon_acquire(
@@ -185,8 +190,8 @@ class ManagedLifecycle(Generic[GenerationT, AccessT, CapabilityT]):
         attempt: AcquireAttempt[GenerationT, AccessT],
         *,
         capability: CapabilityT,
-    ) -> Snapshot[GenerationT, AccessT, CapabilityT] | None:
-        """Commit capability or clean up a superseded attempt."""
+    ) -> AcquireCommitResult[GenerationT, AccessT, CapabilityT]:
+        """Commit capability or register cleanup for a revoked attempt."""
 
         return self._state_machine.commit_acquire(
             attempt,

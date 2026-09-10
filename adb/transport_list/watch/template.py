@@ -8,22 +8,25 @@ from typing import Protocol
 from networking import TcpAddress
 
 from adb._lifecycle import (
+    AcquireAbandonResult,
     AcquireAttempt,
+    AcquireAttemptAbandoned,
+    AcquireAttemptCommitted,
+    AcquireAttemptRevoked,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
-    AcquireGenerationMismatch,
     AcquireStartBlocked,
     AcquireStartBusy,
-    AcquireStartExisting,
+    AcquireStartCurrent,
     AcquireSuperseded,
+    GenerationMismatch,
     LifecycleDiagnostics,
     ManagedLifecycle,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
-    ReleaseGenerationMismatch,
     ReleaseInactive,
     ResourceScope,
 )
@@ -82,6 +85,20 @@ class _AdbTransportListWatchStreamView:
 
     def updates(self) -> Iterator[AdbTransportList]:
         return self.__resource.updates()
+
+
+
+
+def _superseded_after_abandon(
+    result: AcquireAbandonResult[AdbTransportListWatchGeneration],
+) -> AcquireSuperseded[AdbTransportListWatchGeneration] | None:
+    """Translate a shared finalization fact into the watch acquire outcome, if revoked."""
+
+    if isinstance(result, AcquireAttemptRevoked):
+        return AcquireSuperseded(result.current_generation)
+    if isinstance(result, AcquireAttemptAbandoned):
+        return None
+    raise TypeError("unsupported shared lifecycle acquire abandonment")
 
 
 class AdbTransportListWatchLifecycleTemplate(ABC):
@@ -169,9 +186,9 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     ) -> AdbTransportListWatchAcquireOutcome:
         server_address = access.server_address
         start = self._managed.begin_acquire(expected_generation, access)
-        if isinstance(start, AcquireGenerationMismatch):
+        if isinstance(start, GenerationMismatch):
             return start
-        if isinstance(start, AcquireStartExisting):
+        if isinstance(start, AcquireStartCurrent):
             snapshot = start.snapshot
             if snapshot.access == access:
                 return AcquireExisting(snapshot)
@@ -199,25 +216,26 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 )
                 attempt.resources.adopt(resource, lambda: resource.close())
             except AdbTransportListWatchAcquireInterruptedError as exc:
-                revoked = attempt.abandon()
-                if revoked:
-                    return AcquireSuperseded(attempt.generation)
+                superseded = _superseded_after_abandon(attempt.abandon())
+                if superseded is not None:
+                    return superseded
                 raise RuntimeError(
                     "ADB transport-list watch acquisition was interrupted without generation "
                     "revocation"
                 ) from exc
             except AdbTransportListWatchAcquireError as exc:
-                revoked = attempt.abandon()
-                if revoked:
-                    return AcquireSuperseded(attempt.generation)
+                superseded = _superseded_after_abandon(attempt.abandon())
+                if superseded is not None:
+                    return superseded
                 return AcquireFailed(exc.failure)
 
             capability = _AdbTransportListWatchStreamView(resource)
-            committed = attempt.commit(capability=capability)
-            if committed is not None:
-                return AcquireCommitted(committed)
-
-            return AcquireSuperseded(attempt.generation)
+            finalized = attempt.commit(capability=capability)
+            if isinstance(finalized, AcquireAttemptCommitted):
+                return AcquireCommitted(finalized.snapshot)
+            if isinstance(finalized, AcquireAttemptRevoked):
+                return AcquireSuperseded(finalized.current_generation)
+            raise TypeError("unsupported shared lifecycle acquire commit")
 
     def release(
         self,
@@ -249,7 +267,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if isinstance(
             release,
             (
-                ReleaseGenerationMismatch,
+                GenerationMismatch,
                 ReleaseAccessMismatch,
                 ReleaseInactive,
                 ReleaseAcquisitionRevoked,

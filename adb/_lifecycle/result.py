@@ -44,11 +44,22 @@ class AcquireAttempt(Generic[GenerationT, AccessT]):
 
 
 @dataclass(frozen=True, slots=True)
-class AcquireStartExisting(Generic[GenerationT, AccessT, CapabilityT]):
-    """Acquire cannot start because the lifecycle already retains usable access.
+class GenerationMismatch(Generic[GenerationT]):
+    """The caller's expected generation no longer owns lifecycle authority."""
 
-    The snapshot is captured atomically while the lifecycle lock is held. Domain request constraints
-    may still decide that the requested access differs from the captured committed access.
+    current_generation: GenerationT
+
+    def __post_init__(self) -> None:
+        if self.current_generation is None:
+            raise TypeError("current_generation cannot be None")
+
+
+@dataclass(frozen=True, slots=True)
+class AcquireStartCurrent(Generic[GenerationT, AccessT, CapabilityT]):
+    """Acquire cannot start because the lifecycle already retains committed access.
+
+    The snapshot is captured atomically while the lifecycle lock is held. Whether that committed
+    access satisfies the requested access remains a domain decision.
     """
 
     snapshot: Snapshot[GenerationT, AccessT, CapabilityT]
@@ -57,21 +68,7 @@ class AcquireStartExisting(Generic[GenerationT, AccessT, CapabilityT]):
         if not isinstance(self.snapshot, Snapshot):
             raise TypeError("snapshot must be Snapshot")
         if self.snapshot.access is None or self.snapshot.capability is None:
-            raise TypeError("existing snapshot must be committed")
-
-
-@dataclass(frozen=True, slots=True)
-class AcquireGenerationMismatch(Generic[GenerationT, AccessT, CapabilityT]):
-    """The caller's expected generation is stale.
-
-    ``snapshot`` is the atomic current committed-state view captured at the mismatch decision.
-    """
-
-    snapshot: Snapshot[GenerationT, AccessT, CapabilityT]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.snapshot, Snapshot):
-            raise TypeError("snapshot must be Snapshot")
+            raise TypeError("current snapshot must be committed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +84,7 @@ class AcquireStartBusy:
 
 @dataclass(frozen=True, slots=True)
 class AcquireStartBlocked:
-    """Acquire cannot start because a kernel/domain precondition currently blocks it."""
+    """Acquire cannot start because a supplied lifecycle precondition currently blocks it."""
 
     diagnostic: str | None = None
 
@@ -99,10 +96,45 @@ class AcquireStartBlocked:
 
 AcquireStartResult: TypeAlias = (
     AcquireAttempt[GenerationT, AccessT]
-    | AcquireStartExisting[GenerationT, AccessT, CapabilityT]
-    | AcquireGenerationMismatch[GenerationT, AccessT, CapabilityT]
+    | GenerationMismatch[GenerationT]
+    | AcquireStartCurrent[GenerationT, AccessT, CapabilityT]
     | AcquireStartBusy
     | AcquireStartBlocked
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AcquireAttemptAbandoned:
+    """The in-flight attempt ended while it still owned commit authority."""
+
+
+@dataclass(frozen=True, slots=True)
+class AcquireAttemptCommitted(Generic[GenerationT, AccessT, CapabilityT]):
+    """The in-flight attempt committed while it still owned lifecycle authority."""
+
+    snapshot: Snapshot[GenerationT, AccessT, CapabilityT]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.snapshot, Snapshot):
+            raise TypeError("snapshot must be Snapshot")
+        if self.snapshot.access is None or self.snapshot.capability is None:
+            raise TypeError("committed snapshot must contain access and capability")
+
+
+@dataclass(frozen=True, slots=True)
+class AcquireAttemptRevoked(Generic[GenerationT]):
+    """The in-flight attempt ended after its commit authority had been revoked."""
+
+    current_generation: GenerationT
+
+    def __post_init__(self) -> None:
+        if self.current_generation is None:
+            raise TypeError("current_generation cannot be None")
+
+
+AcquireAbandonResult: TypeAlias = AcquireAttemptAbandoned | AcquireAttemptRevoked[GenerationT]
+AcquireCommitResult: TypeAlias = (
+    AcquireAttemptCommitted[GenerationT, AccessT, CapabilityT] | AcquireAttemptRevoked[GenerationT]
 )
 
 
@@ -155,21 +187,9 @@ class AcquireFailed(Generic[FailureT]):
 
 @dataclass(frozen=True, slots=True)
 class AcquireSuperseded(Generic[GenerationT]):
-    """The captured generation ceased to be current before access could commit."""
-
-    generation: GenerationT
-
-    def __post_init__(self) -> None:
-        if self.generation is None:
-            raise TypeError("generation cannot be None")
-
-
-@dataclass(frozen=True, slots=True)
-class ReleaseGenerationMismatch(Generic[GenerationT, AccessT]):
-    """The caller's expected generation does not match current lifecycle authority."""
+    """The acquire attempt lost authority before its result could become authoritative."""
 
     current_generation: GenerationT
-    access: AccessT | None
 
     def __post_init__(self) -> None:
         if self.current_generation is None:
@@ -177,73 +197,51 @@ class ReleaseGenerationMismatch(Generic[GenerationT, AccessT]):
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseAccessMismatch(Generic[GenerationT, AccessT]):
+class ReleaseAccessMismatch(Generic[AccessT]):
     """Generation matches, but the requested release target does not."""
 
-    generation: GenerationT
     current_access: AccessT
 
     def __post_init__(self) -> None:
-        if self.generation is None:
-            raise TypeError("generation cannot be None")
         if self.current_access is None:
             raise TypeError("current_access cannot be None")
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseInactive(Generic[GenerationT]):
-    """No current access; a revoked acquisition may still be draining."""
-
-    generation: GenerationT
-
-    def __post_init__(self) -> None:
-        if self.generation is None:
-            raise TypeError("generation cannot be None")
+class ReleaseInactive:
+    """The current generation has no releasable access authority."""
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseAcquisitionRevoked(Generic[GenerationT, AccessT]):
+class ReleaseAcquisitionRevoked(Generic[GenerationT]):
     """Matching in-flight acquisition lost commit authority and is now draining."""
 
-    generation: GenerationT
-    access: AccessT
     next_generation: GenerationT
 
     def __post_init__(self) -> None:
-        if self.generation is None:
-            raise TypeError("generation cannot be None")
-        if self.access is None:
-            raise TypeError("access cannot be None")
         if self.next_generation is None:
             raise TypeError("next_generation cannot be None")
-        if self.next_generation == self.generation:
-            raise ValueError("next_generation must differ from generation")
 
 
 @dataclass(frozen=True, slots=True)
 class ReleaseAccessDetached(Generic[GenerationT, AccessT]):
-    """Matching access was detached from the current lifecycle state."""
+    """Matching committed access was detached from the current lifecycle state."""
 
-    generation: GenerationT
     access: AccessT
     next_generation: GenerationT
 
     def __post_init__(self) -> None:
-        if self.generation is None:
-            raise TypeError("generation cannot be None")
         if self.access is None:
             raise TypeError("access cannot be None")
         if self.next_generation is None:
             raise TypeError("next_generation cannot be None")
-        if self.next_generation == self.generation:
-            raise ValueError("next_generation must differ from generation")
 
 
 ReleaseResult: TypeAlias = (
-    ReleaseGenerationMismatch[GenerationT, AccessT]
-    | ReleaseAccessMismatch[GenerationT, AccessT]
-    | ReleaseInactive[GenerationT]
-    | ReleaseAcquisitionRevoked[GenerationT, AccessT]
+    GenerationMismatch[GenerationT]
+    | ReleaseAccessMismatch[AccessT]
+    | ReleaseInactive
+    | ReleaseAcquisitionRevoked[GenerationT]
     | ReleaseAccessDetached[GenerationT, AccessT]
 )
 
@@ -257,22 +255,26 @@ class CleanupRegistrationError(RuntimeError):
 
 
 __all__ = [
+    "AcquireAbandonResult",
     "AcquireAttempt",
+    "AcquireAttemptAbandoned",
+    "AcquireAttemptCommitted",
+    "AcquireAttemptRevoked",
     "AcquireBlocked",
+    "AcquireCommitResult",
     "AcquireCommitted",
     "AcquireExisting",
     "AcquireFailed",
-    "AcquireGenerationMismatch",
     "AcquireStartBlocked",
     "AcquireStartBusy",
-    "AcquireStartExisting",
+    "AcquireStartCurrent",
     "AcquireStartResult",
     "AcquireSuperseded",
     "CleanupRegistrationError",
+    "GenerationMismatch",
     "ReleaseAccessDetached",
     "ReleaseAccessMismatch",
     "ReleaseAcquisitionRevoked",
-    "ReleaseGenerationMismatch",
     "ReleaseInactive",
     "ReleaseResult",
 ]

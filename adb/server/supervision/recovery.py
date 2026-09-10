@@ -11,7 +11,7 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
-    AcquireGenerationMismatch,
+    GenerationMismatch,
     AcquireSuperseded,
 )
 from adb._recovery import (
@@ -93,7 +93,7 @@ class AdbServerRecovery:
             (
                 AcquireCommitted,
                 AcquireExisting,
-                AcquireGenerationMismatch,
+                GenerationMismatch,
                 AcquireBlocked,
                 AcquireFailed,
                 AcquireSuperseded,
@@ -101,7 +101,7 @@ class AdbServerRecovery:
         ):
             raise TypeError("result must be AdbServerAcquireOutcome")
 
-        if isinstance(result, (AcquireCommitted, AcquireExisting, AcquireGenerationMismatch)):
+        if isinstance(result, (AcquireCommitted, AcquireExisting)):
             snapshot = result.snapshot
             if not isinstance(snapshot.generation, AdbServerGeneration):
                 raise TypeError("server acquire generation must be AdbServerGeneration")
@@ -110,20 +110,24 @@ class AdbServerRecovery:
             if snapshot.capability is not None and not isinstance(snapshot.capability, TcpAddress):
                 raise TypeError("server acquire capability must be TcpAddress or None")
 
+        if isinstance(result, GenerationMismatch) and not isinstance(
+            result.current_generation, AdbServerGeneration
+        ):
+            raise TypeError("server current generation must be AdbServerGeneration")
         if isinstance(result, AcquireFailed) and not isinstance(
             result.failure, AdbServerLaunchFailure
         ):
             raise TypeError("server acquire failure must be AdbServerLaunchFailure")
         if isinstance(result, AcquireSuperseded) and not isinstance(
-            result.generation, AdbServerGeneration
+            result.current_generation, AdbServerGeneration
         ):
-            raise TypeError("server superseded generation must be AdbServerGeneration")
+            raise TypeError("server superseded current generation must be AdbServerGeneration")
 
         if isinstance(result, (AcquireCommitted, AcquireExisting)):
             outcome = RecoveryAttemptOutcome.ACQUIRED
         elif isinstance(
             result,
-            (AcquireGenerationMismatch, AcquireBlocked, AcquireSuperseded),
+            (GenerationMismatch, AcquireBlocked, AcquireSuperseded),
         ):
             outcome = RecoveryAttemptOutcome.DEFERRED
         else:

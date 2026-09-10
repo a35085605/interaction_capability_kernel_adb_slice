@@ -5,13 +5,12 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
-    AcquireGenerationMismatch,
+    GenerationMismatch,
     AcquireSuperseded,
     Snapshot,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
-    ReleaseGenerationMismatch,
     ReleaseInactive,
 )
 from adb.server.lifecycle import (
@@ -41,7 +40,7 @@ __all__ = [
     "AcquireCommitted",
     "AcquireExisting",
     "AcquireFailed",
-    "AcquireGenerationMismatch",
+    "GenerationMismatch",
     "AcquireSuperseded",
     "AdbServerAccess",
     "AdbServerAcquireOutcome",
@@ -66,6 +65,5 @@ __all__ = [
     "ReleaseAccessDetached",
     "ReleaseAccessMismatch",
     "ReleaseAcquisitionRevoked",
-    "ReleaseGenerationMismatch",
     "ReleaseInactive",
 ]

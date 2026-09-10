@@ -9,7 +9,7 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
-    AcquireGenerationMismatch,
+    GenerationMismatch,
     AcquireSuperseded,
 )
 from adb._recovery import (
@@ -104,7 +104,7 @@ class AdbTransportListWatchRecovery:
             (
                 AcquireCommitted,
                 AcquireExisting,
-                AcquireGenerationMismatch,
+                GenerationMismatch,
                 AcquireBlocked,
                 AcquireFailed,
                 AcquireSuperseded,
@@ -112,7 +112,7 @@ class AdbTransportListWatchRecovery:
         ):
             raise TypeError("result must be AdbTransportListWatchAcquireOutcome")
 
-        if isinstance(result, (AcquireCommitted, AcquireExisting, AcquireGenerationMismatch)):
+        if isinstance(result, (AcquireCommitted, AcquireExisting)):
             snapshot = result.snapshot
             if not isinstance(snapshot.generation, AdbTransportListWatchGeneration):
                 raise TypeError(
@@ -129,22 +129,28 @@ class AdbTransportListWatchRecovery:
                     "watch acquire capability must satisfy AdbTransportListWatchStream or be None"
                 )
 
+        if isinstance(result, GenerationMismatch) and not isinstance(
+            result.current_generation, AdbTransportListWatchGeneration
+        ):
+            raise TypeError(
+                "watch current generation must be AdbTransportListWatchGeneration"
+            )
         if isinstance(result, AcquireFailed) and not isinstance(
             result.failure, AdbTransportListWatchFailure
         ):
             raise TypeError("watch acquire failure must be AdbTransportListWatchFailure")
         if isinstance(result, AcquireSuperseded) and not isinstance(
-            result.generation, AdbTransportListWatchGeneration
+            result.current_generation, AdbTransportListWatchGeneration
         ):
             raise TypeError(
-                "watch superseded generation must be AdbTransportListWatchGeneration"
+                "watch superseded current generation must be AdbTransportListWatchGeneration"
             )
 
         if isinstance(result, (AcquireCommitted, AcquireExisting)):
             outcome = RecoveryAttemptOutcome.ACQUIRED
         elif isinstance(
             result,
-            (AcquireGenerationMismatch, AcquireBlocked, AcquireSuperseded),
+            (GenerationMismatch, AcquireBlocked, AcquireSuperseded),
         ):
             outcome = RecoveryAttemptOutcome.DEFERRED
         else:

@@ -5,7 +5,7 @@ from threading import Event, RLock, Thread, current_thread
 
 from adb.transport_list.watch.access import AdbTransportListWatchAccess
 from adb.transport_list.watch.lifecycle import (
-    AcquireGenerationMismatch,
+    GenerationMismatch,
     AdbTransportListWatchLifecycle,
     ReleaseAccessDetached,
 )
@@ -38,7 +38,7 @@ class AdbTransportListWatchSupervisor:
 
     Reconciliation releases one exact ``(generation, access)`` target. A successful detach provides
     the next generation directly, which recovery carries into reacquisition without a separate
-    state read. Generation mismatches resynchronize the target from the returned atomic snapshot.
+    state read. Generation mismatches resynchronize the target from the returned current generation.
     """
 
     def __init__(
@@ -195,11 +195,11 @@ class AdbTransportListWatchSupervisor:
                         )
 
                 result = self._lifecycle.acquire(target.generation, target.access)
-                if isinstance(result, AcquireGenerationMismatch):
+                if isinstance(result, GenerationMismatch):
                     with self._lock:
                         if self._is_current_recovery_locked(recovery):
                             self._recovery_target = _RecoveryTarget(
-                                result.snapshot.generation,
+                                result.current_generation,
                                 target.access,
                             )
 
