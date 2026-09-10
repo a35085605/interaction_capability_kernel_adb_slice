@@ -9,8 +9,10 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
+    AcquireGenerationMismatch,
     AcquireSuperseded,
     ReleaseAccessDetached,
+    ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
@@ -26,16 +28,18 @@ from adb.server.state import AdbServerStateView
 
 
 AdbServerAcquireOutcome: TypeAlias = (
-    AcquireCommitted[AdbServerGeneration, AdbServerAccess]
-    | AcquireExisting[AdbServerGeneration, AdbServerAccess]
+    AcquireCommitted[AdbServerGeneration, AdbServerAccess, TcpAddress]
+    | AcquireExisting[AdbServerGeneration, AdbServerAccess, TcpAddress]
+    | AcquireGenerationMismatch[AdbServerGeneration, AdbServerAccess, TcpAddress]
     | AcquireBlocked
     | AcquireFailed[AdbServerLaunchFailure]
     | AcquireSuperseded[AdbServerGeneration]
 )
 
 AdbServerReleaseOutcome: TypeAlias = (
-    ReleaseAcquisitionRevoked[AdbServerGeneration]
+    ReleaseAcquisitionRevoked[AdbServerGeneration, AdbServerAccess]
     | ReleaseAccessDetached[AdbServerGeneration, AdbServerAccess]
+    | ReleaseAccessMismatch[AdbServerGeneration, AdbServerAccess]
     | ReleaseInactive[AdbServerGeneration]
     | ReleaseGenerationMismatch[AdbServerGeneration, AdbServerAccess]
 )
@@ -45,21 +49,25 @@ AdbServerReleaseOutcome: TypeAlias = (
 class AdbServerLifecycle(AdbServerStateView, Protocol):
     """Sole authority for one runtime-scoped ADB server generation.
 
-    ``read()`` exposes an atomic generation/server-capability snapshot for data-plane consumers.
-    Acquire/release outcomes retain public server-address metadata for control-plane coordination.
-    Pending work, cleanup diagnostics, physical resources, and resource claims remain lifecycle
-    implementation details.
+    ``read()`` and successful acquire outcomes expose the same atomic generation/access/capability
+    snapshot. Acquire and release are both fenced by the caller's expected generation. Release also
+    requires the requested access to match before logical revocation advances authority.
     """
 
     def acquire(
         self,
-        server_address: TcpAddress,
+        expected_generation: AdbServerGeneration,
+        access: AdbServerAccess,
     ) -> AdbServerAcquireOutcome:
-        """Attempt to establish usable ADB server access at the requested server address."""
+        """Acquire ``access`` only if ``expected_generation`` is still current."""
         ...
 
-    def release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
-        """Release matching authority and advance generation at logical revocation."""
+    def release(
+        self,
+        expected_generation: AdbServerGeneration,
+        access: AdbServerAccess,
+    ) -> AdbServerReleaseOutcome:
+        """Release matching generation/access authority and advance generation on revocation."""
         ...
 
 
@@ -78,6 +86,7 @@ __all__ = [
     "AcquireCommitted",
     "AcquireExisting",
     "AcquireFailed",
+    "AcquireGenerationMismatch",
     "AcquireSuperseded",
     "AdbServerAccess",
     "AdbServerAcquireOutcome",
@@ -87,6 +96,7 @@ __all__ = [
     "AdbServerLifecycleError",
     "AdbServerReleaseOutcome",
     "ReleaseAccessDetached",
+    "ReleaseAccessMismatch",
     "ReleaseAcquisitionRevoked",
     "ReleaseGenerationMismatch",
     "ReleaseInactive",

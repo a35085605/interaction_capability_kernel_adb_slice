@@ -9,6 +9,7 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
+    AcquireGenerationMismatch,
     AcquireSuperseded,
 )
 from adb._recovery import (
@@ -26,6 +27,7 @@ from adb.transport_list.watch.lifecycle import (
 )
 from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
 from adb.transport_list.watch.failure import AdbTransportListWatchFailure
+from adb.transport_list.watch.stream import AdbTransportListWatchStream
 from adb.transport_list.watch.supervision.policy import AdbTransportListWatchRecoveryPolicy
 
 
@@ -102,21 +104,31 @@ class AdbTransportListWatchRecovery:
             (
                 AcquireCommitted,
                 AcquireExisting,
+                AcquireGenerationMismatch,
                 AcquireBlocked,
                 AcquireFailed,
                 AcquireSuperseded,
             ),
         ):
             raise TypeError("result must be AdbTransportListWatchAcquireOutcome")
-        if isinstance(result, (AcquireCommitted, AcquireExisting)):
-            if not isinstance(
-                result.snapshot.generation, AdbTransportListWatchGeneration
-            ):
+
+        if isinstance(result, (AcquireCommitted, AcquireExisting, AcquireGenerationMismatch)):
+            snapshot = result.snapshot
+            if not isinstance(snapshot.generation, AdbTransportListWatchGeneration):
                 raise TypeError(
                     "watch acquire generation must be AdbTransportListWatchGeneration"
                 )
-            if not isinstance(result.snapshot.access, AdbTransportListWatchAccess):
-                raise TypeError("watch acquire access must be AdbTransportListWatchAccess")
+            if snapshot.access is not None and not isinstance(
+                snapshot.access, AdbTransportListWatchAccess
+            ):
+                raise TypeError("watch acquire access must be AdbTransportListWatchAccess or None")
+            if snapshot.capability is not None and not isinstance(
+                snapshot.capability, AdbTransportListWatchStream
+            ):
+                raise TypeError(
+                    "watch acquire capability must satisfy AdbTransportListWatchStream or be None"
+                )
+
         if isinstance(result, AcquireFailed) and not isinstance(
             result.failure, AdbTransportListWatchFailure
         ):
@@ -130,7 +142,10 @@ class AdbTransportListWatchRecovery:
 
         if isinstance(result, (AcquireCommitted, AcquireExisting)):
             outcome = RecoveryAttemptOutcome.ACQUIRED
-        elif isinstance(result, (AcquireBlocked, AcquireSuperseded)):
+        elif isinstance(
+            result,
+            (AcquireGenerationMismatch, AcquireBlocked, AcquireSuperseded),
+        ):
             outcome = RecoveryAttemptOutcome.DEFERRED
         else:
             outcome = RecoveryAttemptOutcome.FAILED

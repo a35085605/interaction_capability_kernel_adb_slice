@@ -13,14 +13,15 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
+    AcquireGenerationMismatch,
     AcquireStartBlocked,
     AcquireStartBusy,
     AcquireStartExisting,
     AcquireSuperseded,
     LifecycleDiagnostics,
-    LifecycleSnapshot,
     ManagedLifecycle,
     ReleaseAccessDetached,
+    ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
@@ -86,8 +87,12 @@ class _AdbTransportListWatchStreamView:
 class AdbTransportListWatchLifecycleTemplate(ABC):
     """Template for one current watch generation and its physical resource scope.
 
+    Requested server-address access is captured before the watch resource is opened, so release can
+    match an in-flight request by both generation and access. Committed state atomically exposes
+    that access together with the single-consumer stream capability.
+
     Watch/client sockets carry no exclusivity claim merely because they connect to the same server
-    server address. Cleanup debt is therefore tracked by ownership but does not block a new watch on an
+    address. Cleanup debt is therefore tracked by ownership but does not block a new watch on an
     equal access server address. This avoids treating access information as a resource conflict key.
     """
 
@@ -113,15 +118,16 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         )
 
     def read(self) -> AdbTransportListWatchState:
-        """Atomically return current generation and single-consumer watch stream, if any."""
+        """Return one atomic generation/access/single-consumer-stream snapshot."""
 
-        state = self._managed.capability_snapshot()
-        return AdbTransportListWatchState(
-            generation=state.generation,
-            capability=state.capability,
-        )
+        return self._managed.read()
 
-    def read_diagnostics(self) -> LifecycleDiagnostics[AdbTransportListWatchGeneration]:
+    def read_diagnostics(
+        self,
+    ) -> LifecycleDiagnostics[
+        AdbTransportListWatchGeneration,
+        AdbTransportListWatchAccess,
+    ]:
         """Sample draining work and cleanup handoff state without exposing resources."""
 
         return self._managed.read_diagnostics()
@@ -133,7 +139,8 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         cancellation: Event,
         resources: ResourceScope,
     ) -> _AdbTransportListWatchResource:
-        """Obtain a fully usable watch resource while recording earlier resources in ``resources``."""
+        """Obtain a fully usable watch resource while recording earlier resources in
+        ``resources``."""
 
     def _schedule_cleanup(self, resource: _AdbTransportListWatchResource) -> None:
         self._managed.register_cleanup(resource, lambda: resource.close())
@@ -141,22 +148,32 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
 
     def acquire(
         self,
-        server_address: TcpAddress,
+        expected_generation: AdbTransportListWatchGeneration,
+        access: AdbTransportListWatchAccess,
     ) -> AdbTransportListWatchAcquireOutcome:
-        if not isinstance(server_address, TcpAddress):
-            raise TypeError("server_address must be TcpAddress")
+        if not isinstance(expected_generation, AdbTransportListWatchGeneration):
+            raise TypeError("expected_generation must be AdbTransportListWatchGeneration")
+        if not isinstance(access, AdbTransportListWatchAccess):
+            raise TypeError("access must be AdbTransportListWatchAccess")
 
         self._managed.process_cleanup()
         try:
-            return self._acquire(server_address)
+            return self._acquire(expected_generation, access)
         finally:
             self._managed.process_cleanup()
 
-    def _acquire(self, server_address: TcpAddress) -> AdbTransportListWatchAcquireOutcome:
-        start = self._managed.begin_acquire()
+    def _acquire(
+        self,
+        expected_generation: AdbTransportListWatchGeneration,
+        access: AdbTransportListWatchAccess,
+    ) -> AdbTransportListWatchAcquireOutcome:
+        server_address = access.server_address
+        start = self._managed.begin_acquire(expected_generation, access)
+        if isinstance(start, AcquireGenerationMismatch):
+            return start
         if isinstance(start, AcquireStartExisting):
             snapshot = start.snapshot
-            if snapshot.access.server_address == server_address:
+            if snapshot.access == access:
                 return AcquireExisting(snapshot)
             return AcquireBlocked(
                 "ADB transport-list watch lifecycle already retains a different server address"
@@ -195,36 +212,36 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                     return AcquireSuperseded(attempt.generation)
                 return AcquireFailed(exc.failure)
 
-            public_access = AdbTransportListWatchAccess(server_address=server_address)
             capability = _AdbTransportListWatchStreamView(resource)
-            committed = attempt.commit(
-                public_access=public_access,
-                capability=capability,
-            )
-            if committed:
-                return AcquireCommitted(
-                    LifecycleSnapshot(attempt.generation, public_access)
-                )
+            committed = attempt.commit(capability=capability)
+            if committed is not None:
+                return AcquireCommitted(committed)
 
             return AcquireSuperseded(attempt.generation)
 
     def release(
         self,
-        expected: AdbTransportListWatchGeneration,
+        expected_generation: AdbTransportListWatchGeneration,
+        access: AdbTransportListWatchAccess,
     ) -> AdbTransportListWatchReleaseOutcome:
-        if not isinstance(expected, AdbTransportListWatchGeneration):
-            raise TypeError("expected must be AdbTransportListWatchGeneration")
+        if not isinstance(expected_generation, AdbTransportListWatchGeneration):
+            raise TypeError("expected_generation must be AdbTransportListWatchGeneration")
+        if not isinstance(access, AdbTransportListWatchAccess):
+            raise TypeError("access must be AdbTransportListWatchAccess")
 
         try:
-            return self._release(expected)
+            return self._release(expected_generation, access)
         finally:
             self._managed.process_cleanup()
 
     def _release(
-        self, expected: AdbTransportListWatchGeneration
+        self,
+        expected_generation: AdbTransportListWatchGeneration,
+        access: AdbTransportListWatchAccess,
     ) -> AdbTransportListWatchReleaseOutcome:
         release = self._managed.release(
-            expected,
+            expected_generation,
+            access,
             inconsistent_state_error=(
                 "ADB transport-list watch lifecycle state is inconsistent"
             ),
@@ -233,6 +250,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             release,
             (
                 ReleaseGenerationMismatch,
+                ReleaseAccessMismatch,
                 ReleaseInactive,
                 ReleaseAcquisitionRevoked,
                 ReleaseAccessDetached,

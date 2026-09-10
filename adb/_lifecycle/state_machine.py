@@ -7,14 +7,16 @@ from time import monotonic
 from typing import Generic, TypeAlias, TypeVar
 
 from adb._lifecycle.resource import ResourceScope
-from adb._lifecycle.snapshot import LifecycleSnapshot
+from adb._lifecycle.snapshot import Snapshot
 from adb._lifecycle.result import (
     AcquireAttempt,
+    AcquireGenerationMismatch,
     AcquireStartBlocked,
     AcquireStartBusy,
     AcquireStartExisting,
     AcquireStartResult,
     CleanupRegistrationError,
+    ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
@@ -25,6 +27,7 @@ from adb._lifecycle.result import (
 
 GenerationT = TypeVar("GenerationT")
 AccessT = TypeVar("AccessT")
+CapabilityT = TypeVar("CapabilityT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,10 +38,10 @@ class _Idle(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class _Acquiring(Generic[GenerationT]):
+class _Acquiring(Generic[GenerationT, AccessT]):
     """Current generation has one in-flight acquisition with commit authority."""
 
-    attempt: AcquireAttempt[GenerationT]
+    attempt: AcquireAttempt[GenerationT, AccessT]
     started_at: float = field(default_factory=monotonic, repr=False, compare=False)
 
     @property
@@ -47,50 +50,53 @@ class _Acquiring(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class _Current(Generic[GenerationT, AccessT]):
-    """Current generation retains one usable access."""
+class _Current(Generic[GenerationT, AccessT, CapabilityT]):
+    """Current generation retains one usable access and operation capability."""
 
     generation: GenerationT
     access: AccessT
+    capability: CapabilityT
     resource_scope: ResourceScope
 
 
 @dataclass(frozen=True, slots=True)
-class _Draining(Generic[GenerationT]):
-    """A revoked acquisition is draining after the state machine advanced to a new generation.
+class _Draining(Generic[GenerationT, AccessT]):
+    """A revoked acquisition is draining after authority advanced to a new generation.
 
-    ``generation`` is the current generation exposed by the state machine. ``attempt.generation`` is
-    the generation of the in-flight attempt that has already lost commit authority but has not yet
-    returned to the state machine.
+    ``generation`` is the current generation exposed by the state machine.
+    ``attempt.generation`` and ``attempt.access`` identify the in-flight request that already lost
+    commit authority.
     """
 
     generation: GenerationT
-    attempt: AcquireAttempt[GenerationT]
+    attempt: AcquireAttempt[GenerationT, AccessT]
     started_at: float = field(repr=False, compare=False)
 
 
 _State: TypeAlias = (
     _Idle[GenerationT]
-    | _Acquiring[GenerationT]
-    | _Current[GenerationT, AccessT]
-    | _Draining[GenerationT]
+    | _Acquiring[GenerationT, AccessT]
+    | _Current[GenerationT, AccessT, CapabilityT]
+    | _Draining[GenerationT, AccessT]
 )
 
 
 @dataclass(frozen=True, slots=True)
-class PendingSnapshot(Generic[GenerationT]):
+class PendingSnapshot(Generic[GenerationT, AccessT]):
     generation: GenerationT
+    access: AccessT
     cancelled: bool
     age_seconds: float
 
 
 @dataclass(frozen=True, slots=True)
-class _LifecycleStateSnapshot(Generic[GenerationT, AccessT]):
+class _LifecycleStateSnapshot(Generic[GenerationT, AccessT, CapabilityT]):
     """Internal lifecycle state sample retaining diagnostics alongside public state."""
 
     generation: GenerationT
     access: AccessT | None
-    pending: PendingSnapshot[GenerationT] | None = None
+    capability: CapabilityT | None
+    pending: PendingSnapshot[GenerationT, AccessT] | None = None
     cleanup_registration_errors: tuple[str, ...] = ()
 
 
@@ -100,22 +106,22 @@ class _FailedCleanupRegistration:
     diagnostic: str
 
 
-class LifecycleStateMachine(Generic[GenerationT, AccessT]):
+class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
     """Shared acquire/commit/release lifecycle state machine.
 
     Lifecycle state is represented as one explicit private state: ``_Idle``, ``_Acquiring``,
-    ``_Current``, or ``_Draining``. This makes in-flight acquisition and a current usable access
-    mutually exclusive by construction. An ``AcquireAttempt`` is identity-bearing and captures the
-    context for one in-flight acquisition; generation fencing is expressed by state transitions,
-    especially ``_Acquiring(A1@G1) -> _Draining(G2, A1@G1)``.
+    ``_Current``, or ``_Draining``. Public committed state is always represented by one atomic
+    ``Snapshot(generation, access, capability)``. An in-flight ``AcquireAttempt`` captures both the
+    generation and requested access so release can fence by the complete ``(generation, access)``
+    target before revoking pending work.
 
     Every in-flight acquisition owns a ``ResourceScope`` that follows it through revocation,
     commit, or abandonment. Domain adapters populate that scope as physical resources are obtained;
-    the state machine keeps the committed value and its scope associated in ``_Current``. Domain
-    lifecycles retain responsibility for acquisition constraints, cleanup implementation, claim
-    semantics, domain values, and notifications. This state machine owns the concurrency-sensitive
-    authority/ownership relationship and invokes narrow callbacks while holding its state lock when
-    cleanup-debt registration must stay atomic with a state transition.
+    the state machine keeps the committed access, capability, and scope associated in ``_Current``.
+    Domain lifecycles retain responsibility for acquisition constraints, cleanup implementation,
+    claim semantics, domain values, and notifications. This state machine owns the concurrency-
+    sensitive authority/ownership relationship and invokes narrow callbacks while holding its state
+    lock when cleanup-debt registration must stay atomic with a state transition.
 
     All callbacks (including the issuer) must be short, non-reentrant, and perform no I/O, thread
     startup, or waits for external work. Nested state locks must follow a consistent lock order.
@@ -132,7 +138,7 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
             raise TypeError("issue_generation must be callable")
         self._issue_generation = issue_generation
         self._lock = Lock()
-        self._state: _State[GenerationT, AccessT] = _Idle(issue_generation())
+        self._state: _State[GenerationT, AccessT, CapabilityT] = _Idle(issue_generation())
         self._failed_cleanup_registrations: list[_FailedCleanupRegistration] = []
 
     def _register_cleanup_locked(self, callback: Callable[[], None]) -> None:
@@ -159,75 +165,95 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
 
     @staticmethod
     def _pending_snapshot(
-        state: _Acquiring[GenerationT] | _Draining[GenerationT],
-    ) -> PendingSnapshot[GenerationT]:
+        state: _Acquiring[GenerationT, AccessT] | _Draining[GenerationT, AccessT],
+    ) -> PendingSnapshot[GenerationT, AccessT]:
         return PendingSnapshot(
             generation=state.attempt.generation,
+            access=state.attempt.access,
             cancelled=(
                 isinstance(state, _Draining) or state.attempt.cancellation.is_set()
             ),
             age_seconds=max(0.0, monotonic() - state.started_at),
         )
 
-    def _snapshot_locked(self) -> _LifecycleStateSnapshot[GenerationT, AccessT]:
+    @staticmethod
+    def _public_snapshot(
+        state: _State[GenerationT, AccessT, CapabilityT],
+    ) -> Snapshot[GenerationT, AccessT, CapabilityT]:
+        if isinstance(state, _Current):
+            return Snapshot(state.generation, state.access, state.capability)
+        return Snapshot(state.generation)
+
+    def _snapshot_locked(
+        self,
+    ) -> _LifecycleStateSnapshot[GenerationT, AccessT, CapabilityT]:
         state = self._state
-        access = state.access if isinstance(state, _Current) else None
+        public = self._public_snapshot(state)
         pending = (
             self._pending_snapshot(state)
             if isinstance(state, (_Acquiring, _Draining))
             else None
         )
         return _LifecycleStateSnapshot(
-            generation=state.generation,
-            access=access,
+            generation=public.generation,
+            access=public.access,
+            capability=public.capability,
             pending=pending,
             cleanup_registration_errors=tuple(
                 item.diagnostic for item in self._failed_cleanup_registrations
             ),
         )
 
-    def snapshot(self) -> LifecycleSnapshot[GenerationT, AccessT | None]:
-        """Return one atomic public generation/access pairing."""
+    def snapshot(self) -> Snapshot[GenerationT, AccessT, CapabilityT]:
+        """Return one atomic committed-state snapshot without extending capability lifetime."""
 
         with self._lock:
-            state = self._snapshot_locked()
-            return LifecycleSnapshot(state.generation, state.access)
+            return self._public_snapshot(self._state)
 
     def read_diagnostics_snapshot(
         self,
-    ) -> _LifecycleStateSnapshot[GenerationT, AccessT]:
+    ) -> _LifecycleStateSnapshot[GenerationT, AccessT, CapabilityT]:
         """Return internal lifecycle diagnostics without exposing cleanup resources."""
 
         with self._lock:
             return self._snapshot_locked()
 
-    def borrow_current(self, expected: GenerationT) -> AccessT | None:
-        """Return matching current access as a point-in-time atomic borrow.
+    def borrow_capability(self, expected: GenerationT) -> CapabilityT | None:
+        """Return matching current capability as a point-in-time atomic borrow.
 
-        The state lock protects the generation comparison and value retrieval only. The returned
-        value is not leased and may become stale immediately after this method returns.
+        The state lock protects the generation comparison and capability retrieval only. The
+        returned capability is not leased and may become stale immediately after this method
+        returns.
         """
 
         with self._lock:
             state = self._state
             if not isinstance(state, _Current) or expected != state.generation:
                 return None
-            return state.access
+            return state.capability
 
     def begin_acquire(
         self,
+        expected: GenerationT,
+        access: AccessT,
         *,
         is_blocked: Callable[[], bool] | None = None,
-    ) -> AcquireStartResult[GenerationT, AccessT]:
-        """Atomically inspect lifecycle state and, when allowed, start one acquisition attempt."""
+    ) -> AcquireStartResult[GenerationT, AccessT, CapabilityT]:
+        """Start an acquisition iff expected generation still owns the requested command."""
 
+        if expected is None:
+            raise TypeError("expected cannot be None")
+        if access is None:
+            raise TypeError("access cannot be None")
         if is_blocked is not None and not callable(is_blocked):
             raise TypeError("is_blocked must be callable or None")
 
         with self._lock:
             state = self._state
+            if expected != state.generation:
+                return AcquireGenerationMismatch(self._public_snapshot(state))
             if isinstance(state, _Current):
-                return AcquireStartExisting(LifecycleSnapshot(state.generation, state.access))
+                return AcquireStartExisting(self._public_snapshot(state))
             if isinstance(state, _Acquiring):
                 return AcquireStartBusy(draining=False)
             if isinstance(state, _Draining):
@@ -244,6 +270,7 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
 
             attempt = AcquireAttempt(
                 generation=state.generation,
+                access=access,
                 cancellation=Event(),
                 resource_scope=ResourceScope(),
             )
@@ -252,15 +279,15 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
 
     def abandon_acquire(
         self,
-        attempt: AcquireAttempt[GenerationT],
+        attempt: AcquireAttempt[GenerationT, AccessT],
         *,
         before_clear: Callable[[], None] | None = None,
     ) -> bool:
         """Finish a failed/abandoned acquisition and report whether it was already revoked.
 
         A failing ``before_clear`` still retires the matching in-flight state. Its
-        resource-retaining cleanup registration remains queued for retry and blocks new acquisitions
-        until registration succeeds.
+        resource-retaining cleanup registration remains queued for retry and blocks new
+        acquisitions until registration succeeds.
         """
 
         if not isinstance(attempt, AcquireAttempt):
@@ -286,17 +313,17 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
 
     def commit_acquire(
         self,
-        attempt: AcquireAttempt[GenerationT],
-        access: AccessT,
+        attempt: AcquireAttempt[GenerationT, AccessT],
+        capability: CapabilityT,
         *,
         on_superseded: Callable[[], None] | None = None,
-    ) -> bool:
-        """Commit ``access`` iff ``attempt`` still has authority; otherwise register cleanup."""
+    ) -> Snapshot[GenerationT, AccessT, CapabilityT] | None:
+        """Commit capability for the attempt's requested access iff authority is still current."""
 
         if not isinstance(attempt, AcquireAttempt):
             raise TypeError("attempt must be AcquireAttempt")
-        if access is None:
-            raise ValueError("access cannot be None")
+        if capability is None:
+            raise ValueError("capability cannot be None")
         if on_superseded is not None and not callable(on_superseded):
             raise TypeError("on_superseded must be callable or None")
 
@@ -305,8 +332,14 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
             if isinstance(state, (_Acquiring, _Draining)) and state.attempt is attempt:
                 attempt.resource_scope.seal()
             if isinstance(state, _Acquiring) and state.attempt is attempt:
-                self._state = _Current(state.generation, access, attempt.resource_scope)
-                return True
+                committed = Snapshot(state.generation, attempt.access, capability)
+                self._state = _Current(
+                    state.generation,
+                    attempt.access,
+                    capability,
+                    attempt.resource_scope,
+                )
+                return committed
 
             try:
                 if on_superseded is not None:
@@ -314,17 +347,22 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
             finally:
                 if isinstance(state, _Draining) and state.attempt is attempt:
                     self._state = _Idle(state.generation)
-            return False
+            return None
 
     def release(
         self,
         expected: GenerationT,
+        access: AccessT,
         *,
-        on_access_release: Callable[[AccessT, ResourceScope], None] | None = None,
+        on_access_release: Callable[[ResourceScope], None] | None = None,
         inconsistent_state_error: str = "lifecycle state is inconsistent",
     ) -> ReleaseResult[GenerationT, AccessT]:
-        """Release matching lifecycle state, advance generation, and fence stale acquisition work."""
+        """Release only matching ``(generation, access)`` authority and advance generation."""
 
+        if expected is None:
+            raise TypeError("expected cannot be None")
+        if access is None:
+            raise TypeError("access cannot be None")
         if on_access_release is not None and not callable(on_access_release):
             raise TypeError("on_access_release must be callable or None")
         if not isinstance(inconsistent_state_error, str):
@@ -345,32 +383,49 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
                 return ReleaseInactive(expected)
 
             released_generation = state.generation
-            next_generation = self._issue_generation()
-            if next_generation == released_generation:
-                raise RuntimeError("issue_generation must return a fresh generation")
-
             if isinstance(state, _Acquiring):
+                current_access = state.attempt.access
+                if current_access != access:
+                    return ReleaseAccessMismatch(released_generation, current_access)
+
+                next_generation = self._issue_generation()
+                if next_generation == released_generation:
+                    raise RuntimeError("issue_generation must return a fresh generation")
+
                 # Logical revocation is immediate, but the old attempt remains represented until
-                # obtain returns. New acquisition is therefore blocked without comparing
-                # generations.
+                # obtain returns. New acquisition is therefore blocked in the new generation while
+                # the revoked request drains.
                 state.attempt.cancellation.set()
                 self._state = _Draining(
                     generation=next_generation,
                     attempt=state.attempt,
                     started_at=state.started_at,
                 )
-                return ReleaseAcquisitionRevoked(released_generation)
+                return ReleaseAcquisitionRevoked(
+                    released_generation,
+                    current_access,
+                    next_generation,
+                )
 
             if not isinstance(state, _Current):
                 raise RuntimeError(normalized_error)
+            if state.access != access:
+                return ReleaseAccessMismatch(released_generation, state.access)
 
-            access = state.access
+            next_generation = self._issue_generation()
+            if next_generation == released_generation:
+                raise RuntimeError("issue_generation must return a fresh generation")
+
             self._state = _Idle(next_generation)
-            outcome = ReleaseAccessDetached(released_generation, access)
+            outcome = ReleaseAccessDetached(
+                released_generation,
+                state.access,
+                next_generation,
+            )
             if on_access_release is not None:
                 try:
                     self._register_cleanup_locked(
-                        lambda: on_access_release(access, state.resource_scope)
+                        lambda: on_access_release(state.resource_scope)
                     )
                 except Exception as exc:
                     raise CleanupRegistrationError(outcome) from exc

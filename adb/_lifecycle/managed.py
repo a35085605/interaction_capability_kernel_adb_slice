@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 from threading import Event
 from types import TracebackType
 from typing import Generic, TypeVar
@@ -10,16 +9,10 @@ from adb._lifecycle.diagnostics import LifecycleDiagnostics
 from adb._lifecycle.resource import ResourceScope
 from adb._lifecycle.result import (
     AcquireAttempt,
-    AcquireStartExisting,
     AcquireStartResult,
-    CleanupRegistrationError,
-    ReleaseAccessDetached,
-    ReleaseAcquisitionRevoked,
-    ReleaseGenerationMismatch,
-    ReleaseInactive,
     ReleaseResult,
 )
-from adb._lifecycle.snapshot import CapabilitySnapshot, LifecycleSnapshot
+from adb._lifecycle.snapshot import Snapshot
 from adb._lifecycle.state_machine import LifecycleStateMachine
 from adb.cleanup import (
     CleanupCoordinator,
@@ -30,29 +23,15 @@ from adb.cleanup import (
 
 
 GenerationT = TypeVar("GenerationT")
-PublicAccessT = TypeVar("PublicAccessT")
+AccessT = TypeVar("AccessT")
 CapabilityT = TypeVar("CapabilityT")
 
 
-@dataclass(frozen=True, slots=True)
-class _Committed(Generic[PublicAccessT, CapabilityT]):
-    """Lifecycle-private pairing of public metadata and an operation capability."""
-
-    public_access: PublicAccessT
-    capability: CapabilityT
-
-    def __post_init__(self) -> None:
-        if self.public_access is None:
-            raise ValueError("public_access cannot be None")
-        if self.capability is None:
-            raise ValueError("capability cannot be None")
-
-
-class AcquireAttemptGuard(Generic[GenerationT, PublicAccessT, CapabilityT]):
+class AcquireAttemptGuard(Generic[GenerationT, AccessT, CapabilityT]):
     """Ensure one managed acquisition attempt is terminated exactly once.
 
-    The guard owns only attempt finalization. Domain acquisition, validation, failure mapping, and
-    committed-value construction remain with the caller. Leaving the context without an explicit
+    The attempt already owns its requested access. Domain acquisition, validation, failure mapping,
+    and capability construction remain with the caller. Leaving the context without an explicit
     commit or abandon automatically abandons the attempt so unexpected exceptions cannot strand
     lifecycle state or owned resources.
     """
@@ -61,8 +40,8 @@ class AcquireAttemptGuard(Generic[GenerationT, PublicAccessT, CapabilityT]):
 
     def __init__(
         self,
-        managed: ManagedLifecycle[GenerationT, PublicAccessT, CapabilityT],
-        attempt: AcquireAttempt[GenerationT],
+        managed: ManagedLifecycle[GenerationT, AccessT, CapabilityT],
+        attempt: AcquireAttempt[GenerationT, AccessT],
     ) -> None:
         if not isinstance(attempt, AcquireAttempt):
             raise TypeError("attempt must be AcquireAttempt")
@@ -75,6 +54,10 @@ class AcquireAttemptGuard(Generic[GenerationT, PublicAccessT, CapabilityT]):
         return self._attempt.generation
 
     @property
+    def access(self) -> AccessT:
+        return self._attempt.access
+
+    @property
     def cancellation(self) -> Event:
         return self._attempt.cancellation
 
@@ -82,7 +65,7 @@ class AcquireAttemptGuard(Generic[GenerationT, PublicAccessT, CapabilityT]):
     def resources(self) -> ResourceScope:
         return self._attempt.resource_scope
 
-    def __enter__(self) -> AcquireAttemptGuard[GenerationT, PublicAccessT, CapabilityT]:
+    def __enter__(self) -> AcquireAttemptGuard[GenerationT, AccessT, CapabilityT]:
         return self
 
     def __exit__(
@@ -105,21 +88,16 @@ class AcquireAttemptGuard(Generic[GenerationT, PublicAccessT, CapabilityT]):
     def commit(
         self,
         *,
-        public_access: PublicAccessT,
         capability: CapabilityT,
-    ) -> bool:
-        """Commit public access and capability together if this attempt still has authority."""
+    ) -> Snapshot[GenerationT, AccessT, CapabilityT] | None:
+        """Commit the capability for this attempt's access if it still has authority."""
 
-        if public_access is None:
-            # Keep the guard open so context exit still abandons the attempt.
-            raise ValueError("public_access cannot be None")
         if capability is None:
             # Keep the guard open so context exit still abandons the attempt.
             raise ValueError("capability cannot be None")
         self._finish_before_call()
         return self._managed.commit_acquire(
             self._attempt,
-            public_access=public_access,
             capability=capability,
         )
 
@@ -131,20 +109,14 @@ class AcquireAttemptGuard(Generic[GenerationT, PublicAccessT, CapabilityT]):
         self._finished = True
 
 
-class ManagedLifecycle(Generic[GenerationT, PublicAccessT, CapabilityT]):
-    """Coordinate public access, operation capability, and cleanup-debt registration.
+class ManagedLifecycle(Generic[GenerationT, AccessT, CapabilityT]):
+    """Coordinate atomic lifecycle state with cleanup-debt registration.
 
-    ``LifecycleStateMachine`` remains responsible for generation fencing and atomic state
-    transitions. It stores one private committed payload containing both caller-facing public access
-    and the capability consumers need for operations. ``ManagedLifecycle`` owns projection of that
-    payload. Metadata snapshots and lifecycle outcomes expose only public access, while
-    ``capability_snapshot()`` atomically exposes the current generation and consumer capability.
-    ``borrow_capability()`` remains a generation-fenced point-in-time capability lookup.
-
-    ``CleanupCoordinator`` remains responsible for cleanup debt and physical cleanup. Every
-    abandoned, superseded, or released resource scope is registered as cleanup debt while lifecycle
-    authority is locked, while physical cleanup is advanced only through explicit calls outside that
-    lock.
+    ``LifecycleStateMachine`` owns generation fencing and one atomic committed
+    ``Snapshot(generation, access, capability)``. ``ManagedLifecycle`` adds resource cleanup-debt
+    registration while keeping physical cleanup outside lifecycle authority locks. Snapshot reads do
+    not extend capability lifetime; ``borrow_capability()`` remains a generation-fenced
+    point-in-time lookup for consumers that already hold a generation.
     """
 
     def __init__(
@@ -154,77 +126,16 @@ class ManagedLifecycle(Generic[GenerationT, PublicAccessT, CapabilityT]):
         cleanup_handoff: CleanupHandoff,
     ) -> None:
         self._state_machine: LifecycleStateMachine[
-            GenerationT, _Committed[PublicAccessT, CapabilityT]
+            GenerationT, AccessT, CapabilityT
         ] = LifecycleStateMachine(issue_generation)
         self._cleanup = CleanupCoordinator(cleanup_handoff)
 
-    @staticmethod
-    def _project_snapshot(
-        snapshot: LifecycleSnapshot[
-            GenerationT, _Committed[PublicAccessT, CapabilityT] | None
-        ],
-    ) -> LifecycleSnapshot[GenerationT, PublicAccessT | None]:
-        committed = snapshot.access
-        return LifecycleSnapshot(
-            snapshot.generation,
-            None if committed is None else committed.public_access,
-        )
+    def read(self) -> Snapshot[GenerationT, AccessT, CapabilityT]:
+        """Return one atomic generation/access/capability snapshot."""
 
-    @staticmethod
-    def _project_capability_snapshot(
-        snapshot: LifecycleSnapshot[
-            GenerationT, _Committed[PublicAccessT, CapabilityT] | None
-        ],
-    ) -> CapabilitySnapshot[GenerationT, CapabilityT | None]:
-        committed = snapshot.access
-        return CapabilitySnapshot(
-            snapshot.generation,
-            None if committed is None else committed.capability,
-        )
+        return self._state_machine.snapshot()
 
-    @staticmethod
-    def _project_detached(
-        outcome: ReleaseAccessDetached[
-            GenerationT, _Committed[PublicAccessT, CapabilityT]
-        ],
-    ) -> ReleaseAccessDetached[GenerationT, PublicAccessT]:
-        return ReleaseAccessDetached(
-            generation=outcome.generation,
-            access=outcome.access.public_access,
-        )
-
-    @classmethod
-    def _project_release(
-        cls,
-        outcome: ReleaseResult[
-            GenerationT, _Committed[PublicAccessT, CapabilityT]
-        ],
-    ) -> ReleaseResult[GenerationT, PublicAccessT]:
-        if isinstance(outcome, ReleaseGenerationMismatch):
-            committed = outcome.access
-            return ReleaseGenerationMismatch(
-                current_generation=outcome.current_generation,
-                access=None if committed is None else committed.public_access,
-            )
-        if isinstance(outcome, (ReleaseInactive, ReleaseAcquisitionRevoked)):
-            return outcome
-        if isinstance(outcome, ReleaseAccessDetached):
-            return cls._project_detached(outcome)
-        raise TypeError("unsupported lifecycle release decision")
-
-    def snapshot(self) -> LifecycleSnapshot[GenerationT, PublicAccessT | None]:
-        """Return one atomic generation/public-access pairing."""
-
-        return self._project_snapshot(self._state_machine.snapshot())
-
-    def capability_snapshot(
-        self,
-    ) -> CapabilitySnapshot[GenerationT, CapabilityT | None]:
-        """Return one atomic generation/capability pairing without extending its lifetime."""
-
-        return self._project_capability_snapshot(self._state_machine.snapshot())
-
-    def read_diagnostics(self) -> LifecycleDiagnostics[GenerationT]:
+    def read_diagnostics(self) -> LifecycleDiagnostics[GenerationT, AccessT]:
         """Sample lifecycle and cleanup state without treating the samples as one transaction."""
 
         state = self._state_machine.read_diagnostics_snapshot()
@@ -240,31 +151,28 @@ class ManagedLifecycle(Generic[GenerationT, PublicAccessT, CapabilityT]):
 
     def begin_acquire(
         self,
+        expected: GenerationT,
+        access: AccessT,
         *,
         is_blocked: Callable[[], bool] | None = None,
-    ) -> AcquireStartResult[GenerationT, PublicAccessT]:
-        """Begin acquisition or expose only the public access of an existing commitment."""
+    ) -> AcquireStartResult[GenerationT, AccessT, CapabilityT]:
+        """Begin generation-fenced acquisition for one requested access."""
 
-        result = self._state_machine.begin_acquire(is_blocked=is_blocked)
-        if isinstance(result, AcquireStartExisting):
-            snapshot = result.snapshot
-            return AcquireStartExisting(
-                LifecycleSnapshot(
-                    snapshot.generation,
-                    snapshot.access.public_access,
-                )
-            )
-        return result
+        return self._state_machine.begin_acquire(
+            expected,
+            access,
+            is_blocked=is_blocked,
+        )
 
     def guard_acquire(
         self,
-        attempt: AcquireAttempt[GenerationT],
-    ) -> AcquireAttemptGuard[GenerationT, PublicAccessT, CapabilityT]:
+        attempt: AcquireAttempt[GenerationT, AccessT],
+    ) -> AcquireAttemptGuard[GenerationT, AccessT, CapabilityT]:
         """Guard one started attempt so every scope exit finalizes it exactly once."""
 
         return AcquireAttemptGuard(self, attempt)
 
-    def abandon_acquire(self, attempt: AcquireAttempt[GenerationT]) -> bool:
+    def abandon_acquire(self, attempt: AcquireAttempt[GenerationT, AccessT]) -> bool:
         """Abandon an attempt and atomically register every still-owned resource for cleanup."""
 
         return self._state_machine.abandon_acquire(
@@ -274,61 +182,38 @@ class ManagedLifecycle(Generic[GenerationT, PublicAccessT, CapabilityT]):
 
     def commit_acquire(
         self,
-        attempt: AcquireAttempt[GenerationT],
+        attempt: AcquireAttempt[GenerationT, AccessT],
         *,
-        public_access: PublicAccessT,
         capability: CapabilityT,
-    ) -> bool:
-        """Commit public access and capability or clean up a superseded attempt."""
+    ) -> Snapshot[GenerationT, AccessT, CapabilityT] | None:
+        """Commit capability or clean up a superseded attempt."""
 
-        committed = _Committed(public_access=public_access, capability=capability)
         return self._state_machine.commit_acquire(
             attempt,
-            committed,
+            capability,
             on_superseded=lambda: self._register_resource_scope(attempt.resource_scope),
         )
 
     def borrow_capability(self, expected: GenerationT) -> CapabilityT | None:
-        """Return the matching current capability without extending its lifecycle.
+        """Return the matching current capability without extending its lifecycle."""
 
-        Generation comparison and capability retrieval are atomic. The returned capability is only
-        known to be current at the instant it is borrowed; a concurrent release may revoke its
-        generation immediately afterward.
-        """
-
-        committed = self._state_machine.borrow_current(expected)
-        return None if committed is None else committed.capability
+        return self._state_machine.borrow_capability(expected)
 
     def release(
         self,
         expected: GenerationT,
+        access: AccessT,
         *,
         inconsistent_state_error: str = "lifecycle state is inconsistent",
-    ) -> ReleaseResult[GenerationT, PublicAccessT]:
-        """Release matching authority without exposing the committed capability."""
+    ) -> ReleaseResult[GenerationT, AccessT]:
+        """Release matching generation/access authority and register detached resources."""
 
-        projected_error: CleanupRegistrationError | None = None
-        projected_cause: BaseException | None = None
-        try:
-            outcome = self._state_machine.release(
-                expected,
-                on_access_release=(
-                    lambda _committed, resources: self._register_resource_scope(resources)
-                ),
-                inconsistent_state_error=inconsistent_state_error,
-            )
-        except CleanupRegistrationError as exc:
-            # The state transition has already happened. Rebuild the exception outside this
-            # handler so neither ``outcome`` nor exception context exposes the private capability.
-            projected_error = CleanupRegistrationError(self._project_detached(exc.outcome))
-            projected_cause = exc.__cause__
-        else:
-            return self._project_release(outcome)
-
-        assert projected_error is not None
-        if projected_cause is None:
-            raise projected_error from None
-        raise projected_error from projected_cause
+        return self._state_machine.release(
+            expected,
+            access,
+            on_access_release=self._register_resource_scope,
+            inconsistent_state_error=inconsistent_state_error,
+        )
 
     def has_cleanup_conflict(
         self,

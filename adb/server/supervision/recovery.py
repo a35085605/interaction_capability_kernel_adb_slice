@@ -4,11 +4,14 @@ from collections.abc import Callable
 from random import random
 from typing import TypeAlias
 
+from networking import TcpAddress
+
 from adb._lifecycle import (
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
+    AcquireGenerationMismatch,
     AcquireSuperseded,
 )
 from adb._recovery import (
@@ -90,21 +93,23 @@ class AdbServerRecovery:
             (
                 AcquireCommitted,
                 AcquireExisting,
+                AcquireGenerationMismatch,
                 AcquireBlocked,
                 AcquireFailed,
                 AcquireSuperseded,
             ),
         ):
             raise TypeError("result must be AdbServerAcquireOutcome")
-        if isinstance(result, (AcquireCommitted, AcquireExisting)):
-            if not isinstance(
-                result.snapshot.generation, AdbServerGeneration
-            ):
-                raise TypeError(
-                    "server acquire generation must be AdbServerGeneration"
-                )
-            if not isinstance(result.snapshot.access, AdbServerAccess):
-                raise TypeError("server acquire access must be AdbServerAccess")
+
+        if isinstance(result, (AcquireCommitted, AcquireExisting, AcquireGenerationMismatch)):
+            snapshot = result.snapshot
+            if not isinstance(snapshot.generation, AdbServerGeneration):
+                raise TypeError("server acquire generation must be AdbServerGeneration")
+            if snapshot.access is not None and not isinstance(snapshot.access, AdbServerAccess):
+                raise TypeError("server acquire access must be AdbServerAccess or None")
+            if snapshot.capability is not None and not isinstance(snapshot.capability, TcpAddress):
+                raise TypeError("server acquire capability must be TcpAddress or None")
+
         if isinstance(result, AcquireFailed) and not isinstance(
             result.failure, AdbServerLaunchFailure
         ):
@@ -116,7 +121,10 @@ class AdbServerRecovery:
 
         if isinstance(result, (AcquireCommitted, AcquireExisting)):
             outcome = RecoveryAttemptOutcome.ACQUIRED
-        elif isinstance(result, (AcquireBlocked, AcquireSuperseded)):
+        elif isinstance(
+            result,
+            (AcquireGenerationMismatch, AcquireBlocked, AcquireSuperseded),
+        ):
             outcome = RecoveryAttemptOutcome.DEFERRED
         else:
             outcome = RecoveryAttemptOutcome.FAILED

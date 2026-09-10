@@ -11,14 +11,15 @@ from adb._lifecycle import (
     AcquireCommitted,
     AcquireExisting,
     AcquireFailed,
+    AcquireGenerationMismatch,
     AcquireStartBlocked,
     AcquireStartBusy,
     AcquireStartExisting,
     AcquireSuperseded,
     LifecycleDiagnostics,
-    LifecycleSnapshot,
     ManagedLifecycle,
     ReleaseAccessDetached,
+    ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
     ReleaseGenerationMismatch,
     ReleaseInactive,
@@ -63,10 +64,10 @@ class AdbServerAcquireInterruptedError(RuntimeError):
 class AdbServerLifecycleTemplate(ABC):
     """Template for one current ADB server access and its owned resource scope.
 
-    Access information, physical ownership, and resource claims are deliberately separate. Adapters
-    add resources to the attempt ``ResourceScope`` as soon as they are obtained and define the claims
-    those resources retain. Committed access stores only caller-facing server address metadata; the shared
-    lifecycle keeps its resource scope associated with that access.
+    The requested access enters lifecycle state before resource-producing acquisition begins. This
+    lets acquire and release both fence on the complete ``(generation, access)`` target, including
+    cancellation of an in-flight acquisition. A committed state atomically pairs that access with
+    its operation capability in the public ``Snapshot``.
 
     Logical release is immediate. Matching release advances the generation and atomically registers
     every still-owned resource as cleanup debt while holding lifecycle authority. Physical cleanup
@@ -92,15 +93,13 @@ class AdbServerLifecycleTemplate(ABC):
         )
 
     def read(self) -> AdbServerState:
-        """Atomically return the current generation and usable server capability, if any."""
+        """Return one atomic generation/access/server-capability snapshot."""
 
-        state = self._managed.capability_snapshot()
-        return AdbServerState(
-            generation=state.generation,
-            capability=state.capability,
-        )
+        return self._managed.read()
 
-    def read_diagnostics(self) -> LifecycleDiagnostics[AdbServerGeneration]:
+    def read_diagnostics(
+        self,
+    ) -> LifecycleDiagnostics[AdbServerGeneration, AdbServerAccess]:
         """Sample draining work and cleanup handoff state without exposing resources."""
 
         return self._managed.read_diagnostics()
@@ -115,8 +114,9 @@ class AdbServerLifecycleTemplate(ABC):
         """Obtain usable access while recording physical ownership in ``resources``.
 
         Resource-producing operations must adopt returned resources before later work can fail.
-        Bound blocking operations and honor cancellation between them. Revocation deliberately retains
-        in-flight scope until this method returns, preventing overlapping physical acquisitions.
+        Bound blocking operations and honor cancellation between them. Revocation deliberately
+        retains in-flight scope until this method returns, preventing overlapping physical
+        acquisitions.
         """
 
     def _requested_resource_claims(
@@ -136,30 +136,41 @@ class AdbServerLifecycleTemplate(ABC):
 
     def acquire(
         self,
-        server_address: TcpAddress,
+        expected_generation: AdbServerGeneration,
+        access: AdbServerAccess,
     ) -> AdbServerAcquireOutcome:
-        if not isinstance(server_address, TcpAddress):
-            raise TypeError("server_address must be TcpAddress")
+        if not isinstance(expected_generation, AdbServerGeneration):
+            raise TypeError("expected_generation must be AdbServerGeneration")
+        if not isinstance(access, AdbServerAccess):
+            raise TypeError("access must be AdbServerAccess")
 
         self._managed.process_cleanup()
         try:
-            return self._acquire(server_address)
+            return self._acquire(expected_generation, access)
         finally:
             self._managed.process_cleanup()
 
-    def _acquire(self, server_address: TcpAddress) -> AdbServerAcquireOutcome:
+    def _acquire(
+        self,
+        expected_generation: AdbServerGeneration,
+        access: AdbServerAccess,
+    ) -> AdbServerAcquireOutcome:
+        server_address = access.server_address
         requested_claims = self._requested_resource_claims(server_address)
         start = self._managed.begin_acquire(
+            expected_generation,
+            access,
             is_blocked=(
                 None
                 if not requested_claims
                 else lambda: self._cleanup_has_conflict(requested_claims)
-            )
+            ),
         )
+        if isinstance(start, AcquireGenerationMismatch):
+            return start
         if isinstance(start, AcquireStartExisting):
             snapshot = start.snapshot
-            access = snapshot.access
-            if access.server_address == server_address:
+            if snapshot.access == access:
                 return AcquireExisting(snapshot)
             return AcquireBlocked(
                 "ADB server lifecycle already retains a different server address"
@@ -213,34 +224,42 @@ class AdbServerLifecycleTemplate(ABC):
                     "ADB server acquisition returned a different server address"
                 )
 
-            access = AdbServerAccess(server_address=obtained_server_address)
-            committed = attempt.commit(
-                public_access=access,
-                capability=access.server_address,
-            )
-            if committed:
-                return AcquireCommitted(LifecycleSnapshot(attempt.generation, access))
+            committed = attempt.commit(capability=obtained_server_address)
+            if committed is not None:
+                return AcquireCommitted(committed)
 
             return AcquireSuperseded(attempt.generation)
 
-    def release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
-        if not isinstance(expected, AdbServerGeneration):
-            raise TypeError("expected must be AdbServerGeneration")
+    def release(
+        self,
+        expected_generation: AdbServerGeneration,
+        access: AdbServerAccess,
+    ) -> AdbServerReleaseOutcome:
+        if not isinstance(expected_generation, AdbServerGeneration):
+            raise TypeError("expected_generation must be AdbServerGeneration")
+        if not isinstance(access, AdbServerAccess):
+            raise TypeError("access must be AdbServerAccess")
 
         try:
-            return self._release(expected)
+            return self._release(expected_generation, access)
         finally:
             self._managed.process_cleanup()
 
-    def _release(self, expected: AdbServerGeneration) -> AdbServerReleaseOutcome:
+    def _release(
+        self,
+        expected_generation: AdbServerGeneration,
+        access: AdbServerAccess,
+    ) -> AdbServerReleaseOutcome:
         release = self._managed.release(
-            expected,
+            expected_generation,
+            access,
             inconsistent_state_error="ADB server lifecycle state is inconsistent",
         )
         if isinstance(
             release,
             (
                 ReleaseGenerationMismatch,
+                ReleaseAccessMismatch,
                 ReleaseInactive,
                 ReleaseAcquisitionRevoked,
                 ReleaseAccessDetached,

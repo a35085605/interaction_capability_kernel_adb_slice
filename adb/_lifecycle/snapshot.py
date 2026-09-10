@@ -10,37 +10,24 @@ CapabilityT = TypeVar("CapabilityT")
 
 
 @dataclass(frozen=True, slots=True)
-class LifecycleSnapshot(Generic[GenerationT, AccessT]):
-    """One atomic pairing of lifecycle authority generation and access information."""
+class Snapshot(Generic[GenerationT, AccessT, CapabilityT]):
+    """One atomic lifecycle generation/access/capability snapshot.
 
-    generation: GenerationT
-    access: AccessT
-
-    def __post_init__(self) -> None:
-        if self.generation is None:
-            raise TypeError("generation cannot be None")
-
-
-@dataclass(frozen=True, slots=True)
-class CapabilitySnapshot(Generic[GenerationT, CapabilityT]):
-    """One atomic pairing of lifecycle authority generation and operation capability.
-
-    ``access`` is an alias of ``capability`` for snapshot consumers that use the shared
-    access-oriented snapshot vocabulary. Neither name leases or extends the capability lifetime.
+    Committed state is represented as ``(generation, access, capability)``. Uncommitted state is
+    represented as ``(generation, None, None)``. Capturing a snapshot does not lease or extend the
+    lifetime of its capability; a concurrent release may revoke the generation immediately after
+    the snapshot is returned.
     """
 
     generation: GenerationT
-    capability: CapabilityT
+    access: AccessT | None = None
+    capability: CapabilityT | None = None
 
     def __post_init__(self) -> None:
         if self.generation is None:
             raise TypeError("generation cannot be None")
-
-    @property
-    def access(self) -> CapabilityT:
-        """Return the captured capability through the shared snapshot access vocabulary."""
-
-        return self.capability
+        if (self.access is None) != (self.capability is None):
+            raise ValueError("access and capability must either both be present or both be None")
 
 
-__all__ = ["CapabilitySnapshot", "LifecycleSnapshot"]
+__all__ = ["Snapshot"]
