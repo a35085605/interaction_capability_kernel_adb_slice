@@ -1,6 +1,7 @@
 """Host-side ADB server, transport-list, transport, and protocol capabilities."""
 
 from adb._lifecycle import (
+    AcquireAccessMismatch,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
@@ -66,6 +67,7 @@ from adb.transport import (
 )
 
 __all__ = [
+    "AcquireAccessMismatch",
     "AcquireBlocked",
     "AcquireCommitted",
     "AcquireExisting",

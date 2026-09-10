@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Protocol, TypeAlias, runtime_checkable
 
 from adb._lifecycle import (
+    AcquireAccessMismatch,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
@@ -35,6 +36,7 @@ AdbTransportListWatchAcquireOutcome: TypeAlias = (
         AdbTransportListWatchAccess,
         AdbTransportListWatchStream,
     ]
+    | AcquireAccessMismatch[AdbTransportListWatchAccess]
     | GenerationMismatch[AdbTransportListWatchGeneration]
     | AcquireBlocked
     | AcquireFailed[AdbTransportListWatchFailure]
@@ -90,6 +92,7 @@ class AdbTransportListWatchLifecycleFactory(Protocol):
 
 
 __all__ = [
+    "AcquireAccessMismatch",
     "AcquireBlocked",
     "AcquireCommitted",
     "AcquireExisting",

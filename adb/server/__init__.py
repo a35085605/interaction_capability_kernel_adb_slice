@@ -1,6 +1,7 @@
 """ADB server address, generation, lifecycle, access, state, and failure contracts."""
 
 from adb._lifecycle import (
+    AcquireAccessMismatch,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
@@ -36,6 +37,7 @@ from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerState, AdbServerStateView
 
 __all__ = [
+    "AcquireAccessMismatch",
     "AcquireBlocked",
     "AcquireCommitted",
     "AcquireExisting",

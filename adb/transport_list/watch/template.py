@@ -13,6 +13,7 @@ from adb._lifecycle import (
     AcquireAttemptAbandoned,
     AcquireAttemptCommitted,
     AcquireAttemptRevoked,
+    AcquireAccessMismatch,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
@@ -192,9 +193,8 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             snapshot = start.snapshot
             if snapshot.access == access:
                 return AcquireExisting(snapshot)
-            return AcquireBlocked(
-                "ADB transport-list watch lifecycle already retains a different server address"
-            )
+            assert snapshot.access is not None
+            return AcquireAccessMismatch(snapshot.access)
         if isinstance(start, AcquireStartBusy):
             return AcquireBlocked(
                 "ADB transport-list watch lifecycle is draining a revoked acquisition"

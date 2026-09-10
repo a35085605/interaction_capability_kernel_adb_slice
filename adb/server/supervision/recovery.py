@@ -7,6 +7,7 @@ from typing import TypeAlias
 from networking import TcpAddress
 
 from adb._lifecycle import (
+    AcquireAccessMismatch,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
@@ -93,6 +94,7 @@ class AdbServerRecovery:
             (
                 AcquireCommitted,
                 AcquireExisting,
+                AcquireAccessMismatch,
                 GenerationMismatch,
                 AcquireBlocked,
                 AcquireFailed,
@@ -110,6 +112,10 @@ class AdbServerRecovery:
             if snapshot.capability is not None and not isinstance(snapshot.capability, TcpAddress):
                 raise TypeError("server acquire capability must be TcpAddress or None")
 
+        if isinstance(result, AcquireAccessMismatch) and not isinstance(
+            result.current_access, AdbServerAccess
+        ):
+            raise TypeError("server current access must be AdbServerAccess")
         if isinstance(result, GenerationMismatch) and not isinstance(
             result.current_generation, AdbServerGeneration
         ):
@@ -127,7 +133,7 @@ class AdbServerRecovery:
             outcome = RecoveryAttemptOutcome.ACQUIRED
         elif isinstance(
             result,
-            (GenerationMismatch, AcquireBlocked, AcquireSuperseded),
+            (AcquireAccessMismatch, GenerationMismatch, AcquireBlocked, AcquireSuperseded),
         ):
             outcome = RecoveryAttemptOutcome.DEFERRED
         else:

@@ -5,6 +5,7 @@ from typing import Protocol, TypeAlias, runtime_checkable
 from networking import TcpAddress
 
 from adb._lifecycle import (
+    AcquireAccessMismatch,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
@@ -25,6 +26,7 @@ from adb.server.state import AdbServerStateView
 AdbServerAcquireOutcome: TypeAlias = (
     AcquireCommitted[AdbServerGeneration, AdbServerAccess, TcpAddress]
     | AcquireExisting[AdbServerGeneration, AdbServerAccess, TcpAddress]
+    | AcquireAccessMismatch[AdbServerAccess]
     | GenerationMismatch[AdbServerGeneration]
     | AcquireBlocked
     | AcquireFailed[AdbServerLaunchFailure]
@@ -77,6 +79,7 @@ class AdbServerLifecycleFactory(Protocol):
 
 
 __all__ = [
+    "AcquireAccessMismatch",
     "AcquireBlocked",
     "AcquireCommitted",
     "AcquireExisting",

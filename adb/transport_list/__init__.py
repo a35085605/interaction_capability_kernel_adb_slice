@@ -1,6 +1,7 @@
 """ADB transport-list values, resolution, projection state, readers, queries, and watch authority."""
 
 from adb._lifecycle import (
+    AcquireAccessMismatch,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
@@ -44,6 +45,7 @@ from adb.transport_list.state import (
 )
 
 __all__ = [
+    "AcquireAccessMismatch",
     "AcquireBlocked",
     "AcquireCommitted",
     "AcquireExisting",

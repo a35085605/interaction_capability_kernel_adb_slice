@@ -165,6 +165,17 @@ class AcquireExisting(Generic[GenerationT, AccessT, CapabilityT]):
 
 
 @dataclass(frozen=True, slots=True)
+class AcquireAccessMismatch(Generic[AccessT]):
+    """Generation matches, but committed access does not match the requested acquire access."""
+
+    current_access: AccessT
+
+    def __post_init__(self) -> None:
+        if self.current_access is None:
+            raise TypeError("current_access cannot be None")
+
+
+@dataclass(frozen=True, slots=True)
 class AcquireBlocked:
     """The completed acquire request cannot currently proceed."""
 
@@ -260,6 +271,7 @@ __all__ = [
     "AcquireAttemptAbandoned",
     "AcquireAttemptCommitted",
     "AcquireAttemptRevoked",
+    "AcquireAccessMismatch",
     "AcquireBlocked",
     "AcquireCommitResult",
     "AcquireCommitted",

@@ -5,6 +5,7 @@ from random import random
 from typing import TypeAlias
 
 from adb._lifecycle import (
+    AcquireAccessMismatch,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
@@ -104,6 +105,7 @@ class AdbTransportListWatchRecovery:
             (
                 AcquireCommitted,
                 AcquireExisting,
+                AcquireAccessMismatch,
                 GenerationMismatch,
                 AcquireBlocked,
                 AcquireFailed,
@@ -129,6 +131,10 @@ class AdbTransportListWatchRecovery:
                     "watch acquire capability must satisfy AdbTransportListWatchStream or be None"
                 )
 
+        if isinstance(result, AcquireAccessMismatch) and not isinstance(
+            result.current_access, AdbTransportListWatchAccess
+        ):
+            raise TypeError("watch current access must be AdbTransportListWatchAccess")
         if isinstance(result, GenerationMismatch) and not isinstance(
             result.current_generation, AdbTransportListWatchGeneration
         ):
@@ -150,7 +156,7 @@ class AdbTransportListWatchRecovery:
             outcome = RecoveryAttemptOutcome.ACQUIRED
         elif isinstance(
             result,
-            (GenerationMismatch, AcquireBlocked, AcquireSuperseded),
+            (AcquireAccessMismatch, GenerationMismatch, AcquireBlocked, AcquireSuperseded),
         ):
             outcome = RecoveryAttemptOutcome.DEFERRED
         else:

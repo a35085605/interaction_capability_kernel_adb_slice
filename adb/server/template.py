@@ -11,6 +11,7 @@ from adb._lifecycle import (
     AcquireAttemptAbandoned,
     AcquireAttemptCommitted,
     AcquireAttemptRevoked,
+    AcquireAccessMismatch,
     AcquireBlocked,
     AcquireCommitted,
     AcquireExisting,
@@ -186,9 +187,8 @@ class AdbServerLifecycleTemplate(ABC):
             snapshot = start.snapshot
             if snapshot.access == access:
                 return AcquireExisting(snapshot)
-            return AcquireBlocked(
-                "ADB server lifecycle already retains a different server address"
-            )
+            assert snapshot.access is not None
+            return AcquireAccessMismatch(snapshot.access)
         if isinstance(start, AcquireStartBusy):
             return AcquireBlocked(
                 "ADB server lifecycle is draining a revoked acquisition"
