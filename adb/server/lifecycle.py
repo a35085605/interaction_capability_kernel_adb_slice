@@ -19,10 +19,6 @@ from adb._lifecycle import (
 )
 from adb.server.access import AdbServerAccess
 from adb.server.failure import AdbServerLaunchFailure
-from adb.server.errors import (
-    AdbServerLifecycleConsistencyError,
-    AdbServerLifecycleError,
-)
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerStateView
 
@@ -92,8 +88,6 @@ __all__ = [
     "AdbServerAcquireOutcome",
     "AdbServerLifecycle",
     "AdbServerLifecycleFactory",
-    "AdbServerLifecycleConsistencyError",
-    "AdbServerLifecycleError",
     "AdbServerReleaseOutcome",
     "ReleaseAccessDetached",
     "ReleaseAccessMismatch",

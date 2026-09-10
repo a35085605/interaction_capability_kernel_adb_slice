@@ -18,8 +18,6 @@ from adb.server.lifecycle import (
     AdbServerAccess,
     AdbServerAcquireOutcome,
     AdbServerLifecycle,
-    AdbServerLifecycleConsistencyError,
-    AdbServerLifecycleError,
     AdbServerLifecycleFactory,
     AdbServerReleaseOutcome,
 )
@@ -53,8 +51,6 @@ __all__ = [
     "AdbServerGenerationIssuer",
     "AdbServerLaunchFailure",
     "AdbServerLifecycle",
-    "AdbServerLifecycleConsistencyError",
-    "AdbServerLifecycleError",
     "AdbServerLifecycleFactory",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",

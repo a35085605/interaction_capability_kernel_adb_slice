@@ -29,7 +29,6 @@ from adb.cleanup import CleanupHandoff
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerState
-from adb.server.errors import AdbServerLifecycleConsistencyError
 from adb.server.lifecycle import (
     AdbServerAccess,
     AdbServerAcquireOutcome,
@@ -220,7 +219,7 @@ class AdbServerLifecycleTemplate(ABC):
                 revoked = attempt.abandon()
                 if revoked:
                     return AcquireSuperseded(attempt.generation)
-                raise AdbServerLifecycleConsistencyError(
+                raise RuntimeError(
                     "ADB server acquisition returned a different server address"
                 )
 
