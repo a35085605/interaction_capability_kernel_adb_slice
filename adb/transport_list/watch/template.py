@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from dataclasses import dataclass
 from threading import Event
 from typing import Protocol
 
@@ -84,14 +83,6 @@ class _AdbTransportListWatchStreamView:
         return self.__resource.updates()
 
 
-@dataclass(frozen=True, slots=True)
-class _WatchAccess:
-    """Committed producer capability; physical ownership lives in the lifecycle scope."""
-
-    stream: AdbTransportListWatchStream
-    access: AdbTransportListWatchAccess
-
-
 class AdbTransportListWatchLifecycleTemplate(ABC):
     """Template for one current watch generation and its physical resource scope.
 
@@ -113,7 +104,9 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if not isinstance(cleanup_handoff, CleanupHandoff):
             raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
         self._managed: ManagedLifecycle[
-            AdbTransportListWatchGeneration, _WatchAccess
+            AdbTransportListWatchGeneration,
+            AdbTransportListWatchAccess,
+            AdbTransportListWatchStream,
         ] = ManagedLifecycle(
             generation_issuer.issue,
             cleanup_handoff=cleanup_handoff,
@@ -123,10 +116,9 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         """Atomically return current generation and usable server address metadata, if any."""
 
         state = self._managed.snapshot()
-        access = state.access
         return AdbTransportListWatchState(
             generation=state.generation,
-            access=None if access is None else access.access,
+            access=state.access,
         )
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbTransportListWatchGeneration]:
@@ -156,11 +148,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         if not isinstance(expected, AdbTransportListWatchGeneration):
             raise TypeError("expected must be AdbTransportListWatchGeneration")
 
-        state = self._managed.snapshot()
-        access = state.access
-        if expected != state.generation or access is None:
-            return None
-        return access.stream
+        return self._managed.borrow_capability(expected)
 
     def acquire(
         self,
@@ -179,11 +167,8 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         start = self._managed.begin_acquire()
         if isinstance(start, AcquireStartExisting):
             snapshot = start.snapshot
-            access = snapshot.access
-            if access.access.server_address == server_address:
-                return AcquireExisting(
-                    LifecycleSnapshot(snapshot.generation, access.access)
-                )
+            if snapshot.access.server_address == server_address:
+                return AcquireExisting(snapshot)
             return AcquireBlocked(
                 "ADB transport-list watch lifecycle already retains a different server address"
             )
@@ -222,11 +207,11 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 return AcquireFailed(exc.failure)
 
             public_access = AdbTransportListWatchAccess(server_address=server_address)
-            access = _WatchAccess(
-                stream=_AdbTransportListWatchStreamView(resource),
-                access=public_access,
+            capability = _AdbTransportListWatchStreamView(resource)
+            committed = attempt.commit(
+                public_access=public_access,
+                capability=capability,
             )
-            committed = attempt.commit(access)
             if committed:
                 return AcquireCommitted(
                     LifecycleSnapshot(attempt.generation, public_access)
@@ -255,19 +240,16 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                 "ADB transport-list watch lifecycle state is inconsistent"
             ),
         )
-        if isinstance(release, ReleaseGenerationMismatch):
-            access = release.access
-            return ReleaseGenerationMismatch(
-                current_generation=release.current_generation,
-                access=None if access is None else access.access,
-            )
-        if isinstance(release, (ReleaseInactive, ReleaseAcquisitionRevoked)):
+        if isinstance(
+            release,
+            (
+                ReleaseGenerationMismatch,
+                ReleaseInactive,
+                ReleaseAcquisitionRevoked,
+                ReleaseAccessDetached,
+            ),
+        ):
             return release
-        if isinstance(release, ReleaseAccessDetached):
-            return ReleaseAccessDetached(
-                generation=release.generation,
-                access=release.access.access,
-            )
         raise TypeError("unsupported shared lifecycle release decision")
 
 

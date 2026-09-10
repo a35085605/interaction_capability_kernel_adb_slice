@@ -201,6 +201,19 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT]):
         with self._lock:
             return self._snapshot_locked()
 
+    def borrow_current(self, expected: GenerationT) -> AccessT | None:
+        """Return matching current access as a point-in-time atomic borrow.
+
+        The state lock protects the generation comparison and value retrieval only. The returned
+        value is not leased and may become stale immediately after this method returns.
+        """
+
+        with self._lock:
+            state = self._state
+            if not isinstance(state, _Current) or expected != state.generation:
+                return None
+            return state.access
+
     def begin_acquire(
         self,
         *,

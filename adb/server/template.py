@@ -85,7 +85,7 @@ class AdbServerLifecycleTemplate(ABC):
         if not isinstance(cleanup_handoff, CleanupHandoff):
             raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
         self._managed: ManagedLifecycle[
-            AdbServerGeneration, AdbServerAccess
+            AdbServerGeneration, AdbServerAccess, TcpAddress
         ] = ManagedLifecycle(
             generation_issuer.issue,
             cleanup_handoff=cleanup_handoff,
@@ -215,7 +215,10 @@ class AdbServerLifecycleTemplate(ABC):
                 )
 
             access = AdbServerAccess(server_address=obtained_server_address)
-            committed = attempt.commit(access)
+            committed = attempt.commit(
+                public_access=access,
+                capability=access.server_address,
+            )
             if committed:
                 return AcquireCommitted(LifecycleSnapshot(attempt.generation, access))
 
