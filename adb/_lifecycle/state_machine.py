@@ -419,10 +419,7 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
                 raise RuntimeError("issue_generation must return a fresh generation")
 
             self._state = _Idle(next_generation)
-            outcome = ReleaseAccessDetached(
-                state.access,
-                next_generation,
-            )
+            outcome = ReleaseAccessDetached(next_generation)
             if on_access_release is not None:
                 try:
                     self._register_cleanup_locked(

@@ -45,10 +45,7 @@ AdbTransportListWatchAcquireOutcome: TypeAlias = (
 
 AdbTransportListWatchReleaseOutcome: TypeAlias = (
     ReleaseAcquisitionRevoked[AdbTransportListWatchGeneration]
-    | ReleaseAccessDetached[
-        AdbTransportListWatchGeneration,
-        AdbTransportListWatchAccess,
-    ]
+    | ReleaseAccessDetached[AdbTransportListWatchGeneration]
     | ReleaseAccessMismatch[AdbTransportListWatchAccess]
     | ReleaseInactive
     | GenerationMismatch[AdbTransportListWatchGeneration]

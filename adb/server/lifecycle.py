@@ -35,7 +35,7 @@ AdbServerAcquireOutcome: TypeAlias = (
 
 AdbServerReleaseOutcome: TypeAlias = (
     ReleaseAcquisitionRevoked[AdbServerGeneration]
-    | ReleaseAccessDetached[AdbServerGeneration, AdbServerAccess]
+    | ReleaseAccessDetached[AdbServerGeneration]
     | ReleaseAccessMismatch[AdbServerAccess]
     | ReleaseInactive
     | GenerationMismatch[AdbServerGeneration]

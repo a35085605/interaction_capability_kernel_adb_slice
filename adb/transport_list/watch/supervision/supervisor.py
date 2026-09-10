@@ -122,7 +122,7 @@ class AdbTransportListWatchSupervisor:
         if not isinstance(release, ReleaseAccessDetached):
             return
 
-        self._request_recovery(_RecoveryTarget(release.next_generation, release.access))
+        self._request_recovery(_RecoveryTarget(release.next_generation, access))
 
     def _request_recovery(self, target: _RecoveryTarget) -> None:
         """Start recovery for one committed failed-watch release."""

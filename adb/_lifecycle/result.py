@@ -235,15 +235,12 @@ class ReleaseAcquisitionRevoked(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseAccessDetached(Generic[GenerationT, AccessT]):
+class ReleaseAccessDetached(Generic[GenerationT]):
     """Matching committed access was detached from the current lifecycle state."""
 
-    access: AccessT
     next_generation: GenerationT
 
     def __post_init__(self) -> None:
-        if self.access is None:
-            raise TypeError("access cannot be None")
         if self.next_generation is None:
             raise TypeError("next_generation cannot be None")
 
@@ -253,7 +250,7 @@ ReleaseResult: TypeAlias = (
     | ReleaseAccessMismatch[AccessT]
     | ReleaseInactive
     | ReleaseAcquisitionRevoked[GenerationT]
-    | ReleaseAccessDetached[GenerationT, AccessT]
+    | ReleaseAccessDetached[GenerationT]
 )
 
 
