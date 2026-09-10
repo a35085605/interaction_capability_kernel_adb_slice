@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import subprocess
 
-from adb.adapters.subprocess.command import (
-    normalize_executable,
-    normalize_timeout,
-    run_adb,
-    server_args,
-)
-from networking import TcpAddress
+from adb.adapters.subprocess.command import normalize_executable, normalize_timeout
 from adb.transport.address import AdbConnectAddress
 from adb.transport.lifecycle.control.result import (
     AdbTcpTransportConnectCommandSucceeded,
@@ -19,30 +14,46 @@ from adb.transport.lifecycle.control.result import (
     AdbTcpTransportDisconnectCommandSucceeded,
     AdbTcpTransportDisconnectResult,
 )
-from native_attempt import NativeAttemptResult, NativeAttemptStatus
+from networking import TcpAddress
 
 
-def _attempt_diagnostic(attempt: NativeAttemptResult) -> str | None:
-    if attempt.diagnostic is not None:
-        return attempt.diagnostic
-    if attempt.native_code is not None:
-        return f"native attempt code: {attempt.native_code}"
-    return None
+def _exception_diagnostic(exc: BaseException) -> str:
+    return str(exc).strip() or type(exc).__name__
 
 
-def _control_failure_from_attempt(
-    attempt: NativeAttemptResult,
+def _completed_diagnostic(completed: subprocess.CompletedProcess[str]) -> str | None:
+    return "\n".join(
+        part
+        for part in (completed.stdout.strip(), completed.stderr.strip())
+        if part
+    ) or None
+
+
+def _run_control_command(
+    executable: str,
+    timeout_seconds: float,
+    args: list[str],
 ) -> AdbTcpTransportControlFailure | None:
-    if not isinstance(attempt, NativeAttemptResult):
-        raise TypeError("attempt must be NativeAttemptResult")
-    if attempt.status is NativeAttemptStatus.SUCCEEDED:
+    try:
+        completed = subprocess.run(
+            [executable, *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return AdbTcpTransportControlTimedOut(diagnostic=_exception_diagnostic(exc))
+    except OSError as exc:
+        return AdbTcpTransportControlFailed(diagnostic=_exception_diagnostic(exc))
+
+    if completed.returncode == 0:
         return None
-    diagnostic = _attempt_diagnostic(attempt)
-    if attempt.status is NativeAttemptStatus.TIMED_OUT:
-        return AdbTcpTransportControlTimedOut(diagnostic=diagnostic)
-    if attempt.status is NativeAttemptStatus.FAILED:
-        return AdbTcpTransportControlFailed(diagnostic=diagnostic)
-    raise TypeError("unsupported native attempt status")
+
+    diagnostic = _completed_diagnostic(completed)
+    if diagnostic is None:
+        diagnostic = f"ADB subprocess exited with code {completed.returncode}"
+    return AdbTcpTransportControlFailed(diagnostic=diagnostic)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,15 +70,24 @@ class SubprocessAdbTransportController:
         object.__setattr__(self, "executable", normalize_executable(self.executable))
         object.__setattr__(self, "timeout_seconds", normalize_timeout(self.timeout_seconds))
 
+    def _args(self, command: str, address: AdbConnectAddress) -> list[str]:
+        return [
+            "-H",
+            self.server_address.host,
+            "-P",
+            str(self.server_address.port),
+            command,
+            address.value,
+        ]
+
     def connect(self, address: AdbConnectAddress) -> AdbTcpTransportConnectResult:
         if not isinstance(address, AdbConnectAddress):
             raise TypeError("address must be AdbConnectAddress")
-        attempt = run_adb(
+        failure = _run_control_command(
             self.executable,
             self.timeout_seconds,
-            [*server_args(self.server_address), "connect", address.value],
+            self._args("connect", address),
         )
-        failure = _control_failure_from_attempt(attempt)
         if failure is not None:
             return failure
         return AdbTcpTransportConnectCommandSucceeded()
@@ -75,12 +95,11 @@ class SubprocessAdbTransportController:
     def disconnect(self, address: AdbConnectAddress) -> AdbTcpTransportDisconnectResult:
         if not isinstance(address, AdbConnectAddress):
             raise TypeError("address must be AdbConnectAddress")
-        attempt = run_adb(
+        failure = _run_control_command(
             self.executable,
             self.timeout_seconds,
-            [*server_args(self.server_address), "disconnect", address.value],
+            self._args("disconnect", address),
         )
-        failure = _control_failure_from_attempt(attempt)
         if failure is not None:
             return failure
         return AdbTcpTransportDisconnectCommandSucceeded()

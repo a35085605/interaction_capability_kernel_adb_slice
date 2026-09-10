@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import math
-import subprocess
-from networking import TcpAddress
-from native_attempt import NativeAttemptResult, NativeAttemptStatus, NativeCompletionScope
 
 
 def normalize_executable(value: object) -> str:
@@ -25,71 +21,4 @@ def normalize_timeout(value: object) -> float:
     return normalized
 
 
-def server_args(server_address: TcpAddress) -> list[str]:
-    if not isinstance(server_address, TcpAddress):
-        raise TypeError("server_address must be TcpAddress")
-    return ["-H", server_address.host, "-P", str(server_address.port)]
-
-
-
-def run_adb(
-    executable: str,
-    timeout_seconds: float,
-    args: list[str],
-) -> NativeAttemptResult:
-    started_at = datetime.now(timezone.utc)
-    run_kwargs: dict[str, object] = {
-        "capture_output": True,
-        "text": True,
-        "check": False,
-        "timeout": timeout_seconds,
-    }
-    try:
-        completed = subprocess.run([executable, *args], **run_kwargs)
-    except subprocess.TimeoutExpired as exc:
-        return NativeAttemptResult(
-            status=NativeAttemptStatus.TIMED_OUT,
-            completion_scope=None,
-            backend_id="adb-subprocess",
-            started_at=started_at,
-            finished_at=datetime.now(timezone.utc),
-            native_code=type(exc).__name__,
-            diagnostic=str(exc),
-        )
-    except OSError as exc:
-        return NativeAttemptResult(
-            status=NativeAttemptStatus.FAILED,
-            completion_scope=None,
-            backend_id="adb-subprocess",
-            started_at=started_at,
-            finished_at=datetime.now(timezone.utc),
-            native_code=type(exc).__name__,
-            diagnostic=str(exc),
-        )
-
-    diagnostic = "\n".join(
-        part
-        for part in (completed.stdout.strip(), completed.stderr.strip())
-        if part
-    ) or None
-    return NativeAttemptResult(
-        status=(
-            NativeAttemptStatus.SUCCEEDED
-            if completed.returncode == 0
-            else NativeAttemptStatus.FAILED
-        ),
-        completion_scope=NativeCompletionScope.PROCESS_EXIT,
-        backend_id="adb-subprocess",
-        started_at=started_at,
-        finished_at=datetime.now(timezone.utc),
-        native_code=str(completed.returncode),
-        diagnostic=diagnostic,
-    )
-
-
-__all__ = [
-    "normalize_executable",
-    "normalize_timeout",
-    "run_adb",
-    "server_args",
-]
+__all__ = ["normalize_executable", "normalize_timeout"]
