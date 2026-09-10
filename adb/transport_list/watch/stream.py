@@ -10,9 +10,11 @@ from adb.transport_list.model import AdbTransportList
 class AdbTransportListWatchStream(Protocol):
     """Producer-facing stream of complete transport-list snapshots.
 
-    The stream is a data-plane capability only. It does not own the physical watch resource and
-    therefore exposes no cancellation or cleanup operations. Backend release may retire the
-    underlying resource concurrently, ending ``updates()``.
+    The stream is a single-consumer data-plane capability only. Repeated state reads for one
+    committed generation may return this same stream; callers must not consume ``updates()`` from
+    multiple consumers. It does not own the physical watch resource and therefore exposes no
+    cancellation or cleanup operations. Backend release may retire the underlying resource
+    concurrently, ending ``updates()``.
     """
 
     @property

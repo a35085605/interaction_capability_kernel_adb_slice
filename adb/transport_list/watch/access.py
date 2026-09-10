@@ -7,9 +7,9 @@ from networking import TcpAddress
 
 @dataclass(frozen=True, slots=True)
 class AdbTransportListWatchAccess:
-    """Server address metadata published by a transport-list watch lifecycle.
+    """Control-plane server address metadata published by a watch lifecycle.
 
-    The enclosing state or snapshot pairs this value with its authority generation.
+    Acquire/release outcomes pair this value with the authority generation they describe.
     """
 
     server_address: TcpAddress

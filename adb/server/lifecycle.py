@@ -45,8 +45,10 @@ AdbServerReleaseOutcome: TypeAlias = (
 class AdbServerLifecycle(AdbServerStateView, Protocol):
     """Sole authority for one runtime-scoped ADB server generation.
 
-    ``read()`` exposes public server address state only. Pending work, cleanup diagnostics, physical
-    resources, and resource claims remain lifecycle implementation details.
+    ``read()`` exposes an atomic generation/server-capability snapshot for data-plane consumers.
+    Acquire/release outcomes retain public server-address metadata for control-plane coordination.
+    Pending work, cleanup diagnostics, physical resources, and resource claims remain lifecycle
+    implementation details.
     """
 
     def acquire(

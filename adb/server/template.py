@@ -92,13 +92,12 @@ class AdbServerLifecycleTemplate(ABC):
         )
 
     def read(self) -> AdbServerState:
-        """Atomically return the current generation and its usable server address, if any."""
+        """Atomically return the current generation and usable server capability, if any."""
 
-        state = self._managed.snapshot()
-        access = state.access
+        state = self._managed.capability_snapshot()
         return AdbServerState(
             generation=state.generation,
-            access=access,
+            capability=state.capability,
         )
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbServerGeneration]:

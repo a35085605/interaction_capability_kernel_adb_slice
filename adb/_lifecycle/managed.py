@@ -19,7 +19,7 @@ from adb._lifecycle.result import (
     ReleaseInactive,
     ReleaseResult,
 )
-from adb._lifecycle.snapshot import LifecycleSnapshot
+from adb._lifecycle.snapshot import CapabilitySnapshot, LifecycleSnapshot
 from adb._lifecycle.state_machine import LifecycleStateMachine
 from adb.cleanup import (
     CleanupCoordinator,
@@ -137,8 +137,9 @@ class ManagedLifecycle(Generic[GenerationT, PublicAccessT, CapabilityT]):
     ``LifecycleStateMachine`` remains responsible for generation fencing and atomic state
     transitions. It stores one private committed payload containing both caller-facing public access
     and the capability consumers need for operations. ``ManagedLifecycle`` owns projection of that
-    payload: snapshots and lifecycle outcomes expose only public access, while
-    ``borrow_capability()`` performs a generation-fenced point-in-time capability lookup.
+    payload. Metadata snapshots and lifecycle outcomes expose only public access, while
+    ``capability_snapshot()`` atomically exposes the current generation and consumer capability.
+    ``borrow_capability()`` remains a generation-fenced point-in-time capability lookup.
 
     ``CleanupCoordinator`` remains responsible for cleanup debt and physical cleanup. Every
     abandoned, superseded, or released resource scope is registered as cleanup debt while lifecycle
@@ -167,6 +168,18 @@ class ManagedLifecycle(Generic[GenerationT, PublicAccessT, CapabilityT]):
         return LifecycleSnapshot(
             snapshot.generation,
             None if committed is None else committed.public_access,
+        )
+
+    @staticmethod
+    def _project_capability_snapshot(
+        snapshot: LifecycleSnapshot[
+            GenerationT, _Committed[PublicAccessT, CapabilityT] | None
+        ],
+    ) -> CapabilitySnapshot[GenerationT, CapabilityT | None]:
+        committed = snapshot.access
+        return CapabilitySnapshot(
+            snapshot.generation,
+            None if committed is None else committed.capability,
         )
 
     @staticmethod
@@ -203,6 +216,13 @@ class ManagedLifecycle(Generic[GenerationT, PublicAccessT, CapabilityT]):
         """Return one atomic generation/public-access pairing."""
 
         return self._project_snapshot(self._state_machine.snapshot())
+
+    def capability_snapshot(
+        self,
+    ) -> CapabilitySnapshot[GenerationT, CapabilityT | None]:
+        """Return one atomic generation/capability pairing without extending its lifetime."""
+
+        return self._project_capability_snapshot(self._state_machine.snapshot())
 
     def read_diagnostics(self) -> LifecycleDiagnostics[GenerationT]:
         """Sample lifecycle and cleanup state without treating the samples as one transaction."""

@@ -113,12 +113,12 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         )
 
     def read(self) -> AdbTransportListWatchState:
-        """Atomically return current generation and usable server address metadata, if any."""
+        """Atomically return current generation and single-consumer watch stream, if any."""
 
-        state = self._managed.snapshot()
+        state = self._managed.capability_snapshot()
         return AdbTransportListWatchState(
             generation=state.generation,
-            access=state.access,
+            capability=state.capability,
         )
 
     def read_diagnostics(self) -> LifecycleDiagnostics[AdbTransportListWatchGeneration]:
@@ -138,17 +138,6 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
     def _schedule_cleanup(self, resource: _AdbTransportListWatchResource) -> None:
         self._managed.register_cleanup(resource, lambda: resource.close())
         self._managed.process_cleanup()
-
-    def _borrow_stream(
-        self,
-        expected: AdbTransportListWatchGeneration,
-    ) -> AdbTransportListWatchStream | None:
-        """Return the narrow producer stream while the matching watch generation is current."""
-
-        if not isinstance(expected, AdbTransportListWatchGeneration):
-            raise TypeError("expected must be AdbTransportListWatchGeneration")
-
-        return self._managed.borrow_capability(expected)
 
     def acquire(
         self,

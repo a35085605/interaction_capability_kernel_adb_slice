@@ -7,9 +7,9 @@ from networking import TcpAddress
 
 @dataclass(frozen=True, slots=True)
 class AdbServerAccess:
-    """Server address metadata published by an ADB server lifecycle.
+    """Control-plane server address metadata published by an ADB server lifecycle.
 
-    The enclosing state or snapshot pairs this value with its authority generation.
+    Acquire/release outcomes pair this value with the authority generation they describe.
     """
 
     server_address: TcpAddress
