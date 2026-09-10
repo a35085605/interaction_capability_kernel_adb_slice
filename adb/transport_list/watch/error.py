@@ -19,7 +19,7 @@ class AdbTransportListWatchError(AdbError):
 
 
 class AdbTransportListWatchCancelledError(RuntimeError):
-    """The watch attachment was closed before a watch became established."""
+    """The watch acquisition was cancelled before usable access was established."""
 
 
 __all__ = [

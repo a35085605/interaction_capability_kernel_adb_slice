@@ -46,7 +46,7 @@ AdbTransportListWatchReleaseOutcome: TypeAlias = (
 class AdbTransportListWatchLifecycle(AdbTransportListWatchStateView, Protocol):
     """Sole authority for one runtime-scoped transport-list watch generation.
 
-    The public access value contains endpoint metadata only. The lifecycle-private stream/handle and
+    The public access value contains endpoint metadata only. The lifecycle-private stream resource and
     cleanup ownership remain separate from this contract.
     """
 

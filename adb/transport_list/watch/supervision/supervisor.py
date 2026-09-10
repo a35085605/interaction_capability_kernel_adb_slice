@@ -74,7 +74,7 @@ class AdbTransportListWatchSupervisor:
             self._started = True
 
     def close(self) -> None:
-        """Stop supervision while retaining the current healthy watch."""
+        """Stop supervision without releasing the current watch lifecycle access."""
 
         with self._lock:
             if self._closed:

@@ -44,7 +44,7 @@ from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 
 class AdbTransportListWatchAcquireError(RuntimeError):
-    """Expected failure while obtaining a usable transport-list watch handle."""
+    """Expected failure while establishing usable transport-list watch access."""
 
     def __init__(self, failure: AdbTransportListWatchFailure) -> None:
         if not isinstance(failure, AdbTransportListWatchFailure):
@@ -60,8 +60,8 @@ class AdbTransportListWatchAcquireInterruptedError(RuntimeError):
         super().__init__("ADB transport-list watch acquisition was interrupted")
 
 
-class _AdbTransportListWatchHandle(AdbTransportListWatchStream, Protocol):
-    """Lifecycle-private physical watch handle with lifecycle cleanup operations."""
+class _AdbTransportListWatchResource(AdbTransportListWatchStream, Protocol):
+    """Lifecycle-private physical watch resource with lifecycle cleanup operations."""
 
     def close(self) -> object | None:
         """Attempt local cleanup; return unresolved resource or ``None``."""
@@ -69,19 +69,19 @@ class _AdbTransportListWatchHandle(AdbTransportListWatchStream, Protocol):
 
 
 class _AdbTransportListWatchStreamView:
-    """Narrow producer capability over a lifecycle-owned physical handle."""
+    """Narrow producer capability over a lifecycle-owned physical watch resource."""
 
-    __slots__ = ("__handle",)
+    __slots__ = ("__resource",)
 
-    def __init__(self, handle: _AdbTransportListWatchHandle) -> None:
-        self.__handle = handle
+    def __init__(self, resource: _AdbTransportListWatchResource) -> None:
+        self.__resource = resource
 
     @property
     def initial(self) -> AdbTransportList:
-        return self.__handle.initial
+        return self.__resource.initial
 
     def updates(self) -> Iterator[AdbTransportList]:
-        return self.__handle.updates()
+        return self.__resource.updates()
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,16 +135,16 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         return self._managed.read_diagnostics()
 
     @abstractmethod
-    def _obtain_handle(
+    def _obtain_resource(
         self,
         endpoint: TcpAddress,
         cancellation: Event,
         resources: ResourceScope,
-    ) -> _AdbTransportListWatchHandle:
-        """Obtain a fully usable handle while recording any earlier resources in ``resources``."""
+    ) -> _AdbTransportListWatchResource:
+        """Obtain a fully usable watch resource while recording earlier resources in ``resources``."""
 
-    def _schedule_cleanup(self, handle: _AdbTransportListWatchHandle) -> None:
-        self._managed.register_cleanup(handle, lambda: handle.close())
+    def _schedule_cleanup(self, resource: _AdbTransportListWatchResource) -> None:
+        self._managed.register_cleanup(resource, lambda: resource.close())
         self._managed.process_cleanup()
 
     def _borrow_stream(
@@ -201,12 +201,12 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             raise TypeError("unsupported shared lifecycle acquire start")
         with self._managed.guard_acquire(start) as attempt:
             try:
-                handle = self._obtain_handle(
+                resource = self._obtain_resource(
                     endpoint,
                     attempt.cancellation,
                     attempt.resources,
                 )
-                attempt.resources.adopt(handle, lambda: handle.close())
+                attempt.resources.adopt(resource, lambda: resource.close())
             except AdbTransportListWatchAcquireInterruptedError as exc:
                 revoked = attempt.abandon()
                 if revoked:
@@ -223,7 +223,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
 
             public_access = AdbTransportListWatchAccess(endpoint=endpoint)
             access = _WatchAccess(
-                stream=_AdbTransportListWatchStreamView(handle),
+                stream=_AdbTransportListWatchStreamView(resource),
                 access=public_access,
             )
             committed = attempt.commit(access)

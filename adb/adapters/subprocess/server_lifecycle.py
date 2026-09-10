@@ -243,7 +243,7 @@ class _AdbServerSubprocessFactory:
             )
 
         deadline = self._monotonic() + self.startup_timeout_seconds
-        attachment, resolved_endpoint = self._launch(
+        owned_process, resolved_endpoint = self._launch(
             endpoint,
             resources,
             deadline=deadline,
@@ -253,7 +253,7 @@ class _AdbServerSubprocessFactory:
             raise _AdbServerSubprocessAcquireInterrupted
         self._wait_until_ready(
             resolved_endpoint,
-            attachment._process,
+            owned_process._process,
             cancellation=cancellation,
             deadline=deadline,
         )
@@ -304,16 +304,16 @@ class _AdbServerSubprocessFactory:
                 raise
             raise primary from exc
 
-        attachment = _OwnedAdbServerProcess(process, self.shutdown_timeout_seconds)
+        owned_process = _OwnedAdbServerProcess(process, self.shutdown_timeout_seconds)
         resources.adopt(
-            attachment,
-            lambda: _cleanup_owned_process(attachment),
+            owned_process,
+            lambda: _cleanup_owned_process(owned_process),
             claims=reservation_ownership.claims,
         )
 
         if _close_socket_or_cleanup_resource(reservation) is None:
             resources.release(reservation_ownership)
-            return attachment, resolved_endpoint
+            return owned_process, resolved_endpoint
 
         raise _AdbServerSubprocessStartError(
             "ADB server child launched but parent listener reservation cleanup was not confirmed"

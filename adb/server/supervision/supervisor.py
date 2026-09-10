@@ -69,7 +69,7 @@ class AdbServerSupervisor:
             self._started = True
 
     def close(self) -> None:
-        """Stop supervision while retaining the current healthy server."""
+        """Stop supervision without releasing the current lifecycle access."""
 
         with self._lock:
             if self._closed:

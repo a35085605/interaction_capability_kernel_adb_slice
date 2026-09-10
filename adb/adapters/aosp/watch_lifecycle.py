@@ -55,8 +55,8 @@ def _watch_error(exc: BaseException) -> AdbTransportListWatchError | None:
     return None if failure is None else AdbTransportListWatchError(failure)
 
 
-class _AospTransportListWatchHandle:
-    """Adapter handle translating one AOSP stream into transport-list snapshots."""
+class _AospTransportListWatchResource:
+    """Lifecycle-owned watch resource translating one AOSP stream into transport-list snapshots."""
 
     __slots__ = (
         "_stream",
@@ -68,7 +68,7 @@ class _AospTransportListWatchHandle:
     def __init__(
         self,
         stream: AospTrackDevicesStream,
-        schedule_cleanup: Callable[["_AospTransportListWatchHandle"], None],
+        schedule_cleanup: Callable[["_AospTransportListWatchResource"], None],
     ) -> None:
         if not isinstance(stream, AospTrackDevicesStream):
             raise TypeError("stream must be AospTrackDevicesStream")
@@ -131,18 +131,18 @@ class SmartSocketAdbTransportListWatchLifecycle(AdbTransportListWatchLifecycleTe
             _clock=_clock,
         )
 
-    def _obtain_handle(
+    def _obtain_resource(
         self,
         endpoint: TcpAddress,
         cancellation: Event,
         resources: ResourceScope,
-    ) -> _AospTransportListWatchHandle:
+    ) -> _AospTransportListWatchResource:
         stream: AospTrackDevicesStream | None = None
         try:
             stream = self._stream_factory.open(endpoint, cancellation)
-            return _AospTransportListWatchHandle(
+            return _AospTransportListWatchResource(
                 stream,
-                lambda handle: self._schedule_cleanup(handle),
+                lambda resource: self._schedule_cleanup(resource),
             )
         except AospTrackDevicesOpenCleanupRequired as exc:
             resources.adopt_handoff(exc.cleanup_resource)

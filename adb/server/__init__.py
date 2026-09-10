@@ -1,4 +1,4 @@
-"""ADB server endpoint, generation, lifecycle, failure, and availability contracts."""
+"""ADB server endpoint, generation, lifecycle, access, state, and failure contracts."""
 
 from adb._lifecycle import (
     AcquireBlocked,
