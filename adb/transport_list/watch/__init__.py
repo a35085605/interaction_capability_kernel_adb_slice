@@ -30,10 +30,7 @@ from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchReleaseOutcome,
 )
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
-from adb.transport_list.watch.error import (
-    AdbTransportListWatchCancelledError,
-    AdbTransportListWatchError,
-)
+from adb.transport_list.watch.error import AdbTransportListWatchError
 from adb.transport_list.watch.failure import (
     AdbTransportListWatchFailure,
     AdbTransportListWatchProtocolFailure,
@@ -51,7 +48,6 @@ __all__ = [
     "Snapshot",
     "AdbTransportListWatchAccess",
     "AdbTransportListWatchAcquireOutcome",
-    "AdbTransportListWatchCancelledError",
     "AdbTransportListWatchError",
     "AdbTransportListWatchFailure",
     "AdbTransportListWatchGeneration",

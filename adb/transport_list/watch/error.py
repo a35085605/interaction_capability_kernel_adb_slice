@@ -18,11 +18,6 @@ class AdbTransportListWatchError(AdbError):
         )
 
 
-class AdbTransportListWatchCancelledError(RuntimeError):
-    """The watch acquisition was cancelled before usable access was established."""
-
-
 __all__ = [
-    "AdbTransportListWatchCancelledError",
     "AdbTransportListWatchError",
 ]
