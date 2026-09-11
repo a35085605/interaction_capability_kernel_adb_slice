@@ -28,21 +28,21 @@ from adb._managed.result import (
 )
 from adb._managed.snapshot import Snapshot
 from adb._managed.state import Current, Idle, ManagedAttempt, ManagedState, Preparing
-from adb._resource.lifecycle import ResourceAcquisitionRequest
+from adb._resource.lifecycle import ResourceAcquisitionRequest, ResourceSet
 
 
 GenerationT = TypeVar("GenerationT")
 AccessT = TypeVar("AccessT")
-ResourceSetT = TypeVar("ResourceSetT")
+ResourceT = TypeVar("ResourceT")
 CapabilityT = TypeVar("CapabilityT")
 
 
-class _PoolAcquisitionRequest(Generic[AccessT, ResourceSetT]):
+class _PoolAcquisitionRequest(Generic[AccessT, ResourceT]):
     """Narrow lifecycle-facing view backed by one Pool ResourceRequest."""
 
     def __init__(
         self,
-        pool: ResourcePool[AccessT, ResourceSetT],
+        pool: ResourcePool[AccessT, ResourceT],
         request: ResourceRequest[AccessT],
     ) -> None:
         self._pool = pool
@@ -56,12 +56,12 @@ class _PoolAcquisitionRequest(Generic[AccessT, ResourceSetT]):
     def interrupted(self) -> bool:
         return self._pool.is_interrupted(self._request)
 
-    def publish(self, resources: ResourceSetT) -> None:
+    def publish(self, resources: ResourceSet[ResourceT]) -> None:
         self._pool.publish(self._request, resources)
 
 
 class ManagedCoordinator(
-    Generic[GenerationT, AccessT, ResourceSetT, CapabilityT]
+    Generic[GenerationT, AccessT, ResourceT, CapabilityT]
 ):
     """Coordinate Access authority around policy-aware physical ResourceSets.
 
@@ -83,9 +83,9 @@ class ManagedCoordinator(
     def __init__(
         self,
         issue_generation: Callable[[], GenerationT],
-        adapter: Adapter[AccessT, ResourceSetT, CapabilityT],
+        adapter: Adapter[AccessT, ResourceT, CapabilityT],
         *,
-        resource_pool: ResourcePool[AccessT, ResourceSetT] = GLOBAL_RESOURCE_POOL,
+        resource_pool: ResourcePool[AccessT, ResourceT] = GLOBAL_RESOURCE_POOL,
     ) -> None:
         if not callable(issue_generation):
             raise TypeError("issue_generation must be callable")
@@ -96,15 +96,15 @@ class ManagedCoordinator(
         self._resource_pool = resource_pool
         self._lock = Lock()
         self._state: ManagedState[
-            GenerationT, AccessT, ResourceSetT, CapabilityT
+            GenerationT, AccessT, ResourceT, CapabilityT
         ] = Idle(issue_generation())
 
     @property
-    def resource_pool(self) -> ResourcePool[AccessT, ResourceSetT]:
+    def resource_pool(self) -> ResourcePool[AccessT, ResourceT]:
         return self._resource_pool
 
     @property
-    def adapter(self) -> Adapter[AccessT, ResourceSetT, CapabilityT]:
+    def adapter(self) -> Adapter[AccessT, ResourceT, CapabilityT]:
         return self._adapter
 
     def read(self) -> Snapshot[GenerationT, AccessT, CapabilityT]:
@@ -142,9 +142,9 @@ class ManagedCoordinator(
             self._state = Preparing(state.generation, access, attempt)
 
         request: ResourceRequest[AccessT] | None = None
-        request_context: ResourceAcquisitionRequest[ResourceSetT] | None = None
-        lease: ResourceLease[AccessT, ResourceSetT] | None = None
-        resources: ResourceSetT | None = None
+        request_context: ResourceAcquisitionRequest[ResourceT] | None = None
+        lease: ResourceLease[AccessT, ResourceT] | None = None
+        resources: ResourceSet[ResourceT] | None = None
 
         try:
             requirement = self._adapter.access_model.requirements(access)
@@ -282,7 +282,7 @@ class ManagedCoordinator(
         if access is None:
             raise TypeError("access cannot be None")
 
-        retired: RetiredResource[AccessT, ResourceSetT] | None = None
+        retired: RetiredResource[AccessT, ResourceT] | None = None
         request: ResourceRequest[AccessT] | None = None
         next_generation: GenerationT | None = None
         revoked_acquisition = False
@@ -385,7 +385,7 @@ class ManagedCoordinator(
     def _interrupt_finish_request_and_cleanup(
         self,
         request: ResourceRequest[AccessT],
-        resources: ResourceSetT | None,
+        resources: ResourceSet[ResourceT] | None,
     ) -> None:
         """Finish a producer that has returned/raised after losing ownership."""
 
@@ -402,7 +402,7 @@ class ManagedCoordinator(
 
     def _release_lease_and_cleanup(
         self,
-        lease: ResourceLease[AccessT, ResourceSetT],
+        lease: ResourceLease[AccessT, ResourceT],
     ) -> None:
         retired = self._resource_pool.retire(lease)
         if retired is not None:
@@ -410,7 +410,7 @@ class ManagedCoordinator(
 
     def _cleanup_retired(
         self,
-        retired: RetiredResource[AccessT, ResourceSetT],
+        retired: RetiredResource[AccessT, ResourceT],
     ) -> None:
         self._adapter.resource_lifecycle.cleanup(retired.resources)
         self._resource_pool.discard(retired)

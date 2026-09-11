@@ -4,10 +4,13 @@ from typing import Hashable, Protocol, TypeVar
 
 
 AccessT = TypeVar("AccessT", contravariant=True)
-ResourceSetT = TypeVar("ResourceSetT")
+ResourceT = TypeVar("ResourceT")
 
 
-class ResourceAcquisitionRequest(Protocol[ResourceSetT]):
+type ResourceSet[T] = tuple[T, ...]
+
+
+class ResourceAcquisitionRequest(Protocol[ResourceT]):
     """Managed-owned view of one physical acquisition request.
 
     ``interrupted`` is independent from coordinator authority. It means the
@@ -25,10 +28,10 @@ class ResourceAcquisitionRequest(Protocol[ResourceSetT]):
     @property
     def interrupted(self) -> bool: ...
 
-    def publish(self, resources: ResourceSetT) -> None: ...
+    def publish(self, resources: ResourceSet[ResourceT]) -> None: ...
 
 
-class AccessResourceLifecycle(Protocol[AccessT, ResourceSetT]):
+class AccessResourceLifecycle(Protocol[AccessT, ResourceT]):
     """Physical ResourceSet lifecycle driven directly by Access.
 
     Coordination concerns such as conflict detection, coexistence policy,
@@ -46,16 +49,16 @@ class AccessResourceLifecycle(Protocol[AccessT, ResourceSetT]):
     def acquire(
         self,
         access: AccessT,
-        request: ResourceAcquisitionRequest[ResourceSetT],
-    ) -> ResourceSetT: ...
+        request: ResourceAcquisitionRequest[ResourceT],
+    ) -> ResourceSet[ResourceT]: ...
 
     def interrupt(
         self,
         access: AccessT,
-        request: ResourceAcquisitionRequest[ResourceSetT],
+        request: ResourceAcquisitionRequest[ResourceT],
     ) -> None: ...
 
-    def cleanup(self, resources: ResourceSetT) -> None: ...
+    def cleanup(self, resources: ResourceSet[ResourceT]) -> None: ...
 
 
-__all__ = ["AccessResourceLifecycle", "ResourceAcquisitionRequest"]
+__all__ = ["AccessResourceLifecycle", "ResourceAcquisitionRequest", "ResourceSet"]

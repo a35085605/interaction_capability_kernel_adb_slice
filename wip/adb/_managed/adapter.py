@@ -9,7 +9,7 @@ from adb._resource.lifecycle import AccessResourceLifecycle
 
 
 AccessT = TypeVar("AccessT")
-ResourceSetT = TypeVar("ResourceSetT")
+ResourceT = TypeVar("ResourceT")
 CapabilityT = TypeVar("CapabilityT")
 
 
@@ -20,10 +20,10 @@ class AccessModel(Protocol[AccessT]):
 
 
 @dataclass(frozen=True, slots=True)
-class Adapter(Generic[AccessT, ResourceSetT, CapabilityT]):
+class Adapter(Generic[AccessT, ResourceT, CapabilityT]):
     access_model: AccessModel[AccessT]
-    resource_lifecycle: AccessResourceLifecycle[AccessT, ResourceSetT]
-    capability_projection: CapabilityProjection[AccessT, ResourceSetT, CapabilityT]
+    resource_lifecycle: AccessResourceLifecycle[AccessT, ResourceT]
+    capability_projection: CapabilityProjection[AccessT, ResourceT, CapabilityT]
 
 
 __all__ = ["AccessModel", "Adapter"]

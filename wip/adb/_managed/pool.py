@@ -6,10 +6,11 @@ from threading import Lock
 from typing import Any, Generic, Hashable, TypeVar
 
 from adb._managed.requirement import ResourcePolicy, ResourceRequirement
+from adb._resource.lifecycle import ResourceSet
 
 
 AccessT = TypeVar("AccessT")
-ResourceSetT = TypeVar("ResourceSetT")
+ResourceT = TypeVar("ResourceT")
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -20,26 +21,26 @@ class RequestId:
 
 
 @dataclass(frozen=True, slots=True)
-class ResourceRequestRecord(Generic[AccessT, ResourceSetT]):
+class ResourceRequestRecord(Generic[AccessT, ResourceT]):
     """Immutable point-in-time view of one physical acquisition request."""
 
     request_id: RequestId
     access: AccessT
     requirement_key: Hashable
     policy: ResourcePolicy
-    resources: ResourceSetT | None
+    resources: ResourceSet[ResourceT] | None
     interrupted: bool
     processing: bool
 
 
 @dataclass(frozen=True, slots=True)
-class ResourceRecord(Generic[AccessT, ResourceSetT]):
+class ResourceRecord(Generic[AccessT, ResourceT]):
     """Immutable point-in-time view of one retained physical ResourceSet."""
 
     access: AccessT
     requirement_key: Hashable
     policy: ResourcePolicy
-    resources: ResourceSetT
+    resources: ResourceSet[ResourceT]
     leases: int
     retired: bool = False
     request_id: RequestId | None = None
@@ -62,60 +63,60 @@ ResourceReservation = ResourceRequest
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class ResourceLease(Generic[AccessT, ResourceSetT]):
+class ResourceLease(Generic[AccessT, ResourceT]):
     """Identity token retaining one installed ResourceSet for a coordinator."""
 
     access: AccessT
     requirement_key: Hashable
-    resources: ResourceSetT
+    resources: ResourceSet[ResourceT]
     _record_token: object
     _lease_token: object
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class RetiredResource(Generic[AccessT, ResourceSetT]):
+class RetiredResource(Generic[AccessT, ResourceT]):
     """Exact retired record that remains retained until cleanup succeeds."""
 
     access: AccessT
     requirement_key: Hashable
-    resources: ResourceSetT
+    resources: ResourceSet[ResourceT]
     _record_token: object
     request_id: RequestId | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class RequestInterruption(Generic[AccessT, ResourceSetT]):
+class RequestInterruption(Generic[AccessT, ResourceT]):
     """Result of asking one physical request to stop."""
 
     processing: bool
-    retired: RetiredResource[AccessT, ResourceSetT] | None = None
+    retired: RetiredResource[AccessT, ResourceT] | None = None
 
 
 @dataclass(slots=True)
-class _RequestState(Generic[AccessT, ResourceSetT]):
+class _RequestState(Generic[AccessT, ResourceT]):
     request_id: RequestId
     access: AccessT
     requirement_key: Hashable
     policy: ResourcePolicy
     token: object
-    resources: ResourceSetT | None = None
+    resources: ResourceSet[ResourceT] | None = None
     interrupted: bool = False
     processing: bool = True
 
 
 @dataclass(slots=True)
-class _RecordState(Generic[AccessT, ResourceSetT]):
+class _RecordState(Generic[AccessT, ResourceT]):
     access: AccessT
     requirement_key: Hashable
     policy: ResourcePolicy
-    resources: ResourceSetT
+    resources: ResourceSet[ResourceT]
     token: object
     request_id: RequestId | None = None
     lease_tokens: set[object] = field(default_factory=set)
     retired: bool = False
 
 
-class ResourcePool(Generic[AccessT, ResourceSetT]):
+class ResourcePool(Generic[AccessT, ResourceT]):
     """Process-wide registry for request processing and retained ResourceSets.
 
     A new physical acquisition is represented in the Pool before I/O begins.
@@ -134,8 +135,8 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
     def __init__(self) -> None:
         self._lock = Lock()
         self._request_ids = count(1)
-        self._records: list[_RecordState[AccessT, ResourceSetT]] = []
-        self._requests: list[_RequestState[AccessT, ResourceSetT]] = []
+        self._records: list[_RecordState[AccessT, ResourceT]] = []
+        self._requests: list[_RequestState[AccessT, ResourceT]] = []
 
     @staticmethod
     def _validate_access(access: AccessT) -> None:
@@ -151,7 +152,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
         if not isinstance(requirement, ResourceRequirement):
             raise TypeError("requirement must be ResourceRequirement")
 
-    def snapshot(self) -> tuple[ResourceRecord[AccessT, ResourceSetT], ...]:
+    def snapshot(self) -> tuple[ResourceRecord[AccessT, ResourceT], ...]:
         """Return immutable views of every retained physical ResourceSet."""
 
         with self._lock:
@@ -171,7 +172,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
     def request_snapshot(
         self,
         request: ResourceRequest[AccessT],
-    ) -> ResourceRequestRecord[AccessT, ResourceSetT] | None:
+    ) -> ResourceRequestRecord[AccessT, ResourceT] | None:
         """Return the current request view, or ``None`` after it is consumed."""
 
         self._validate_request(request)
@@ -181,7 +182,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
                 return None
             return self._request_record_locked(state)
 
-    def requests(self) -> tuple[ResourceRequestRecord[AccessT, ResourceSetT], ...]:
+    def requests(self) -> tuple[ResourceRequestRecord[AccessT, ResourceT], ...]:
         """Return immutable views of all requests not yet installed or retired."""
 
         with self._lock:
@@ -191,7 +192,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
         self,
         access: AccessT,
         requirement_key: Hashable,
-    ) -> tuple[ResourceSetT, ...]:
+    ) -> tuple[ResourceSet[ResourceT], ...]:
         """Return all active ResourceSets matching one Access + requirement key."""
 
         self._validate_access(access)
@@ -210,7 +211,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
         self,
         access: AccessT,
         requirement_key: Hashable,
-    ) -> tuple[RetiredResource[AccessT, ResourceSetT], ...]:
+    ) -> tuple[RetiredResource[AccessT, ResourceT], ...]:
         """Return retired records matching one Access + requirement key."""
 
         self._validate_access(access)
@@ -235,7 +236,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
         self,
         access: AccessT,
         requirement: ResourceRequirement,
-    ) -> ResourceRequest[AccessT] | ResourceLease[AccessT, ResourceSetT] | None:
+    ) -> ResourceRequest[AccessT] | ResourceLease[AccessT, ResourceT] | None:
         """Reserve/reuse one requirement according to its same-Access policy.
 
         A newly reserved acquisition is immediately a ``processing`` request in
@@ -332,7 +333,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
     def publish(
         self,
         request: ResourceRequest[AccessT],
-        resources: ResourceSetT,
+        resources: ResourceSet[ResourceT],
     ) -> None:
         """Publish a partial/current ResourceSet while the producer is processing.
 
@@ -352,7 +353,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
     def interrupt(
         self,
         request: ResourceRequest[AccessT],
-    ) -> RequestInterruption[AccessT, ResourceSetT]:
+    ) -> RequestInterruption[AccessT, ResourceT]:
         """Mark a request interrupted without pretending its producer has stopped.
 
         If processing has already ended, interruption immediately retires the
@@ -376,8 +377,8 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
     def finish(
         self,
         request: ResourceRequest[AccessT],
-        resources: ResourceSetT | None = None,
-    ) -> RetiredResource[AccessT, ResourceSetT] | None:
+        resources: ResourceSet[ResourceT] | None = None,
+    ) -> RetiredResource[AccessT, ResourceT] | None:
         """Atomically publish the final snapshot and set ``processing=False``.
 
         An interrupted request is retired immediately once processing ends. If it
@@ -418,8 +419,8 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
     def install(
         self,
         request: ResourceRequest[AccessT],
-        resources: ResourceSetT | None = None,
-    ) -> ResourceLease[AccessT, ResourceSetT]:
+        resources: ResourceSet[ResourceT] | None = None,
+    ) -> ResourceLease[AccessT, ResourceT]:
         """Consume one finished request and return the first retained lease.
 
         ``resources`` is accepted only for compatibility with the old reservation
@@ -454,8 +455,8 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
 
     @staticmethod
     def _lease_locked(
-        state: _RecordState[AccessT, ResourceSetT],
-    ) -> ResourceLease[AccessT, ResourceSetT]:
+        state: _RecordState[AccessT, ResourceT],
+    ) -> ResourceLease[AccessT, ResourceT]:
         lease_token = object()
         state.lease_tokens.add(lease_token)
         return ResourceLease(
@@ -468,8 +469,8 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
 
     def retire(
         self,
-        lease: ResourceLease[AccessT, ResourceSetT],
-    ) -> RetiredResource[AccessT, ResourceSetT] | None:
+        lease: ResourceLease[AccessT, ResourceT],
+    ) -> RetiredResource[AccessT, ResourceT] | None:
         """Release one lease; retire the ResourceSet when its last lease detaches."""
 
         if not isinstance(lease, ResourceLease):
@@ -502,7 +503,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
                 state.request_id,
             )
 
-    def discard(self, retired: RetiredResource[AccessT, ResourceSetT]) -> None:
+    def discard(self, retired: RetiredResource[AccessT, ResourceT]) -> None:
         """Forget one exact retired record after physical cleanup succeeds."""
 
         if not isinstance(retired, RetiredResource):
@@ -534,7 +535,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
     def _find_request_locked(
         self,
         request: ResourceRequest[AccessT],
-    ) -> _RequestState[AccessT, ResourceSetT] | None:
+    ) -> _RequestState[AccessT, ResourceT] | None:
         return next(
             (
                 state
@@ -548,7 +549,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
     def _require_request_locked(
         self,
         request: ResourceRequest[AccessT],
-    ) -> _RequestState[AccessT, ResourceSetT]:
+    ) -> _RequestState[AccessT, ResourceT]:
         state = self._find_request_locked(request)
         if state is None:
             raise RuntimeError("resource request is not current")
@@ -556,8 +557,8 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
 
     @staticmethod
     def _request_record_locked(
-        state: _RequestState[AccessT, ResourceSetT],
-    ) -> ResourceRequestRecord[AccessT, ResourceSetT]:
+        state: _RequestState[AccessT, ResourceT],
+    ) -> ResourceRequestRecord[AccessT, ResourceT]:
         return ResourceRequestRecord(
             state.request_id,
             state.access,
@@ -570,8 +571,8 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
 
     def _retire_request_locked(
         self,
-        state: _RequestState[AccessT, ResourceSetT],
-    ) -> RetiredResource[AccessT, ResourceSetT] | None:
+        state: _RequestState[AccessT, ResourceT],
+    ) -> RetiredResource[AccessT, ResourceT] | None:
         self._requests.remove(state)
         if state.resources is None:
             return None
