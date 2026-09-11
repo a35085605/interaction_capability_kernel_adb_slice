@@ -1,0 +1,71 @@
+"""Shared private lifecycle state-machine, result, snapshot, and resource primitives."""
+
+from adb._lifecycle.resource import (
+    GLOBAL_RESOURCE_POOL,
+    ResourceClaimConflict,
+    ResourceEntry,
+    ResourcePool,
+    ResourceScope,
+)
+from adb._lifecycle.snapshot import Snapshot
+from adb._lifecycle.state_machine import LifecycleStateMachine
+from adb._lifecycle.managed import AcquireAttemptGuard, ManagedLifecycle
+from adb._lifecycle.result import (
+    AcquireAbandonResult,
+    AcquireAttempt,
+    AcquireAttemptAbandoned,
+    AcquireAttemptCommitted,
+    AcquireAttemptRevoked,
+    AcquireAccessMismatch,
+    AcquireBlocked,
+    AcquireCommitResult,
+    AcquireCommitted,
+    AcquireExisting,
+    AcquireFailed,
+    AcquireStartBlocked,
+    AcquireStartBusy,
+    AcquireStartCurrent,
+    AcquireStartResult,
+    AcquireSuperseded,
+    GenerationMismatch,
+    ReleaseAccessDetached,
+    ReleaseAccessMismatch,
+    ReleaseAcquisitionRevoked,
+    ReleaseInactive,
+    ReleaseResult,
+)
+
+
+__all__ = [
+    "AcquireAbandonResult",
+    "AcquireAttempt",
+    "AcquireAttemptAbandoned",
+    "AcquireAttemptCommitted",
+    "AcquireAttemptGuard",
+    "AcquireAttemptRevoked",
+    "AcquireAccessMismatch",
+    "AcquireBlocked",
+    "AcquireCommitResult",
+    "AcquireCommitted",
+    "AcquireExisting",
+    "AcquireFailed",
+    "AcquireStartBlocked",
+    "AcquireStartBusy",
+    "AcquireStartCurrent",
+    "AcquireStartResult",
+    "AcquireSuperseded",
+    "GenerationMismatch",
+    "LifecycleStateMachine",
+    "ManagedLifecycle",
+    "ReleaseAccessDetached",
+    "ReleaseAccessMismatch",
+    "ReleaseAcquisitionRevoked",
+    "ReleaseInactive",
+    "ReleaseResult",
+    "GLOBAL_RESOURCE_POOL",
+    "ResourceClaimConflict",
+    "ResourceEntry",
+    "ResourcePool",
+    "ResourceScope",
+    "Snapshot",
+]
