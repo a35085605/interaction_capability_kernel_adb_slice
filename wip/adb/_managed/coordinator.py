@@ -21,8 +21,7 @@ from adb._managed.result import (
 )
 from adb._managed.snapshot import Snapshot
 from adb._managed.state import Current, Idle, ManagedAttempt, ManagedState, Preparing
-from adb._resource.acquisition import ResourceAcquisition
-from adb._resource.pool import (
+from adb._managed.pool import (
     GLOBAL_RESOURCE_POOL,
     ResourceLease,
     ResourcePool,
@@ -32,13 +31,12 @@ from adb._resource.pool import (
 
 GenerationT = TypeVar("GenerationT")
 AccessT = TypeVar("AccessT")
-RequirementsT = TypeVar("RequirementsT")
 ResourceSetT = TypeVar("ResourceSetT")
 CapabilityT = TypeVar("CapabilityT")
 
 
 class ManagedCoordinator(
-    Generic[GenerationT, AccessT, RequirementsT, ResourceSetT, CapabilityT]
+    Generic[GenerationT, AccessT, ResourceSetT, CapabilityT]
 ):
     """Coordinate Access authority around policy-aware physical ResourceSets.
 
@@ -57,7 +55,7 @@ class ManagedCoordinator(
     def __init__(
         self,
         issue_generation: Callable[[], GenerationT],
-        adapter: Adapter[AccessT, RequirementsT, ResourceSetT, CapabilityT],
+        adapter: Adapter[AccessT, ResourceSetT, CapabilityT],
         *,
         resource_pool: ResourcePool[AccessT, ResourceSetT] = GLOBAL_RESOURCE_POOL,
     ) -> None:
@@ -78,7 +76,7 @@ class ManagedCoordinator(
         return self._resource_pool
 
     @property
-    def adapter(self) -> Adapter[AccessT, RequirementsT, ResourceSetT, CapabilityT]:
+    def adapter(self) -> Adapter[AccessT, ResourceSetT, CapabilityT]:
         return self._adapter
 
     def read(self) -> Snapshot[GenerationT, AccessT, CapabilityT]:
@@ -95,7 +93,6 @@ class ManagedCoordinator(
         if access is None:
             raise TypeError("access cannot be None")
 
-        acquisition = ResourceAcquisition()
         with self._lock:
             state = self._state
             if expected != state.generation:
@@ -113,7 +110,6 @@ class ManagedCoordinator(
             attempt = ManagedAttempt(
                 generation=state.generation,
                 access=access,
-                acquisition=acquisition,
             )
             self._state = Preparing(state.generation, access, attempt)
 
@@ -125,7 +121,7 @@ class ManagedCoordinator(
         try:
             requirement = self._adapter.access_model.requirements(access)
 
-            if acquisition.revoked:
+            if attempt.revoked:
                 return self._finish_superseded(attempt)
 
             claim = self._resource_pool.reserve(access, requirement)
@@ -141,7 +137,7 @@ class ManagedCoordinator(
             else:
                 reservation = claim
 
-            if acquisition.revoked:
+            if attempt.revoked:
                 if lease is not None:
                     self._release_lease_and_cleanup(lease)
                     lease = None
@@ -153,11 +149,10 @@ class ManagedCoordinator(
             if resources is None:
                 assert reservation is not None
                 resources = self._adapter.resource_lifecycle.acquire(
-                    requirement.value,
-                    acquisition,
+                    access,
                 )
                 if resources is None:
-                    raise TypeError("ResourceLifecycle.acquire() cannot return None")
+                    raise TypeError("AccessResourceLifecycle.acquire() cannot return None")
                 resources_obtained = True
 
             capability = self._adapter.capability_projection.project(access, resources)
@@ -169,7 +164,7 @@ class ManagedCoordinator(
                 owns_authority = (
                     isinstance(state, Preparing)
                     and state.attempt is attempt
-                    and not acquisition.revoked
+                    and not attempt.revoked
                 )
                 if owns_authority:
                     if lease is None:
@@ -209,7 +204,7 @@ class ManagedCoordinator(
                     self._resource_pool.cancel(reservation)
             raise
         finally:
-            acquisition.finish()
+            attempt.finish()
 
     def release(
         self,
@@ -235,7 +230,7 @@ class ManagedCoordinator(
                 if state.access != access:
                     return ReleaseAccessMismatch(state.access)
                 next_generation = self._fresh_generation(state.generation)
-                state.attempt.acquisition.revoke()
+                state.attempt.revoke()
                 self._state = Idle(next_generation)
                 return ReleaseAcquisitionRevoked(next_generation)
 

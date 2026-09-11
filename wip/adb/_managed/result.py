@@ -63,7 +63,7 @@ class ReleaseInactive:
 
 @dataclass(frozen=True, slots=True)
 class ReleaseAcquisitionRevoked(Generic[GenerationT]):
-    """An in-flight physical acquisition was revoked and is draining."""
+    """An in-flight Managed attempt lost commit authority and may be draining."""
 
     next_generation: GenerationT
 

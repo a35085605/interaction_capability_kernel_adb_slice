@@ -1,7 +1,16 @@
-"""Managed Access authority and coordination primitives."""
+"""Managed Access authority, conflict policy, and coordination primitives."""
 
 from adb._managed.adapter import AccessModel, Adapter
 from adb._managed.coordinator import ManagedCoordinator
+from adb._managed.pool import (
+    GLOBAL_RESOURCE_POOL,
+    ResourceLease,
+    ResourcePool,
+    ResourceRecord,
+    ResourceReservation,
+    RetiredResource,
+)
+from adb._managed.requirement import ResourcePolicy, ResourceRequirement
 from adb._managed.result import (
     AcquireAccessMismatch,
     AcquireBusy,
@@ -30,6 +39,7 @@ __all__ = [
     "AcquireSuperseded",
     "Adapter",
     "Current",
+    "GLOBAL_RESOURCE_POOL",
     "GenerationMismatch",
     "Idle",
     "ManagedAttempt",
@@ -41,5 +51,12 @@ __all__ = [
     "ReleaseDetached",
     "ReleaseInactive",
     "ReleaseResult",
+    "ResourceLease",
+    "ResourcePolicy",
+    "ResourcePool",
+    "ResourceRecord",
+    "ResourceRequirement",
+    "ResourceReservation",
+    "RetiredResource",
     "Snapshot",
 ]

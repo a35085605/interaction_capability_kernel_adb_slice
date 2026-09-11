@@ -2,27 +2,21 @@ from __future__ import annotations
 
 from typing import Protocol, TypeVar
 
-from adb._resource.acquisition import ResourceAcquisition
 
-
-RequirementsT = TypeVar("RequirementsT", contravariant=True)
+AccessT = TypeVar("AccessT", contravariant=True)
 ResourceSetT = TypeVar("ResourceSetT")
 
 
-class ResourceLifecycle(Protocol[RequirementsT, ResourceSetT]):
-    """Physical acquire/cleanup operations for one adapter domain.
+class AccessResourceLifecycle(Protocol[AccessT, ResourceSetT]):
+    """Physical ResourceSet lifecycle driven directly by Access.
 
-    ``acquire`` returns one complete ResourceSet. Any temporary/partial resources
-    created before it returns remain the implementation's responsibility.
+    Coordination concerns such as conflict detection, coexistence policy,
+    reservations, and revocation intentionally live in ``adb._managed``.
     """
 
-    def acquire(
-        self,
-        requirements: RequirementsT,
-        acquisition: ResourceAcquisition,
-    ) -> ResourceSetT: ...
+    def acquire(self, access: AccessT) -> ResourceSetT: ...
 
     def cleanup(self, resources: ResourceSetT) -> None: ...
 
 
-__all__ = ["ResourceLifecycle"]
+__all__ = ["AccessResourceLifecycle"]

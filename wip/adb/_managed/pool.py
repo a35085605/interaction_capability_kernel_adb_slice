@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Generic, Hashable, TypeVar
 
-from adb._resource.requirement import ResourcePolicy, ResourceRequirement
+from adb._managed.requirement import ResourcePolicy, ResourceRequirement
 
 
 AccessT = TypeVar("AccessT")
@@ -65,7 +65,7 @@ class _RecordState(Generic[AccessT, ResourceSetT]):
 
 
 class ResourcePool(Generic[AccessT, ResourceSetT]):
-    """Process-wide registry of physical ResourceSets and their coexistence policy.
+    """Process-wide coordinator registry for ResourceSet coexistence and retention.
 
     EXCLUSIVE requirements block every retained or reserved ResourceSet for the same
     Access. SHARED requirements reuse one active ResourceSet with the same key and
@@ -89,7 +89,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
             raise TypeError("access must be hashable") from exc
 
     @staticmethod
-    def _validate_requirement(requirement: ResourceRequirement[Any]) -> None:
+    def _validate_requirement(requirement: ResourceRequirement) -> None:
         if not isinstance(requirement, ResourceRequirement):
             raise TypeError("requirement must be ResourceRequirement")
 
@@ -155,7 +155,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
     def reserve(
         self,
         access: AccessT,
-        requirement: ResourceRequirement[Any],
+        requirement: ResourceRequirement,
     ) -> ResourceReservation[AccessT] | ResourceLease[AccessT, ResourceSetT] | None:
         """Reserve/acquire one requirement according to its same-Access policy.
 
@@ -226,7 +226,7 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
     def _reserve_locked(
         self,
         access: AccessT,
-        requirement: ResourceRequirement[Any],
+        requirement: ResourceRequirement,
     ) -> ResourceReservation[AccessT]:
         reservation = ResourceReservation(access, requirement.key, requirement.policy)
         self._reservations.append(reservation)

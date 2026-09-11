@@ -2,14 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Generic, Hashable, TypeVar
-
-
-RequirementsT = TypeVar("RequirementsT")
+from typing import Hashable
 
 
 class ResourcePolicy(Enum):
-    """Same-Access coexistence policy for one physical ResourceSet requirement."""
+    """Same-Access coexistence policy for one managed resource identity."""
 
     EXCLUSIVE = "exclusive"
     SHARED = "shared"
@@ -17,13 +14,12 @@ class ResourcePolicy(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class ResourceRequirement(Generic[RequirementsT]):
-    """Describe one ResourceSet acquisition before physical resources are touched.
+class ResourceRequirement:
+    """Describe coordinator-level conflict and reuse semantics for one Access.
 
     ``key`` identifies the physical resource contract for SHARED reuse, policy
-    consistency, and cleanup ownership. Keys must include every material parameter
-    that makes two ResourceSets unsafe to reuse. ``value`` is passed unchanged to
-    ``ResourceLifecycle``.
+    consistency, and cleanup ownership. Keys must include every material
+    parameter that makes two ResourceSets unsafe to reuse.
 
     Policy semantics for the same Access are:
 
@@ -33,7 +29,6 @@ class ResourceRequirement(Generic[RequirementsT]):
     """
 
     key: Hashable
-    value: RequirementsT
     policy: ResourcePolicy = ResourcePolicy.EXCLUSIVE
 
     def __post_init__(self) -> None:
