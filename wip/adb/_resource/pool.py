@@ -2,155 +2,185 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import Lock
-from typing import Iterable, Protocol
+from typing import Any, Generic, TypeVar
 
 
-@dataclass(slots=True, eq=False)
-class ResourceEntry:
-    """One physical resource retained by the shared pool."""
-
-    identity: object
-    resource: object
-    claims: tuple[object, ...] = ()
-    retired: bool = False
+AccessT = TypeVar("AccessT")
+ResourceSetT = TypeVar("ResourceSetT")
 
 
 @dataclass(frozen=True, slots=True)
-class ResourceBinding:
-    """Managed-only record of which pool entries currently satisfy one Access."""
+class ResourceRecord(Generic[AccessT, ResourceSetT]):
+    """Immutable point-in-time view of one Access -> ResourceSet mapping."""
 
-    entries: tuple[ResourceEntry, ...]
-
-
-class ResourcePoolView(Protocol):
-    """Read-only surface exposed to adapter resolution logic."""
-
-    def snapshot(self) -> tuple[ResourceEntry, ...]: ...
+    access: AccessT
+    resources: ResourceSetT
+    retired: bool = False
 
 
-class ResourcePool:
-    """Shared registry of physical resources and active Managed bindings.
+@dataclass(frozen=True, slots=True, eq=False)
+class ResourceReservation(Generic[AccessT]):
+    """Identity token reserving one Access while its ResourceSet is prepared."""
 
-    The pool owns retention/accounting only. It does not know Access or Capability.
+    access: AccessT
+
+
+@dataclass(slots=True)
+class _RecordState(Generic[AccessT, ResourceSetT]):
+    access: AccessT
+    resources: ResourceSetT
+    retired: bool = False
+
+
+class ResourcePool(Generic[AccessT, ResourceSetT]):
+    """Process-wide registry of one ResourceSet per Access.
+
+    The simplified model deliberately does not compose or share resources between
+    different Access values. A reservation blocks duplicate physical acquisition
+    while a ResourceSet is being prepared. Retired records remain retained until
+    physical cleanup succeeds and ``discard`` confirms their removal.
     """
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._entries: dict[int, ResourceEntry] = {}
-        self._usage: dict[int, int] = {}
+        self._records: dict[AccessT, _RecordState[AccessT, ResourceSetT]] = {}
+        self._reservations: dict[AccessT, ResourceReservation[AccessT]] = {}
 
-    def snapshot(self) -> tuple[ResourceEntry, ...]:
-        with self._lock:
-            return tuple(self._entries.values())
+    @staticmethod
+    def _validate_access(access: AccessT) -> None:
+        if access is None:
+            raise TypeError("access cannot be None")
+        try:
+            hash(access)
+        except TypeError as exc:
+            raise TypeError("access must be hashable") from exc
 
-    def bind(self, entries: Iterable[ResourceEntry]) -> ResourceBinding:
-        selected = tuple(entries)
-        if not selected:
-            raise ValueError("binding must contain at least one resource entry")
-        if len({id(entry) for entry in selected}) != len(selected):
-            raise ValueError("binding cannot contain duplicate entries")
-
-        with self._lock:
-            for entry in selected:
-                self._require_retained(entry)
-                if entry.retired:
-                    raise RuntimeError("cannot bind a retired resource entry")
-            for entry in selected:
-                key = id(entry.identity)
-                self._usage[key] = self._usage.get(key, 0) + 1
-
-        return ResourceBinding(selected)
-
-    def unbind(self, binding: ResourceBinding) -> tuple[ResourceEntry, ...]:
-        """Drop one Managed demand and return zero-usage cleanup candidates."""
-
-        if not isinstance(binding, ResourceBinding):
-            raise TypeError("binding must be ResourceBinding")
-
-        cleanup_candidates: list[ResourceEntry] = []
-        with self._lock:
-            for entry in binding.entries:
-                self._require_retained(entry)
-                key = id(entry.identity)
-                usage = self._usage.get(key, 0)
-                if usage <= 0:
-                    raise RuntimeError("resource entry is not currently bound")
-                next_usage = usage - 1
-                self._usage[key] = next_usage
-                if next_usage == 0:
-                    entry.retired = True
-                    cleanup_candidates.append(entry)
-        return tuple(cleanup_candidates)
-
-    def retire(self, entry: ResourceEntry) -> None:
-        with self._lock:
-            self._require_retained(entry)
-            entry.retired = True
-
-    def discard(self, entry: ResourceEntry) -> None:
-        """Forget an entry only after physical cleanup has been confirmed."""
+    def snapshot(self) -> tuple[ResourceRecord[AccessT, ResourceSetT], ...]:
+        """Return immutable views of every retained Access -> ResourceSet record."""
 
         with self._lock:
-            self._require_retained(entry)
-            key = id(entry.identity)
-            if not entry.retired:
-                raise RuntimeError("resource entry must be retired before discard")
-            if self._usage.get(key, 0) != 0:
-                raise RuntimeError("cannot discard a resource entry that is still bound")
-            del self._entries[key]
-            self._usage.pop(key, None)
+            return tuple(
+                ResourceRecord(state.access, state.resources, state.retired)
+                for state in self._records.values()
+            )
 
-    def usage(self, entry: ResourceEntry) -> int:
+    def lookup(self, access: AccessT) -> ResourceSetT | None:
+        """Return the active ResourceSet for ``access``; retired records are hidden."""
+
+        self._validate_access(access)
         with self._lock:
-            self._require_retained(entry)
-            return self._usage.get(id(entry.identity), 0)
+            state = self._records.get(access)
+            if state is None or state.retired:
+                return None
+            return state.resources
 
-    def _register(
+    def retired(self, access: AccessT) -> ResourceSetT | None:
+        """Return the retained retired ResourceSet for cleanup retry, if any."""
+
+        self._validate_access(access)
+        with self._lock:
+            state = self._records.get(access)
+            if state is None or not state.retired:
+                return None
+            return state.resources
+
+    def reserve(self, access: AccessT) -> ResourceReservation[AccessT] | None:
+        """Reserve an absent Access for acquisition.
+
+        ``None`` means the Access is already retained (active or retired) or another
+        acquisition already owns its reservation.
+        """
+
+        self._validate_access(access)
+        with self._lock:
+            if access in self._records or access in self._reservations:
+                return None
+            reservation = ResourceReservation(access)
+            self._reservations[access] = reservation
+            return reservation
+
+    def cancel(self, reservation: ResourceReservation[AccessT]) -> bool:
+        """Cancel one still-current reservation; return whether it was removed."""
+
+        if not isinstance(reservation, ResourceReservation):
+            raise TypeError("reservation must be ResourceReservation")
+        with self._lock:
+            current = self._reservations.get(reservation.access)
+            if current is not reservation:
+                return False
+            del self._reservations[reservation.access]
+            return True
+
+    def install(
         self,
-        resource: object,
+        reservation: ResourceReservation[AccessT],
+        resources: ResourceSetT,
         *,
-        claims: Iterable[object],
-        identity: object,
-        retired: bool,
-    ) -> ResourceEntry:
-        if resource is None:
-            raise TypeError("resource cannot be None")
-        if identity is None:
-            raise TypeError("identity cannot be None")
-        normalized_claims = tuple(claims)
-        if any(claim is None for claim in normalized_claims):
-            raise ValueError("resource claims cannot contain None")
+        retired: bool = False,
+    ) -> ResourceRecord[AccessT, ResourceSetT]:
+        """Consume a reservation and install exactly one ResourceSet for its Access."""
 
-        key = id(identity)
+        if not isinstance(reservation, ResourceReservation):
+            raise TypeError("reservation must be ResourceReservation")
+        if resources is None:
+            raise TypeError("resources cannot be None")
+        if not isinstance(retired, bool):
+            raise TypeError("retired must be bool")
+
         with self._lock:
-            existing = self._entries.get(key)
-            if existing is not None:
-                raise RuntimeError("resource identity is already registered")
-            entry = ResourceEntry(
-                identity=identity,
-                resource=resource,
-                claims=normalized_claims,
+            current = self._reservations.get(reservation.access)
+            if current is not reservation:
+                raise RuntimeError("resource reservation is not current")
+            if reservation.access in self._records:
+                raise RuntimeError("resource access is already retained")
+
+            state = _RecordState(
+                access=reservation.access,
+                resources=resources,
                 retired=retired,
             )
-            self._entries[key] = entry
-            self._usage[key] = 0
-            return entry
+            self._records[reservation.access] = state
+            del self._reservations[reservation.access]
+            return ResourceRecord(state.access, state.resources, state.retired)
 
-    def _require_retained(self, entry: ResourceEntry) -> None:
-        if not isinstance(entry, ResourceEntry):
-            raise TypeError("entry must be ResourceEntry")
-        retained = self._entries.get(id(entry.identity))
-        if retained is not entry:
-            raise RuntimeError("resource entry is not retained by this pool")
+    def retire(self, access: AccessT) -> ResourceSetT:
+        """Retire the retained ResourceSet for ``access`` and return it for cleanup."""
+
+        self._validate_access(access)
+        with self._lock:
+            state = self._records.get(access)
+            if state is None:
+                raise RuntimeError("resource access is not retained")
+            state.retired = True
+            return state.resources
+
+    def discard(self, access: AccessT, resources: ResourceSetT) -> None:
+        """Forget a retired record after physical cleanup has succeeded.
+
+        The ResourceSet identity check prevents a stale cleanup completion from
+        discarding a later record for the same Access.
+        """
+
+        self._validate_access(access)
+        if resources is None:
+            raise TypeError("resources cannot be None")
+        with self._lock:
+            state = self._records.get(access)
+            if state is None:
+                raise RuntimeError("resource access is not retained")
+            if state.resources is not resources:
+                raise RuntimeError("resource set does not match the retained access")
+            if not state.retired:
+                raise RuntimeError("resource set must be retired before discard")
+            del self._records[access]
 
 
-GLOBAL_RESOURCE_POOL = ResourcePool()
+GLOBAL_RESOURCE_POOL: ResourcePool[Any, Any] = ResourcePool()
 
 
 __all__ = [
     "GLOBAL_RESOURCE_POOL",
-    "ResourceBinding",
-    "ResourceEntry",
     "ResourcePool",
-    "ResourcePoolView",
+    "ResourceRecord",
+    "ResourceReservation",
 ]

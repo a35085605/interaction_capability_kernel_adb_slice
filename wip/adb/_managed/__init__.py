@@ -3,12 +3,18 @@
 from adb._managed.adapter import AccessModel, Adapter
 from adb._managed.coordinator import ManagedCoordinator
 from adb._managed.result import (
+    AcquireAccessMismatch,
     AcquireBusy,
     AcquireCommitted,
+    AcquireExisting,
+    AcquireResult,
     AcquireSuperseded,
     GenerationMismatch,
+    ReleaseAccessMismatch,
+    ReleaseAcquisitionRevoked,
     ReleaseDetached,
     ReleaseInactive,
+    ReleaseResult,
 )
 from adb._managed.snapshot import Snapshot
 from adb._managed.state import Current, Idle, ManagedAttempt, ManagedState, Preparing
@@ -16,8 +22,11 @@ from adb._managed.state import Current, Idle, ManagedAttempt, ManagedState, Prep
 
 __all__ = [
     "AccessModel",
+    "AcquireAccessMismatch",
     "AcquireBusy",
     "AcquireCommitted",
+    "AcquireExisting",
+    "AcquireResult",
     "AcquireSuperseded",
     "Adapter",
     "Current",
@@ -27,7 +36,10 @@ __all__ = [
     "ManagedCoordinator",
     "ManagedState",
     "Preparing",
+    "ReleaseAccessMismatch",
+    "ReleaseAcquisitionRevoked",
     "ReleaseDetached",
     "ReleaseInactive",
+    "ReleaseResult",
     "Snapshot",
 ]

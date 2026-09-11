@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, TypeAlias, TypeVar
 
-from adb._resource.pool import ResourceBinding
+from adb._resource.acquisition import ResourceAcquisition
 
 
 GenerationT = TypeVar("GenerationT")
@@ -17,6 +17,7 @@ class ManagedAttempt(Generic[GenerationT, AccessT]):
 
     generation: GenerationT
     access: AccessT
+    acquisition: ResourceAcquisition
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +37,6 @@ class Current(Generic[GenerationT, AccessT, CapabilityT]):
     generation: GenerationT
     access: AccessT
     capability: CapabilityT
-    binding: ResourceBinding
 
 
 ManagedState: TypeAlias = (
