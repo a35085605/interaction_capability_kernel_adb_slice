@@ -4,9 +4,13 @@ from adb._managed.adapter import AccessModel, Adapter
 from adb._managed.coordinator import ManagedCoordinator
 from adb._managed.pool import (
     GLOBAL_RESOURCE_POOL,
+    RequestId,
+    RequestInterruption,
     ResourceLease,
     ResourcePool,
     ResourceRecord,
+    ResourceRequest,
+    ResourceRequestRecord,
     ResourceReservation,
     RetiredResource,
 )
@@ -51,10 +55,14 @@ __all__ = [
     "ReleaseDetached",
     "ReleaseInactive",
     "ReleaseResult",
+    "RequestId",
+    "RequestInterruption",
     "ResourceLease",
     "ResourcePolicy",
     "ResourcePool",
     "ResourceRecord",
+    "ResourceRequest",
+    "ResourceRequestRecord",
     "ResourceRequirement",
     "ResourceReservation",
     "RetiredResource",

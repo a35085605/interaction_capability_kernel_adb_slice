@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from threading import Event, Lock
 from typing import Generic, TypeAlias, TypeVar
 
-from adb._managed.pool import ResourceLease
+from adb._managed.pool import ResourceLease, ResourceRequest
 
 
 GenerationT = TypeVar("GenerationT")
@@ -18,9 +18,11 @@ class ManagedAttempt(Generic[GenerationT, AccessT]):
     """Coordinator-owned state for one in-flight Managed authority attempt.
 
     ``revoke`` removes commit authority and raises a coordinator-owned
-    cancellation signal. ``AccessResourceLifecycle.acquire`` intentionally does
-    not receive that signal; a physical acquire that cannot be interrupted is
-    allowed to drain, after which the coordinator cleans up its ResourceSet.
+    cancellation signal. This remains deliberately independent from physical
+    request interruption: a Preparing state may additionally point at a
+    ``ResourceRequest`` whose I/O is best-effort interrupted by the coordinator.
+    A backend that cannot stop immediately is allowed to drain and report late
+    resources under that Request ID before cleanup becomes eligible.
     """
 
     generation: GenerationT
@@ -66,6 +68,7 @@ class Preparing(Generic[GenerationT, AccessT]):
     generation: GenerationT
     access: AccessT
     attempt: ManagedAttempt[GenerationT, AccessT]
+    request: ResourceRequest[AccessT] | None = None
 
 
 @dataclass(frozen=True, slots=True)
