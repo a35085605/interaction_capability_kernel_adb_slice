@@ -23,7 +23,6 @@ from adb._lifecycle import (
     AcquireStartCurrent,
     AcquireSuperseded,
     GenerationMismatch,
-    LifecycleDiagnostics,
     ManagedLifecycle,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
@@ -120,14 +119,6 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
 
     def read(self) -> AdbTransportListWatchState:
         return self._managed.read()
-
-    def read_diagnostics(
-        self,
-    ) -> LifecycleDiagnostics[
-        AdbTransportListWatchGeneration,
-        AdbTransportListWatchAccess,
-    ]:
-        return self._managed.read_diagnostics()
 
     @abstractmethod
     def _obtain_resource(

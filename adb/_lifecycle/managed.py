@@ -5,7 +5,6 @@ from threading import Event
 from types import TracebackType
 from typing import Generic, TypeVar
 
-from adb._lifecycle.diagnostics import LifecycleDiagnostics
 from adb._lifecycle.resource import (
     GLOBAL_RESOURCE_POOL,
     ResourceClaimConflict,
@@ -127,10 +126,6 @@ class ManagedLifecycle(Generic[GenerationT, AccessT, CapabilityT]):
 
     def read(self) -> Snapshot[GenerationT, AccessT, CapabilityT]:
         return self._state_machine.snapshot()
-
-    def read_diagnostics(self) -> LifecycleDiagnostics[GenerationT, AccessT]:
-        state = self._state_machine.read_diagnostics_snapshot()
-        return LifecycleDiagnostics(state.generation, state.pending)
 
     def begin_acquire(
         self,

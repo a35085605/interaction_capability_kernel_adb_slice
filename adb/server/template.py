@@ -22,7 +22,6 @@ from adb._lifecycle import (
     AcquireStartCurrent,
     AcquireSuperseded,
     GenerationMismatch,
-    LifecycleDiagnostics,
     ManagedLifecycle,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
@@ -102,11 +101,6 @@ class AdbServerLifecycleTemplate(ABC):
 
     def read(self) -> AdbServerState:
         return self._managed.read()
-
-    def read_diagnostics(
-        self,
-    ) -> LifecycleDiagnostics[AdbServerGeneration, AdbServerAccess]:
-        return self._managed.read_diagnostics()
 
     @abstractmethod
     def _obtain_access(

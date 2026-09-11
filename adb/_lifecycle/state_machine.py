@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from threading import Event, Lock
-from time import monotonic
 from typing import Generic, TypeAlias, TypeVar
 
 from adb._lifecycle.resource import GLOBAL_RESOURCE_POOL, ResourcePool, ResourceScope
@@ -45,8 +44,6 @@ class _Acquiring(Generic[GenerationT, AccessT]):
     """Current generation has one in-flight acquisition with commit authority."""
 
     attempt: AcquireAttempt[GenerationT, AccessT]
-    started_at: float = field(default_factory=monotonic, repr=False, compare=False)
-
     @property
     def generation(self) -> GenerationT:
         return self.attempt.generation
@@ -73,8 +70,6 @@ class _Draining(Generic[GenerationT, AccessT]):
 
     generation: GenerationT
     attempt: AcquireAttempt[GenerationT, AccessT]
-    started_at: float = field(repr=False, compare=False)
-
 
 _State: TypeAlias = (
     _Idle[GenerationT]
@@ -83,23 +78,6 @@ _State: TypeAlias = (
     | _Draining[GenerationT, AccessT]
 )
 
-
-@dataclass(frozen=True, slots=True)
-class PendingSnapshot(Generic[GenerationT, AccessT]):
-    generation: GenerationT
-    access: AccessT
-    cancelled: bool
-    age_seconds: float
-
-
-@dataclass(frozen=True, slots=True)
-class _LifecycleStateSnapshot(Generic[GenerationT, AccessT, CapabilityT]):
-    """Internal lifecycle state sample; resource state lives in ``ResourcePool``."""
-
-    generation: GenerationT
-    access: AccessT | None
-    capability: CapabilityT | None
-    pending: PendingSnapshot[GenerationT, AccessT] | None = None
 
 
 class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
@@ -127,19 +105,6 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
         self._state: _State[GenerationT, AccessT, CapabilityT] = _Idle(issue_generation())
 
     @staticmethod
-    def _pending_snapshot(
-        state: _Acquiring[GenerationT, AccessT] | _Draining[GenerationT, AccessT],
-    ) -> PendingSnapshot[GenerationT, AccessT]:
-        return PendingSnapshot(
-            generation=state.attempt.generation,
-            access=state.attempt.access,
-            cancelled=(
-                isinstance(state, _Draining) or state.attempt.cancellation.is_set()
-            ),
-            age_seconds=max(0.0, monotonic() - state.started_at),
-        )
-
-    @staticmethod
     def _public_snapshot(
         state: _State[GenerationT, AccessT, CapabilityT],
     ) -> Snapshot[GenerationT, AccessT, CapabilityT]:
@@ -147,34 +112,11 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
             return Snapshot(state.generation, state.access, state.capability)
         return Snapshot(state.generation)
 
-    def _snapshot_locked(
-        self,
-    ) -> _LifecycleStateSnapshot[GenerationT, AccessT, CapabilityT]:
-        state = self._state
-        public = self._public_snapshot(state)
-        pending = (
-            self._pending_snapshot(state)
-            if isinstance(state, (_Acquiring, _Draining))
-            else None
-        )
-        return _LifecycleStateSnapshot(
-            generation=public.generation,
-            access=public.access,
-            capability=public.capability,
-            pending=pending,
-        )
-
     def snapshot(self) -> Snapshot[GenerationT, AccessT, CapabilityT]:
         """Return one atomic committed-state snapshot without extending capability lifetime."""
 
         with self._lock:
             return self._public_snapshot(self._state)
-
-    def read_diagnostics_snapshot(
-        self,
-    ) -> _LifecycleStateSnapshot[GenerationT, AccessT, CapabilityT]:
-        with self._lock:
-            return self._snapshot_locked()
 
     def borrow_capability(self, expected: GenerationT) -> CapabilityT | None:
         """Return a matching current capability as a point-in-time atomic borrow."""
@@ -328,7 +270,6 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
                 self._state = _Draining(
                     generation=next_generation,
                     attempt=state.attempt,
-                    started_at=state.started_at,
                 )
                 return ReleaseAcquisitionRevoked(next_generation)
 
@@ -346,7 +287,4 @@ class LifecycleStateMachine(Generic[GenerationT, AccessT, CapabilityT]):
             return ReleaseAccessDetached(next_generation)
 
 
-__all__ = [
-    "LifecycleStateMachine",
-    "PendingSnapshot",
-]
+__all__ = ["LifecycleStateMachine"]
