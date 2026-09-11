@@ -2,16 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import Lock
-from typing import Generic, TypeVar
+from typing import Generic, Hashable, TypeVar
 
 from adb._managed.adapter import Adapter
-from adb._managed.pool import (
-    GLOBAL_RESOURCE_POOL,
-    ResourceLease,
-    ResourcePool,
-    ResourceRequest,
-    RetiredResource,
-)
 from adb._managed.result import (
     AcquireAccessMismatch,
     AcquireBusy,
@@ -28,84 +21,57 @@ from adb._managed.result import (
 )
 from adb._managed.snapshot import Snapshot
 from adb._managed.state import Current, Idle, ManagedAttempt, ManagedState, Preparing
-from adb._resource.lifecycle import ResourceAcquisitionRequest, ResourceSet
+from adb._resource.driver import ResourceSet
+from adb._resource.manager import ResourceAcquisition, ResourceManagement
+from adb._resource.pool import ResourceLease
 
 
 GenerationT = TypeVar("GenerationT")
 AccessT = TypeVar("AccessT")
+SpecT = TypeVar("SpecT")
 ResourceT = TypeVar("ResourceT")
 CapabilityT = TypeVar("CapabilityT")
 
 
-class _PoolAcquisitionRequest(Generic[AccessT, ResourceT]):
-    """Narrow lifecycle-facing view backed by one Pool ResourceRequest."""
-
-    def __init__(
-        self,
-        pool: ResourcePool[AccessT, ResourceT],
-        request: ResourceRequest[AccessT],
-    ) -> None:
-        self._pool = pool
-        self._request = request
-
-    @property
-    def request_id(self):
-        return self._request.request_id
-
-    @property
-    def interrupted(self) -> bool:
-        return self._pool.is_interrupted(self._request)
-
-    def publish(self, resources: ResourceSet[ResourceT]) -> None:
-        self._pool.publish(self._request, resources)
-
-
 class ManagedCoordinator(
-    Generic[GenerationT, AccessT, ResourceT, CapabilityT]
+    Generic[GenerationT, AccessT, SpecT, ResourceT, CapabilityT]
 ):
-    """Coordinate Access authority around policy-aware physical ResourceSets.
+    """Coordinate Access authority without owning physical-resource mechanics.
 
-    Authority cancellation and physical request interruption are independent.
-    ``ManagedAttempt.revoke`` still removes capability commit authority
-    immediately. A new physical acquisition also owns a Pool ``ResourceRequest``
-    with a Request ID. Releasing a Preparing coordinator marks that request
-    interrupted and asks the lifecycle to abort I/O, but cleanup is delayed until
-    the producer's final ``finish`` changes ``processing`` to false.
+    Authority cancellation and physical interruption are independent. The
+    coordinator owns generation/Access/Capability state and delegates the full
+    resource transaction to ``ResourceManagement`` using opaque acquisition and
+    lease handles.
 
     Simplified new-resource acquire sequence::
 
-        ResourceRequirement -> processing ResourceRequest -> acquire/publish
-        -> Capability -> atomically finish/install lease + commit Current
+        Access -> ResourcePlan -> claim -> acquire -> Capability
+        -> commit lease + Current
 
-    SHARED reuse may skip physical acquisition and return an existing lease.
+    SHARED reuse may return an existing lease directly from ``claim``.
     """
 
     def __init__(
         self,
         issue_generation: Callable[[], GenerationT],
-        adapter: Adapter[AccessT, ResourceT, CapabilityT],
-        *,
-        resource_pool: ResourcePool[AccessT, ResourceT] = GLOBAL_RESOURCE_POOL,
+        adapter: Adapter[AccessT, SpecT, ResourceT, CapabilityT],
     ) -> None:
         if not callable(issue_generation):
             raise TypeError("issue_generation must be callable")
-        if not isinstance(resource_pool, ResourcePool):
-            raise TypeError("resource_pool must be ResourcePool")
         self._issue_generation = issue_generation
         self._adapter = adapter
-        self._resource_pool = resource_pool
         self._lock = Lock()
         self._state: ManagedState[
-            GenerationT, AccessT, ResourceT, CapabilityT
+            GenerationT, AccessT, SpecT, ResourceT, CapabilityT
         ] = Idle(issue_generation())
 
     @property
-    def resource_pool(self) -> ResourcePool[AccessT, ResourceT]:
-        return self._resource_pool
+    def adapter(self) -> Adapter[AccessT, SpecT, ResourceT, CapabilityT]:
+        return self._adapter
 
     @property
-    def adapter(self) -> Adapter[AccessT, ResourceT, CapabilityT]:
-        return self._adapter
+    def resource_manager(self) -> ResourceManagement[SpecT, ResourceT]:
+        return self._adapter.resource_manager
 
     def read(self) -> Snapshot[GenerationT, AccessT, CapabilityT]:
         with self._lock:
@@ -141,18 +107,18 @@ class ManagedCoordinator(
             )
             self._state = Preparing(state.generation, access, attempt)
 
-        request: ResourceRequest[AccessT] | None = None
-        request_context: ResourceAcquisitionRequest[ResourceT] | None = None
-        lease: ResourceLease[AccessT, ResourceT] | None = None
+        manager = self._adapter.resource_manager
+        acquisition: ResourceAcquisition[SpecT, ResourceT] | None = None
+        lease: ResourceLease[Hashable, ResourceT] | None = None
         resources: ResourceSet[ResourceT] | None = None
 
         try:
-            requirement = self._adapter.access_model.requirements(access)
+            plan = self._adapter.access_model.resource_plan(access)
 
             if attempt.revoked:
                 return self._finish_superseded(attempt)
 
-            claim = self._resource_pool.reserve(access, requirement)
+            claim = manager.claim(plan)
             if claim is None:
                 abandoned, current_generation = self._abandon_if_current(attempt)
                 if abandoned:
@@ -163,13 +129,11 @@ class ManagedCoordinator(
                 lease = claim
                 resources = claim.resources
             else:
-                request = claim
-                request_context = _PoolAcquisitionRequest(self._resource_pool, request)
+                acquisition = claim
 
-                # Publish the request handle into Preparing so release() can mark
-                # physical interruption. If authority was revoked between reserve
-                # and this handoff, no producer has started and the empty request
-                # can be cancelled safely.
+                # Publish only the opaque acquisition handle into Preparing. If
+                # authority was revoked between claim and this handoff, no physical
+                # producer has started and the claim can be cancelled safely.
                 with self._lock:
                     state = self._state
                     owns_preparing = (
@@ -182,44 +146,33 @@ class ManagedCoordinator(
                             state.generation,
                             state.access,
                             state.attempt,
-                            request,
+                            acquisition,
                         )
                     current_generation = state.generation
 
                 if not owns_preparing:
-                    self._resource_pool.cancel(request)
-                    request = None
+                    manager.cancel(acquisition)
+                    acquisition = None
                     return AcquireSuperseded(current_generation)
 
             if attempt.revoked:
                 if lease is not None:
-                    self._release_lease_and_cleanup(lease)
+                    manager.release(lease)
                     lease = None
-                elif request is not None:
-                    # No lifecycle producer has started yet.
-                    self._resource_pool.cancel(request)
-                    request = None
+                elif acquisition is not None:
+                    # No physical producer has started yet.
+                    manager.cancel(acquisition)
+                    acquisition = None
                 return self._finish_superseded(attempt)
 
             if resources is None:
-                assert request is not None
-                assert request_context is not None
-                resources = self._adapter.resource_lifecycle.acquire(
-                    access,
-                    request_context,
-                )
-                if resources is None:
-                    raise TypeError("AccessResourceLifecycle.acquire() cannot return None")
-
-                # Keep processing=true through capability projection. This final
-                # acquire snapshot is visible to Pool interruption immediately,
-                # but cleanup cannot begin while the coordinator may still use it.
-                self._resource_pool.publish(request, resources)
+                assert acquisition is not None
+                resources = manager.acquire(acquisition)
 
                 if attempt.revoked:
                     current_generation = self._current_generation()
-                    self._interrupt_finish_request_and_cleanup(request, resources)
-                    request = None
+                    manager.abandon(acquisition, resources)
+                    acquisition = None
                     return AcquireSuperseded(current_generation)
 
             capability = self._adapter.capability_projection.project(access, resources)
@@ -235,15 +188,10 @@ class ManagedCoordinator(
                 )
                 if owns_authority:
                     if lease is None:
-                        assert request is not None
+                        assert acquisition is not None
                         assert resources is not None
-                        retired = self._resource_pool.finish(request, resources)
-                        if retired is not None:
-                            raise RuntimeError(
-                                "current Managed authority has an interrupted resource request"
-                            )
-                        lease = self._resource_pool.install(request)
-                        request = None
+                        lease = manager.commit(acquisition, resources)
+                        acquisition = None
                     snapshot = Snapshot(state.generation, access, capability)
                     self._state = Current(
                         state.generation,
@@ -255,19 +203,19 @@ class ManagedCoordinator(
                 current_generation = state.generation
 
             if lease is not None:
-                self._release_lease_and_cleanup(lease)
+                manager.release(lease)
                 lease = None
-            elif request is not None:
-                self._interrupt_finish_request_and_cleanup(request, resources)
-                request = None
+            elif acquisition is not None:
+                manager.abandon(acquisition, resources)
+                acquisition = None
             return AcquireSuperseded(current_generation)
 
         except BaseException:
             self._abandon_if_current(attempt)
             if lease is not None:
-                self._release_lease_and_cleanup(lease)
-            elif request is not None:
-                self._interrupt_finish_request_and_cleanup(request, resources)
+                manager.release(lease)
+            elif acquisition is not None:
+                manager.abandon(acquisition, resources)
             raise
         finally:
             attempt.finish()
@@ -282,8 +230,8 @@ class ManagedCoordinator(
         if access is None:
             raise TypeError("access cannot be None")
 
-        retired: RetiredResource[AccessT, ResourceT] | None = None
-        request: ResourceRequest[AccessT] | None = None
+        acquisition: ResourceAcquisition[SpecT, ResourceT] | None = None
+        lease: ResourceLease[Hashable, ResourceT] | None = None
         next_generation: GenerationT | None = None
         revoked_acquisition = False
 
@@ -299,7 +247,7 @@ class ManagedCoordinator(
                     return ReleaseAccessMismatch(state.access)
                 next_generation = self._fresh_generation(state.generation)
                 state.attempt.revoke()
-                request = state.request
+                acquisition = state.acquisition
                 self._state = Idle(next_generation)
                 revoked_acquisition = True
             else:
@@ -309,44 +257,29 @@ class ManagedCoordinator(
                     return ReleaseAccessMismatch(state.access)
 
                 next_generation = self._fresh_generation(state.generation)
-                retired = self._resource_pool.retire(state.resource_lease)
+                lease = state.resource_lease
                 self._state = Idle(next_generation)
 
-        # Managed authority is already detached here. Physical request interruption
-        # is deliberately outside the coordinator lock so a backend abort cannot
-        # block reads/releases of authority state.
+        # Managed authority is detached before any physical operation. Backend
+        # interruption/cleanup therefore cannot block reads or generation changes.
         assert next_generation is not None
+        manager = self._adapter.resource_manager
         if revoked_acquisition:
-            if request is not None:
-                interruption = self._resource_pool.interrupt(request)
-                if interruption.processing:
-                    request_context = _PoolAcquisitionRequest(
-                        self._resource_pool,
-                        request,
-                    )
-                    self._adapter.resource_lifecycle.interrupt(access, request_context)
-                elif interruption.retired is not None:
-                    self._cleanup_retired(interruption.retired)
+            if acquisition is not None:
+                manager.interrupt(acquisition)
             return ReleaseAcquisitionRevoked(next_generation)
 
-        # SHARED resources remain active while another lease exists. If final
-        # cleanup fails, the retired record stays in the Pool for retry.
-        if retired is not None:
-            self._cleanup_retired(retired)
+        assert lease is not None
+        manager.release(lease)
         return ReleaseDetached(next_generation)
 
     def cleanup_retired(self, access: AccessT) -> bool:
-        """Retry cleanup of every retired record currently retained for Access."""
+        """Retry cleanup for retired resources described by this Access."""
 
         if access is None:
             raise TypeError("access cannot be None")
-        requirement = self._adapter.access_model.requirements(access)
-        retired_records = self._resource_pool.retired(access, requirement.key)
-        if not retired_records:
-            return False
-        for retired in retired_records:
-            self._cleanup_retired(retired)
-        return True
+        plan = self._adapter.access_model.resource_plan(access)
+        return self._adapter.resource_manager.cleanup_retired(plan)
 
     def _snapshot_locked(self) -> Snapshot[GenerationT, AccessT, CapabilityT]:
         state = self._state
@@ -381,39 +314,6 @@ class ManagedCoordinator(
     ) -> AcquireSuperseded[GenerationT]:
         _abandoned, current_generation = self._abandon_if_current(attempt)
         return AcquireSuperseded(current_generation)
-
-    def _interrupt_finish_request_and_cleanup(
-        self,
-        request: ResourceRequest[AccessT],
-        resources: ResourceSet[ResourceT] | None,
-    ) -> None:
-        """Finish a producer that has returned/raised after losing ownership."""
-
-        interruption = self._resource_pool.interrupt(request)
-        if interruption.retired is not None:
-            self._cleanup_retired(interruption.retired)
-            return
-        if not interruption.processing:
-            return
-
-        retired = self._resource_pool.finish(request, resources)
-        if retired is not None:
-            self._cleanup_retired(retired)
-
-    def _release_lease_and_cleanup(
-        self,
-        lease: ResourceLease[AccessT, ResourceT],
-    ) -> None:
-        retired = self._resource_pool.retire(lease)
-        if retired is not None:
-            self._cleanup_retired(retired)
-
-    def _cleanup_retired(
-        self,
-        retired: RetiredResource[AccessT, ResourceT],
-    ) -> None:
-        self._adapter.resource_lifecycle.cleanup(retired.resources)
-        self._resource_pool.discard(retired)
 
 
 __all__ = ["ManagedCoordinator"]

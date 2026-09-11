@@ -6,7 +6,7 @@ from typing import Hashable
 
 
 class ResourcePolicy(Enum):
-    """Same-Access coexistence policy for one managed resource identity."""
+    """Same-scope coexistence policy for one physical resource identity."""
 
     EXCLUSIVE = "exclusive"
     SHARED = "shared"
@@ -15,13 +15,13 @@ class ResourcePolicy(Enum):
 
 @dataclass(frozen=True, slots=True)
 class ResourceRequirement:
-    """Describe coordinator-level conflict and reuse semantics for one Access.
+    """Describe conflict and reuse semantics inside one resource scope.
 
     ``key`` identifies the physical resource contract for SHARED reuse, policy
     consistency, and cleanup ownership. Keys must include every material
     parameter that makes two ResourceSets unsafe to reuse.
 
-    Policy semantics for the same Access are:
+    Policy semantics inside the same scope are:
 
     * EXCLUSIVE: coexist with nothing else.
     * SHARED: reuse one active ResourceSet with the same key.

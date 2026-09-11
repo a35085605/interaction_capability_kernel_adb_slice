@@ -2,27 +2,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from threading import Event, Lock
-from typing import Generic, TypeAlias, TypeVar
+from typing import Generic, Hashable, TypeAlias, TypeVar
 
-from adb._managed.pool import ResourceLease, ResourceRequest
+from adb._resource.manager import ResourceAcquisition
+from adb._resource.pool import ResourceLease
 
 
 GenerationT = TypeVar("GenerationT")
 AccessT = TypeVar("AccessT")
+SpecT = TypeVar("SpecT")
 ResourceT = TypeVar("ResourceT")
 CapabilityT = TypeVar("CapabilityT")
 
 
 @dataclass(slots=True, eq=False)
 class ManagedAttempt(Generic[GenerationT, AccessT]):
-    """Coordinator-owned state for one in-flight Managed authority attempt.
+    """Coordinator-owned state for one in-flight Access authority attempt.
 
-    ``revoke`` removes commit authority and raises a coordinator-owned
-    cancellation signal. This remains deliberately independent from physical
-    request interruption: a Preparing state may additionally point at a
-    ``ResourceRequest`` whose I/O is best-effort interrupted by the coordinator.
-    A backend that cannot stop immediately is allowed to drain and report late
-    resources under that Request ID before cleanup becomes eligible.
+    ``revoke`` removes capability commit authority immediately. Physical resource
+    interruption is deliberately separate and is delegated through the opaque
+    acquisition handle held by ``Preparing``.
     """
 
     generation: GenerationT
@@ -64,11 +63,11 @@ class Idle(Generic[GenerationT]):
 
 
 @dataclass(frozen=True, slots=True)
-class Preparing(Generic[GenerationT, AccessT]):
+class Preparing(Generic[GenerationT, AccessT, SpecT, ResourceT]):
     generation: GenerationT
     access: AccessT
     attempt: ManagedAttempt[GenerationT, AccessT]
-    request: ResourceRequest[AccessT] | None = None
+    acquisition: ResourceAcquisition[SpecT, ResourceT] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,12 +75,12 @@ class Current(Generic[GenerationT, AccessT, ResourceT, CapabilityT]):
     generation: GenerationT
     access: AccessT
     capability: CapabilityT
-    resource_lease: ResourceLease[AccessT, ResourceT]
+    resource_lease: ResourceLease[Hashable, ResourceT]
 
 
 ManagedState: TypeAlias = (
     Idle[GenerationT]
-    | Preparing[GenerationT, AccessT]
+    | Preparing[GenerationT, AccessT, SpecT, ResourceT]
     | Current[GenerationT, AccessT, ResourceT, CapabilityT]
 )
 
