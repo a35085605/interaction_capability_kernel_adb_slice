@@ -6,8 +6,8 @@ from threading import Event
 from typing import Protocol
 
 from networking import TcpAddress
-
 from adb._lifecycle import (
+    GLOBAL_RESOURCE_POOL,
     AcquireAbandonResult,
     AcquireAttempt,
     AcquireAttemptAbandoned,
@@ -29,9 +29,9 @@ from adb._lifecycle import (
     ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
     ReleaseInactive,
+    ResourcePool,
     ResourceScope,
 )
-from adb.cleanup import CleanupHandoff
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchAccess,
@@ -65,15 +65,11 @@ class AdbTransportListWatchAcquireInterruptedError(RuntimeError):
 
 
 class _AdbTransportListWatchResource(AdbTransportListWatchStream, Protocol):
-    """Lifecycle-private physical watch resource with lifecycle cleanup operations."""
-
-    def close(self) -> object | None:
-        """Attempt local cleanup; return unresolved resource or ``None``."""
-        ...
+    """Lifecycle-private view over a pool-registered physical watch resource."""
 
 
 class _AdbTransportListWatchStreamView:
-    """Narrow producer capability over a lifecycle-owned physical watch resource."""
+    """Narrow producer capability over a lifecycle-owned watch resource."""
 
     __slots__ = ("__resource",)
 
@@ -88,13 +84,9 @@ class _AdbTransportListWatchStreamView:
         return self.__resource.updates()
 
 
-
-
 def _superseded_after_abandon(
     result: AcquireAbandonResult[AdbTransportListWatchGeneration],
 ) -> AcquireSuperseded[AdbTransportListWatchGeneration] | None:
-    """Translate a shared finalization fact into the watch acquire outcome, if revoked."""
-
     if isinstance(result, AcquireAttemptRevoked):
         return AcquireSuperseded(result.current_generation)
     if isinstance(result, AcquireAttemptAbandoned):
@@ -103,41 +95,30 @@ def _superseded_after_abandon(
 
 
 class AdbTransportListWatchLifecycleTemplate(ABC):
-    """Template for one current watch generation and its physical resource scope.
-
-    Requested server-address access is captured before the watch resource is opened, so release can
-    match an in-flight request by both generation and access. Committed state atomically exposes
-    that access together with the single-consumer stream capability.
-
-    Watch/client sockets carry no exclusivity claim merely because they connect to the same server
-    address. Cleanup debt is therefore tracked by ownership but does not block a new watch on an
-    equal access server address. This avoids treating access information as a resource conflict key.
-    """
+    """Template for one current watch generation backed by the shared resource pool."""
 
     def __init__(
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
         *,
-        cleanup_handoff: CleanupHandoff,
+        _resource_pool: ResourcePool = GLOBAL_RESOURCE_POOL,
     ) -> None:
         if not isinstance(generation_issuer, AdbTransportListWatchGenerationIssuer):
             raise TypeError(
                 "generation_issuer must be AdbTransportListWatchGenerationIssuer"
             )
-        if not isinstance(cleanup_handoff, CleanupHandoff):
-            raise TypeError("cleanup_handoff must satisfy CleanupHandoff")
+        if not isinstance(_resource_pool, ResourcePool):
+            raise TypeError("_resource_pool must be ResourcePool")
         self._managed: ManagedLifecycle[
             AdbTransportListWatchGeneration,
             AdbTransportListWatchAccess,
             AdbTransportListWatchStream,
         ] = ManagedLifecycle(
             generation_issuer.issue,
-            cleanup_handoff=cleanup_handoff,
+            resource_pool=_resource_pool,
         )
 
     def read(self) -> AdbTransportListWatchState:
-        """Return one atomic generation/access/single-consumer-stream snapshot."""
-
         return self._managed.read()
 
     def read_diagnostics(
@@ -146,8 +127,6 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         AdbTransportListWatchGeneration,
         AdbTransportListWatchAccess,
     ]:
-        """Sample draining work and cleanup handoff state without exposing resources."""
-
         return self._managed.read_diagnostics()
 
     @abstractmethod
@@ -157,12 +136,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
         cancellation: Event,
         resources: ResourceScope,
     ) -> _AdbTransportListWatchResource:
-        """Obtain a fully usable watch resource while recording earlier resources in
-        ``resources``."""
-
-    def _schedule_cleanup(self, resource: _AdbTransportListWatchResource) -> None:
-        self._managed.register_cleanup(resource, lambda: resource.close())
-        self._managed.process_cleanup()
+        """Obtain a usable watch while registering produced physical resources immediately."""
 
     def acquire(
         self,
@@ -173,12 +147,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             raise TypeError("expected_generation must be AdbTransportListWatchGeneration")
         if not isinstance(access, AdbTransportListWatchAccess):
             raise TypeError("access must be AdbTransportListWatchAccess")
-
-        self._managed.process_cleanup()
-        try:
-            return self._acquire(expected_generation, access)
-        finally:
-            self._managed.process_cleanup()
+        return self._acquire(expected_generation, access)
 
     def _acquire(
         self,
@@ -207,6 +176,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             )
         if not isinstance(start, AcquireAttempt):
             raise TypeError("unsupported shared lifecycle acquire start")
+
         with self._managed.guard_acquire(start) as attempt:
             try:
                 resource = self._obtain_resource(
@@ -214,7 +184,6 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
                     attempt.cancellation,
                     attempt.resources,
                 )
-                attempt.resources.adopt(resource, lambda: resource.close())
             except AdbTransportListWatchAcquireInterruptedError as exc:
                 superseded = _superseded_after_abandon(attempt.abandon())
                 if superseded is not None:
@@ -246,11 +215,7 @@ class AdbTransportListWatchLifecycleTemplate(ABC):
             raise TypeError("expected_generation must be AdbTransportListWatchGeneration")
         if not isinstance(access, AdbTransportListWatchAccess):
             raise TypeError("access must be AdbTransportListWatchAccess")
-
-        try:
-            return self._release(expected_generation, access)
-        finally:
-            self._managed.process_cleanup()
+        return self._release(expected_generation, access)
 
     def _release(
         self,

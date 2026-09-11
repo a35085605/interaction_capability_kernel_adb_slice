@@ -1,6 +1,12 @@
 """Shared private lifecycle state-machine, result, snapshot, and diagnostic primitives."""
 
-from adb._lifecycle.resource import ResourceCleanupAttempt, ResourceOwnership, ResourceScope
+from adb._lifecycle.resource import (
+    GLOBAL_RESOURCE_POOL,
+    ResourceClaimConflict,
+    ResourceEntry,
+    ResourcePool,
+    ResourceScope,
+)
 from adb._lifecycle.snapshot import Snapshot
 from adb._lifecycle.state_machine import LifecycleStateMachine, PendingSnapshot
 from adb._lifecycle.diagnostics import LifecycleDiagnostics
@@ -22,7 +28,6 @@ from adb._lifecycle.result import (
     AcquireStartCurrent,
     AcquireStartResult,
     AcquireSuperseded,
-    CleanupRegistrationError,
     GenerationMismatch,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
@@ -50,7 +55,6 @@ __all__ = [
     "AcquireStartCurrent",
     "AcquireStartResult",
     "AcquireSuperseded",
-    "CleanupRegistrationError",
     "GenerationMismatch",
     "LifecycleDiagnostics",
     "LifecycleStateMachine",
@@ -61,8 +65,10 @@ __all__ = [
     "ReleaseAcquisitionRevoked",
     "ReleaseInactive",
     "ReleaseResult",
-    "ResourceCleanupAttempt",
-    "ResourceOwnership",
+    "GLOBAL_RESOURCE_POOL",
+    "ResourceClaimConflict",
+    "ResourceEntry",
+    "ResourcePool",
     "ResourceScope",
     "Snapshot",
 ]

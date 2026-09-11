@@ -8,13 +8,16 @@ from adb._lifecycle import (
     AcquireFailed,
     GenerationMismatch,
     AcquireSuperseded,
+    GLOBAL_RESOURCE_POOL,
+    ResourceEntry,
+    ResourcePool,
+    ResourceScope,
     Snapshot,
     ReleaseAccessDetached,
     ReleaseAccessMismatch,
     ReleaseAcquisitionRevoked,
     ReleaseInactive,
 )
-from adb.cleanup import CleanupCompletion, CleanupHandoff
 from adb.epoch import Epoch, EpochIssuer, EpochSequence
 from adb.errors import (
     AdbError,
@@ -74,6 +77,7 @@ __all__ = [
     "AcquireFailed",
     "GenerationMismatch",
     "AcquireSuperseded",
+    "GLOBAL_RESOURCE_POOL",
     "AdbDeviceSerial",
     "AdbError",
     "AdbObservedTransportKind",
@@ -115,8 +119,6 @@ __all__ = [
     "AdbTransportSelector",
     "AdbTransportState",
     "AdbTransportUnavailableError",
-    "CleanupCompletion",
-    "CleanupHandoff",
     "Snapshot",
     "Epoch",
     "EpochIssuer",
@@ -125,4 +127,7 @@ __all__ = [
     "ReleaseAccessMismatch",
     "ReleaseAcquisitionRevoked",
     "ReleaseInactive",
+    "ResourceEntry",
+    "ResourcePool",
+    "ResourceScope",
 ]

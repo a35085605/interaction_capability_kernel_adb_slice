@@ -254,14 +254,6 @@ ReleaseResult: TypeAlias = (
 )
 
 
-class CleanupRegistrationError(RuntimeError):
-    """Cleanup registration failed after the lifecycle transition was already applied."""
-
-    def __init__(self, outcome: ReleaseAccessDetached) -> None:
-        self.outcome = outcome
-        super().__init__("lifecycle transition applied, but cleanup registration failed")
-
-
 __all__ = [
     "AcquireAbandonResult",
     "AcquireAttempt",
@@ -279,7 +271,6 @@ __all__ = [
     "AcquireStartCurrent",
     "AcquireStartResult",
     "AcquireSuperseded",
-    "CleanupRegistrationError",
     "GenerationMismatch",
     "ReleaseAccessDetached",
     "ReleaseAccessMismatch",

@@ -3,7 +3,6 @@
 from adb.aosp.io.smart_socket import AdbServiceClient, ShellV2Result
 from adb.aosp.io.track_devices import (
     AospTrackDevicesOpenCancelled,
-    AospTrackDevicesOpenCleanupRequired,
     AospTrackDevicesStream,
     AospTrackDevicesStreamFactory,
 )
@@ -14,7 +13,6 @@ from adb.aosp.io.server_status import (
 
 __all__ = [
     "AospTrackDevicesOpenCancelled",
-    "AospTrackDevicesOpenCleanupRequired",
     "AospTrackDevicesStream",
     "AospTrackDevicesStreamFactory",
     "AdbServerStatusReader",
