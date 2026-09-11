@@ -1,0 +1,834 @@
+diff --git a/wip/adb/_managed/adapter.py b/wip/adb/_managed/adapter.py
+index ee2affc..fbc21d3 100644
+--- a/wip/adb/_managed/adapter.py
++++ b/wip/adb/_managed/adapter.py
+@@ -5,6 +5,7 @@ from typing import Generic, Protocol, TypeVar
+ 
+ from adb._capability.projection import CapabilityProjection
+ from adb._resource.lifecycle import ResourceLifecycle
++from adb._resource.requirement import ResourceRequirement
+ 
+ 
+ AccessT = TypeVar("AccessT")
+@@ -14,9 +15,9 @@ CapabilityT = TypeVar("CapabilityT")
+ 
+ 
+ class AccessModel(Protocol[AccessT, RequirementsT]):
+-    """Adapter semantics for deriving physical requirements from Access."""
++    """Adapter semantics for deriving one physical requirement from Access."""
+ 
+-    def requirements(self, access: AccessT) -> RequirementsT: ...
++    def requirements(self, access: AccessT) -> ResourceRequirement[RequirementsT]: ...
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+diff --git a/wip/adb/_managed/coordinator.py b/wip/adb/_managed/coordinator.py
+index 29fbc2e..065568a 100644
+--- a/wip/adb/_managed/coordinator.py
++++ b/wip/adb/_managed/coordinator.py
+@@ -22,7 +22,12 @@ from adb._managed.result import (
+ from adb._managed.snapshot import Snapshot
+ from adb._managed.state import Current, Idle, ManagedAttempt, ManagedState, Preparing
+ from adb._resource.acquisition import ResourceAcquisition
+-from adb._resource.pool import GLOBAL_RESOURCE_POOL, ResourcePool, ResourceReservation
++from adb._resource.pool import (
++    GLOBAL_RESOURCE_POOL,
++    ResourceLease,
++    ResourcePool,
++    ResourceReservation,
++)
+ 
+ 
+ GenerationT = TypeVar("GenerationT")
+@@ -35,17 +40,18 @@ CapabilityT = TypeVar("CapabilityT")
+ class ManagedCoordinator(
+     Generic[GenerationT, AccessT, RequirementsT, ResourceSetT, CapabilityT]
+ ):
+-    """Coordinate Access authority around one Access-keyed ResourceSet pool.
++    """Coordinate Access authority around policy-aware physical ResourceSets.
+ 
+     Simplified acquire sequence::
+ 
+-        requirements -> reserve Access -> acquire ResourceSet -> project Capability
+-        -> atomically install ResourceSet + commit Current
++        ResourceRequirement -> reserve/reuse -> acquire if needed -> Capability
++        -> atomically install/retain lease + commit Current
+ 
+-    No ResourceSet composition or cross-Access sharing exists in this model.
+-    Physical acquisition happens outside the coordinator lock. ``release`` can
+-    therefore revoke a Preparing attempt, advance authority immediately, and let
+-    the losing acquire call drain/cleanup its ResourceSet when it returns.
++    EXCLUSIVE, SHARED, and PARALLEL coexistence is decided by ``ResourcePool``
++    before physical acquisition. Physical acquisition happens outside the
++    coordinator lock. ``release`` can therefore revoke a Preparing attempt,
++    advance authority immediately, and let the losing acquire call drain/cleanup
++    its lease or ResourceSet when it returns.
+     """
+ 
+     def __init__(
+@@ -63,9 +69,9 @@ class ManagedCoordinator(
+         self._adapter = adapter
+         self._resource_pool = resource_pool
+         self._lock = Lock()
+-        self._state: ManagedState[GenerationT, AccessT, CapabilityT] = Idle(
+-            issue_generation()
+-        )
++        self._state: ManagedState[
++            GenerationT, AccessT, ResourceSetT, CapabilityT
++        ] = Idle(issue_generation())
+ 
+     @property
+     def resource_pool(self) -> ResourcePool[AccessT, ResourceSetT]:
+@@ -112,31 +118,47 @@ class ManagedCoordinator(
+             self._state = Preparing(state.generation, access, attempt)
+ 
+         reservation: ResourceReservation[AccessT] | None = None
++        lease: ResourceLease[AccessT, ResourceSetT] | None = None
+         resources: ResourceSetT | None = None
+         resources_obtained = False
+ 
+         try:
+-            requirements = self._adapter.access_model.requirements(access)
++            requirement = self._adapter.access_model.requirements(access)
+ 
+             if acquisition.revoked:
+                 return self._finish_superseded(attempt)
+ 
+-            reservation = self._resource_pool.reserve(access)
+-            if reservation is None:
++            claim = self._resource_pool.reserve(access, requirement)
++            if claim is None:
+                 abandoned, current_generation = self._abandon_if_current(attempt)
+                 if abandoned:
+                     return AcquireBusy()
+                 return AcquireSuperseded(current_generation)
+ 
++            if isinstance(claim, ResourceLease):
++                lease = claim
++                resources = claim.resources
++            else:
++                reservation = claim
++
+             if acquisition.revoked:
+-                self._resource_pool.cancel(reservation)
+-                reservation = None
++                if lease is not None:
++                    self._release_lease_and_cleanup(lease)
++                    lease = None
++                elif reservation is not None:
++                    self._resource_pool.cancel(reservation)
++                    reservation = None
+                 return self._finish_superseded(attempt)
+ 
+-            resources = self._adapter.resource_lifecycle.acquire(requirements, acquisition)
+             if resources is None:
+-                raise TypeError("ResourceLifecycle.acquire() cannot return None")
+-            resources_obtained = True
++                assert reservation is not None
++                resources = self._adapter.resource_lifecycle.acquire(
++                    requirement.value,
++                    acquisition,
++                )
++                if resources is None:
++                    raise TypeError("ResourceLifecycle.acquire() cannot return None")
++                resources_obtained = True
+ 
+             capability = self._adapter.capability_projection.project(access, resources)
+             if capability is None:
+@@ -150,23 +172,39 @@ class ManagedCoordinator(
+                     and not acquisition.revoked
+                 )
+                 if owns_authority:
+-                    self._resource_pool.install(reservation, resources)
+-                    reservation = None
++                    if lease is None:
++                        assert reservation is not None
++                        lease = self._resource_pool.install(reservation, resources)
++                        reservation = None
+                     snapshot = Snapshot(state.generation, access, capability)
+-                    self._state = Current(state.generation, access, capability)
++                    self._state = Current(
++                        state.generation,
++                        access,
++                        capability,
++                        lease,
++                    )
+                     return AcquireCommitted(snapshot)
+                 current_generation = state.generation
+ 
+-            self._retire_and_cleanup_reservation(reservation, access, resources)
+-            reservation = None
+-            resources_obtained = False
++            if lease is not None:
++                self._release_lease_and_cleanup(lease)
++                lease = None
++            elif reservation is not None:
++                if resources_obtained:
++                    self._install_retire_and_cleanup_reservation(reservation, resources)
++                    resources_obtained = False
++                else:
++                    self._resource_pool.cancel(reservation)
++                reservation = None
+             return AcquireSuperseded(current_generation)
+ 
+         except BaseException:
+             self._abandon_if_current(attempt)
+-            if reservation is not None:
++            if lease is not None:
++                self._release_lease_and_cleanup(lease)
++            elif reservation is not None:
+                 if resources_obtained and resources is not None:
+-                    self._retire_and_cleanup_reservation(reservation, access, resources)
++                    self._install_retire_and_cleanup_reservation(reservation, resources)
+                 else:
+                     self._resource_pool.cancel(reservation)
+             raise
+@@ -183,7 +221,7 @@ class ManagedCoordinator(
+         if access is None:
+             raise TypeError("access cannot be None")
+ 
+-        resources: ResourceSetT | None = None
++        retired = None
+         next_generation: GenerationT | None = None
+ 
+         with self._lock:
+@@ -207,28 +245,30 @@ class ManagedCoordinator(
+                 return ReleaseAccessMismatch(state.access)
+ 
+             next_generation = self._fresh_generation(state.generation)
+-            resources = self._resource_pool.retire(access)
++            retired = self._resource_pool.retire(state.resource_lease)
+             self._state = Idle(next_generation)
+ 
+-        # Authority is detached before physical cleanup. On failure the retired
+-        # record remains in the pool, blocks reacquisition, and can be retried via
+-        # cleanup_retired().
+-        assert resources is not None
++        # Authority is detached before physical cleanup. SHARED resources remain
++        # active while another lease exists. If final cleanup fails, the retired
++        # record stays in the pool and can be retried via cleanup_retired().
+         assert next_generation is not None
+-        self._adapter.resource_lifecycle.cleanup(resources)
+-        self._resource_pool.discard(access, resources)
++        if retired is not None:
++            self._adapter.resource_lifecycle.cleanup(retired.resources)
++            self._resource_pool.discard(retired)
+         return ReleaseDetached(next_generation)
+ 
+     def cleanup_retired(self, access: AccessT) -> bool:
+-        """Retry cleanup of one retired Access record left by a prior failure."""
++        """Retry cleanup of every retired record currently retained for Access."""
+ 
+         if access is None:
+             raise TypeError("access cannot be None")
+-        resources = self._resource_pool.retired(access)
+-        if resources is None:
++        requirement = self._adapter.access_model.requirements(access)
++        retired_records = self._resource_pool.retired(access, requirement.key)
++        if not retired_records:
+             return False
+-        self._adapter.resource_lifecycle.cleanup(resources)
+-        self._resource_pool.discard(access, resources)
++        for retired in retired_records:
++            self._adapter.resource_lifecycle.cleanup(retired.resources)
++            self._resource_pool.discard(retired)
+         return True
+ 
+     def _snapshot_locked(self) -> Snapshot[GenerationT, AccessT, CapabilityT]:
+@@ -261,15 +301,23 @@ class ManagedCoordinator(
+         _abandoned, current_generation = self._abandon_if_current(attempt)
+         return AcquireSuperseded(current_generation)
+ 
+-    def _retire_and_cleanup_reservation(
++    def _install_retire_and_cleanup_reservation(
+         self,
+         reservation: ResourceReservation[AccessT],
+-        access: AccessT,
+         resources: ResourceSetT,
+     ) -> None:
+-        self._resource_pool.install(reservation, resources, retired=True)
+-        self._adapter.resource_lifecycle.cleanup(resources)
+-        self._resource_pool.discard(access, resources)
++        lease = self._resource_pool.install(reservation, resources)
++        self._release_lease_and_cleanup(lease)
++
++    def _release_lease_and_cleanup(
++        self,
++        lease: ResourceLease[AccessT, ResourceSetT],
++    ) -> None:
++        retired = self._resource_pool.retire(lease)
++        if retired is None:
++            return
++        self._adapter.resource_lifecycle.cleanup(retired.resources)
++        self._resource_pool.discard(retired)
+ 
+ 
+ __all__ = ["ManagedCoordinator"]
+diff --git a/wip/adb/_managed/state.py b/wip/adb/_managed/state.py
+index 5b44522..bd55a1e 100644
+--- a/wip/adb/_managed/state.py
++++ b/wip/adb/_managed/state.py
+@@ -4,10 +4,12 @@ from dataclasses import dataclass
+ from typing import Generic, TypeAlias, TypeVar
+ 
+ from adb._resource.acquisition import ResourceAcquisition
++from adb._resource.pool import ResourceLease
+ 
+ 
+ GenerationT = TypeVar("GenerationT")
+ AccessT = TypeVar("AccessT")
++ResourceSetT = TypeVar("ResourceSetT")
+ CapabilityT = TypeVar("CapabilityT")
+ 
+ 
+@@ -33,16 +35,17 @@ class Preparing(Generic[GenerationT, AccessT]):
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+-class Current(Generic[GenerationT, AccessT, CapabilityT]):
++class Current(Generic[GenerationT, AccessT, ResourceSetT, CapabilityT]):
+     generation: GenerationT
+     access: AccessT
+     capability: CapabilityT
++    resource_lease: ResourceLease[AccessT, ResourceSetT]
+ 
+ 
+ ManagedState: TypeAlias = (
+     Idle[GenerationT]
+     | Preparing[GenerationT, AccessT]
+-    | Current[GenerationT, AccessT, CapabilityT]
++    | Current[GenerationT, AccessT, ResourceSetT, CapabilityT]
+ )
+ 
+ 
+diff --git a/wip/adb/_resource/__init__.py b/wip/adb/_resource/__init__.py
+index 61807b6..c2f7aa9 100644
+--- a/wip/adb/_resource/__init__.py
++++ b/wip/adb/_resource/__init__.py
+@@ -1,20 +1,27 @@
+-"""Access-keyed physical ResourceSet acquisition, retention, and cleanup primitives."""
++"""Physical ResourceSet acquisition, coexistence, retention, and cleanup primitives."""
+ 
+ from adb._resource.acquisition import ResourceAcquisition
+ from adb._resource.lifecycle import ResourceLifecycle
+ from adb._resource.pool import (
+     GLOBAL_RESOURCE_POOL,
++    ResourceLease,
+     ResourcePool,
+     ResourceRecord,
+     ResourceReservation,
++    RetiredResource,
+ )
++from adb._resource.requirement import ResourcePolicy, ResourceRequirement
+ 
+ 
+ __all__ = [
+     "GLOBAL_RESOURCE_POOL",
+     "ResourceAcquisition",
++    "ResourceLease",
+     "ResourceLifecycle",
++    "ResourcePolicy",
+     "ResourcePool",
+     "ResourceRecord",
++    "ResourceRequirement",
+     "ResourceReservation",
++    "RetiredResource",
+ ]
+diff --git a/wip/adb/_resource/pool.py b/wip/adb/_resource/pool.py
+index bb66c88..befc9b0 100644
+--- a/wip/adb/_resource/pool.py
++++ b/wip/adb/_resource/pool.py
+@@ -1,8 +1,10 @@
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ from threading import Lock
+-from typing import Any, Generic, TypeVar
++from typing import Any, Generic, Hashable, TypeVar
++
++from adb._resource.requirement import ResourcePolicy, ResourceRequirement
+ 
+ 
+ AccessT = TypeVar("AccessT")
+@@ -11,40 +13,71 @@ ResourceSetT = TypeVar("ResourceSetT")
+ 
+ @dataclass(frozen=True, slots=True)
+ class ResourceRecord(Generic[AccessT, ResourceSetT]):
+-    """Immutable point-in-time view of one Access -> ResourceSet mapping."""
++    """Immutable point-in-time view of one retained physical ResourceSet."""
+ 
+     access: AccessT
++    requirement_key: Hashable
++    policy: ResourcePolicy
+     resources: ResourceSetT
++    leases: int
+     retired: bool = False
+ 
+ 
+ @dataclass(frozen=True, slots=True, eq=False)
+ class ResourceReservation(Generic[AccessT]):
+-    """Identity token reserving one Access while its ResourceSet is prepared."""
++    """Identity token reserving one new physical ResourceSet acquisition."""
++
++    access: AccessT
++    requirement_key: Hashable
++    policy: ResourcePolicy
++
++
++@dataclass(frozen=True, slots=True, eq=False)
++class ResourceLease(Generic[AccessT, ResourceSetT]):
++    """Identity token retaining one installed ResourceSet for a coordinator."""
++
++    access: AccessT
++    requirement_key: Hashable
++    resources: ResourceSetT
++    _record_token: object
++    _lease_token: object
++
++
++@dataclass(frozen=True, slots=True, eq=False)
++class RetiredResource(Generic[AccessT, ResourceSetT]):
++    """Exact retired record that remains retained until cleanup succeeds."""
+ 
+     access: AccessT
++    requirement_key: Hashable
++    resources: ResourceSetT
++    _record_token: object
+ 
+ 
+ @dataclass(slots=True)
+ class _RecordState(Generic[AccessT, ResourceSetT]):
+     access: AccessT
++    requirement_key: Hashable
++    policy: ResourcePolicy
+     resources: ResourceSetT
++    token: object
++    lease_tokens: set[object] = field(default_factory=set)
+     retired: bool = False
+ 
+ 
+ class ResourcePool(Generic[AccessT, ResourceSetT]):
+-    """Process-wide registry of one ResourceSet per Access.
++    """Process-wide registry of physical ResourceSets and their coexistence policy.
+ 
+-    The simplified model deliberately does not compose or share resources between
+-    different Access values. A reservation blocks duplicate physical acquisition
+-    while a ResourceSet is being prepared. Retired records remain retained until
+-    physical cleanup succeeds and ``discard`` confirms their removal.
++    EXCLUSIVE requirements block every retained or reserved ResourceSet for the same
++    Access. SHARED requirements reuse one active ResourceSet with the same key and
++    reference-count its leases. PARALLEL requirements always acquire an independent
++    ResourceSet. A conflicting EXCLUSIVE record, including a retired one awaiting
++    cleanup, blocks non-exclusive acquisition.
+     """
+ 
+     def __init__(self) -> None:
+         self._lock = Lock()
+-        self._records: dict[AccessT, _RecordState[AccessT, ResourceSetT]] = {}
+-        self._reservations: dict[AccessT, ResourceReservation[AccessT]] = {}
++        self._records: list[_RecordState[AccessT, ResourceSetT]] = []
++        self._reservations: list[ResourceReservation[AccessT]] = []
+ 
+     @staticmethod
+     def _validate_access(access: AccessT) -> None:
+@@ -55,49 +88,149 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
+         except TypeError as exc:
+             raise TypeError("access must be hashable") from exc
+ 
++    @staticmethod
++    def _validate_requirement(requirement: ResourceRequirement[Any]) -> None:
++        if not isinstance(requirement, ResourceRequirement):
++            raise TypeError("requirement must be ResourceRequirement")
++
+     def snapshot(self) -> tuple[ResourceRecord[AccessT, ResourceSetT], ...]:
+-        """Return immutable views of every retained Access -> ResourceSet record."""
++        """Return immutable views of every retained physical ResourceSet."""
+ 
+         with self._lock:
+             return tuple(
+-                ResourceRecord(state.access, state.resources, state.retired)
+-                for state in self._records.values()
++                ResourceRecord(
++                    state.access,
++                    state.requirement_key,
++                    state.policy,
++                    state.resources,
++                    len(state.lease_tokens),
++                    state.retired,
++                )
++                for state in self._records
+             )
+ 
+-    def lookup(self, access: AccessT) -> ResourceSetT | None:
+-        """Return the active ResourceSet for ``access``; retired records are hidden."""
++    def lookup(
++        self,
++        access: AccessT,
++        requirement_key: Hashable,
++    ) -> tuple[ResourceSetT, ...]:
++        """Return all active ResourceSets matching one Access + requirement key."""
+ 
+         self._validate_access(access)
++        if requirement_key is None:
++            raise TypeError("requirement_key cannot be None")
+         with self._lock:
+-            state = self._records.get(access)
+-            if state is None or state.retired:
+-                return None
+-            return state.resources
++            return tuple(
++                state.resources
++                for state in self._records
++                if state.access == access
++                and state.requirement_key == requirement_key
++                and not state.retired
++            )
+ 
+-    def retired(self, access: AccessT) -> ResourceSetT | None:
+-        """Return the retained retired ResourceSet for cleanup retry, if any."""
++    def retired(
++        self,
++        access: AccessT,
++        requirement_key: Hashable,
++    ) -> tuple[RetiredResource[AccessT, ResourceSetT], ...]:
++        """Return retired records matching one Access + requirement key."""
+ 
+         self._validate_access(access)
++        if requirement_key is None:
++            raise TypeError("requirement_key cannot be None")
+         with self._lock:
+-            state = self._records.get(access)
+-            if state is None or not state.retired:
+-                return None
+-            return state.resources
+-
+-    def reserve(self, access: AccessT) -> ResourceReservation[AccessT] | None:
+-        """Reserve an absent Access for acquisition.
++            return tuple(
++                RetiredResource(
++                    state.access,
++                    state.requirement_key,
++                    state.resources,
++                    state.token,
++                )
++                for state in self._records
++                if state.access == access
++                and state.requirement_key == requirement_key
++                and state.retired
++            )
+ 
+-        ``None`` means the Access is already retained (active or retired) or another
+-        acquisition already owns its reservation.
++    def reserve(
++        self,
++        access: AccessT,
++        requirement: ResourceRequirement[Any],
++    ) -> ResourceReservation[AccessT] | ResourceLease[AccessT, ResourceSetT] | None:
++        """Reserve/acquire one requirement according to its same-Access policy.
++
++        SHARED may return an already-installed lease. Returning ``None`` means the
++        request conflicts with a retained/reserved resource or a same-key SHARED
++        acquisition is still being prepared.
+         """
+ 
+         self._validate_access(access)
++        self._validate_requirement(requirement)
++
+         with self._lock:
+-            if access in self._records or access in self._reservations:
++            same_access_records = [
++                state for state in self._records if state.access == access
++            ]
++            same_access_reservations = [
++                reservation
++                for reservation in self._reservations
++                if reservation.access == access
++            ]
++
++            if requirement.policy is ResourcePolicy.EXCLUSIVE:
++                if same_access_records or same_access_reservations:
++                    return None
++                return self._reserve_locked(access, requirement)
++
++            if any(
++                state.policy is ResourcePolicy.EXCLUSIVE
++                for state in same_access_records
++            ) or any(
++                reservation.policy is ResourcePolicy.EXCLUSIVE
++                for reservation in same_access_reservations
++            ):
++                return None
++
++            same_key_records = [
++                state
++                for state in same_access_records
++                if state.requirement_key == requirement.key
++            ]
++            same_key_reservations = [
++                reservation
++                for reservation in same_access_reservations
++                if reservation.requirement_key == requirement.key
++            ]
++
++            # One resource identity must not change coexistence semantics while any
++            # record/reservation for that identity still exists.
++            if any(state.policy is not requirement.policy for state in same_key_records):
++                return None
++            if any(
++                reservation.policy is not requirement.policy
++                for reservation in same_key_reservations
++            ):
+                 return None
+-            reservation = ResourceReservation(access)
+-            self._reservations[access] = reservation
+-            return reservation
++
++            if requirement.policy is ResourcePolicy.SHARED:
++                if any(state.retired for state in same_key_records):
++                    return None
++                for state in same_key_records:
++                    if not state.retired:
++                        return self._lease_locked(state)
++                if same_key_reservations:
++                    return None
++
++            return self._reserve_locked(access, requirement)
++
++    def _reserve_locked(
++        self,
++        access: AccessT,
++        requirement: ResourceRequirement[Any],
++    ) -> ResourceReservation[AccessT]:
++        reservation = ResourceReservation(access, requirement.key, requirement.policy)
++        self._reservations.append(reservation)
++        return reservation
+ 
+     def cancel(self, reservation: ResourceReservation[AccessT]) -> bool:
+         """Cancel one still-current reservation; return whether it was removed."""
+@@ -105,74 +238,120 @@ class ResourcePool(Generic[AccessT, ResourceSetT]):
+         if not isinstance(reservation, ResourceReservation):
+             raise TypeError("reservation must be ResourceReservation")
+         with self._lock:
+-            current = self._reservations.get(reservation.access)
+-            if current is not reservation:
+-                return False
+-            del self._reservations[reservation.access]
+-            return True
++            for index, current in enumerate(self._reservations):
++                if current is reservation:
++                    del self._reservations[index]
++                    return True
++            return False
+ 
+     def install(
+         self,
+         reservation: ResourceReservation[AccessT],
+         resources: ResourceSetT,
+-        *,
+-        retired: bool = False,
+-    ) -> ResourceRecord[AccessT, ResourceSetT]:
+-        """Consume a reservation and install exactly one ResourceSet for its Access."""
++    ) -> ResourceLease[AccessT, ResourceSetT]:
++        """Consume a reservation, install its ResourceSet, and return the first lease."""
+ 
+         if not isinstance(reservation, ResourceReservation):
+             raise TypeError("reservation must be ResourceReservation")
+         if resources is None:
+             raise TypeError("resources cannot be None")
+-        if not isinstance(retired, bool):
+-            raise TypeError("retired must be bool")
+ 
+         with self._lock:
+-            current = self._reservations.get(reservation.access)
+-            if current is not reservation:
++            reservation_index = next(
++                (
++                    index
++                    for index, current in enumerate(self._reservations)
++                    if current is reservation
++                ),
++                None,
++            )
++            if reservation_index is None:
+                 raise RuntimeError("resource reservation is not current")
+-            if reservation.access in self._records:
+-                raise RuntimeError("resource access is already retained")
+ 
++            token = object()
+             state = _RecordState(
+                 access=reservation.access,
++                requirement_key=reservation.requirement_key,
++                policy=reservation.policy,
+                 resources=resources,
+-                retired=retired,
++                token=token,
+             )
+-            self._records[reservation.access] = state
+-            del self._reservations[reservation.access]
+-            return ResourceRecord(state.access, state.resources, state.retired)
++            self._records.append(state)
++            del self._reservations[reservation_index]
++            return self._lease_locked(state)
++
++    @staticmethod
++    def _lease_locked(
++        state: _RecordState[AccessT, ResourceSetT],
++    ) -> ResourceLease[AccessT, ResourceSetT]:
++        lease_token = object()
++        state.lease_tokens.add(lease_token)
++        return ResourceLease(
++            state.access,
++            state.requirement_key,
++            state.resources,
++            state.token,
++            lease_token,
++        )
++
++    def retire(
++        self,
++        lease: ResourceLease[AccessT, ResourceSetT],
++    ) -> RetiredResource[AccessT, ResourceSetT] | None:
++        """Release one lease; retire the ResourceSet when its last lease detaches."""
+ 
+-    def retire(self, access: AccessT) -> ResourceSetT:
+-        """Retire the retained ResourceSet for ``access`` and return it for cleanup."""
++        if not isinstance(lease, ResourceLease):
++            raise TypeError("lease must be ResourceLease")
+ 
+-        self._validate_access(access)
+         with self._lock:
+-            state = self._records.get(access)
++            state = next(
++                (state for state in self._records if state.token is lease._record_token),
++                None,
++            )
+             if state is None:
+-                raise RuntimeError("resource access is not retained")
++                raise RuntimeError("resource lease is not retained")
++            if state.retired:
++                raise RuntimeError("resource lease is already retired")
++            if state.resources is not lease.resources:
++                raise RuntimeError("resource lease does not match retained resources")
++            if lease._lease_token not in state.lease_tokens:
++                raise RuntimeError("resource lease is not current")
++
++            state.lease_tokens.remove(lease._lease_token)
++            if state.lease_tokens:
++                return None
++
+             state.retired = True
+-            return state.resources
++            return RetiredResource(
++                state.access,
++                state.requirement_key,
++                state.resources,
++                state.token,
++            )
+ 
+-    def discard(self, access: AccessT, resources: ResourceSetT) -> None:
+-        """Forget a retired record after physical cleanup has succeeded.
++    def discard(self, retired: RetiredResource[AccessT, ResourceSetT]) -> None:
++        """Forget one exact retired record after physical cleanup succeeds."""
+ 
+-        The ResourceSet identity check prevents a stale cleanup completion from
+-        discarding a later record for the same Access.
+-        """
++        if not isinstance(retired, RetiredResource):
++            raise TypeError("retired must be RetiredResource")
+ 
+-        self._validate_access(access)
+-        if resources is None:
+-            raise TypeError("resources cannot be None")
+         with self._lock:
+-            state = self._records.get(access)
+-            if state is None:
+-                raise RuntimeError("resource access is not retained")
+-            if state.resources is not resources:
+-                raise RuntimeError("resource set does not match the retained access")
++            record_index = next(
++                (
++                    index
++                    for index, state in enumerate(self._records)
++                    if state.token is retired._record_token
++                ),
++                None,
++            )
++            if record_index is None:
++                raise RuntimeError("retired resource is not retained")
++            state = self._records[record_index]
++            if state.resources is not retired.resources:
++                raise RuntimeError("retired resource does not match retained resources")
+             if not state.retired:
+                 raise RuntimeError("resource set must be retired before discard")
+-            del self._records[access]
++            del self._records[record_index]
+ 
+ 
+ GLOBAL_RESOURCE_POOL: ResourcePool[Any, Any] = ResourcePool()
+@@ -180,7 +359,9 @@ GLOBAL_RESOURCE_POOL: ResourcePool[Any, Any] = ResourcePool()
+ 
+ __all__ = [
+     "GLOBAL_RESOURCE_POOL",
++    "ResourceLease",
+     "ResourcePool",
+     "ResourceRecord",
+     "ResourceReservation",
++    "RetiredResource",
+ ]
+diff --git a/wip/adb/_resource/requirement.py b/wip/adb/_resource/requirement.py
+new file mode 100644
+index 0000000..4d2ad8c
+--- /dev/null
++++ b/wip/adb/_resource/requirement.py
+@@ -0,0 +1,50 @@
++from __future__ import annotations
++
++from dataclasses import dataclass
++from enum import Enum
++from typing import Generic, Hashable, TypeVar
++
++
++RequirementsT = TypeVar("RequirementsT")
++
++
++class ResourcePolicy(Enum):
++    """Same-Access coexistence policy for one physical ResourceSet requirement."""
++
++    EXCLUSIVE = "exclusive"
++    SHARED = "shared"
++    PARALLEL = "parallel"
++
++
++@dataclass(frozen=True, slots=True)
++class ResourceRequirement(Generic[RequirementsT]):
++    """Describe one ResourceSet acquisition before physical resources are touched.
++
++    ``key`` identifies the physical resource contract for SHARED reuse, policy
++    consistency, and cleanup ownership. Keys must include every material parameter
++    that makes two ResourceSets unsafe to reuse. ``value`` is passed unchanged to
++    ``ResourceLifecycle``.
++
++    Policy semantics for the same Access are:
++
++    * EXCLUSIVE: coexist with nothing else.
++    * SHARED: reuse one active ResourceSet with the same key.
++    * PARALLEL: allow independent ResourceSets, including with the same key.
++    """
++
++    key: Hashable
++    value: RequirementsT
++    policy: ResourcePolicy = ResourcePolicy.EXCLUSIVE
++
++    def __post_init__(self) -> None:
++        if self.key is None:
++            raise TypeError("resource requirement key cannot be None")
++        try:
++            hash(self.key)
++        except TypeError as exc:
++            raise TypeError("resource requirement key must be hashable") from exc
++        if not isinstance(self.policy, ResourcePolicy):
++            raise TypeError("resource requirement policy must be ResourcePolicy")
++
++
++__all__ = ["ResourcePolicy", "ResourceRequirement"]

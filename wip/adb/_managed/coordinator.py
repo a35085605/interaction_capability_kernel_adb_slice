@@ -22,7 +22,12 @@ from adb._managed.result import (
 from adb._managed.snapshot import Snapshot
 from adb._managed.state import Current, Idle, ManagedAttempt, ManagedState, Preparing
 from adb._resource.acquisition import ResourceAcquisition
-from adb._resource.pool import GLOBAL_RESOURCE_POOL, ResourcePool, ResourceReservation
+from adb._resource.pool import (
+    GLOBAL_RESOURCE_POOL,
+    ResourceLease,
+    ResourcePool,
+    ResourceReservation,
+)
 
 
 GenerationT = TypeVar("GenerationT")
@@ -35,17 +40,18 @@ CapabilityT = TypeVar("CapabilityT")
 class ManagedCoordinator(
     Generic[GenerationT, AccessT, RequirementsT, ResourceSetT, CapabilityT]
 ):
-    """Coordinate Access authority around one Access-keyed ResourceSet pool.
+    """Coordinate Access authority around policy-aware physical ResourceSets.
 
     Simplified acquire sequence::
 
-        requirements -> reserve Access -> acquire ResourceSet -> project Capability
-        -> atomically install ResourceSet + commit Current
+        ResourceRequirement -> reserve/reuse -> acquire if needed -> Capability
+        -> atomically install/retain lease + commit Current
 
-    No ResourceSet composition or cross-Access sharing exists in this model.
-    Physical acquisition happens outside the coordinator lock. ``release`` can
-    therefore revoke a Preparing attempt, advance authority immediately, and let
-    the losing acquire call drain/cleanup its ResourceSet when it returns.
+    EXCLUSIVE, SHARED, and PARALLEL coexistence is decided by ``ResourcePool``
+    before physical acquisition. Physical acquisition happens outside the
+    coordinator lock. ``release`` can therefore revoke a Preparing attempt,
+    advance authority immediately, and let the losing acquire call drain/cleanup
+    its lease or ResourceSet when it returns.
     """
 
     def __init__(
@@ -63,9 +69,9 @@ class ManagedCoordinator(
         self._adapter = adapter
         self._resource_pool = resource_pool
         self._lock = Lock()
-        self._state: ManagedState[GenerationT, AccessT, CapabilityT] = Idle(
-            issue_generation()
-        )
+        self._state: ManagedState[
+            GenerationT, AccessT, ResourceSetT, CapabilityT
+        ] = Idle(issue_generation())
 
     @property
     def resource_pool(self) -> ResourcePool[AccessT, ResourceSetT]:
@@ -112,31 +118,47 @@ class ManagedCoordinator(
             self._state = Preparing(state.generation, access, attempt)
 
         reservation: ResourceReservation[AccessT] | None = None
+        lease: ResourceLease[AccessT, ResourceSetT] | None = None
         resources: ResourceSetT | None = None
         resources_obtained = False
 
         try:
-            requirements = self._adapter.access_model.requirements(access)
+            requirement = self._adapter.access_model.requirements(access)
 
             if acquisition.revoked:
                 return self._finish_superseded(attempt)
 
-            reservation = self._resource_pool.reserve(access)
-            if reservation is None:
+            claim = self._resource_pool.reserve(access, requirement)
+            if claim is None:
                 abandoned, current_generation = self._abandon_if_current(attempt)
                 if abandoned:
                     return AcquireBusy()
                 return AcquireSuperseded(current_generation)
 
+            if isinstance(claim, ResourceLease):
+                lease = claim
+                resources = claim.resources
+            else:
+                reservation = claim
+
             if acquisition.revoked:
-                self._resource_pool.cancel(reservation)
-                reservation = None
+                if lease is not None:
+                    self._release_lease_and_cleanup(lease)
+                    lease = None
+                elif reservation is not None:
+                    self._resource_pool.cancel(reservation)
+                    reservation = None
                 return self._finish_superseded(attempt)
 
-            resources = self._adapter.resource_lifecycle.acquire(requirements, acquisition)
             if resources is None:
-                raise TypeError("ResourceLifecycle.acquire() cannot return None")
-            resources_obtained = True
+                assert reservation is not None
+                resources = self._adapter.resource_lifecycle.acquire(
+                    requirement.value,
+                    acquisition,
+                )
+                if resources is None:
+                    raise TypeError("ResourceLifecycle.acquire() cannot return None")
+                resources_obtained = True
 
             capability = self._adapter.capability_projection.project(access, resources)
             if capability is None:
@@ -150,23 +172,39 @@ class ManagedCoordinator(
                     and not acquisition.revoked
                 )
                 if owns_authority:
-                    self._resource_pool.install(reservation, resources)
-                    reservation = None
+                    if lease is None:
+                        assert reservation is not None
+                        lease = self._resource_pool.install(reservation, resources)
+                        reservation = None
                     snapshot = Snapshot(state.generation, access, capability)
-                    self._state = Current(state.generation, access, capability)
+                    self._state = Current(
+                        state.generation,
+                        access,
+                        capability,
+                        lease,
+                    )
                     return AcquireCommitted(snapshot)
                 current_generation = state.generation
 
-            self._retire_and_cleanup_reservation(reservation, access, resources)
-            reservation = None
-            resources_obtained = False
+            if lease is not None:
+                self._release_lease_and_cleanup(lease)
+                lease = None
+            elif reservation is not None:
+                if resources_obtained:
+                    self._install_retire_and_cleanup_reservation(reservation, resources)
+                    resources_obtained = False
+                else:
+                    self._resource_pool.cancel(reservation)
+                reservation = None
             return AcquireSuperseded(current_generation)
 
         except BaseException:
             self._abandon_if_current(attempt)
-            if reservation is not None:
+            if lease is not None:
+                self._release_lease_and_cleanup(lease)
+            elif reservation is not None:
                 if resources_obtained and resources is not None:
-                    self._retire_and_cleanup_reservation(reservation, access, resources)
+                    self._install_retire_and_cleanup_reservation(reservation, resources)
                 else:
                     self._resource_pool.cancel(reservation)
             raise
@@ -183,7 +221,7 @@ class ManagedCoordinator(
         if access is None:
             raise TypeError("access cannot be None")
 
-        resources: ResourceSetT | None = None
+        retired = None
         next_generation: GenerationT | None = None
 
         with self._lock:
@@ -207,28 +245,30 @@ class ManagedCoordinator(
                 return ReleaseAccessMismatch(state.access)
 
             next_generation = self._fresh_generation(state.generation)
-            resources = self._resource_pool.retire(access)
+            retired = self._resource_pool.retire(state.resource_lease)
             self._state = Idle(next_generation)
 
-        # Authority is detached before physical cleanup. On failure the retired
-        # record remains in the pool, blocks reacquisition, and can be retried via
-        # cleanup_retired().
-        assert resources is not None
+        # Authority is detached before physical cleanup. SHARED resources remain
+        # active while another lease exists. If final cleanup fails, the retired
+        # record stays in the pool and can be retried via cleanup_retired().
         assert next_generation is not None
-        self._adapter.resource_lifecycle.cleanup(resources)
-        self._resource_pool.discard(access, resources)
+        if retired is not None:
+            self._adapter.resource_lifecycle.cleanup(retired.resources)
+            self._resource_pool.discard(retired)
         return ReleaseDetached(next_generation)
 
     def cleanup_retired(self, access: AccessT) -> bool:
-        """Retry cleanup of one retired Access record left by a prior failure."""
+        """Retry cleanup of every retired record currently retained for Access."""
 
         if access is None:
             raise TypeError("access cannot be None")
-        resources = self._resource_pool.retired(access)
-        if resources is None:
+        requirement = self._adapter.access_model.requirements(access)
+        retired_records = self._resource_pool.retired(access, requirement.key)
+        if not retired_records:
             return False
-        self._adapter.resource_lifecycle.cleanup(resources)
-        self._resource_pool.discard(access, resources)
+        for retired in retired_records:
+            self._adapter.resource_lifecycle.cleanup(retired.resources)
+            self._resource_pool.discard(retired)
         return True
 
     def _snapshot_locked(self) -> Snapshot[GenerationT, AccessT, CapabilityT]:
@@ -261,15 +301,23 @@ class ManagedCoordinator(
         _abandoned, current_generation = self._abandon_if_current(attempt)
         return AcquireSuperseded(current_generation)
 
-    def _retire_and_cleanup_reservation(
+    def _install_retire_and_cleanup_reservation(
         self,
         reservation: ResourceReservation[AccessT],
-        access: AccessT,
         resources: ResourceSetT,
     ) -> None:
-        self._resource_pool.install(reservation, resources, retired=True)
-        self._adapter.resource_lifecycle.cleanup(resources)
-        self._resource_pool.discard(access, resources)
+        lease = self._resource_pool.install(reservation, resources)
+        self._release_lease_and_cleanup(lease)
+
+    def _release_lease_and_cleanup(
+        self,
+        lease: ResourceLease[AccessT, ResourceSetT],
+    ) -> None:
+        retired = self._resource_pool.retire(lease)
+        if retired is None:
+            return
+        self._adapter.resource_lifecycle.cleanup(retired.resources)
+        self._resource_pool.discard(retired)
 
 
 __all__ = ["ManagedCoordinator"]

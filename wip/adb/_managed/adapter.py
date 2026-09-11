@@ -5,6 +5,7 @@ from typing import Generic, Protocol, TypeVar
 
 from adb._capability.projection import CapabilityProjection
 from adb._resource.lifecycle import ResourceLifecycle
+from adb._resource.requirement import ResourceRequirement
 
 
 AccessT = TypeVar("AccessT")
@@ -14,9 +15,9 @@ CapabilityT = TypeVar("CapabilityT")
 
 
 class AccessModel(Protocol[AccessT, RequirementsT]):
-    """Adapter semantics for deriving physical requirements from Access."""
+    """Adapter semantics for deriving one physical requirement from Access."""
 
-    def requirements(self, access: AccessT) -> RequirementsT: ...
+    def requirements(self, access: AccessT) -> ResourceRequirement[RequirementsT]: ...
 
 
 @dataclass(frozen=True, slots=True)

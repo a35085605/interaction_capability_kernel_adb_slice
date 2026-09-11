@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from typing import Generic, TypeAlias, TypeVar
 
 from adb._resource.acquisition import ResourceAcquisition
+from adb._resource.pool import ResourceLease
 
 
 GenerationT = TypeVar("GenerationT")
 AccessT = TypeVar("AccessT")
+ResourceSetT = TypeVar("ResourceSetT")
 CapabilityT = TypeVar("CapabilityT")
 
 
@@ -33,16 +35,17 @@ class Preparing(Generic[GenerationT, AccessT]):
 
 
 @dataclass(frozen=True, slots=True)
-class Current(Generic[GenerationT, AccessT, CapabilityT]):
+class Current(Generic[GenerationT, AccessT, ResourceSetT, CapabilityT]):
     generation: GenerationT
     access: AccessT
     capability: CapabilityT
+    resource_lease: ResourceLease[AccessT, ResourceSetT]
 
 
 ManagedState: TypeAlias = (
     Idle[GenerationT]
     | Preparing[GenerationT, AccessT]
-    | Current[GenerationT, AccessT, CapabilityT]
+    | Current[GenerationT, AccessT, ResourceSetT, CapabilityT]
 )
 
 
