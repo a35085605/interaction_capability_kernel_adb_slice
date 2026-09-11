@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Generic, Hashable, Protocol, TypeVar
 
@@ -61,7 +62,7 @@ class ResourceManagement(Protocol[SpecT, ResourceT]):
     def cleanup_retired(self, plan: ResourcePlan[SpecT]) -> bool: ...
 
 
-class _PoolAcquisitionContext(Generic[ResourceT]):
+class _PoolAcquisitionContext:
     """Driver-facing view backed by one Pool ResourceRequest."""
 
     def __init__(
@@ -75,9 +76,6 @@ class _PoolAcquisitionContext(Generic[ResourceT]):
     @property
     def interrupted(self) -> bool:
         return self._pool.is_interrupted(self._request)
-
-    def publish(self, resources: ResourceSet[ResourceT]) -> None:
-        self._pool.publish(self._request, resources)
 
 
 class ResourceManager(Generic[SpecT, ResourceT]):
@@ -128,13 +126,27 @@ class ResourceManager(Generic[SpecT, ResourceT]):
     ) -> ResourceSet[ResourceT]:
         self._validate_acquisition(acquisition)
         context = self._context(acquisition)
-        resources = self._driver.acquire(acquisition._plan.spec, context)
+        snapshots = self._driver.acquire(acquisition._plan.spec, context)
+        if not isinstance(snapshots, Iterator):
+            raise TypeError("ResourceDriver.acquire() must return an Iterator")
+
+        resources: ResourceSet[ResourceT] | None = None
+        for snapshot in snapshots:
+            if snapshot is None:
+                raise TypeError("ResourceDriver.acquire() cannot yield None")
+            if not isinstance(snapshot, tuple):
+                raise TypeError("ResourceDriver.acquire() must yield ResourceSet tuples")
+            resources = snapshot
+            self._resource_pool.publish(acquisition._request, snapshot)
+
         if resources is None:
-            raise TypeError("ResourceDriver.acquire() cannot return None")
+            raise RuntimeError(
+                "ResourceDriver.acquire() must yield at least one ResourceSet"
+            )
 
         # Keep processing=true until upper-layer capability projection has
-        # completed and commit authority is rechecked.
-        self._resource_pool.publish(acquisition._request, resources)
+        # completed and commit authority is rechecked. The final yielded snapshot
+        # is returned to the upper layer while the request remains processing.
         return resources
 
     def commit(
@@ -219,7 +231,7 @@ class ResourceManager(Generic[SpecT, ResourceT]):
     def _context(
         self,
         acquisition: ResourceAcquisition[SpecT, ResourceT],
-    ) -> AcquisitionContext[ResourceT]:
+    ) -> AcquisitionContext:
         return _PoolAcquisitionContext(self._resource_pool, acquisition._request)
 
     def _cleanup_retired(
