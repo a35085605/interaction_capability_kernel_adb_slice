@@ -38,6 +38,8 @@ AdbServerAcquireSupervisionResult: TypeAlias = (
     | AdbServerAcquireAlreadyActive
     | AdbServerAcquireFailed
     | AdbServerAcquireReleaseRequired
+    | AdbServerGenerationMismatch
+    | AdbServerAcquireRequestMismatch
 )
 
 
@@ -48,11 +50,14 @@ class AdbServerAcquireSupervisor:
 
     - ``AcquireSucceeded`` and ``AcquireAlreadyActive`` terminate in ACTIVE.
     - ``AcquireFailed`` and ``AcquireReleaseRequired`` terminate in RELEASE_REQUIRED.
-    - ``GenerationMismatch`` follows the returned generation and retries.
-    - ``LifecycleBusy`` and ``AcquireRequestMismatch`` defer and retry unchanged.
+    - ``GenerationMismatch`` terminates without following the newer generation.
+    - ``AcquireRequestMismatch`` terminates because the requested generation belongs to
+      another request.
+    - ``LifecycleBusy`` is the only deferred result and retries the same generation/request.
 
-    The terminal lifecycle result is returned unchanged so orchestration can hand a
-    RELEASE_REQUIRED result to a separate release supervisor without reconstructing state.
+    Supervision is generation-scoped: crossing into a newer generation is an orchestration
+    decision, not an acquire-supervision side effect. Terminal lifecycle results are returned
+    unchanged so orchestration can decide whether and how to continue.
     """
 
     def __init__(
@@ -85,17 +90,27 @@ class AdbServerAcquireSupervisor:
         generation: AdbServerGeneration,
         request: AdbServerRequest,
     ) -> AdbServerAcquireSupervisionResult:
-        """Retry deferred acquire results until ACTIVE or RELEASE_REQUIRED is reached."""
+        """Retry same-generation busy results until a terminal acquire result is reached."""
 
         if not isinstance(generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
         if not isinstance(request, AdbServerRequest):
             raise TypeError("request must be AdbServerRequest")
 
-        current_generation = generation
-
         while True:
-            result = self._acquirer.acquire(current_generation, request)
+            result = self._acquirer.acquire(generation, request)
+
+            if isinstance(result, AdbServerGenerationMismatch):
+                if not isinstance(result.current_generation, AdbServerGeneration):
+                    raise TypeError(
+                        "server current generation must be AdbServerGeneration"
+                    )
+                return result
+
+            if isinstance(result, AdbServerAcquireRequestMismatch):
+                if not isinstance(result.current_request, AdbServerRequest):
+                    raise TypeError("server current request must be AdbServerRequest")
+                return result
 
             if isinstance(
                 result,
@@ -108,16 +123,7 @@ class AdbServerAcquireSupervisor:
             ):
                 return result
 
-            if isinstance(result, AdbServerGenerationMismatch):
-                if not isinstance(result.current_generation, AdbServerGeneration):
-                    raise TypeError(
-                        "server current generation must be AdbServerGeneration"
-                    )
-                current_generation = result.current_generation
-            elif isinstance(result, AdbServerAcquireRequestMismatch):
-                if not isinstance(result.current_request, AdbServerRequest):
-                    raise TypeError("server current request must be AdbServerRequest")
-            elif not isinstance(result, AdbServerLifecycleBusy):
+            if not isinstance(result, AdbServerLifecycleBusy):
                 raise TypeError("acquirer returned an unsupported AdbServerAcquireResult")
 
             self._sleep(self._policy.deferred_retry_seconds)
