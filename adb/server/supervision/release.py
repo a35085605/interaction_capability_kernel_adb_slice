@@ -4,12 +4,12 @@ from collections.abc import Callable
 from time import sleep
 from typing import Protocol, TypeAlias, runtime_checkable
 
+from _lifecycle_new.capability.supervision.release import ReleaseSupervisor
+from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration
 from adb.server.lifecycle import (
     AdbServerGenerationMismatch,
-    AdbServerLifecycleBusy,
     AdbServerReleaseAlreadyIdle,
-    AdbServerReleaseFailed,
     AdbServerReleaseRequestMismatch,
     AdbServerReleaseResult,
     AdbServerReleaseSucceeded,
@@ -40,22 +40,10 @@ AdbServerReleaseSupervisionResult: TypeAlias = (
 )
 
 
-class AdbServerReleaseSupervisor:
-    """Drive one server lifetime to a release-side terminal lifecycle result.
-
-    Supervision never reads lifecycle state. It advances only from ``release`` results:
-
-    - ``ReleaseSucceeded`` and ``ReleaseAlreadyIdle`` terminate in IDLE.
-    - ``ReleaseFailed`` and ``LifecycleBusy`` retry the same generation/request target.
-    - ``GenerationMismatch`` terminates without following the newer generation because
-      release supervision is lifetime-oriented.
-    - ``ReleaseRequestMismatch`` terminates without releasing the current request because
-      it is not the requested lifetime target.
-
-    Supervision is generation-scoped: a newer generation is reported but never followed.
-    Terminal lifecycle results are returned unchanged so orchestration can decide how to
-    proceed without reconstructing state.
-    """
+class AdbServerReleaseSupervisor(
+    ReleaseSupervisor[AdbServerGeneration, AdbServerRequest, AdbServerCapability]
+):
+    """ADB server specialization of generation-scoped release supervision."""
 
     def __init__(
         self,
@@ -68,11 +56,7 @@ class AdbServerReleaseSupervisor:
             raise TypeError("releaser must satisfy AdbServerReleaser")
         if not isinstance(policy, AdbServerReleaseSupervisionPolicy):
             raise TypeError("policy must be AdbServerReleaseSupervisionPolicy")
-        if not callable(_sleeper):
-            raise TypeError("_sleeper must be callable")
-        self._releaser = releaser
-        self._policy = policy
-        self._sleep = _sleeper
+        super().__init__(releaser, policy=policy, _sleeper=_sleeper)
 
     @property
     def releaser(self) -> AdbServerReleaser:
@@ -87,34 +71,11 @@ class AdbServerReleaseSupervisor:
         generation: AdbServerGeneration,
         request: AdbServerRequest,
     ) -> AdbServerReleaseSupervisionResult:
-        """Retry release failures/busy results until the target is terminal."""
-
         if not isinstance(generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
         if not isinstance(request, AdbServerRequest):
             raise TypeError("request must be AdbServerRequest")
-
-        while True:
-            result = self._releaser.release(generation, request)
-
-            if isinstance(
-                result,
-                (
-                    AdbServerReleaseSucceeded,
-                    AdbServerReleaseAlreadyIdle,
-                    AdbServerGenerationMismatch,
-                    AdbServerReleaseRequestMismatch,
-                ),
-            ):
-                return result
-
-            if not isinstance(
-                result,
-                (AdbServerReleaseFailed, AdbServerLifecycleBusy),
-            ):
-                raise TypeError("releaser returned an unsupported AdbServerReleaseResult")
-
-            self._sleep(self._policy.retry_seconds)
+        return super().supervise(generation, request)
 
 
 __all__ = [

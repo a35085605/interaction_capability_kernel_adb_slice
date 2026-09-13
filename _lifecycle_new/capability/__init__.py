@@ -17,9 +17,23 @@ from _lifecycle_new.capability.result import (
     ReleaseSucceeded,
 )
 from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
+from _lifecycle_new.capability.supervision import (
+    Acquirer,
+    AcquireSupervisionPolicy,
+    AcquireSupervisionResult,
+    AcquireSupervisor,
+    Releaser,
+    ReleaseSupervisionPolicy,
+    ReleaseSupervisionResult,
+    ReleaseSupervisor,
+)
 
 
 __all__ = [
+    "Acquirer",
+    "AcquireSupervisionPolicy",
+    "AcquireSupervisionResult",
+    "AcquireSupervisor",
     "CapabilityProjector",
     "AcquireAlreadyActive",
     "AcquireFailed",
@@ -36,4 +50,8 @@ __all__ = [
     "ReleaseRequestMismatch",
     "ReleaseResult",
     "ReleaseSucceeded",
+    "Releaser",
+    "ReleaseSupervisionPolicy",
+    "ReleaseSupervisionResult",
+    "ReleaseSupervisor",
 ]

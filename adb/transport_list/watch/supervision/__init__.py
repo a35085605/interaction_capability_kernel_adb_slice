@@ -1,37 +1,27 @@
-"""Transport-list watch recovery policy, decisions, and lifecycle supervision."""
+"""Generation-scoped transport-list watch acquire and release supervision."""
 
-from adb._recovery import RecoveryAcquired, RecoveryAttempt, RecoveryFailed
-from adb.transport_list.watch.supervision.policy import (
-    AdbTransportListWatchRecoveryPolicy,
-    AdbTransportListWatchReleaseSupervisionPolicy,
+from adb.transport_list.watch.supervision.acquire import (
+    AdbTransportListWatchAcquirer,
+    AdbTransportListWatchAcquireSupervisionResult,
+    AdbTransportListWatchAcquireSupervisor,
 )
-from adb.transport_list.watch.supervision.recovery import (
-    AdbTransportListWatchRecovery,
-    AdbTransportListWatchRecoveryDecision,
-    AdbTransportListWatchRecoveryFailureCause,
-    AdbTransportListWatchRecoveryResult,
+from adb.transport_list.watch.supervision.policy import (
+    AdbTransportListWatchAcquireSupervisionPolicy,
+    AdbTransportListWatchReleaseSupervisionPolicy,
 )
 from adb.transport_list.watch.supervision.release import (
     AdbTransportListWatchReleaser,
     AdbTransportListWatchReleaseSupervisionResult,
     AdbTransportListWatchReleaseSupervisor,
 )
-from adb.transport_list.watch.supervision.supervisor import (
-    AdbTransportListWatchSupervisor,
-)
 
 __all__ = [
-    "AdbTransportListWatchRecovery",
-    "AdbTransportListWatchRecoveryDecision",
-    "AdbTransportListWatchRecoveryFailureCause",
-    "AdbTransportListWatchRecoveryPolicy",
-    "AdbTransportListWatchRecoveryResult",
+    "AdbTransportListWatchAcquirer",
+    "AdbTransportListWatchAcquireSupervisionPolicy",
+    "AdbTransportListWatchAcquireSupervisionResult",
+    "AdbTransportListWatchAcquireSupervisor",
     "AdbTransportListWatchReleaser",
     "AdbTransportListWatchReleaseSupervisionPolicy",
     "AdbTransportListWatchReleaseSupervisionResult",
     "AdbTransportListWatchReleaseSupervisor",
-    "AdbTransportListWatchSupervisor",
-    "RecoveryAcquired",
-    "RecoveryAttempt",
-    "RecoveryFailed",
 ]
