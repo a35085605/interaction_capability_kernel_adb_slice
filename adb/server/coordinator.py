@@ -9,7 +9,7 @@ from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.lifecycle import AdbServerAcquireResult, AdbServerReleaseResult
 from adb.server.request import AdbServerRequest
-from adb.server.state import AdbServerSnapshot
+from adb.server.snapshot import AdbServerSnapshot
 
 
 PhysicalResourceT = TypeVar("PhysicalResourceT")

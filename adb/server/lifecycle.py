@@ -20,7 +20,7 @@ from _lifecycle_new.capability.result import (
 from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.request import AdbServerRequest
-from adb.server.state import AdbServerSnapshotReader
+from adb.server.snapshot import AdbServerSnapshotReader
 
 
 AdbServerAcquireAlreadyActive = AcquireAlreadyActive

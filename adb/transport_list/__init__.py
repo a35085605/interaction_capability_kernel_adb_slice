@@ -34,8 +34,8 @@ from adb.transport_list.watch import (
     AdbTransportListWatchReleaseResult,
     AdbTransportListWatchReleaseSucceeded,
     AdbTransportListWatchRequest,
-    AdbTransportListWatchState,
-    AdbTransportListWatchStateView,
+    AdbTransportListWatchSnapshot,
+    AdbTransportListWatchSnapshotReader,
     AdbTransportListWatchStream,
 )
 
@@ -68,8 +68,8 @@ __all__ = [
     "AdbTransportListWatchReleaseResult",
     "AdbTransportListWatchReleaseSucceeded",
     "AdbTransportListWatchRequest",
-    "AdbTransportListWatchState",
-    "AdbTransportListWatchStateView",
+    "AdbTransportListWatchSnapshot",
+    "AdbTransportListWatchSnapshotReader",
     "AdbTransportListWatchStream",
     "find_transport",
 ]

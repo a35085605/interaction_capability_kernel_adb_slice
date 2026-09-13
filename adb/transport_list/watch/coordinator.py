@@ -14,7 +14,7 @@ from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchReleaseResult,
 )
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
-from adb.transport_list.watch.state import AdbTransportListWatchState
+from adb.transport_list.watch.snapshot import AdbTransportListWatchSnapshot
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 
@@ -69,7 +69,7 @@ class AdbTransportListWatchLifecycleCoordinator(Generic[PhysicalResourceT]):
     ) -> ResourceProvider[AdbTransportListWatchRequest, PhysicalResourceT]:
         return self._resource_provider
 
-    def read(self) -> AdbTransportListWatchState:
+    def read(self) -> AdbTransportListWatchSnapshot:
         return self._coordinator.read()
 
     def acquire(

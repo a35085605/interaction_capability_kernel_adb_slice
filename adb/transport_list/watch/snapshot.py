@@ -11,7 +11,7 @@ from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 AdbTransportListWatchPhase: TypeAlias = LifecyclePhase
 
-AdbTransportListWatchState: TypeAlias = LifecycleSnapshot[
+AdbTransportListWatchSnapshot: TypeAlias = LifecycleSnapshot[
     AdbTransportListWatchGeneration,
     AdbTransportListWatchRequest,
     AdbTransportListWatchStream,
@@ -19,7 +19,7 @@ AdbTransportListWatchState: TypeAlias = LifecycleSnapshot[
 
 
 @runtime_checkable
-class AdbTransportListWatchStateView(
+class AdbTransportListWatchSnapshotReader(
     LifecycleSnapshotReader[
         AdbTransportListWatchGeneration,
         AdbTransportListWatchRequest,
@@ -32,6 +32,6 @@ class AdbTransportListWatchStateView(
 
 __all__ = [
     "AdbTransportListWatchPhase",
-    "AdbTransportListWatchState",
-    "AdbTransportListWatchStateView",
+    "AdbTransportListWatchSnapshot",
+    "AdbTransportListWatchSnapshotReader",
 ]

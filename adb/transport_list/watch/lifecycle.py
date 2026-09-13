@@ -22,7 +22,7 @@ from adb.transport_list.watch.generation import (
     AdbTransportListWatchGenerationIssuer,
 )
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
-from adb.transport_list.watch.state import AdbTransportListWatchStateView
+from adb.transport_list.watch.snapshot import AdbTransportListWatchSnapshotReader
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 
@@ -52,7 +52,7 @@ AdbTransportListWatchReleaseResult: TypeAlias = ReleaseResult[
 
 
 @runtime_checkable
-class AdbTransportListWatchLifecycle(AdbTransportListWatchStateView, Protocol):
+class AdbTransportListWatchLifecycle(AdbTransportListWatchSnapshotReader, Protocol):
     """Acquire and release one generation-scoped transport-list watch capability."""
 
     def acquire(

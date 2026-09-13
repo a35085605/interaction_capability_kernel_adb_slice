@@ -1,4 +1,4 @@
-"""ADB server generation, request, capability, lifecycle, state, and failure contracts."""
+"""ADB server generation, request, capability, lifecycle, snapshot, and failure contracts."""
 
 from adb.server.capability import AdbServerCapability
 from adb.server.coordinator import AdbServerLifecycleCoordinator
@@ -34,7 +34,7 @@ from adb.server.lifecycle import (
     AdbServerReleaseSucceeded,
 )
 from adb.server.request import AdbServerRequest
-from adb.server.state import AdbServerPhase, AdbServerSnapshot, AdbServerSnapshotReader
+from adb.server.snapshot import AdbServerPhase, AdbServerSnapshot, AdbServerSnapshotReader
 
 
 __all__ = [

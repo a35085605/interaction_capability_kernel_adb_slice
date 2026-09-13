@@ -32,10 +32,10 @@ from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchReleaseSucceeded,
 )
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
-from adb.transport_list.watch.state import (
+from adb.transport_list.watch.snapshot import (
     AdbTransportListWatchPhase,
-    AdbTransportListWatchState,
-    AdbTransportListWatchStateView,
+    AdbTransportListWatchSnapshot,
+    AdbTransportListWatchSnapshotReader,
 )
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
@@ -65,7 +65,7 @@ __all__ = [
     "AdbTransportListWatchRequest",
     "AdbTransportListWatchServerConnectionFailure",
     "AdbTransportListWatchServiceFailure",
-    "AdbTransportListWatchState",
-    "AdbTransportListWatchStateView",
+    "AdbTransportListWatchSnapshot",
+    "AdbTransportListWatchSnapshotReader",
     "AdbTransportListWatchStream",
 ]
