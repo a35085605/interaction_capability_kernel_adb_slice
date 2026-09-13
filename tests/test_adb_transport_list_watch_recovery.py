@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-from _lifecycle_new.capability.result import (
-    AcquireFailed,
-    AcquireSucceeded,
-    LifecycleBusy,
+from adb.transport_list.watch import (
+    AdbTransportListWatchAcquireFailed,
+    AdbTransportListWatchAcquireSucceeded,
+    AdbTransportListWatchLifecycleBusy,
+    AdbTransportListWatchPhase,
+    AdbTransportListWatchState,
 )
-from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
 from adb._recovery import RecoveryAcquired, RecoveryAttempt, RecoveryFailed
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.watch.failure import AdbTransportListWatchServerConnectionFailure
@@ -15,7 +16,7 @@ from adb.transport_list.watch.generation import AdbTransportListWatchGenerationI
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.supervision.policy import AdbTransportListWatchRecoveryPolicy
 from adb.transport_list.watch.supervision.recovery import AdbTransportListWatchRecovery
-from adb.transport_list.watch.template import AdbTransportListWatchAcquireError
+from adb.transport_list.watch import AdbTransportListWatchAcquireError
 from networking import TcpAddress
 
 
@@ -45,14 +46,14 @@ class AdbTransportListWatchRecoveryTests(unittest.TestCase):
     def test_success_is_acquired(self) -> None:
         recovery = AdbTransportListWatchRecovery(self.policy, _random=lambda: 0.5)
         recovery.begin()
-        snapshot = LifecycleSnapshot(
+        snapshot = AdbTransportListWatchState(
             self.generation,
             self.request,
             _Capability(),
-            phase=LifecyclePhase.ACTIVE,
+            phase=AdbTransportListWatchPhase.ACTIVE,
         )
 
-        decision = recovery.decide_after(AcquireSucceeded(snapshot))
+        decision = recovery.decide_after(AdbTransportListWatchAcquireSucceeded(snapshot))
 
         self.assertIsInstance(decision, RecoveryAcquired)
 
@@ -60,7 +61,9 @@ class AdbTransportListWatchRecoveryTests(unittest.TestCase):
         recovery = AdbTransportListWatchRecovery(self.policy, _random=lambda: 0.5)
         recovery.begin()
 
-        decision = recovery.decide_after(LifecycleBusy(LifecyclePhase.ACQUIRING))
+        decision = recovery.decide_after(
+            AdbTransportListWatchLifecycleBusy(AdbTransportListWatchPhase.ACQUIRING)
+        )
 
         self.assertIsInstance(decision, RecoveryAttempt)
         self.assertEqual(recovery.failed_attempts, 0)
@@ -71,14 +74,14 @@ class AdbTransportListWatchRecoveryTests(unittest.TestCase):
         cause = AdbTransportListWatchAcquireError(
             AdbTransportListWatchServerConnectionFailure("connection lost")
         )
-        snapshot = LifecycleSnapshot(
+        snapshot = AdbTransportListWatchState(
             self.generation,
             self.request,
-            phase=LifecyclePhase.RELEASE_REQUIRED,
+            phase=AdbTransportListWatchPhase.RELEASE_REQUIRED,
             last_error=cause,
         )
 
-        decision = recovery.decide_after(AcquireFailed(snapshot))
+        decision = recovery.decide_after(AdbTransportListWatchAcquireFailed(snapshot))
 
         self.assertIsInstance(decision, RecoveryFailed)
         self.assertIs(decision.cause, cause)

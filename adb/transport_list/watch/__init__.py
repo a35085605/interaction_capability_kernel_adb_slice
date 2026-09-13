@@ -1,5 +1,9 @@
 """ADB transport-list watch request, capability, lifecycle, and supervision types."""
 
+from adb.transport_list.watch.error import (
+    AdbTransportListWatchAcquireError,
+    AdbTransportListWatchError,
+)
 from adb.transport_list.watch.failure import (
     AdbTransportListWatchFailure,
     AdbTransportListWatchProtocolFailure,
@@ -34,10 +38,10 @@ from adb.transport_list.watch.state import (
     AdbTransportListWatchStateView,
 )
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
-from adb.transport_list.watch.error import AdbTransportListWatchError
 
 __all__ = [
     "AdbTransportListWatchAcquireAlreadyActive",
+    "AdbTransportListWatchAcquireError",
     "AdbTransportListWatchAcquireFailed",
     "AdbTransportListWatchAcquireReleaseRequired",
     "AdbTransportListWatchAcquireRequestMismatch",

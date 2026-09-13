@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from threading import Condition
 import unittest
 
-from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
 from adb.server.capability import AdbServerCapability
+from adb.server.state import AdbServerPhase, AdbServerSnapshot
 from adb.server.generation import AdbServerGenerationIssuer
 from adb.server.lifecycle import (
     AdbServerAcquireFailed,
@@ -16,7 +16,7 @@ from adb.server.lifecycle import (
 from adb.server.request import AdbServerRequest
 from adb.server.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.supervision.supervisor import AdbServerSupervisor
-from adb.server.template import AdbServerAcquireError
+from adb.server import AdbServerAcquireError
 from networking import TcpAddress
 
 
@@ -84,18 +84,18 @@ class AdbServerSupervisorTests(unittest.TestCase):
         )
 
     def active_snapshot(self, generation):
-        return LifecycleSnapshot(
+        return AdbServerSnapshot(
             generation,
             self.request,
             self.capability,
-            phase=LifecyclePhase.ACTIVE,
+            phase=AdbServerPhase.ACTIVE,
         )
 
     def failed_snapshot(self, generation, diagnostic="launch failed"):
-        return LifecycleSnapshot(
+        return AdbServerSnapshot(
             generation,
             self.request,
-            phase=LifecyclePhase.RELEASE_REQUIRED,
+            phase=AdbServerPhase.RELEASE_REQUIRED,
             last_error=AdbServerAcquireError(diagnostic),
         )
 

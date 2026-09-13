@@ -22,7 +22,11 @@ from adb.errors import (
     AdbTimeoutError,
 )
 from adb.transport_list.model import AdbTransportList
-from adb.transport_list.watch.error import AdbTransportListWatchError
+from adb.transport_list.watch.coordinator import AdbTransportListWatchLifecycleCoordinator
+from adb.transport_list.watch.error import (
+    AdbTransportListWatchAcquireError,
+    AdbTransportListWatchError,
+)
 from adb.transport_list.watch.failure import (
     AdbTransportListWatchFailure,
     AdbTransportListWatchProtocolFailure,
@@ -32,10 +36,6 @@ from adb.transport_list.watch.failure import (
 from adb.transport_list.watch.generation import AdbTransportListWatchGenerationIssuer
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
-from adb.transport_list.watch.template import (
-    AdbTransportListWatchAcquireError,
-    AdbTransportListWatchLifecycleTemplate,
-)
 from networking import TcpAddress
 
 
@@ -144,7 +144,7 @@ class _AospTransportListWatchProjector:
 
 
 class SmartSocketAdbTransportListWatchLifecycle(
-    AdbTransportListWatchLifecycleTemplate[AospTrackDevicesSession]
+    AdbTransportListWatchLifecycleCoordinator[AospTrackDevicesSession]
 ):
     """Transport-list watch backed by one lifecycle-owned AOSP track-devices session."""
 

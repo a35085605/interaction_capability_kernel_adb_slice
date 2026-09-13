@@ -20,9 +20,10 @@ from adb.adapters.subprocess.command import normalize_executable, normalize_time
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
 from adb.aosp.io.smart_socket import AdbServiceClient
 from adb.errors import AdbError, AdbTimeoutError
+from adb.server.coordinator import AdbServerLifecycleCoordinator
+from adb.server.error import AdbServerAcquireError
 from adb.server.request import AdbServerRequest
 from adb.server.generation import AdbServerGenerationIssuer
-from adb.server.template import AdbServerAcquireError, AdbServerLifecycleTemplate
 from networking import TcpAddress
 
 
@@ -403,7 +404,7 @@ class _AdbServerSubprocessFactory:
 
 
 class SubprocessAdbServerLifecycle(
-    AdbServerLifecycleTemplate[_AdbServerSubprocessResource]
+    AdbServerLifecycleCoordinator[_AdbServerSubprocessResource]
 ):
     """Provide ADB server access through an owned foreground subprocess.
 

@@ -27,7 +27,7 @@ from adb.server.lifecycle import (
 )
 from adb.server.request import AdbServerRequest
 from adb.server.supervision.policy import AdbServerRecoveryPolicy
-from adb.server.template import AdbServerAcquireError
+from adb.server.error import AdbServerAcquireError
 
 
 _RandomSource = Callable[[], float]

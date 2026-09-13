@@ -3,17 +3,18 @@ from __future__ import annotations
 import unittest
 from dataclasses import dataclass
 
-from _lifecycle_new.capability.result import (
-    GenerationMismatch,
-    LifecycleBusy,
-    ReleaseAlreadyIdle,
-    ReleaseFailed,
-    ReleaseRequestMismatch,
-    ReleaseSucceeded,
+from adb.server import (
+    AdbServerGenerationIssuer,
+    AdbServerGenerationMismatch,
+    AdbServerLifecycleBusy,
+    AdbServerPhase,
+    AdbServerReleaseAlreadyIdle,
+    AdbServerReleaseFailed,
+    AdbServerReleaseRequestMismatch,
+    AdbServerReleaseSucceeded,
+    AdbServerRequest,
+    AdbServerSnapshot,
 )
-from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
-from adb.server.generation import AdbServerGenerationIssuer
-from adb.server.request import AdbServerRequest
 from adb.server.supervision.policy import AdbServerReleaseSupervisionPolicy
 from adb.server.supervision.release import AdbServerReleaseSupervisor
 from networking import TcpAddress
@@ -55,15 +56,15 @@ class AdbServerReleaseSupervisorTests(unittest.TestCase):
         return supervisor, releaser
 
     def release_required_snapshot(self, generation):
-        return LifecycleSnapshot(
+        return AdbServerSnapshot(
             generation,
             self.request,
-            phase=LifecyclePhase.RELEASE_REQUIRED,
+            phase=AdbServerPhase.RELEASE_REQUIRED,
             last_error=RuntimeError("boom"),
         )
 
     def test_returns_succeeded_unchanged(self) -> None:
-        terminal = ReleaseSucceeded(self.generation_2)
+        terminal = AdbServerReleaseSucceeded(self.generation_2)
         supervisor, releaser = self.supervisor([terminal])
 
         result = supervisor.supervise(self.generation_1, self.request)
@@ -73,7 +74,7 @@ class AdbServerReleaseSupervisorTests(unittest.TestCase):
         self.assertEqual(self.sleeps, [])
 
     def test_returns_already_idle_unchanged(self) -> None:
-        terminal = ReleaseAlreadyIdle()
+        terminal = AdbServerReleaseAlreadyIdle()
         supervisor, releaser = self.supervisor([terminal])
 
         result = supervisor.supervise(self.generation_1, self.request)
@@ -83,7 +84,7 @@ class AdbServerReleaseSupervisorTests(unittest.TestCase):
         self.assertEqual(self.sleeps, [])
 
     def test_generation_mismatch_is_terminal_without_following_new_generation(self) -> None:
-        terminal = GenerationMismatch(self.generation_2)
+        terminal = AdbServerGenerationMismatch(self.generation_2)
         supervisor, releaser = self.supervisor([terminal])
 
         result = supervisor.supervise(self.generation_1, self.request)
@@ -94,7 +95,7 @@ class AdbServerReleaseSupervisorTests(unittest.TestCase):
 
     def test_request_mismatch_is_terminal_without_releasing_current_request(self) -> None:
         other_request = AdbServerRequest(TcpAddress("127.0.0.1", 5038))
-        terminal = ReleaseRequestMismatch(other_request)
+        terminal = AdbServerReleaseRequestMismatch(other_request)
         supervisor, releaser = self.supervisor([terminal])
 
         result = supervisor.supervise(self.generation_1, self.request)
@@ -104,8 +105,8 @@ class AdbServerReleaseSupervisorTests(unittest.TestCase):
         self.assertEqual(self.sleeps, [])
 
     def test_release_failed_retries_same_lifetime_until_success(self) -> None:
-        failure = ReleaseFailed(self.release_required_snapshot(self.generation_1))
-        terminal = ReleaseSucceeded(self.generation_2)
+        failure = AdbServerReleaseFailed(self.release_required_snapshot(self.generation_1))
+        terminal = AdbServerReleaseSucceeded(self.generation_2)
         supervisor, releaser = self.supervisor([failure, terminal])
 
         result = supervisor.supervise(self.generation_1, self.request)
@@ -121,9 +122,9 @@ class AdbServerReleaseSupervisorTests(unittest.TestCase):
         self.assertEqual(self.sleeps, [0.25])
 
     def test_busy_retries_same_lifetime_without_state_reads(self) -> None:
-        terminal = ReleaseSucceeded(self.generation_2)
+        terminal = AdbServerReleaseSucceeded(self.generation_2)
         supervisor, releaser = self.supervisor(
-            [LifecycleBusy(LifecyclePhase.ACQUIRING), terminal]
+            [AdbServerLifecycleBusy(AdbServerPhase.ACQUIRING), terminal]
         )
 
         result = supervisor.supervise(self.generation_1, self.request)
@@ -139,9 +140,9 @@ class AdbServerReleaseSupervisorTests(unittest.TestCase):
         self.assertEqual(self.sleeps, [0.25])
 
     def test_releasing_busy_can_end_with_generation_mismatch_without_following(self) -> None:
-        terminal = GenerationMismatch(self.generation_2)
+        terminal = AdbServerGenerationMismatch(self.generation_2)
         supervisor, releaser = self.supervisor(
-            [LifecycleBusy(LifecyclePhase.RELEASING), terminal]
+            [AdbServerLifecycleBusy(AdbServerPhase.RELEASING), terminal]
         )
 
         result = supervisor.supervise(self.generation_1, self.request)

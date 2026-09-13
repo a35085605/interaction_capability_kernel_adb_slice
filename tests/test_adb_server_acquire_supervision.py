@@ -3,19 +3,20 @@ from __future__ import annotations
 import unittest
 from dataclasses import dataclass
 
-from _lifecycle_new.capability.result import (
-    AcquireAlreadyActive,
-    AcquireFailed,
-    AcquireReleaseRequired,
-    AcquireRequestMismatch,
-    AcquireSucceeded,
-    GenerationMismatch,
-    LifecycleBusy,
+from adb.server import (
+    AdbServerAcquireAlreadyActive,
+    AdbServerAcquireFailed,
+    AdbServerAcquireReleaseRequired,
+    AdbServerAcquireRequestMismatch,
+    AdbServerAcquireSucceeded,
+    AdbServerCapability,
+    AdbServerGenerationIssuer,
+    AdbServerGenerationMismatch,
+    AdbServerLifecycleBusy,
+    AdbServerPhase,
+    AdbServerRequest,
+    AdbServerSnapshot,
 )
-from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
-from adb.server.capability import AdbServerCapability
-from adb.server.generation import AdbServerGenerationIssuer
-from adb.server.request import AdbServerRequest
 from adb.server.supervision.acquire import AdbServerAcquireSupervisor
 from adb.server.supervision.policy import AdbServerAcquireSupervisionPolicy
 from networking import TcpAddress
@@ -58,23 +59,23 @@ class AdbServerAcquireSupervisorTests(unittest.TestCase):
         return supervisor, acquirer
 
     def active_snapshot(self, generation):
-        return LifecycleSnapshot(
+        return AdbServerSnapshot(
             generation,
             self.request,
             self.capability,
-            phase=LifecyclePhase.ACTIVE,
+            phase=AdbServerPhase.ACTIVE,
         )
 
     def release_required_snapshot(self, generation):
-        return LifecycleSnapshot(
+        return AdbServerSnapshot(
             generation,
             self.request,
-            phase=LifecyclePhase.RELEASE_REQUIRED,
+            phase=AdbServerPhase.RELEASE_REQUIRED,
             last_error=RuntimeError("boom"),
         )
 
     def test_returns_succeeded_unchanged(self) -> None:
-        terminal = AcquireSucceeded(self.active_snapshot(self.generation_1))
+        terminal = AdbServerAcquireSucceeded(self.active_snapshot(self.generation_1))
         supervisor, acquirer = self.supervisor([terminal])
 
         result = supervisor.supervise(self.generation_1, self.request)
@@ -84,13 +85,13 @@ class AdbServerAcquireSupervisorTests(unittest.TestCase):
         self.assertEqual(self.sleeps, [])
 
     def test_returns_already_active_unchanged(self) -> None:
-        terminal = AcquireAlreadyActive(self.active_snapshot(self.generation_1))
+        terminal = AdbServerAcquireAlreadyActive(self.active_snapshot(self.generation_1))
         supervisor, _ = self.supervisor([terminal])
 
         self.assertIs(supervisor.supervise(self.generation_1, self.request), terminal)
 
     def test_acquire_failed_is_release_required_terminal_without_retry(self) -> None:
-        terminal = AcquireFailed(self.release_required_snapshot(self.generation_1))
+        terminal = AdbServerAcquireFailed(self.release_required_snapshot(self.generation_1))
         supervisor, acquirer = self.supervisor([terminal])
 
         result = supervisor.supervise(self.generation_1, self.request)
@@ -100,7 +101,7 @@ class AdbServerAcquireSupervisorTests(unittest.TestCase):
         self.assertEqual(self.sleeps, [])
 
     def test_existing_release_required_is_terminal_without_retry(self) -> None:
-        terminal = AcquireReleaseRequired(
+        terminal = AdbServerAcquireReleaseRequired(
             self.release_required_snapshot(self.generation_1)
         )
         supervisor, acquirer = self.supervisor([terminal])
@@ -112,9 +113,9 @@ class AdbServerAcquireSupervisorTests(unittest.TestCase):
         self.assertEqual(self.sleeps, [])
 
     def test_generation_mismatch_updates_cursor_from_result(self) -> None:
-        terminal = AcquireSucceeded(self.active_snapshot(self.generation_2))
+        terminal = AdbServerAcquireSucceeded(self.active_snapshot(self.generation_2))
         supervisor, acquirer = self.supervisor(
-            [GenerationMismatch(self.generation_2), terminal]
+            [AdbServerGenerationMismatch(self.generation_2), terminal]
         )
 
         result = supervisor.supervise(self.generation_1, self.request)
@@ -131,11 +132,11 @@ class AdbServerAcquireSupervisorTests(unittest.TestCase):
 
     def test_busy_and_request_mismatch_are_deferred_without_state_reads(self) -> None:
         other_request = AdbServerRequest(TcpAddress("127.0.0.1", 5038))
-        terminal = AcquireSucceeded(self.active_snapshot(self.generation_1))
+        terminal = AdbServerAcquireSucceeded(self.active_snapshot(self.generation_1))
         supervisor, acquirer = self.supervisor(
             [
-                LifecycleBusy(LifecyclePhase.ACQUIRING),
-                AcquireRequestMismatch(other_request),
+                AdbServerLifecycleBusy(AdbServerPhase.ACQUIRING),
+                AdbServerAcquireRequestMismatch(other_request),
                 terminal,
             ]
         )

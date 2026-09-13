@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from _lifecycle_new.capability.result import ReleaseFailed, ReleaseSucceeded
-from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
+from adb.transport_list.watch import (
+    AdbTransportListWatchPhase,
+    AdbTransportListWatchReleaseFailed,
+    AdbTransportListWatchReleaseSucceeded,
+    AdbTransportListWatchState,
+)
 from adb.transport_list.watch.generation import AdbTransportListWatchGenerationIssuer
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.supervision.policy import (
@@ -31,14 +35,17 @@ class AdbTransportListWatchReleaseSupervisorTests(unittest.TestCase):
         generation = issuer.issue()
         next_generation = issuer.issue()
         request = AdbTransportListWatchRequest(TcpAddress("127.0.0.1", 5037))
-        failed_snapshot = LifecycleSnapshot(
+        failed_snapshot = AdbTransportListWatchState(
             generation,
             request,
-            phase=LifecyclePhase.RELEASE_REQUIRED,
+            phase=AdbTransportListWatchPhase.RELEASE_REQUIRED,
             last_error=OSError("close failed"),
         )
         releaser = _ScriptedReleaser(
-            [ReleaseFailed(failed_snapshot), ReleaseSucceeded(next_generation)]
+            [
+                AdbTransportListWatchReleaseFailed(failed_snapshot),
+                AdbTransportListWatchReleaseSucceeded(next_generation),
+            ]
         )
         sleeps: list[float] = []
         supervisor = AdbTransportListWatchReleaseSupervisor(
@@ -49,7 +56,7 @@ class AdbTransportListWatchReleaseSupervisorTests(unittest.TestCase):
 
         result = supervisor.supervise(generation, request)
 
-        self.assertIsInstance(result, ReleaseSucceeded)
+        self.assertIsInstance(result, AdbTransportListWatchReleaseSucceeded)
         self.assertEqual(releaser.calls, [(generation, request), (generation, request)])
         self.assertEqual(sleeps, [0.25])
 

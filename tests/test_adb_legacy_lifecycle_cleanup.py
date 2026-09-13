@@ -12,6 +12,18 @@ class AdbLegacyLifecycleCleanupTests(unittest.TestCase):
     def test_legacy_lifecycle_package_is_removed(self) -> None:
         self.assertIsNone(importlib.util.find_spec("adb._lifecycle"))
 
+    def test_migration_scaffold_modules_are_removed(self) -> None:
+        removed_modules = (
+            "adb.aosp.errors",
+            "adb.server.access",
+            "adb.server.template",
+            "adb.transport_list.watch.template",
+        )
+
+        for module_name in removed_modules:
+            with self.subTest(module_name=module_name):
+                self.assertIsNone(importlib.util.find_spec(module_name))
+
     def test_root_package_does_not_reexport_legacy_lifecycle_api(self) -> None:
         legacy_names = (
             "AcquireAccessMismatch",

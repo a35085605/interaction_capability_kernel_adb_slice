@@ -2,6 +2,7 @@
 
 from adb.server.capability import AdbServerCapability
 from adb.server.coordinator import AdbServerLifecycleCoordinator
+from adb.server.error import AdbServerAcquireError
 from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerFailure,
@@ -38,6 +39,7 @@ from adb.server.state import AdbServerPhase, AdbServerSnapshot, AdbServerSnapsho
 
 __all__ = [
     "AdbServerAcquireAlreadyActive",
+    "AdbServerAcquireError",
     "AdbServerAcquireFailed",
     "AdbServerAcquireReleaseRequired",
     "AdbServerAcquireRequestMismatch",

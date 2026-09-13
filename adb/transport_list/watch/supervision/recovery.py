@@ -27,7 +27,7 @@ from adb.transport_list.watch.lifecycle import (
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 from adb.transport_list.watch.supervision.policy import AdbTransportListWatchRecoveryPolicy
-from adb.transport_list.watch.template import AdbTransportListWatchAcquireError
+from adb.transport_list.watch.error import AdbTransportListWatchAcquireError
 
 
 _RandomSource = Callable[[], float]

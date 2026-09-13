@@ -3,7 +3,7 @@ from __future__ import annotations
 import socket
 import unittest
 
-from _lifecycle_new.capability.snapshot import LifecyclePhase
+from adb.transport_list.watch.state import AdbTransportListWatchPhase
 from adb.adapters.aosp.watch_lifecycle import SmartSocketAdbTransportListWatchLifecycle
 from adb.transport_list.watch.error import AdbTransportListWatchError
 from adb.transport_list.watch.generation import AdbTransportListWatchGenerationIssuer
@@ -13,7 +13,7 @@ from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchReleaseSucceeded,
 )
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
-from adb.transport_list.watch.template import AdbTransportListWatchAcquireError
+from adb.transport_list.watch import AdbTransportListWatchAcquireError
 from networking import TcpAddress
 
 
@@ -92,7 +92,7 @@ class AdbTransportListWatchLifecycleTests(unittest.TestCase):
         acquired = lifecycle.acquire(idle.generation, request)
 
         self.assertIsInstance(acquired, AdbTransportListWatchAcquireSucceeded)
-        self.assertEqual(acquired.snapshot.phase, LifecyclePhase.ACTIVE)
+        self.assertEqual(acquired.snapshot.phase, AdbTransportListWatchPhase.ACTIVE)
         self.assertIs(acquired.snapshot.request, request)
         self.assertEqual(len(acquired.snapshot.capability.initial), 0)
         self.assertFalse(hasattr(acquired.snapshot.capability, "close"))
@@ -102,7 +102,7 @@ class AdbTransportListWatchLifecycleTests(unittest.TestCase):
 
         self.assertIsInstance(released, AdbTransportListWatchReleaseSucceeded)
         self.assertTrue(sock.closed)
-        self.assertEqual(lifecycle.read().phase, LifecyclePhase.IDLE)
+        self.assertEqual(lifecycle.read().phase, AdbTransportListWatchPhase.IDLE)
         self.assertEqual(lifecycle.read().generation, released.next_generation)
 
     def test_failed_socket_cleanup_is_retained_until_explicit_release(self) -> None:
@@ -118,7 +118,7 @@ class AdbTransportListWatchLifecycleTests(unittest.TestCase):
         failed = lifecycle.acquire(idle.generation, request)
 
         self.assertIsInstance(failed, AdbTransportListWatchAcquireFailed)
-        self.assertEqual(failed.snapshot.phase, LifecyclePhase.RELEASE_REQUIRED)
+        self.assertEqual(failed.snapshot.phase, AdbTransportListWatchPhase.RELEASE_REQUIRED)
         self.assertIsInstance(failed.snapshot.last_error, AdbTransportListWatchAcquireError)
         self.assertFalse(sock.closed)
 
@@ -126,7 +126,7 @@ class AdbTransportListWatchLifecycleTests(unittest.TestCase):
 
         self.assertIsInstance(released, AdbTransportListWatchReleaseSucceeded)
         self.assertTrue(sock.closed)
-        self.assertEqual(lifecycle.read().phase, LifecyclePhase.IDLE)
+        self.assertEqual(lifecycle.read().phase, AdbTransportListWatchPhase.IDLE)
 
     def test_data_plane_failure_does_not_mutate_lifecycle_ownership(self) -> None:
         sock = _FakeSocket(b"OKAY0000")
@@ -140,7 +140,7 @@ class AdbTransportListWatchLifecycleTests(unittest.TestCase):
             next(acquired.snapshot.capability.updates())
 
         active = lifecycle.read()
-        self.assertEqual(active.phase, LifecyclePhase.ACTIVE)
+        self.assertEqual(active.phase, AdbTransportListWatchPhase.ACTIVE)
         self.assertIs(active.request, request)
         self.assertFalse(sock.closed)
 

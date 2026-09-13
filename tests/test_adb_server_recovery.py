@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
 from adb._recovery import RecoveryAcquired, RecoveryAttempt, RecoveryFailed
 from adb.server.capability import AdbServerCapability
+from adb.server.state import AdbServerPhase, AdbServerSnapshot
 from adb.server.generation import AdbServerGenerationIssuer
 from adb.server.lifecycle import (
     AdbServerAcquireAlreadyActive,
@@ -18,7 +18,7 @@ from adb.server.lifecycle import (
 from adb.server.request import AdbServerRequest
 from adb.server.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.supervision.recovery import AdbServerRecovery
-from adb.server.template import AdbServerAcquireError
+from adb.server import AdbServerAcquireError
 from networking import TcpAddress
 
 
@@ -43,18 +43,18 @@ class AdbServerRecoveryTests(unittest.TestCase):
         return AdbServerRecovery(self.policy, _random=lambda: 0.5)
 
     def active_snapshot(self, generation):
-        return LifecycleSnapshot(
+        return AdbServerSnapshot(
             generation,
             self.request,
             self.capability,
-            phase=LifecyclePhase.ACTIVE,
+            phase=AdbServerPhase.ACTIVE,
         )
 
     def release_required_snapshot(self, generation, error):
-        return LifecycleSnapshot(
+        return AdbServerSnapshot(
             generation,
             self.request,
-            phase=LifecyclePhase.RELEASE_REQUIRED,
+            phase=AdbServerPhase.RELEASE_REQUIRED,
             last_error=error,
         )
 
@@ -71,7 +71,7 @@ class AdbServerRecoveryTests(unittest.TestCase):
     def test_generation_busy_and_request_mismatch_are_deferred(self) -> None:
         deferred_results = (
             AdbServerGenerationMismatch(self.generation_2),
-            AdbServerLifecycleBusy(LifecyclePhase.ACQUIRING),
+            AdbServerLifecycleBusy(AdbServerPhase.ACQUIRING),
             AdbServerAcquireRequestMismatch(self.other_request),
         )
         for result in deferred_results:
