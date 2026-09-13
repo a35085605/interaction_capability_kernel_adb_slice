@@ -4,6 +4,21 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
 
+from _lifecycle_new.capability.result import (
+    AcquireAlreadyActive as CapabilityAcquireAlreadyActive,
+    AcquireFailed as CapabilityAcquireFailed,
+    AcquireReleaseRequired as CapabilityAcquireReleaseRequired,
+    AcquireRequestMismatch as CapabilityAcquireRequestMismatch,
+    AcquireResult as CapabilityAcquireResult,
+    AcquireSucceeded as CapabilityAcquireSucceeded,
+    GenerationMismatch as CapabilityGenerationMismatch,
+    LifecycleBusy as CapabilityLifecycleBusy,
+    ReleaseAlreadyIdle as CapabilityReleaseAlreadyIdle,
+    ReleaseFailed as CapabilityReleaseFailed,
+    ReleaseRequestMismatch as CapabilityReleaseRequestMismatch,
+    ReleaseResult as CapabilityReleaseResult,
+    ReleaseSucceeded as CapabilityReleaseSucceeded,
+)
 from adb._lifecycle import (
     AcquireAccessMismatch,
     AcquireBlocked,
@@ -20,9 +35,10 @@ from adb._lifecycle import (
 from adb.server.access import AdbServerAccess
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
-from adb.server.state import AdbServerStateView
+from adb.server.state import AdbServerLifecycleSnapshot, AdbServerStateView
 
 
+# Legacy lifecycle outcomes retained until supervision and current adapters migrate.
 AdbServerAcquireOutcome: TypeAlias = (
     AcquireCommitted[AdbServerGeneration, AdbServerAccess, TcpAddress]
     | AcquireExisting[AdbServerGeneration, AdbServerAccess, TcpAddress]
@@ -41,10 +57,65 @@ AdbServerReleaseOutcome: TypeAlias = (
     | GenerationMismatch[AdbServerGeneration]
 )
 
+# Simplified lifecycle result variants used by the new coordinator path. Prefix
+# them at the ADB-server boundary so legacy result names can coexist during migration.
+AdbServerAcquireAlreadyActive = CapabilityAcquireAlreadyActive
+AdbServerAcquireFailed = CapabilityAcquireFailed
+AdbServerAcquireReleaseRequired = CapabilityAcquireReleaseRequired
+AdbServerAcquireRequestMismatch = CapabilityAcquireRequestMismatch
+AdbServerAcquireSucceeded = CapabilityAcquireSucceeded
+AdbServerGenerationMismatch = CapabilityGenerationMismatch
+AdbServerLifecycleBusy = CapabilityLifecycleBusy
+AdbServerReleaseAlreadyIdle = CapabilityReleaseAlreadyIdle
+AdbServerReleaseFailed = CapabilityReleaseFailed
+AdbServerReleaseRequestMismatch = CapabilityReleaseRequestMismatch
+AdbServerReleaseSucceeded = CapabilityReleaseSucceeded
+
+# The legacy Outcome aliases above remain temporarily for supervision and existing adapters.
+AdbServerAcquireResult: TypeAlias = CapabilityAcquireResult[
+    AdbServerGeneration,
+    AdbServerAccess,
+    TcpAddress,
+]
+AdbServerReleaseResult: TypeAlias = CapabilityReleaseResult[
+    AdbServerGeneration,
+    AdbServerAccess,
+    TcpAddress,
+]
+
+
+class AdbServerCapabilityLifecycle(Protocol):
+    """Simplified synchronous lifecycle contract for ADB server capability ownership.
+
+    Unlike the legacy ``AdbServerLifecycle``, an in-flight acquisition is not
+    revoked by release. Overlapping lifecycle operations report ``LifecycleBusy``;
+    acquisition/release failures retain cleanup responsibility in the current
+    generation until an explicit release succeeds.
+    """
+
+    def read(self) -> AdbServerLifecycleSnapshot:
+        ...
+
+    def acquire(
+        self,
+        expected_generation: AdbServerGeneration,
+        access: AdbServerAccess,
+    ) -> AdbServerAcquireResult:
+        ...
+
+    def release(
+        self,
+        expected_generation: AdbServerGeneration,
+        access: AdbServerAccess,
+    ) -> AdbServerReleaseResult:
+        ...
+
 
 @runtime_checkable
 class AdbServerLifecycle(AdbServerStateView, Protocol):
-    """Sole authority for one runtime-scoped ADB server generation.
+    """Legacy ADB server lifecycle contract retained during staged migration.
+
+    New integrations should target ``AdbServerCapabilityLifecycle`` instead.
 
     ``read()`` and successful acquire outcomes expose the same atomic generation/access/capability
     snapshot. Acquire and release are both fenced by the caller's expected generation. Release also
@@ -86,10 +157,24 @@ __all__ = [
     "AcquireFailed",
     "AcquireSuperseded",
     "AdbServerAccess",
+    "AdbServerAcquireAlreadyActive",
+    "AdbServerAcquireFailed",
+    "AdbServerAcquireReleaseRequired",
+    "AdbServerAcquireRequestMismatch",
+    "AdbServerAcquireSucceeded",
     "AdbServerAcquireOutcome",
+    "AdbServerAcquireResult",
+    "AdbServerCapabilityLifecycle",
+    "AdbServerGenerationMismatch",
     "AdbServerLifecycle",
+    "AdbServerLifecycleBusy",
     "AdbServerLifecycleFactory",
+    "AdbServerReleaseAlreadyIdle",
+    "AdbServerReleaseFailed",
     "AdbServerReleaseOutcome",
+    "AdbServerReleaseRequestMismatch",
+    "AdbServerReleaseSucceeded",
+    "AdbServerReleaseResult",
     "GenerationMismatch",
     "ReleaseAccessDetached",
     "ReleaseAccessMismatch",

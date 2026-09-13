@@ -4,12 +4,21 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from networking import TcpAddress
 
+from _lifecycle_new.capability.snapshot import LifecycleSnapshot
 from adb._lifecycle import Snapshot
 from adb.server.access import AdbServerAccess
 from adb.server.generation import AdbServerGeneration
 
 
 AdbServerState: TypeAlias = Snapshot[
+    AdbServerGeneration,
+    AdbServerAccess,
+    TcpAddress,
+]
+
+# New synchronous lifecycle state. ``AdbServerState`` above remains the legacy
+# committed-only snapshot until supervision and the existing adapters migrate.
+AdbServerLifecycleSnapshot: TypeAlias = LifecycleSnapshot[
     AdbServerGeneration,
     AdbServerAccess,
     TcpAddress,
@@ -25,4 +34,4 @@ class AdbServerStateView(Protocol):
         ...
 
 
-__all__ = ["AdbServerState", "AdbServerStateView"]
+__all__ = ["AdbServerLifecycleSnapshot", "AdbServerState", "AdbServerStateView"]

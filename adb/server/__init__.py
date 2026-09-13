@@ -16,10 +16,24 @@ from adb._lifecycle import (
 )
 from adb.server.lifecycle import (
     AdbServerAccess,
+    AdbServerAcquireAlreadyActive,
+    AdbServerAcquireFailed,
     AdbServerAcquireOutcome,
+    AdbServerAcquireReleaseRequired,
+    AdbServerAcquireRequestMismatch,
+    AdbServerAcquireResult,
+    AdbServerAcquireSucceeded,
+    AdbServerCapabilityLifecycle,
+    AdbServerGenerationMismatch,
     AdbServerLifecycle,
+    AdbServerLifecycleBusy,
     AdbServerLifecycleFactory,
+    AdbServerReleaseAlreadyIdle,
+    AdbServerReleaseFailed,
     AdbServerReleaseOutcome,
+    AdbServerReleaseRequestMismatch,
+    AdbServerReleaseResult,
+    AdbServerReleaseSucceeded,
 )
 from adb.server.failure import (
     AdbServerConnectionFailure,
@@ -34,7 +48,12 @@ from adb.server.failure import (
     AdbServerTimeoutFailure,
 )
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
-from adb.server.state import AdbServerState, AdbServerStateView
+from adb.server.coordinator import AdbServerLifecycleCoordinator
+from adb.server.state import (
+    AdbServerLifecycleSnapshot,
+    AdbServerState,
+    AdbServerStateView,
+)
 
 __all__ = [
     "AcquireAccessMismatch",
@@ -45,19 +64,35 @@ __all__ = [
     "GenerationMismatch",
     "AcquireSuperseded",
     "AdbServerAccess",
+    "AdbServerAcquireAlreadyActive",
+    "AdbServerAcquireFailed",
     "AdbServerAcquireOutcome",
+    "AdbServerAcquireReleaseRequired",
+    "AdbServerAcquireRequestMismatch",
+    "AdbServerAcquireResult",
+    "AdbServerAcquireSucceeded",
+    "AdbServerCapabilityLifecycle",
     "AdbServerConnectionFailure",
     "AdbServerFailure",
     "AdbServerGeneration",
     "AdbServerGenerationIssuer",
+    "AdbServerGenerationMismatch",
     "AdbServerLaunchFailure",
     "AdbServerLifecycle",
+    "AdbServerLifecycleBusy",
+    "AdbServerLifecycleCoordinator",
+    "AdbServerLifecycleSnapshot",
     "AdbServerLifecycleFactory",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",
+    "AdbServerReleaseAlreadyIdle",
+    "AdbServerReleaseFailed",
     "AdbServerReleaseOutcome",
+    "AdbServerReleaseRequestMismatch",
+    "AdbServerReleaseResult",
+    "AdbServerReleaseSucceeded",
     "AdbServerRequestFailure",
     "AdbServerServiceFailure",
     "AdbServerState",
