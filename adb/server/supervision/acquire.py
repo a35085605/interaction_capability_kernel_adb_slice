@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from time import sleep
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import TypeAlias
 
 from _lifecycle_new.capability.supervision.acquire import AcquireSupervisor
 from adb.server.capability import AdbServerCapability
@@ -12,26 +12,15 @@ from adb.server.lifecycle import (
     AdbServerAcquireFailed,
     AdbServerAcquireReleaseRequired,
     AdbServerAcquireRequestMismatch,
-    AdbServerAcquireResult,
     AdbServerAcquireSucceeded,
     AdbServerGenerationMismatch,
+    AdbServerLifecycle,
 )
 from adb.server.request import AdbServerRequest
 from adb.server.supervision.policy import AdbServerAcquireSupervisionPolicy
 
 
 _Sleeper = Callable[[float], None]
-
-
-@runtime_checkable
-class AdbServerAcquirer(Protocol):
-    """Narrow acquire-only lifecycle surface used by acquisition supervision."""
-
-    def acquire(
-        self,
-        expected_generation: AdbServerGeneration,
-        request: AdbServerRequest,
-    ) -> AdbServerAcquireResult: ...
 
 
 AdbServerAcquireSupervisionResult: TypeAlias = (
@@ -51,20 +40,20 @@ class AdbServerAcquireSupervisor(
 
     def __init__(
         self,
-        acquirer: AdbServerAcquirer,
+        lifecycle: AdbServerLifecycle,
         *,
         policy: AdbServerAcquireSupervisionPolicy = AdbServerAcquireSupervisionPolicy(),
         _sleeper: _Sleeper = sleep,
     ) -> None:
-        if not isinstance(acquirer, AdbServerAcquirer):
-            raise TypeError("acquirer must satisfy AdbServerAcquirer")
+        if not isinstance(lifecycle, AdbServerLifecycle):
+            raise TypeError("lifecycle must satisfy AdbServerLifecycle")
         if not isinstance(policy, AdbServerAcquireSupervisionPolicy):
             raise TypeError("policy must be AdbServerAcquireSupervisionPolicy")
-        super().__init__(acquirer, policy=policy, _sleeper=_sleeper)
+        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper)
 
     @property
-    def acquirer(self) -> AdbServerAcquirer:
-        return self._acquirer
+    def lifecycle(self) -> AdbServerLifecycle:
+        return self._lifecycle
 
     @property
     def policy(self) -> AdbServerAcquireSupervisionPolicy:
@@ -91,7 +80,6 @@ class AdbServerAcquireSupervisor(
 
 
 __all__ = [
-    "AdbServerAcquirer",
     "AdbServerAcquireSupervisionResult",
     "AdbServerAcquireSupervisor",
 ]

@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from time import sleep
-from typing import Generic, Protocol, TypeAlias, TypeVar, runtime_checkable
+from typing import Generic, TypeAlias, TypeVar
 
+from _lifecycle_new.capability.lifecycle import CapabilityLifecycle
 from _lifecycle_new.capability.result import (
     GenerationMismatch,
     LifecycleBusy,
     ReleaseAlreadyIdle,
     ReleaseFailed,
     ReleaseRequestMismatch,
-    ReleaseResult,
     ReleaseSucceeded,
 )
 from _lifecycle_new.capability.supervision.policy import ReleaseSupervisionPolicy
@@ -21,17 +21,6 @@ RequestT = TypeVar("RequestT")
 CapabilityT = TypeVar("CapabilityT")
 
 _Sleeper = Callable[[float], None]
-
-
-@runtime_checkable
-class Releaser(Protocol[GenerationT, RequestT, CapabilityT]):
-    """Narrow release-only lifecycle surface used by release supervision."""
-
-    def release(
-        self,
-        expected_generation: GenerationT,
-        request: RequestT,
-    ) -> ReleaseResult[GenerationT, RequestT, CapabilityT]: ...
 
 
 ReleaseSupervisionResult: TypeAlias = (
@@ -52,24 +41,24 @@ class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
 
     def __init__(
         self,
-        releaser: Releaser[GenerationT, RequestT, CapabilityT],
+        lifecycle: CapabilityLifecycle[GenerationT, RequestT, CapabilityT],
         *,
         policy: ReleaseSupervisionPolicy = ReleaseSupervisionPolicy(),
         _sleeper: _Sleeper = sleep,
     ) -> None:
-        if not isinstance(releaser, Releaser):
-            raise TypeError("releaser must satisfy Releaser")
+        if not isinstance(lifecycle, CapabilityLifecycle):
+            raise TypeError("lifecycle must satisfy CapabilityLifecycle")
         if not isinstance(policy, ReleaseSupervisionPolicy):
             raise TypeError("policy must be ReleaseSupervisionPolicy")
         if not callable(_sleeper):
             raise TypeError("_sleeper must be callable")
-        self._releaser = releaser
+        self._lifecycle = lifecycle
         self._policy = policy
         self._sleep = _sleeper
 
     @property
-    def releaser(self) -> Releaser[GenerationT, RequestT, CapabilityT]:
-        return self._releaser
+    def lifecycle(self) -> CapabilityLifecycle[GenerationT, RequestT, CapabilityT]:
+        return self._lifecycle
 
     @property
     def policy(self) -> ReleaseSupervisionPolicy:
@@ -88,7 +77,7 @@ class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
             raise TypeError("request cannot be None")
 
         while True:
-            result = self._releaser.release(generation, request)
+            result = self._lifecycle.release(generation, request)
             if isinstance(
                 result,
                 (
@@ -100,8 +89,8 @@ class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
             ):
                 return result
             if not isinstance(result, (ReleaseFailed, LifecycleBusy)):
-                raise TypeError("releaser returned an unsupported ReleaseResult")
+                raise TypeError("lifecycle returned an unsupported ReleaseResult")
             self._sleep(self._policy.retry_seconds)
 
 
-__all__ = ["Releaser", "ReleaseSupervisionResult", "ReleaseSupervisor"]
+__all__ = ["ReleaseSupervisionResult", "ReleaseSupervisor"]

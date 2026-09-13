@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from time import sleep
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import TypeAlias
 
 from _lifecycle_new.capability.supervision.release import ReleaseSupervisor
 from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration
 from adb.server.lifecycle import (
     AdbServerGenerationMismatch,
+    AdbServerLifecycle,
     AdbServerReleaseAlreadyIdle,
     AdbServerReleaseRequestMismatch,
-    AdbServerReleaseResult,
     AdbServerReleaseSucceeded,
 )
 from adb.server.request import AdbServerRequest
@@ -19,17 +19,6 @@ from adb.server.supervision.policy import AdbServerReleaseSupervisionPolicy
 
 
 _Sleeper = Callable[[float], None]
-
-
-@runtime_checkable
-class AdbServerReleaser(Protocol):
-    """Narrow release-only lifecycle surface used by release supervision."""
-
-    def release(
-        self,
-        expected_generation: AdbServerGeneration,
-        request: AdbServerRequest,
-    ) -> AdbServerReleaseResult: ...
 
 
 AdbServerReleaseSupervisionResult: TypeAlias = (
@@ -47,20 +36,20 @@ class AdbServerReleaseSupervisor(
 
     def __init__(
         self,
-        releaser: AdbServerReleaser,
+        lifecycle: AdbServerLifecycle,
         *,
         policy: AdbServerReleaseSupervisionPolicy = AdbServerReleaseSupervisionPolicy(),
         _sleeper: _Sleeper = sleep,
     ) -> None:
-        if not isinstance(releaser, AdbServerReleaser):
-            raise TypeError("releaser must satisfy AdbServerReleaser")
+        if not isinstance(lifecycle, AdbServerLifecycle):
+            raise TypeError("lifecycle must satisfy AdbServerLifecycle")
         if not isinstance(policy, AdbServerReleaseSupervisionPolicy):
             raise TypeError("policy must be AdbServerReleaseSupervisionPolicy")
-        super().__init__(releaser, policy=policy, _sleeper=_sleeper)
+        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper)
 
     @property
-    def releaser(self) -> AdbServerReleaser:
-        return self._releaser
+    def lifecycle(self) -> AdbServerLifecycle:
+        return self._lifecycle
 
     @property
     def policy(self) -> AdbServerReleaseSupervisionPolicy:
@@ -79,7 +68,6 @@ class AdbServerReleaseSupervisor(
 
 
 __all__ = [
-    "AdbServerReleaser",
     "AdbServerReleaseSupervisionResult",
     "AdbServerReleaseSupervisor",
 ]

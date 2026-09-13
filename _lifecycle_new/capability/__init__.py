@@ -1,5 +1,6 @@
 """Contracts and result models for capability lifecycles."""
 
+from _lifecycle_new.capability.lifecycle import CapabilityLifecycle
 from _lifecycle_new.capability.projection import CapabilityProjector
 from _lifecycle_new.capability.result import (
     AcquireAlreadyActive,
@@ -18,11 +19,9 @@ from _lifecycle_new.capability.result import (
 )
 from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
 from _lifecycle_new.capability.supervision import (
-    Acquirer,
     AcquireSupervisionPolicy,
     AcquireSupervisionResult,
     AcquireSupervisor,
-    Releaser,
     ReleaseSupervisionPolicy,
     ReleaseSupervisionResult,
     ReleaseSupervisor,
@@ -30,10 +29,10 @@ from _lifecycle_new.capability.supervision import (
 
 
 __all__ = [
-    "Acquirer",
     "AcquireSupervisionPolicy",
     "AcquireSupervisionResult",
     "AcquireSupervisor",
+    "CapabilityLifecycle",
     "CapabilityProjector",
     "AcquireAlreadyActive",
     "AcquireFailed",
@@ -50,7 +49,6 @@ __all__ = [
     "ReleaseRequestMismatch",
     "ReleaseResult",
     "ReleaseSucceeded",
-    "Releaser",
     "ReleaseSupervisionPolicy",
     "ReleaseSupervisionResult",
     "ReleaseSupervisor",

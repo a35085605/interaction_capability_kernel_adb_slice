@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from time import sleep
-from typing import Generic, Protocol, TypeAlias, TypeVar, runtime_checkable
+from typing import Generic, TypeAlias, TypeVar
 
+from _lifecycle_new.capability.lifecycle import CapabilityLifecycle
 from _lifecycle_new.capability.result import (
     AcquireAlreadyActive,
     AcquireFailed,
     AcquireReleaseRequired,
     AcquireRequestMismatch,
-    AcquireResult,
     AcquireSucceeded,
     GenerationMismatch,
     LifecycleBusy,
@@ -22,17 +22,6 @@ RequestT = TypeVar("RequestT")
 CapabilityT = TypeVar("CapabilityT")
 
 _Sleeper = Callable[[float], None]
-
-
-@runtime_checkable
-class Acquirer(Protocol[GenerationT, RequestT, CapabilityT]):
-    """Narrow acquire-only lifecycle surface used by acquisition supervision."""
-
-    def acquire(
-        self,
-        expected_generation: GenerationT,
-        request: RequestT,
-    ) -> AcquireResult[GenerationT, RequestT, CapabilityT]: ...
 
 
 AcquireSupervisionResult: TypeAlias = (
@@ -55,24 +44,24 @@ class AcquireSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
 
     def __init__(
         self,
-        acquirer: Acquirer[GenerationT, RequestT, CapabilityT],
+        lifecycle: CapabilityLifecycle[GenerationT, RequestT, CapabilityT],
         *,
         policy: AcquireSupervisionPolicy = AcquireSupervisionPolicy(),
         _sleeper: _Sleeper = sleep,
     ) -> None:
-        if not isinstance(acquirer, Acquirer):
-            raise TypeError("acquirer must satisfy Acquirer")
+        if not isinstance(lifecycle, CapabilityLifecycle):
+            raise TypeError("lifecycle must satisfy CapabilityLifecycle")
         if not isinstance(policy, AcquireSupervisionPolicy):
             raise TypeError("policy must be AcquireSupervisionPolicy")
         if not callable(_sleeper):
             raise TypeError("_sleeper must be callable")
-        self._acquirer = acquirer
+        self._lifecycle = lifecycle
         self._policy = policy
         self._sleep = _sleeper
 
     @property
-    def acquirer(self) -> Acquirer[GenerationT, RequestT, CapabilityT]:
-        return self._acquirer
+    def lifecycle(self) -> CapabilityLifecycle[GenerationT, RequestT, CapabilityT]:
+        return self._lifecycle
 
     @property
     def policy(self) -> AcquireSupervisionPolicy:
@@ -91,7 +80,7 @@ class AcquireSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
             raise TypeError("request cannot be None")
 
         while True:
-            result = self._acquirer.acquire(generation, request)
+            result = self._lifecycle.acquire(generation, request)
             if isinstance(
                 result,
                 (
@@ -105,8 +94,8 @@ class AcquireSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
             ):
                 return result
             if not isinstance(result, LifecycleBusy):
-                raise TypeError("acquirer returned an unsupported AcquireResult")
+                raise TypeError("lifecycle returned an unsupported AcquireResult")
             self._sleep(self._policy.deferred_retry_seconds)
 
 
-__all__ = ["Acquirer", "AcquireSupervisionResult", "AcquireSupervisor"]
+__all__ = ["AcquireSupervisionResult", "AcquireSupervisor"]

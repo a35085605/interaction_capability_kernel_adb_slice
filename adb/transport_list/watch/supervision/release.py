@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from time import sleep
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import TypeAlias
 
 from _lifecycle_new.capability.supervision.release import ReleaseSupervisor
 from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
 from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchGenerationMismatch,
+    AdbTransportListWatchLifecycle,
     AdbTransportListWatchReleaseAlreadyIdle,
     AdbTransportListWatchReleaseRequestMismatch,
-    AdbTransportListWatchReleaseResult,
     AdbTransportListWatchReleaseSucceeded,
 )
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
@@ -21,17 +21,6 @@ from adb.transport_list.watch.supervision.policy import (
 
 
 _Sleeper = Callable[[float], None]
-
-
-@runtime_checkable
-class AdbTransportListWatchReleaser(Protocol):
-    """Narrow release-only lifecycle surface used by watch release supervision."""
-
-    def release(
-        self,
-        expected_generation: AdbTransportListWatchGeneration,
-        request: AdbTransportListWatchRequest,
-    ) -> AdbTransportListWatchReleaseResult: ...
 
 
 AdbTransportListWatchReleaseSupervisionResult: TypeAlias = (
@@ -53,24 +42,24 @@ class AdbTransportListWatchReleaseSupervisor(
 
     def __init__(
         self,
-        releaser: AdbTransportListWatchReleaser,
+        lifecycle: AdbTransportListWatchLifecycle,
         *,
         policy: AdbTransportListWatchReleaseSupervisionPolicy = (
             AdbTransportListWatchReleaseSupervisionPolicy()
         ),
         _sleeper: _Sleeper = sleep,
     ) -> None:
-        if not isinstance(releaser, AdbTransportListWatchReleaser):
-            raise TypeError("releaser must satisfy AdbTransportListWatchReleaser")
+        if not isinstance(lifecycle, AdbTransportListWatchLifecycle):
+            raise TypeError("lifecycle must satisfy AdbTransportListWatchLifecycle")
         if not isinstance(policy, AdbTransportListWatchReleaseSupervisionPolicy):
             raise TypeError(
                 "policy must be AdbTransportListWatchReleaseSupervisionPolicy"
             )
-        super().__init__(releaser, policy=policy, _sleeper=_sleeper)
+        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper)
 
     @property
-    def releaser(self) -> AdbTransportListWatchReleaser:
-        return self._releaser
+    def lifecycle(self) -> AdbTransportListWatchLifecycle:
+        return self._lifecycle
 
     @property
     def policy(self) -> AdbTransportListWatchReleaseSupervisionPolicy:
@@ -89,7 +78,6 @@ class AdbTransportListWatchReleaseSupervisor(
 
 
 __all__ = [
-    "AdbTransportListWatchReleaser",
     "AdbTransportListWatchReleaseSupervisionResult",
     "AdbTransportListWatchReleaseSupervisor",
 ]

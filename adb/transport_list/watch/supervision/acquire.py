@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from time import sleep
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import TypeAlias
 
 from _lifecycle_new.capability.supervision.acquire import AcquireSupervisor
 from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
@@ -11,9 +11,9 @@ from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchAcquireFailed,
     AdbTransportListWatchAcquireReleaseRequired,
     AdbTransportListWatchAcquireRequestMismatch,
-    AdbTransportListWatchAcquireResult,
     AdbTransportListWatchAcquireSucceeded,
     AdbTransportListWatchGenerationMismatch,
+    AdbTransportListWatchLifecycle,
 )
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
@@ -23,17 +23,6 @@ from adb.transport_list.watch.supervision.policy import (
 
 
 _Sleeper = Callable[[float], None]
-
-
-@runtime_checkable
-class AdbTransportListWatchAcquirer(Protocol):
-    """Narrow acquire-only lifecycle surface used by watch acquisition supervision."""
-
-    def acquire(
-        self,
-        expected_generation: AdbTransportListWatchGeneration,
-        request: AdbTransportListWatchRequest,
-    ) -> AdbTransportListWatchAcquireResult: ...
 
 
 AdbTransportListWatchAcquireSupervisionResult: TypeAlias = (
@@ -57,24 +46,24 @@ class AdbTransportListWatchAcquireSupervisor(
 
     def __init__(
         self,
-        acquirer: AdbTransportListWatchAcquirer,
+        lifecycle: AdbTransportListWatchLifecycle,
         *,
         policy: AdbTransportListWatchAcquireSupervisionPolicy = (
             AdbTransportListWatchAcquireSupervisionPolicy()
         ),
         _sleeper: _Sleeper = sleep,
     ) -> None:
-        if not isinstance(acquirer, AdbTransportListWatchAcquirer):
-            raise TypeError("acquirer must satisfy AdbTransportListWatchAcquirer")
+        if not isinstance(lifecycle, AdbTransportListWatchLifecycle):
+            raise TypeError("lifecycle must satisfy AdbTransportListWatchLifecycle")
         if not isinstance(policy, AdbTransportListWatchAcquireSupervisionPolicy):
             raise TypeError(
                 "policy must be AdbTransportListWatchAcquireSupervisionPolicy"
             )
-        super().__init__(acquirer, policy=policy, _sleeper=_sleeper)
+        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper)
 
     @property
-    def acquirer(self) -> AdbTransportListWatchAcquirer:
-        return self._acquirer
+    def lifecycle(self) -> AdbTransportListWatchLifecycle:
+        return self._lifecycle
 
     @property
     def policy(self) -> AdbTransportListWatchAcquireSupervisionPolicy:
@@ -108,7 +97,6 @@ class AdbTransportListWatchAcquireSupervisor(
 
 
 __all__ = [
-    "AdbTransportListWatchAcquirer",
     "AdbTransportListWatchAcquireSupervisionResult",
     "AdbTransportListWatchAcquireSupervisor",
 ]
