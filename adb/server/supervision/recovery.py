@@ -4,17 +4,6 @@ from collections.abc import Callable
 from random import random
 from typing import TypeAlias
 
-from networking import TcpAddress
-
-from adb._lifecycle import (
-    AcquireAccessMismatch,
-    AcquireBlocked,
-    AcquireCommitted,
-    AcquireExisting,
-    AcquireFailed,
-    GenerationMismatch,
-    AcquireSuperseded,
-)
 from adb._recovery import (
     RecoveryAcquired,
     RecoveryAttempt,
@@ -24,16 +13,26 @@ from adb._recovery import (
     RecoveryFailed,
     RecoveryRetryConfiguration,
 )
-from adb.server.failure import AdbServerLaunchFailure
+from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration
-from adb.server.access import AdbServerAccess
-from adb.server.legacy import AdbServerAcquireOutcome
+from adb.server.lifecycle import (
+    AdbServerAcquireAlreadyActive,
+    AdbServerAcquireFailed,
+    AdbServerAcquireReleaseRequired,
+    AdbServerAcquireRequestMismatch,
+    AdbServerAcquireResult,
+    AdbServerAcquireSucceeded,
+    AdbServerGenerationMismatch,
+    AdbServerLifecycleBusy,
+)
+from adb.server.request import AdbServerRequest
 from adb.server.supervision.policy import AdbServerRecoveryPolicy
+from adb.server.template import AdbServerAcquireError
 
 
 _RandomSource = Callable[[], float]
 
-AdbServerRecoveryFailureCause: TypeAlias = AdbServerLaunchFailure
+AdbServerRecoveryFailureCause: TypeAlias = AdbServerAcquireError
 AdbServerRecoveryResult: TypeAlias = (
     RecoveryAcquired | RecoveryFailed[AdbServerRecoveryFailureCause]
 )
@@ -51,8 +50,39 @@ def _configuration_from_policy(policy: AdbServerRecoveryPolicy) -> RecoveryRetry
     )
 
 
+def _validate_active_result(
+    result: AdbServerAcquireSucceeded | AdbServerAcquireAlreadyActive,
+) -> None:
+    snapshot = result.snapshot
+    if not isinstance(snapshot.generation, AdbServerGeneration):
+        raise TypeError("server acquire generation must be AdbServerGeneration")
+    if not isinstance(snapshot.request, AdbServerRequest):
+        raise TypeError("server acquire request must be AdbServerRequest")
+    if not isinstance(snapshot.capability, AdbServerCapability):
+        raise TypeError("server acquire capability must be AdbServerCapability")
+
+
+def _failure_cause(
+    result: AdbServerAcquireFailed | AdbServerAcquireReleaseRequired,
+) -> AdbServerAcquireError:
+    snapshot = result.snapshot
+    if not isinstance(snapshot.generation, AdbServerGeneration):
+        raise TypeError("server acquire generation must be AdbServerGeneration")
+    if not isinstance(snapshot.request, AdbServerRequest):
+        raise TypeError("server acquire request must be AdbServerRequest")
+    if not isinstance(snapshot.last_error, AdbServerAcquireError):
+        raise TypeError("server acquire failure must be AdbServerAcquireError")
+    return snapshot.last_error
+
+
 class AdbServerRecovery:
-    """Decision engine for one bounded ADB server recovery cycle."""
+    """Decision engine for one bounded ADB server recovery cycle.
+
+    The recovery policy consumes the simplified synchronous lifecycle outcomes directly.
+    A failed acquisition (including a pre-existing ``RELEASE_REQUIRED`` state) consumes
+    failure budget. The orchestration layer is responsible for completing the matching
+    release before the next selected acquisition attempt is executed.
+    """
 
     def __init__(
         self,
@@ -85,72 +115,52 @@ class AdbServerRecovery:
             raise RuntimeError("ADB server recovery has already begun")
         return self._core.begin()
 
-    def decide_after(self, result: AdbServerAcquireOutcome) -> AdbServerRecoveryDecision:
-        """Apply retry policy after one selected acquisition attempt completes."""
+    def decide_after(self, result: AdbServerAcquireResult) -> AdbServerRecoveryDecision:
+        """Apply retry policy after one simplified lifecycle acquisition result."""
 
         if self._core.attempt_number == 0:
             raise RuntimeError("ADB server recovery has not begun")
         if not isinstance(
             result,
             (
-                AcquireCommitted,
-                AcquireExisting,
-                AcquireAccessMismatch,
-                GenerationMismatch,
-                AcquireBlocked,
-                AcquireFailed,
-                AcquireSuperseded,
+                AdbServerAcquireSucceeded,
+                AdbServerAcquireAlreadyActive,
+                AdbServerAcquireFailed,
+                AdbServerAcquireReleaseRequired,
+                AdbServerAcquireRequestMismatch,
+                AdbServerGenerationMismatch,
+                AdbServerLifecycleBusy,
             ),
         ):
-            raise TypeError("result must be AdbServerAcquireOutcome")
+            raise TypeError("result must be AdbServerAcquireResult")
 
-        if isinstance(result, (AcquireCommitted, AcquireExisting)):
-            snapshot = result.snapshot
-            if not isinstance(snapshot.generation, AdbServerGeneration):
-                raise TypeError("server acquire generation must be AdbServerGeneration")
-            if snapshot.access is not None and not isinstance(snapshot.access, AdbServerAccess):
-                raise TypeError("server acquire access must be AdbServerAccess or None")
-            if snapshot.capability is not None and not isinstance(snapshot.capability, TcpAddress):
-                raise TypeError("server acquire capability must be TcpAddress or None")
-
-        if isinstance(result, AcquireAccessMismatch) and not isinstance(
-            result.current_access, AdbServerAccess
-        ):
-            raise TypeError("server current access must be AdbServerAccess")
-        if isinstance(result, GenerationMismatch) and not isinstance(
-            result.current_generation, AdbServerGeneration
-        ):
-            raise TypeError("server current generation must be AdbServerGeneration")
-        if isinstance(result, AcquireFailed) and not isinstance(
-            result.failure, AdbServerLaunchFailure
-        ):
-            raise TypeError("server acquire failure must be AdbServerLaunchFailure")
-        if isinstance(result, AcquireSuperseded) and not isinstance(
-            result.current_generation, AdbServerGeneration
-        ):
-            raise TypeError("server superseded current generation must be AdbServerGeneration")
-
-        if isinstance(result, (AcquireCommitted, AcquireExisting)):
+        cause: AdbServerAcquireError | None = None
+        if isinstance(result, (AdbServerAcquireSucceeded, AdbServerAcquireAlreadyActive)):
+            _validate_active_result(result)
             outcome = RecoveryAttemptOutcome.ACQUIRED
-        elif isinstance(
-            result,
-            (AcquireAccessMismatch, GenerationMismatch, AcquireBlocked, AcquireSuperseded),
-        ):
+        elif isinstance(result, AdbServerGenerationMismatch):
+            if not isinstance(result.current_generation, AdbServerGeneration):
+                raise TypeError("server current generation must be AdbServerGeneration")
+            outcome = RecoveryAttemptOutcome.DEFERRED
+        elif isinstance(result, AdbServerAcquireRequestMismatch):
+            if not isinstance(result.current_request, AdbServerRequest):
+                raise TypeError("server current request must be AdbServerRequest")
+            outcome = RecoveryAttemptOutcome.DEFERRED
+        elif isinstance(result, AdbServerLifecycleBusy):
             outcome = RecoveryAttemptOutcome.DEFERRED
         else:
+            cause = _failure_cause(result)
             outcome = RecoveryAttemptOutcome.FAILED
 
         decision = self._core.decide_after(outcome)
         if isinstance(decision, (RecoveryAcquired, RecoveryAttempt)):
             return decision
         if isinstance(decision, RecoveryExhausted):
-            if not isinstance(result, AcquireFailed) or not isinstance(
-                result.failure, AdbServerLaunchFailure
-            ):
+            if cause is None:
                 raise TypeError("unsupported budget-consuming server acquire outcome")
             return RecoveryFailed(
                 failed_attempts=decision.failed_attempts,
-                cause=result.failure,
+                cause=cause,
             )
         raise TypeError("unsupported shared server recovery decision")
 

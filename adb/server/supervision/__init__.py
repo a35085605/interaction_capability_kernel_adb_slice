@@ -1,4 +1,4 @@
-"""ADB server acquire/release supervision and legacy recovery supervision."""
+"""ADB server acquire/release and recovery supervision."""
 
 from adb._recovery import RecoveryAcquired, RecoveryAttempt, RecoveryFailed
 from adb.server.supervision.acquire import (

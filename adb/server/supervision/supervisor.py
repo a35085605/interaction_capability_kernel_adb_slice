@@ -3,49 +3,64 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import Event, RLock, Thread, current_thread
 
-from adb.server.access import AdbServerAccess
 from adb.server.generation import AdbServerGeneration
-from adb._lifecycle import GenerationMismatch, ReleaseAccessDetached
-from adb.server.legacy import LegacyAdbServerLifecycle
-from adb.server.supervision.policy import AdbServerRecoveryPolicy
+from adb.server.lifecycle import (
+    AdbServerAcquireFailed,
+    AdbServerAcquireReleaseRequired,
+    AdbServerGenerationMismatch,
+    AdbServerLifecycle,
+    AdbServerReleaseAlreadyIdle,
+    AdbServerReleaseRequestMismatch,
+    AdbServerReleaseSucceeded,
+)
+from adb.server.request import AdbServerRequest
+from adb.server.supervision.policy import (
+    AdbServerRecoveryPolicy,
+    AdbServerReleaseSupervisionPolicy,
+)
 from adb.server.supervision.recovery import (
     AdbServerRecovery,
     RecoveryAcquired,
     RecoveryAttempt,
     RecoveryFailed,
 )
+from adb.server.supervision.release import AdbServerReleaseSupervisor
 
 
 @dataclass(frozen=True, slots=True)
 class _RecoveryTarget:
     generation: AdbServerGeneration
-    access: AdbServerAccess
+    request: AdbServerRequest
 
     def __post_init__(self) -> None:
         if not isinstance(self.generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
-        if not isinstance(self.access, AdbServerAccess):
-            raise TypeError("access must be AdbServerAccess")
+        if not isinstance(self.request, AdbServerRequest):
+            raise TypeError("request must be AdbServerRequest")
 
 
 class AdbServerSupervisor:
     """Run explicitly reconciled ADB server recovery cycles.
 
-    Reconciliation releases one exact ``(generation, access)`` target. A successful detach provides
-    the next generation directly, which is carried through recovery attempts so reacquisition never
-    needs a separate read between release and acquire. Generation mismatches resynchronize the
-    recovery target from the returned current generation.
+    Reconciliation releases one exact ``(generation, request)`` target. A successful
+    release provides the next generation directly, which is carried through recovery
+    attempts so reacquisition never needs a separate state read.
+
+    The simplified lifecycle retains failed acquisition resources in
+    ``RELEASE_REQUIRED``. Recovery therefore completes that exact release before retrying
+    the request in the next generation. Generation mismatches resynchronize the recovery
+    target from the returned current generation.
     """
 
     def __init__(
         self,
-        lifecycle: LegacyAdbServerLifecycle,
+        lifecycle: AdbServerLifecycle,
         *,
         policy: AdbServerRecoveryPolicy,
         recovery_enabled: bool,
     ) -> None:
-        if not isinstance(lifecycle, LegacyAdbServerLifecycle):
-            raise TypeError("lifecycle must satisfy LegacyAdbServerLifecycle")
+        if not isinstance(lifecycle, AdbServerLifecycle):
+            raise TypeError("lifecycle must satisfy AdbServerLifecycle")
         if not isinstance(policy, AdbServerRecoveryPolicy):
             raise TypeError("policy must be AdbServerRecoveryPolicy")
         if not isinstance(recovery_enabled, bool):
@@ -53,6 +68,12 @@ class AdbServerSupervisor:
         self._lifecycle = lifecycle
         self._policy = policy
         self._recovery_enabled = recovery_enabled
+        self._release_supervisor = AdbServerReleaseSupervisor(
+            lifecycle,
+            policy=AdbServerReleaseSupervisionPolicy(
+                retry_seconds=policy.deferred_retry_seconds,
+            ),
+        )
 
         self._lock = RLock()
         self._stop_event = Event()
@@ -84,7 +105,7 @@ class AdbServerSupervisor:
             self._started = True
 
     def close(self) -> None:
-        """Stop supervision without releasing the current lifecycle access."""
+        """Stop supervision without releasing the current lifecycle request."""
 
         with self._lock:
             if self._closed:
@@ -99,14 +120,14 @@ class AdbServerSupervisor:
     def reconcile(
         self,
         generation: AdbServerGeneration,
-        access: AdbServerAccess,
+        request: AdbServerRequest,
     ) -> None:
-        """Release one exact server target and recover when it owned usable access."""
+        """Release one exact server request and recover only after successful release."""
 
         if not isinstance(generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
-        if not isinstance(access, AdbServerAccess):
-            raise TypeError("access must be AdbServerAccess")
+        if not isinstance(request, AdbServerRequest):
+            raise TypeError("request must be AdbServerRequest")
 
         with self._lock:
             if self._closed:
@@ -114,14 +135,14 @@ class AdbServerSupervisor:
             if not self._started:
                 raise RuntimeError("ADB server supervisor is not started")
 
-        release = self._lifecycle.release(generation, access)
-        if not isinstance(release, ReleaseAccessDetached):
+        release = self._release_supervisor.supervise(generation, request)
+        if not isinstance(release, AdbServerReleaseSucceeded):
             return
 
-        self._request_recovery(_RecoveryTarget(release.next_generation, access))
+        self._request_recovery(_RecoveryTarget(release.next_generation, request))
 
     def _request_recovery(self, target: _RecoveryTarget) -> None:
-        """Start recovery for one committed server release."""
+        """Start recovery for one completed server release."""
 
         if not isinstance(target, _RecoveryTarget):
             raise TypeError("target must be _RecoveryTarget")
@@ -188,14 +209,18 @@ class AdbServerSupervisor:
                     if target is None:
                         raise RuntimeError("ADB server recovery target state is inconsistent")
 
-                result = self._lifecycle.acquire(target.generation, target.access)
-                if isinstance(result, GenerationMismatch):
-                    with self._lock:
-                        if self._is_current_recovery_locked(recovery):
-                            self._recovery_target = _RecoveryTarget(
-                                result.current_generation,
-                                target.access,
-                            )
+                result = self._lifecycle.acquire(target.generation, target.request)
+
+                if isinstance(result, AdbServerGenerationMismatch):
+                    self._replace_recovery_target(
+                        recovery,
+                        _RecoveryTarget(result.current_generation, target.request),
+                    )
+                elif isinstance(
+                    result,
+                    (AdbServerAcquireFailed, AdbServerAcquireReleaseRequired),
+                ):
+                    self._release_failed_acquire(recovery, result)
 
                 decision = recovery.decide_after(result)
                 if isinstance(decision, RecoveryAttempt):
@@ -208,13 +233,56 @@ class AdbServerSupervisor:
         except BaseException:
             # Contract/invariant failures are not retryable lifecycle outcomes. Release this cycle
             # so later explicit reconciliations cannot become permanently pending behind a dead
-            # worker,
-            # but do not automatically restart the broken cycle.
+            # worker, but do not automatically restart the broken cycle.
             self._abort_recovery(recovery)
             raise
         finally:
             with self._lock:
                 self._recovery_threads.discard(active_thread)
+
+    def _release_failed_acquire(
+        self,
+        recovery: AdbServerRecovery,
+        result: AdbServerAcquireFailed | AdbServerAcquireReleaseRequired,
+    ) -> None:
+        """Complete RELEASE_REQUIRED before another recovery acquisition is selected."""
+
+        snapshot = result.snapshot
+        if not isinstance(snapshot.generation, AdbServerGeneration):
+            raise TypeError("server failed acquire generation must be AdbServerGeneration")
+        if not isinstance(snapshot.request, AdbServerRequest):
+            raise TypeError("server failed acquire request must be AdbServerRequest")
+
+        release = self._release_supervisor.supervise(
+            snapshot.generation,
+            snapshot.request,
+        )
+        if isinstance(release, AdbServerReleaseSucceeded):
+            next_generation = release.next_generation
+        elif isinstance(release, AdbServerGenerationMismatch):
+            next_generation = release.current_generation
+        elif isinstance(release, AdbServerReleaseAlreadyIdle):
+            next_generation = snapshot.generation
+        elif isinstance(release, AdbServerReleaseRequestMismatch):
+            raise RuntimeError(
+                "ADB server failed-acquire cleanup targeted a different current request"
+            )
+        else:
+            raise TypeError("unsupported server release supervision result")
+
+        self._replace_recovery_target(
+            recovery,
+            _RecoveryTarget(next_generation, snapshot.request),
+        )
+
+    def _replace_recovery_target(
+        self,
+        recovery: AdbServerRecovery,
+        target: _RecoveryTarget,
+    ) -> None:
+        with self._lock:
+            if self._is_current_recovery_locked(recovery):
+                self._recovery_target = target
 
     def _abort_recovery(self, recovery: AdbServerRecovery) -> None:
         """Terminate a broken recovery cycle and clear its queued work."""

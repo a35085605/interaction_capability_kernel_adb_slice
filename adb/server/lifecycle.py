@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol, TypeAlias
+from typing import Protocol, TypeAlias, runtime_checkable
 
 from _lifecycle_new.capability.result import (
     AcquireAlreadyActive,
@@ -48,6 +48,7 @@ AdbServerReleaseResult: TypeAlias = ReleaseResult[
 ]
 
 
+@runtime_checkable
 class AdbServerLifecycle(AdbServerSnapshotReader, Protocol):
     """Acquire and release one generation-scoped ADB server capability."""
 
