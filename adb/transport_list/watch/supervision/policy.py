@@ -1,8 +1,28 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from numbers import Real
 
 from adb._recovery import normalize_recovery_retry_configuration
+
+
+@dataclass(frozen=True, slots=True)
+class AdbTransportListWatchReleaseSupervisionPolicy:
+    """Retry timing for retryable transport-list watch release results."""
+
+    retry_seconds: float = 0.1
+
+    def __post_init__(self) -> None:
+        value = self.retry_seconds
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise TypeError("watch release supervision retry must be a real number")
+        normalized = float(value)
+        if not math.isfinite(normalized) or normalized <= 0.0:
+            raise ValueError(
+                "watch release supervision retry must be finite and greater than zero"
+            )
+        object.__setattr__(self, "retry_seconds", normalized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,4 +62,7 @@ class AdbTransportListWatchRecoveryPolicy:
         object.__setattr__(self, "max_attempts", configuration.max_attempts)
 
 
-__all__ = ["AdbTransportListWatchRecoveryPolicy"]
+__all__ = [
+    "AdbTransportListWatchRecoveryPolicy",
+    "AdbTransportListWatchReleaseSupervisionPolicy",
+]

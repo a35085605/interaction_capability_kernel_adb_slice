@@ -4,11 +4,16 @@ from collections.abc import Callable, Iterator
 from math import isfinite
 from numbers import Real
 import socket
-from threading import Event, Lock
+from threading import Lock
 from time import monotonic
 
-from adb._lifecycle import ResourceEntry, ResourceScope
-from adb._resolution import AddressResolutionCancelled, DeadlineResolver
+from _lifecycle_new.resource.driver import (
+    PhysicalResources,
+    RequirementAcquireFailed,
+    RequirementAcquireResult,
+    RequirementAcquireSucceeded,
+)
+from adb._resolution import DeadlineResolver
 from adb.aosp.model.track_devices import Devices, parse_devices
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
 from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
@@ -26,10 +31,6 @@ _Resolver = Callable[..., list[tuple]]
 _SocketFactory = Callable[..., socket.socket]
 
 
-class AospTrackDevicesOpenCancelled(RuntimeError):
-    """Opening an AOSP track-devices stream was cooperatively cancelled."""
-
-
 def _normalize_startup_timeout(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, Real):
         raise TypeError("startup_timeout_seconds must be a real number")
@@ -37,19 +38,6 @@ def _normalize_startup_timeout(value: object) -> float:
     if not isfinite(timeout) or timeout <= 0:
         raise ValueError("startup_timeout_seconds must be finite and greater than zero")
     return timeout
-
-
-def _check_cancelled(cancellation: Event | None) -> None:
-    if cancellation is not None and cancellation.is_set():
-        raise AospTrackDevicesOpenCancelled
-
-
-def _close_socket(sock: socket.socket) -> bool:
-    try:
-        sock.close()
-    except BaseException:
-        return False
-    return True
 
 
 def _set_deadline_timeout(sock: socket.socket, deadline: float, clock: _Clock) -> None:
@@ -111,8 +99,13 @@ def _handshake(sock: socket.socket, deadline: float, clock: _Clock) -> None:
     raise AdbProtocolError(f"unexpected ADB service status: {status!r}")
 
 
-class AospTrackDevicesStream:
-    """One live AOSP track-devices smart-socket stream."""
+class AospTrackDevicesSession:
+    """Lifecycle-owned AOSP track-devices session.
+
+    The session is the physical-resource ownership boundary. It privately owns the
+    underlying OS socket, carries the initialized first ``Devices`` record, streams
+    subsequent records, and synchronously closes the socket during lifecycle release.
+    """
 
     __slots__ = (
         "_socket",
@@ -123,22 +116,36 @@ class AospTrackDevicesStream:
         "_updates",
     )
 
-    def __init__(self, sock: socket.socket, initial: Devices) -> None:
-        if not isinstance(initial, Devices):
-            raise TypeError("initial must be AOSP Devices")
+    def __init__(self, sock: socket.socket) -> None:
         self._socket = sock
-        self._initial = initial
+        self._initial: Devices | None = None
         self._lock = Lock()
         self._cancelled = False
         self._closed = False
+        self._updates: Iterator[Devices] | None = None
+
+    def initialize(self, initial: Devices) -> None:
+        """Publish the first record after the smart-socket handshake is complete."""
+
+        if not isinstance(initial, Devices):
+            raise TypeError("initial must be AOSP Devices")
+        if self._initial is not None:
+            raise RuntimeError("track-devices session is already initialized")
+        self._initial = initial
         self._updates = self._iterate_updates()
 
     @property
     def initial(self) -> Devices:
-        return self._initial
+        initial = self._initial
+        if initial is None:
+            raise RuntimeError("track-devices session is not initialized")
+        return initial
 
     def updates(self) -> Iterator[Devices]:
-        return self._updates
+        updates = self._updates
+        if updates is None:
+            raise RuntimeError("track-devices session is not initialized")
+        return updates
 
     def _is_closed(self) -> bool:
         with self._lock:
@@ -166,12 +173,7 @@ class AospTrackDevicesStream:
             pass
 
     def close(self) -> None:
-        """Interrupt the stream and close its physical socket.
-
-        Cleanup orchestration is intentionally absent. A future pool cleaner may call this method;
-        failures propagate and the retired pool entry remains available for retry policy outside
-        this module.
-        """
+        """Interrupt reads and synchronously close the privately owned OS socket."""
 
         with self._lock:
             self._cancelled = True
@@ -183,12 +185,8 @@ class AospTrackDevicesStream:
             self._closed = True
 
 
-class AospTrackDevicesStreamFactory:
-    """Open fully initialized AOSP track-devices streams over smart sockets.
-
-    Every socket is registered in the supplied resource scope immediately after creation. On a
-    successful open, ownership is transferred to the registered ``AospTrackDevicesStream`` entry.
-    """
+class AospTrackDevicesSessionDriver:
+    """Acquire initialized track-devices sessions and clean them up synchronously."""
 
     def __init__(
         self,
@@ -205,105 +203,127 @@ class AospTrackDevicesStreamFactory:
         self._socket_factory = _socket_factory
         self._clock = _clock
 
-    def open(
+    def acquire(
         self,
         server_address: TcpAddress,
-        cancellation: Event | None,
-        resources: ResourceScope,
-    ) -> AospTrackDevicesStream:
-        """Connect, initialize, and register a track-devices stream."""
+    ) -> RequirementAcquireResult[AospTrackDevicesSession]:
+        """Create one initialized session and report retained cleanup debt on failure."""
 
         if not isinstance(server_address, TcpAddress):
             raise TypeError("server_address must be TcpAddress")
-        if cancellation is not None and not isinstance(cancellation, Event):
-            raise TypeError("cancellation must be threading.Event or None")
-        if not isinstance(resources, ResourceScope):
-            raise TypeError("resources must be ResourceScope")
 
-        _check_cancelled(cancellation)
-        sock: socket.socket | None = None
-        socket_entry: ResourceEntry | None = None
-        try:
-            sock, socket_entry, deadline = self._connect(
-                server_address,
-                cancellation,
-                resources,
-            )
-            _check_cancelled(cancellation)
-            _handshake(sock, deadline, self._clock)
-            _check_cancelled(cancellation)
-            initial = parse_devices(_read_frame(sock, deadline=deadline, clock=self._clock))
-            _check_cancelled(cancellation)
-            sock.settimeout(None)
-            _check_cancelled(cancellation)
-
-            stream = AospTrackDevicesStream(sock, initial)
-            resources.register(stream)
-            resources.discard(socket_entry)
-            return stream
-        except BaseException:
-            if sock is not None and socket_entry is not None:
-                if _close_socket(sock):
-                    resources.discard(socket_entry)
-                else:
-                    resources.retire(socket_entry)
-            raise
-
-    def _connect(
-        self,
-        server_address: TcpAddress,
-        cancellation: Event | None,
-        resources: ResourceScope,
-    ) -> tuple[socket.socket, ResourceEntry, float]:
         deadline = self._clock() + self.startup_timeout_seconds
         try:
             addresses = self._resolver.resolve(
                 server_address.host,
                 server_address.port,
                 deadline=deadline,
-                cancellation=cancellation,
+                cancellation=None,
             )
-        except AddressResolutionCancelled as exc:
-            raise AospTrackDevicesOpenCancelled from exc
-        except OSError as exc:
-            raise AdbServerConnectionError(
-                f"failed to resolve ADB server address {server_address.host!r}: {exc}"
-            ) from exc
+        except Exception as exc:
+            if isinstance(exc, AdbTimeoutError):
+                return RequirementAcquireFailed(exc, ())
+            if isinstance(exc, OSError):
+                error = AdbServerConnectionError(
+                    f"failed to resolve ADB server address {server_address.host!r}: {exc}"
+                )
+                return RequirementAcquireFailed(error, ())
+            return RequirementAcquireFailed(exc, ())
 
-        _check_cancelled(cancellation)
-        last_error: OSError | None = None
-        for family, socktype, proto, _, sockaddr in addresses:
-            _check_cancelled(cancellation)
-            candidate: socket.socket | None = None
-            entry: ResourceEntry | None = None
+        if not addresses:
+            return RequirementAcquireFailed(
+                AdbServerConnectionError("ADB server address resolution returned no candidates"),
+                (),
+            )
+
+        last_error: Exception | None = None
+        for address in addresses:
+            if len(address) < 5:
+                last_error = AdbServerConnectionError(
+                    "ADB server address resolver returned a malformed candidate"
+                )
+                continue
+            family, socktype, proto, _, sockaddr = address[:5]
+            if not all(isinstance(value, int) for value in (family, socktype, proto)):
+                last_error = AdbServerConnectionError(
+                    "ADB server address resolver returned invalid socket metadata"
+                )
+                continue
+
             try:
-                candidate = self._socket_factory(family, socktype, proto)
-                entry = resources.register(candidate)
-                _set_deadline_timeout(candidate, deadline, self._clock)
-                candidate.connect(sockaddr)
-                return candidate, entry, deadline
+                sock = self._socket_factory(family, socktype, proto)
             except OSError as exc:
-                if candidate is not None and entry is not None:
-                    if _close_socket(candidate):
-                        resources.discard(entry)
-                    else:
-                        resources.retire(entry)
-                        raise
                 last_error = exc
-            except BaseException:
-                if candidate is not None and entry is not None:
-                    if _close_socket(candidate):
-                        resources.discard(entry)
-                    else:
-                        resources.retire(entry)
-                raise
+                continue
 
-        detail = str(last_error) if last_error is not None else "no address candidates"
-        raise AdbServerConnectionError(f"failed to connect to ADB server: {detail}") from last_error
+            session = AospTrackDevicesSession(sock)
+            try:
+                _set_deadline_timeout(sock, deadline, self._clock)
+                sock.connect(sockaddr)
+            except OSError as exc:
+                last_error = exc
+                try:
+                    session.close()
+                except BaseException:
+                    return RequirementAcquireFailed(exc, (session,))
+                continue
+            except Exception as exc:
+                try:
+                    session.close()
+                except BaseException:
+                    return RequirementAcquireFailed(exc, (session,))
+                return RequirementAcquireFailed(exc, ())
+
+            try:
+                _handshake(sock, deadline, self._clock)
+                initial = parse_devices(
+                    _read_frame(sock, deadline=deadline, clock=self._clock)
+                )
+                sock.settimeout(None)
+                session.initialize(initial)
+            except Exception as exc:
+                try:
+                    session.close()
+                except BaseException:
+                    return RequirementAcquireFailed(exc, (session,))
+                return RequirementAcquireFailed(exc, ())
+
+            return RequirementAcquireSucceeded((session,))
+
+        detail = str(last_error) if last_error is not None else "no address candidate succeeded"
+        return RequirementAcquireFailed(
+            AdbServerConnectionError(f"failed to connect to ADB server: {detail}"),
+            (),
+        )
+
+    def cleanup(
+        self,
+        resources: PhysicalResources[AospTrackDevicesSession],
+    ) -> None:
+        """Close every retained session, tolerating retries after partial cleanup."""
+
+        if not isinstance(resources, tuple):
+            raise TypeError("resources must be a PhysicalResources tuple")
+
+        first_error: BaseException | None = None
+        for resource in reversed(resources):
+            if not isinstance(resource, AospTrackDevicesSession):
+                if first_error is None:
+                    first_error = TypeError(
+                        "resources must contain only AospTrackDevicesSession values"
+                    )
+                continue
+            try:
+                resource.close()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+
+        if first_error is not None:
+            raise first_error
 
 
 __all__ = [
-    "AospTrackDevicesOpenCancelled",
-    "AospTrackDevicesStream",
-    "AospTrackDevicesStreamFactory",
+    "AospTrackDevicesSession",
+    "AospTrackDevicesSessionDriver",
 ]

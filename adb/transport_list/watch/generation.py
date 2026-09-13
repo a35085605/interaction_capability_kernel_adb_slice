@@ -16,8 +16,8 @@ class AdbTransportListWatchGeneration:
     """Runtime-scoped generation fencing one transport-list watch authority lifetime.
 
     A lifecycle owns a current generation before acquisition begins. Failed or retried
-    acquisitions remain in that generation. Releasing matching pending or usable
-    authority advances to a fresh generation before cancellation or physical cleanup.
+    acquisitions remain in that generation until an explicit release completes. A matching
+    release cleans up retained physical resources before issuing the next generation.
     """
 
     _epoch: _AdbTransportListWatchGenerationEpoch = field(repr=False)

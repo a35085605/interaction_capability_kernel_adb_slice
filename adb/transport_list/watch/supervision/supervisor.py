@@ -3,15 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import Event, RLock, Thread, current_thread
 
-from adb.transport_list.watch.access import AdbTransportListWatchAccess
-from adb.transport_list.watch.lifecycle import (
-    GenerationMismatch,
-    AdbTransportListWatchLifecycle,
-    ReleaseAccessDetached,
-)
 from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
+from adb.transport_list.watch.lifecycle import (
+    AdbTransportListWatchAcquireFailed,
+    AdbTransportListWatchAcquireReleaseRequired,
+    AdbTransportListWatchGenerationMismatch,
+    AdbTransportListWatchLifecycle,
+    AdbTransportListWatchReleaseAlreadyIdle,
+    AdbTransportListWatchReleaseRequestMismatch,
+    AdbTransportListWatchReleaseSucceeded,
+)
+from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchRecoveryPolicy,
+    AdbTransportListWatchReleaseSupervisionPolicy,
 )
 from adb.transport_list.watch.supervision.recovery import (
     AdbTransportListWatchRecovery,
@@ -19,26 +24,29 @@ from adb.transport_list.watch.supervision.recovery import (
     RecoveryAttempt,
     RecoveryFailed,
 )
+from adb.transport_list.watch.supervision.release import (
+    AdbTransportListWatchReleaseSupervisor,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class _RecoveryTarget:
     generation: AdbTransportListWatchGeneration
-    access: AdbTransportListWatchAccess
+    request: AdbTransportListWatchRequest
 
     def __post_init__(self) -> None:
         if not isinstance(self.generation, AdbTransportListWatchGeneration):
             raise TypeError("generation must be AdbTransportListWatchGeneration")
-        if not isinstance(self.access, AdbTransportListWatchAccess):
-            raise TypeError("access must be AdbTransportListWatchAccess")
+        if not isinstance(self.request, AdbTransportListWatchRequest):
+            raise TypeError("request must be AdbTransportListWatchRequest")
 
 
 class AdbTransportListWatchSupervisor:
     """Run explicitly reconciled transport-list watch recovery cycles.
 
-    Reconciliation releases one exact ``(generation, access)`` target. A successful detach provides
-    the next generation directly, which recovery carries into reacquisition without a separate
-    state read. Generation mismatches resynchronize the target from the returned current generation.
+    Reconciliation completes synchronous resource cleanup before advancing to the next
+    generation. Failed acquisition resources in ``RELEASE_REQUIRED`` are likewise
+    released before another recovery attempt is selected.
     """
 
     def __init__(
@@ -57,6 +65,12 @@ class AdbTransportListWatchSupervisor:
         self._lifecycle = lifecycle
         self._policy = policy
         self._recovery_enabled = recovery_enabled
+        self._release_supervisor = AdbTransportListWatchReleaseSupervisor(
+            lifecycle,
+            policy=AdbTransportListWatchReleaseSupervisionPolicy(
+                retry_seconds=policy.deferred_retry_seconds,
+            ),
+        )
 
         self._lock = RLock()
         self._stop_event = Event()
@@ -78,8 +92,6 @@ class AdbTransportListWatchSupervisor:
             return self._closed
 
     def start(self) -> None:
-        """Start transport-list watch recovery supervision."""
-
         with self._lock:
             if self._closed:
                 raise RuntimeError("ADB transport-list watch supervisor is closed")
@@ -88,7 +100,7 @@ class AdbTransportListWatchSupervisor:
             self._started = True
 
     def close(self) -> None:
-        """Stop supervision without releasing the current watch lifecycle access."""
+        """Stop supervision without releasing the current watch request."""
 
         with self._lock:
             if self._closed:
@@ -103,14 +115,14 @@ class AdbTransportListWatchSupervisor:
     def reconcile(
         self,
         generation: AdbTransportListWatchGeneration,
-        access: AdbTransportListWatchAccess,
+        request: AdbTransportListWatchRequest,
     ) -> None:
-        """Release one exact watch target and recover its detached server access."""
+        """Release one exact watch request and recover only after successful cleanup."""
 
         if not isinstance(generation, AdbTransportListWatchGeneration):
             raise TypeError("generation must be AdbTransportListWatchGeneration")
-        if not isinstance(access, AdbTransportListWatchAccess):
-            raise TypeError("access must be AdbTransportListWatchAccess")
+        if not isinstance(request, AdbTransportListWatchRequest):
+            raise TypeError("request must be AdbTransportListWatchRequest")
 
         with self._lock:
             if self._closed:
@@ -118,15 +130,13 @@ class AdbTransportListWatchSupervisor:
             if not self._started:
                 raise RuntimeError("ADB transport-list watch supervisor is not started")
 
-        release = self._lifecycle.release(generation, access)
-        if not isinstance(release, ReleaseAccessDetached):
+        release = self._release_supervisor.supervise(generation, request)
+        if not isinstance(release, AdbTransportListWatchReleaseSucceeded):
             return
 
-        self._request_recovery(_RecoveryTarget(release.next_generation, access))
+        self._request_recovery(_RecoveryTarget(release.next_generation, request))
 
     def _request_recovery(self, target: _RecoveryTarget) -> None:
-        """Start recovery for one committed failed-watch release."""
-
         if not isinstance(target, _RecoveryTarget):
             raise TypeError("target must be _RecoveryTarget")
 
@@ -194,14 +204,21 @@ class AdbTransportListWatchSupervisor:
                             "ADB transport-list watch recovery target state is inconsistent"
                         )
 
-                result = self._lifecycle.acquire(target.generation, target.access)
-                if isinstance(result, GenerationMismatch):
-                    with self._lock:
-                        if self._is_current_recovery_locked(recovery):
-                            self._recovery_target = _RecoveryTarget(
-                                result.current_generation,
-                                target.access,
-                            )
+                result = self._lifecycle.acquire(target.generation, target.request)
+
+                if isinstance(result, AdbTransportListWatchGenerationMismatch):
+                    self._replace_recovery_target(
+                        recovery,
+                        _RecoveryTarget(result.current_generation, target.request),
+                    )
+                elif isinstance(
+                    result,
+                    (
+                        AdbTransportListWatchAcquireFailed,
+                        AdbTransportListWatchAcquireReleaseRequired,
+                    ),
+                ):
+                    self._release_failed_acquire(recovery, result)
 
                 decision = recovery.decide_after(result)
                 if isinstance(decision, RecoveryAttempt):
@@ -212,18 +229,58 @@ class AdbTransportListWatchSupervisor:
                     return
                 raise TypeError("decision must be AdbTransportListWatchRecoveryDecision")
         except BaseException:
-            # Contract/invariant failures are not retryable lifecycle outcomes. Release this cycle
-            # so later explicit reconciliations cannot become permanently pending behind a dead
-            # worker, but do not automatically restart the broken cycle.
             self._abort_recovery(recovery)
             raise
         finally:
             with self._lock:
                 self._recovery_threads.discard(active_thread)
 
-    def _abort_recovery(self, recovery: AdbTransportListWatchRecovery) -> None:
-        """Terminate a broken recovery cycle and clear its queued work."""
+    def _release_failed_acquire(
+        self,
+        recovery: AdbTransportListWatchRecovery,
+        result: AdbTransportListWatchAcquireFailed
+        | AdbTransportListWatchAcquireReleaseRequired,
+    ) -> None:
+        snapshot = result.snapshot
+        if not isinstance(snapshot.generation, AdbTransportListWatchGeneration):
+            raise TypeError(
+                "watch failed acquire generation must be AdbTransportListWatchGeneration"
+            )
+        if not isinstance(snapshot.request, AdbTransportListWatchRequest):
+            raise TypeError("watch failed acquire request must be AdbTransportListWatchRequest")
 
+        release = self._release_supervisor.supervise(
+            snapshot.generation,
+            snapshot.request,
+        )
+        if isinstance(release, AdbTransportListWatchReleaseSucceeded):
+            next_generation = release.next_generation
+        elif isinstance(release, AdbTransportListWatchGenerationMismatch):
+            next_generation = release.current_generation
+        elif isinstance(release, AdbTransportListWatchReleaseAlreadyIdle):
+            next_generation = snapshot.generation
+        elif isinstance(release, AdbTransportListWatchReleaseRequestMismatch):
+            raise RuntimeError(
+                "watch failed-acquire cleanup targeted a different current request"
+            )
+        else:
+            raise TypeError("unsupported watch release supervision result")
+
+        self._replace_recovery_target(
+            recovery,
+            _RecoveryTarget(next_generation, snapshot.request),
+        )
+
+    def _replace_recovery_target(
+        self,
+        recovery: AdbTransportListWatchRecovery,
+        target: _RecoveryTarget,
+    ) -> None:
+        with self._lock:
+            if self._is_current_recovery_locked(recovery):
+                self._recovery_target = target
+
+    def _abort_recovery(self, recovery: AdbTransportListWatchRecovery) -> None:
         with self._lock:
             if self._recovery is not recovery:
                 return
@@ -232,8 +289,6 @@ class AdbTransportListWatchSupervisor:
             self._pending_recovery_target = None
 
     def _finish_recovery(self, recovery: AdbTransportListWatchRecovery) -> None:
-        """Release one terminal recovery cycle and consume queued recovery demand."""
-
         with self._lock:
             if not self._is_current_recovery_locked(recovery):
                 return

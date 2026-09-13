@@ -2,26 +2,32 @@ from __future__ import annotations
 
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb._lifecycle import Snapshot
-from adb.transport_list.watch.access import AdbTransportListWatchAccess
+from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
 from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
+from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 
-AdbTransportListWatchState: TypeAlias = Snapshot[
+AdbTransportListWatchPhase: TypeAlias = LifecyclePhase
+
+AdbTransportListWatchState: TypeAlias = LifecycleSnapshot[
     AdbTransportListWatchGeneration,
-    AdbTransportListWatchAccess,
+    AdbTransportListWatchRequest,
     AdbTransportListWatchStream,
 ]
 
 
 @runtime_checkable
 class AdbTransportListWatchStateView(Protocol):
-    """Read a linearizable snapshot of current watch authority and single-consumer stream."""
+    """Read one consistent point-in-time watch lifecycle snapshot."""
 
     def read(self) -> AdbTransportListWatchState:
-        """Return one atomic generation/access/capability snapshot without leasing the stream."""
+        """Return the current generation, phase, request, and projected capability."""
         ...
 
 
-__all__ = ["AdbTransportListWatchState", "AdbTransportListWatchStateView"]
+__all__ = [
+    "AdbTransportListWatchPhase",
+    "AdbTransportListWatchState",
+    "AdbTransportListWatchStateView",
+]

@@ -3,12 +3,18 @@
 from adb._recovery import RecoveryAcquired, RecoveryAttempt, RecoveryFailed
 from adb.transport_list.watch.supervision.policy import (
     AdbTransportListWatchRecoveryPolicy,
+    AdbTransportListWatchReleaseSupervisionPolicy,
 )
 from adb.transport_list.watch.supervision.recovery import (
     AdbTransportListWatchRecovery,
     AdbTransportListWatchRecoveryDecision,
     AdbTransportListWatchRecoveryFailureCause,
     AdbTransportListWatchRecoveryResult,
+)
+from adb.transport_list.watch.supervision.release import (
+    AdbTransportListWatchReleaser,
+    AdbTransportListWatchReleaseSupervisionResult,
+    AdbTransportListWatchReleaseSupervisor,
 )
 from adb.transport_list.watch.supervision.supervisor import (
     AdbTransportListWatchSupervisor,
@@ -20,6 +26,10 @@ __all__ = [
     "AdbTransportListWatchRecoveryFailureCause",
     "AdbTransportListWatchRecoveryPolicy",
     "AdbTransportListWatchRecoveryResult",
+    "AdbTransportListWatchReleaser",
+    "AdbTransportListWatchReleaseSupervisionPolicy",
+    "AdbTransportListWatchReleaseSupervisionResult",
+    "AdbTransportListWatchReleaseSupervisor",
     "AdbTransportListWatchSupervisor",
     "RecoveryAcquired",
     "RecoveryAttempt",

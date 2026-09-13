@@ -2,80 +2,75 @@ from __future__ import annotations
 
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from adb._lifecycle import (
-    AcquireAccessMismatch,
-    AcquireBlocked,
-    AcquireCommitted,
-    AcquireExisting,
+from _lifecycle_new.capability.result import (
+    AcquireAlreadyActive,
     AcquireFailed,
-    AcquireSuperseded,
+    AcquireReleaseRequired,
+    AcquireRequestMismatch,
+    AcquireResult,
+    AcquireSucceeded,
     GenerationMismatch,
-    ReleaseAccessDetached,
-    ReleaseAccessMismatch,
-    ReleaseAcquisitionRevoked,
-    ReleaseInactive,
+    LifecycleBusy,
+    ReleaseAlreadyIdle,
+    ReleaseFailed,
+    ReleaseRequestMismatch,
+    ReleaseResult,
+    ReleaseSucceeded,
 )
 from adb.transport_list.watch.access import AdbTransportListWatchAccess
-from adb.transport_list.watch.failure import AdbTransportListWatchFailure
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,
 )
+from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.state import AdbTransportListWatchStateView
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 
-AdbTransportListWatchAcquireOutcome: TypeAlias = (
-    AcquireCommitted[
-        AdbTransportListWatchGeneration,
-        AdbTransportListWatchAccess,
-        AdbTransportListWatchStream,
-    ]
-    | AcquireExisting[
-        AdbTransportListWatchGeneration,
-        AdbTransportListWatchAccess,
-        AdbTransportListWatchStream,
-    ]
-    | AcquireAccessMismatch[AdbTransportListWatchAccess]
-    | GenerationMismatch[AdbTransportListWatchGeneration]
-    | AcquireBlocked
-    | AcquireFailed[AdbTransportListWatchFailure]
-    | AcquireSuperseded[AdbTransportListWatchGeneration]
-)
+AdbTransportListWatchAcquireAlreadyActive = AcquireAlreadyActive
+AdbTransportListWatchAcquireFailed = AcquireFailed
+AdbTransportListWatchAcquireReleaseRequired = AcquireReleaseRequired
+AdbTransportListWatchAcquireRequestMismatch = AcquireRequestMismatch
+AdbTransportListWatchAcquireSucceeded = AcquireSucceeded
+AdbTransportListWatchGenerationMismatch = GenerationMismatch
+AdbTransportListWatchLifecycleBusy = LifecycleBusy
+AdbTransportListWatchReleaseAlreadyIdle = ReleaseAlreadyIdle
+AdbTransportListWatchReleaseFailed = ReleaseFailed
+AdbTransportListWatchReleaseRequestMismatch = ReleaseRequestMismatch
+AdbTransportListWatchReleaseSucceeded = ReleaseSucceeded
 
-AdbTransportListWatchReleaseOutcome: TypeAlias = (
-    ReleaseAcquisitionRevoked[AdbTransportListWatchGeneration]
-    | ReleaseAccessDetached[AdbTransportListWatchGeneration]
-    | ReleaseAccessMismatch[AdbTransportListWatchAccess]
-    | ReleaseInactive
-    | GenerationMismatch[AdbTransportListWatchGeneration]
-)
+AdbTransportListWatchAcquireResult: TypeAlias = AcquireResult[
+    AdbTransportListWatchGeneration,
+    AdbTransportListWatchRequest,
+    AdbTransportListWatchStream,
+]
+
+AdbTransportListWatchReleaseResult: TypeAlias = ReleaseResult[
+    AdbTransportListWatchGeneration,
+    AdbTransportListWatchRequest,
+    AdbTransportListWatchStream,
+]
+
+# Transitional names retained while callers move from access/outcome terminology.
+AdbTransportListWatchAcquireOutcome: TypeAlias = AdbTransportListWatchAcquireResult
+AdbTransportListWatchReleaseOutcome: TypeAlias = AdbTransportListWatchReleaseResult
 
 
 @runtime_checkable
 class AdbTransportListWatchLifecycle(AdbTransportListWatchStateView, Protocol):
-    """Sole authority for one runtime-scoped transport-list watch generation.
-
-    ``read()`` and successful acquire outcomes expose the same atomic generation/access/stream
-    snapshot. Acquire and release are generation-fenced, and release additionally matches access.
-    Physical watch-resource ownership and cleanup remain lifecycle implementation details.
-    """
+    """Acquire and release one generation-scoped transport-list watch capability."""
 
     def acquire(
         self,
         expected_generation: AdbTransportListWatchGeneration,
-        access: AdbTransportListWatchAccess,
-    ) -> AdbTransportListWatchAcquireOutcome:
-        """Acquire ``access`` only if ``expected_generation`` is still current."""
-        ...
+        request: AdbTransportListWatchRequest,
+    ) -> AdbTransportListWatchAcquireResult: ...
 
     def release(
         self,
         expected_generation: AdbTransportListWatchGeneration,
-        access: AdbTransportListWatchAccess,
-    ) -> AdbTransportListWatchReleaseOutcome:
-        """Release matching generation/access authority and advance generation on revocation."""
-        ...
+        request: AdbTransportListWatchRequest,
+    ) -> AdbTransportListWatchReleaseResult: ...
 
 
 class AdbTransportListWatchLifecycleFactory(Protocol):
@@ -84,25 +79,26 @@ class AdbTransportListWatchLifecycleFactory(Protocol):
     def __call__(
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
-    ) -> AdbTransportListWatchLifecycle:
-        ...
+    ) -> AdbTransportListWatchLifecycle: ...
 
 
 __all__ = [
-    "AcquireAccessMismatch",
-    "AcquireBlocked",
-    "AcquireCommitted",
-    "AcquireExisting",
-    "AcquireFailed",
-    "AcquireSuperseded",
     "AdbTransportListWatchAccess",
+    "AdbTransportListWatchAcquireAlreadyActive",
+    "AdbTransportListWatchAcquireFailed",
+    "AdbTransportListWatchAcquireReleaseRequired",
+    "AdbTransportListWatchAcquireRequestMismatch",
     "AdbTransportListWatchAcquireOutcome",
+    "AdbTransportListWatchAcquireResult",
+    "AdbTransportListWatchAcquireSucceeded",
+    "AdbTransportListWatchGenerationMismatch",
     "AdbTransportListWatchLifecycle",
+    "AdbTransportListWatchLifecycleBusy",
     "AdbTransportListWatchLifecycleFactory",
+    "AdbTransportListWatchReleaseAlreadyIdle",
     "AdbTransportListWatchReleaseOutcome",
-    "GenerationMismatch",
-    "ReleaseAccessDetached",
-    "ReleaseAccessMismatch",
-    "ReleaseAcquisitionRevoked",
-    "ReleaseInactive",
+    "AdbTransportListWatchReleaseFailed",
+    "AdbTransportListWatchReleaseRequestMismatch",
+    "AdbTransportListWatchReleaseResult",
+    "AdbTransportListWatchReleaseSucceeded",
 ]
