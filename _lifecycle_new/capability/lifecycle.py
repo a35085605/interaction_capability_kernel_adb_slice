@@ -12,10 +12,18 @@ CapabilityT = TypeVar("CapabilityT")
 
 
 @runtime_checkable
-class CapabilityLifecycle(Protocol[GenerationT, RequestT, CapabilityT]):
-    """Read, acquire, and release one generation-scoped capability lifecycle."""
+class LifecycleSnapshotReader(Protocol[GenerationT, RequestT, CapabilityT]):
+    """Read one consistent point-in-time capability lifecycle snapshot."""
 
     def read(self) -> LifecycleSnapshot[GenerationT, RequestT, CapabilityT]: ...
+
+
+@runtime_checkable
+class CapabilityLifecycle(
+    LifecycleSnapshotReader[GenerationT, RequestT, CapabilityT],
+    Protocol[GenerationT, RequestT, CapabilityT],
+):
+    """Read, acquire, and release one generation-scoped capability lifecycle."""
 
     def acquire(
         self,
@@ -30,4 +38,4 @@ class CapabilityLifecycle(Protocol[GenerationT, RequestT, CapabilityT]):
     ) -> ReleaseResult[GenerationT, RequestT, CapabilityT]: ...
 
 
-__all__ = ["CapabilityLifecycle"]
+__all__ = ["CapabilityLifecycle", "LifecycleSnapshotReader"]
