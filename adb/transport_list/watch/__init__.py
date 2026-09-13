@@ -1,6 +1,5 @@
 """ADB transport-list watch request, capability, lifecycle, and supervision types."""
 
-from adb.transport_list.watch.access import AdbTransportListWatchAccess
 from adb.transport_list.watch.failure import (
     AdbTransportListWatchFailure,
     AdbTransportListWatchProtocolFailure,
@@ -14,7 +13,6 @@ from adb.transport_list.watch.generation import (
 from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchAcquireAlreadyActive,
     AdbTransportListWatchAcquireFailed,
-    AdbTransportListWatchAcquireOutcome,
     AdbTransportListWatchAcquireReleaseRequired,
     AdbTransportListWatchAcquireRequestMismatch,
     AdbTransportListWatchAcquireResult,
@@ -25,7 +23,6 @@ from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchLifecycleFactory,
     AdbTransportListWatchReleaseAlreadyIdle,
     AdbTransportListWatchReleaseFailed,
-    AdbTransportListWatchReleaseOutcome,
     AdbTransportListWatchReleaseRequestMismatch,
     AdbTransportListWatchReleaseResult,
     AdbTransportListWatchReleaseSucceeded,
@@ -40,10 +37,8 @@ from adb.transport_list.watch.stream import AdbTransportListWatchStream
 from adb.transport_list.watch.error import AdbTransportListWatchError
 
 __all__ = [
-    "AdbTransportListWatchAccess",
     "AdbTransportListWatchAcquireAlreadyActive",
     "AdbTransportListWatchAcquireFailed",
-    "AdbTransportListWatchAcquireOutcome",
     "AdbTransportListWatchAcquireReleaseRequired",
     "AdbTransportListWatchAcquireRequestMismatch",
     "AdbTransportListWatchAcquireResult",
@@ -60,7 +55,6 @@ __all__ = [
     "AdbTransportListWatchProtocolFailure",
     "AdbTransportListWatchReleaseAlreadyIdle",
     "AdbTransportListWatchReleaseFailed",
-    "AdbTransportListWatchReleaseOutcome",
     "AdbTransportListWatchReleaseRequestMismatch",
     "AdbTransportListWatchReleaseResult",
     "AdbTransportListWatchReleaseSucceeded",

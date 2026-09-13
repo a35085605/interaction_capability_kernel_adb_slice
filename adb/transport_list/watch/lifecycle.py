@@ -17,7 +17,6 @@ from _lifecycle_new.capability.result import (
     ReleaseResult,
     ReleaseSucceeded,
 )
-from adb.transport_list.watch.access import AdbTransportListWatchAccess
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,
@@ -51,10 +50,6 @@ AdbTransportListWatchReleaseResult: TypeAlias = ReleaseResult[
     AdbTransportListWatchStream,
 ]
 
-# Transitional names retained while callers move from access/outcome terminology.
-AdbTransportListWatchAcquireOutcome: TypeAlias = AdbTransportListWatchAcquireResult
-AdbTransportListWatchReleaseOutcome: TypeAlias = AdbTransportListWatchReleaseResult
-
 
 @runtime_checkable
 class AdbTransportListWatchLifecycle(AdbTransportListWatchStateView, Protocol):
@@ -83,12 +78,10 @@ class AdbTransportListWatchLifecycleFactory(Protocol):
 
 
 __all__ = [
-    "AdbTransportListWatchAccess",
     "AdbTransportListWatchAcquireAlreadyActive",
     "AdbTransportListWatchAcquireFailed",
     "AdbTransportListWatchAcquireReleaseRequired",
     "AdbTransportListWatchAcquireRequestMismatch",
-    "AdbTransportListWatchAcquireOutcome",
     "AdbTransportListWatchAcquireResult",
     "AdbTransportListWatchAcquireSucceeded",
     "AdbTransportListWatchGenerationMismatch",
@@ -96,7 +89,6 @@ __all__ = [
     "AdbTransportListWatchLifecycleBusy",
     "AdbTransportListWatchLifecycleFactory",
     "AdbTransportListWatchReleaseAlreadyIdle",
-    "AdbTransportListWatchReleaseOutcome",
     "AdbTransportListWatchReleaseFailed",
     "AdbTransportListWatchReleaseRequestMismatch",
     "AdbTransportListWatchReleaseResult",

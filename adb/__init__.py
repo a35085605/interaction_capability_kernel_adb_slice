@@ -1,23 +1,5 @@
 """Host-side ADB server, transport-list, transport, and protocol capabilities."""
 
-from adb._lifecycle import (
-    AcquireAccessMismatch,
-    AcquireBlocked,
-    AcquireCommitted,
-    AcquireExisting,
-    AcquireFailed,
-    GenerationMismatch,
-    AcquireSuperseded,
-    GLOBAL_RESOURCE_POOL,
-    ResourceEntry,
-    ResourcePool,
-    ResourceScope,
-    Snapshot,
-    ReleaseAccessDetached,
-    ReleaseAccessMismatch,
-    ReleaseAcquisitionRevoked,
-    ReleaseInactive,
-)
 from adb.epoch import Epoch, EpochIssuer, EpochSequence
 from adb.errors import (
     AdbError,
@@ -83,14 +65,6 @@ from adb.transport import (
 )
 
 __all__ = [
-    "AcquireAccessMismatch",
-    "AcquireBlocked",
-    "AcquireCommitted",
-    "AcquireExisting",
-    "AcquireFailed",
-    "GenerationMismatch",
-    "AcquireSuperseded",
-    "GLOBAL_RESOURCE_POOL",
     "AdbDeviceSerial",
     "AdbError",
     "AdbObservedTransportKind",
@@ -145,15 +119,7 @@ __all__ = [
     "AdbTransportSelector",
     "AdbTransportState",
     "AdbTransportUnavailableError",
-    "Snapshot",
     "Epoch",
     "EpochIssuer",
     "EpochSequence",
-    "ReleaseAccessDetached",
-    "ReleaseAccessMismatch",
-    "ReleaseAcquisitionRevoked",
-    "ReleaseInactive",
-    "ResourceEntry",
-    "ResourcePool",
-    "ResourceScope",
 ]

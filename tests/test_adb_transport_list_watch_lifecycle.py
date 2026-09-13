@@ -5,7 +5,6 @@ import unittest
 
 from _lifecycle_new.capability.snapshot import LifecyclePhase
 from adb.adapters.aosp.watch_lifecycle import SmartSocketAdbTransportListWatchLifecycle
-from adb.transport_list.watch.access import AdbTransportListWatchAccess
 from adb.transport_list.watch.error import AdbTransportListWatchError
 from adb.transport_list.watch.generation import AdbTransportListWatchGenerationIssuer
 from adb.transport_list.watch.lifecycle import (
@@ -83,9 +82,6 @@ class AdbTransportListWatchLifecycleTests(unittest.TestCase):
             _resolver=_resolver,
             _socket_factory=lambda *args: sock,
         )
-
-    def test_access_name_is_compatibility_alias_for_request(self) -> None:
-        self.assertIs(AdbTransportListWatchAccess, AdbTransportListWatchRequest)
 
     def test_session_is_physical_resource_and_public_capability_hides_cleanup(self) -> None:
         sock = _FakeSocket(b"OKAY0000")
