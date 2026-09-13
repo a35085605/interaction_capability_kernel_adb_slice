@@ -2,54 +2,37 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from networking import TcpAddress
-
 from _lifecycle_new.capability.coordinator import CapabilityLifecycleCoordinator
 from _lifecycle_new.resource.contract import ResourceProvider
 from _lifecycle_new.resource.driver import PhysicalResources
-from adb.server.access import AdbServerAccess
+from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
-from adb.server.lifecycle import (
-    AdbServerAcquireResult,
-    AdbServerReleaseResult,
-)
-from adb.server.state import AdbServerLifecycleSnapshot
+from adb.server.lifecycle import AdbServerAcquireResult, AdbServerReleaseResult
+from adb.server.request import AdbServerRequest
+from adb.server.state import AdbServerSnapshot
 
 
 PhysicalResourceT = TypeVar("PhysicalResourceT")
 
 
 class _AdbServerCapabilityProjector(Generic[PhysicalResourceT]):
-    """Project public ADB server access from an acquired server request.
-
-    Physical server resources stay lifecycle-private. Once acquisition succeeds,
-    the public capability remains the requested server address.
-    """
+    """Project the public server capability while keeping physical resources private."""
 
     def project(
         self,
-        request: AdbServerAccess,
+        request: AdbServerRequest,
         resources: PhysicalResources[PhysicalResourceT],
-    ) -> TcpAddress:
-        return request.server_address
+    ) -> AdbServerCapability:
+        return AdbServerCapability(request.server_address)
 
 
 class AdbServerLifecycleCoordinator(Generic[PhysicalResourceT]):
-    """ADB-server specialization of the simplified synchronous lifecycle.
-
-    The injected resource provider owns all physical I/O. This coordinator only
-    fences requests by generation, retains resources until explicit release, and
-    projects the successful request into the public ``TcpAddress`` capability.
-
-    Acquisition and release are deliberately non-cancellable lifecycle operations.
-    Calls that overlap in-flight acquire/release work receive ``LifecycleBusy`` from
-    the shared coordinator rather than revoking or draining the operation.
-    """
+    """Specialize the simplified synchronous lifecycle for one ADB server."""
 
     def __init__(
         self,
         generation_issuer: AdbServerGenerationIssuer,
-        resource_provider: ResourceProvider[AdbServerAccess, PhysicalResourceT],
+        resource_provider: ResourceProvider[AdbServerRequest, PhysicalResourceT],
     ) -> None:
         if not isinstance(generation_issuer, AdbServerGenerationIssuer):
             raise TypeError("generation_issuer must be AdbServerGenerationIssuer")
@@ -62,9 +45,9 @@ class AdbServerLifecycleCoordinator(Generic[PhysicalResourceT]):
         self._resource_provider = resource_provider
         self._coordinator: CapabilityLifecycleCoordinator[
             AdbServerGeneration,
-            AdbServerAccess,
+            AdbServerRequest,
             PhysicalResourceT,
-            TcpAddress,
+            AdbServerCapability,
         ] = CapabilityLifecycleCoordinator(
             generation_issuer.issue,
             resource_provider,
@@ -76,33 +59,33 @@ class AdbServerLifecycleCoordinator(Generic[PhysicalResourceT]):
         return self._generation_issuer
 
     @property
-    def resource_provider(self) -> ResourceProvider[AdbServerAccess, PhysicalResourceT]:
+    def resource_provider(self) -> ResourceProvider[AdbServerRequest, PhysicalResourceT]:
         return self._resource_provider
 
-    def read(self) -> AdbServerLifecycleSnapshot:
+    def read(self) -> AdbServerSnapshot:
         return self._coordinator.read()
 
     def acquire(
         self,
         expected_generation: AdbServerGeneration,
-        access: AdbServerAccess,
+        request: AdbServerRequest,
     ) -> AdbServerAcquireResult:
         if not isinstance(expected_generation, AdbServerGeneration):
             raise TypeError("expected_generation must be AdbServerGeneration")
-        if not isinstance(access, AdbServerAccess):
-            raise TypeError("access must be AdbServerAccess")
-        return self._coordinator.acquire(expected_generation, access)
+        if not isinstance(request, AdbServerRequest):
+            raise TypeError("request must be AdbServerRequest")
+        return self._coordinator.acquire(expected_generation, request)
 
     def release(
         self,
         expected_generation: AdbServerGeneration,
-        access: AdbServerAccess,
+        request: AdbServerRequest,
     ) -> AdbServerReleaseResult:
         if not isinstance(expected_generation, AdbServerGeneration):
             raise TypeError("expected_generation must be AdbServerGeneration")
-        if not isinstance(access, AdbServerAccess):
-            raise TypeError("access must be AdbServerAccess")
-        return self._coordinator.release(expected_generation, access)
+        if not isinstance(request, AdbServerRequest):
+            raise TypeError("request must be AdbServerRequest")
+        return self._coordinator.release(expected_generation, request)
 
 
 __all__ = ["AdbServerLifecycleCoordinator"]

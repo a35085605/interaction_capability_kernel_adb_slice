@@ -20,7 +20,7 @@ from adb.adapters.subprocess.command import normalize_executable, normalize_time
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
 from adb.aosp.io.smart_socket import AdbServiceClient
 from adb.errors import AdbError, AdbTimeoutError
-from adb.server.access import AdbServerAccess
+from adb.server.request import AdbServerRequest
 from adb.server.generation import AdbServerGenerationIssuer
 from adb.server.template import AdbServerAcquireError, AdbServerLifecycleTemplate
 from networking import TcpAddress
@@ -123,11 +123,11 @@ _AdbServerSubprocessResource: TypeAlias = socket.socket | _OwnedAdbServerProcess
 
 
 class _AdbServerSubprocessRequirementsResolver:
-    """Resolve one server-access request into its single subprocess requirement."""
+    """Resolve one server request into its single subprocess requirement."""
 
-    def resolve(self, request: AdbServerAccess) -> tuple[TcpAddress, ...]:
-        if not isinstance(request, AdbServerAccess):
-            raise TypeError("request must be AdbServerAccess")
+    def resolve(self, request: AdbServerRequest) -> tuple[TcpAddress, ...]:
+        if not isinstance(request, AdbServerRequest):
+            raise TypeError("request must be AdbServerRequest")
         return (request.server_address,)
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import total_ordering
 from numbers import Integral
+from typing import TypeAlias
 
 
 def _normalize_required_text(value: object, *, field_name: str) -> str:
@@ -49,4 +50,7 @@ class TcpAddress:
         return hash(self._comparison_key())
 
 
-__all__ = ["TcpAddress"]
+TcpEndpoint: TypeAlias = TcpAddress
+
+
+__all__ = ["TcpAddress", "TcpEndpoint"]

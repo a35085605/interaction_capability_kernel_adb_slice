@@ -5,11 +5,8 @@ from threading import Event, RLock, Thread, current_thread
 
 from adb.server.access import AdbServerAccess
 from adb.server.generation import AdbServerGeneration
-from adb.server.lifecycle import (
-    GenerationMismatch,
-    AdbServerLifecycle,
-    ReleaseAccessDetached,
-)
+from adb._lifecycle import GenerationMismatch, ReleaseAccessDetached
+from adb.server.legacy import LegacyAdbServerLifecycle
 from adb.server.supervision.policy import AdbServerRecoveryPolicy
 from adb.server.supervision.recovery import (
     AdbServerRecovery,
@@ -42,13 +39,13 @@ class AdbServerSupervisor:
 
     def __init__(
         self,
-        lifecycle: AdbServerLifecycle,
+        lifecycle: LegacyAdbServerLifecycle,
         *,
         policy: AdbServerRecoveryPolicy,
         recovery_enabled: bool,
     ) -> None:
-        if not isinstance(lifecycle, AdbServerLifecycle):
-            raise TypeError("lifecycle must satisfy AdbServerLifecycle")
+        if not isinstance(lifecycle, LegacyAdbServerLifecycle):
+            raise TypeError("lifecycle must satisfy LegacyAdbServerLifecycle")
         if not isinstance(policy, AdbServerRecoveryPolicy):
             raise TypeError("policy must be AdbServerRecoveryPolicy")
         if not isinstance(recovery_enabled, bool):

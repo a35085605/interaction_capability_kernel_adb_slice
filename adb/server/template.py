@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import Generic, TypeVar
 
 from _lifecycle_new.resource.contract import ResourceProvider
-from adb.server.access import AdbServerAccess
 from adb.server.coordinator import AdbServerLifecycleCoordinator
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.lifecycle import AdbServerAcquireResult, AdbServerReleaseResult
-from adb.server.state import AdbServerLifecycleSnapshot
+from adb.server.request import AdbServerRequest
+from adb.server.state import AdbServerSnapshot
 
 
 PhysicalResourceT = TypeVar("PhysicalResourceT")
@@ -31,21 +31,12 @@ class AdbServerAcquireError(RuntimeError):
 
 
 class AdbServerLifecycleTemplate(Generic[PhysicalResourceT]):
-    """Bind ADB-server lifecycle semantics to one synchronous resource provider.
-
-    The provider owns all physical I/O and cleanup. Lifecycle coordination is delegated to
-    ``AdbServerLifecycleCoordinator``: acquire/release operations are synchronous, overlapping
-    lifecycle calls report ``LifecycleBusy``, and failed acquisition or cleanup remains in
-    ``RELEASE_REQUIRED`` until an explicit matching release succeeds.
-
-    In particular, this template has no cancellation, draining, global resource pool, resource
-    claims, or background cleanup path. Those mechanisms belonged to the retired lifecycle model.
-    """
+    """Bind ADB-server lifecycle semantics to one synchronous resource provider."""
 
     def __init__(
         self,
         generation_issuer: AdbServerGenerationIssuer,
-        resource_provider: ResourceProvider[AdbServerAccess, PhysicalResourceT],
+        resource_provider: ResourceProvider[AdbServerRequest, PhysicalResourceT],
     ) -> None:
         if not isinstance(generation_issuer, AdbServerGenerationIssuer):
             raise TypeError("generation_issuer must be AdbServerGenerationIssuer")
@@ -63,22 +54,22 @@ class AdbServerLifecycleTemplate(Generic[PhysicalResourceT]):
     def coordinator(self) -> AdbServerLifecycleCoordinator[PhysicalResourceT]:
         return self._coordinator
 
-    def read(self) -> AdbServerLifecycleSnapshot:
+    def read(self) -> AdbServerSnapshot:
         return self._coordinator.read()
 
     def acquire(
         self,
         expected_generation: AdbServerGeneration,
-        access: AdbServerAccess,
+        request: AdbServerRequest,
     ) -> AdbServerAcquireResult:
-        return self._coordinator.acquire(expected_generation, access)
+        return self._coordinator.acquire(expected_generation, request)
 
     def release(
         self,
         expected_generation: AdbServerGeneration,
-        access: AdbServerAccess,
+        request: AdbServerRequest,
     ) -> AdbServerReleaseResult:
-        return self._coordinator.release(expected_generation, access)
+        return self._coordinator.release(expected_generation, request)
 
 
 __all__ = [

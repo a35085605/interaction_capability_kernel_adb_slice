@@ -26,7 +26,8 @@ from adb._recovery import (
 )
 from adb.server.failure import AdbServerLaunchFailure
 from adb.server.generation import AdbServerGeneration
-from adb.server.lifecycle import AdbServerAccess, AdbServerAcquireOutcome
+from adb.server.access import AdbServerAccess
+from adb.server.legacy import AdbServerAcquireOutcome
 from adb.server.supervision.policy import AdbServerRecoveryPolicy
 
 

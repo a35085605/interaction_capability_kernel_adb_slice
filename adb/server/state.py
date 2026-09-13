@@ -2,36 +2,32 @@ from __future__ import annotations
 
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from networking import TcpAddress
-
-from _lifecycle_new.capability.snapshot import LifecycleSnapshot
-from adb._lifecycle import Snapshot
-from adb.server.access import AdbServerAccess
+from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
+from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration
+from adb.server.request import AdbServerRequest
 
 
-AdbServerState: TypeAlias = Snapshot[
+AdbServerPhase: TypeAlias = LifecyclePhase
+
+AdbServerSnapshot: TypeAlias = LifecycleSnapshot[
     AdbServerGeneration,
-    AdbServerAccess,
-    TcpAddress,
-]
-
-# New synchronous lifecycle state. ``AdbServerState`` above remains the legacy
-# committed-only snapshot until server supervision migrates.
-AdbServerLifecycleSnapshot: TypeAlias = LifecycleSnapshot[
-    AdbServerGeneration,
-    AdbServerAccess,
-    TcpAddress,
+    AdbServerRequest,
+    AdbServerCapability,
 ]
 
 
 @runtime_checkable
-class AdbServerStateView(Protocol):
-    """Read a linearizable snapshot of current server authority and usable capability."""
+class AdbServerSnapshotReader(Protocol):
+    """Read a consistent point-in-time ADB server lifecycle snapshot."""
 
-    def read(self) -> AdbServerState:
-        """Return one atomic generation/access/capability snapshot without leasing capability."""
+    def read(self) -> AdbServerSnapshot:
+        """Return the current generation, phase, and phase-specific fields."""
         ...
 
 
-__all__ = ["AdbServerLifecycleSnapshot", "AdbServerState", "AdbServerStateView"]
+__all__ = [
+    "AdbServerPhase",
+    "AdbServerSnapshot",
+    "AdbServerSnapshotReader",
+]

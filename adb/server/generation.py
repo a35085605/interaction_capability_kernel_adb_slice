@@ -6,20 +6,12 @@ from adb.epoch import Epoch, EpochSequence
 
 
 class _AdbServerGenerationEpoch(Epoch):
-    """Internal ordinal backing one runtime-scoped ADB server generation."""
-
     __slots__ = ()
 
 
 @dataclass(frozen=True, slots=True)
 class AdbServerGeneration:
-    """Runtime-scoped generation fencing one ADB server authority lifetime.
-
-    A lifecycle owns a current generation before any acquisition begins. Acquisition or release
-    failures remain in that generation until an explicit matching release completes successfully.
-    A successful release performs physical cleanup first and only then advances to a fresh
-    generation, fencing stale lifecycle work.
-    """
+    """Identify one ADB server lifecycle generation."""
 
     _epoch: _AdbServerGenerationEpoch = field(repr=False)
 
@@ -32,7 +24,7 @@ class AdbServerGeneration:
 
 
 class AdbServerGenerationIssuer:
-    """Issue monotonically increasing generations within one ADB runtime scope."""
+    """Issue monotonically increasing ADB server generations."""
 
     __slots__ = ("_sequence",)
 
@@ -43,7 +35,7 @@ class AdbServerGenerationIssuer:
         self._sequence = EpochSequence(_AdbServerGenerationEpoch, initial_value=initial_value)
 
     def issue(self) -> AdbServerGeneration:
-        """Issue a fresh server generation."""
+        """Issue a generation newer than every generation previously issued here."""
 
         return AdbServerGeneration(self._sequence.issue())
 

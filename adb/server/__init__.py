@@ -1,40 +1,7 @@
-"""ADB server address, generation, lifecycle, access, state, and failure contracts."""
+"""ADB server generation, request, capability, lifecycle, state, and failure contracts."""
 
-from adb._lifecycle import (
-    AcquireAccessMismatch,
-    AcquireBlocked,
-    AcquireCommitted,
-    AcquireExisting,
-    AcquireFailed,
-    GenerationMismatch,
-    AcquireSuperseded,
-    Snapshot,
-    ReleaseAccessDetached,
-    ReleaseAccessMismatch,
-    ReleaseAcquisitionRevoked,
-    ReleaseInactive,
-)
-from adb.server.lifecycle import (
-    AdbServerAccess,
-    AdbServerAcquireAlreadyActive,
-    AdbServerAcquireFailed,
-    AdbServerAcquireOutcome,
-    AdbServerAcquireReleaseRequired,
-    AdbServerAcquireRequestMismatch,
-    AdbServerAcquireResult,
-    AdbServerAcquireSucceeded,
-    AdbServerCapabilityLifecycle,
-    AdbServerGenerationMismatch,
-    AdbServerLifecycle,
-    AdbServerLifecycleBusy,
-    AdbServerLifecycleFactory,
-    AdbServerReleaseAlreadyIdle,
-    AdbServerReleaseFailed,
-    AdbServerReleaseOutcome,
-    AdbServerReleaseRequestMismatch,
-    AdbServerReleaseResult,
-    AdbServerReleaseSucceeded,
-)
+from adb.server.capability import AdbServerCapability
+from adb.server.coordinator import AdbServerLifecycleCoordinator
 from adb.server.failure import (
     AdbServerConnectionFailure,
     AdbServerFailure,
@@ -48,30 +15,35 @@ from adb.server.failure import (
     AdbServerTimeoutFailure,
 )
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
-from adb.server.coordinator import AdbServerLifecycleCoordinator
-from adb.server.state import (
-    AdbServerLifecycleSnapshot,
-    AdbServerState,
-    AdbServerStateView,
+from adb.server.lifecycle import (
+    AdbServerAcquireAlreadyActive,
+    AdbServerAcquireFailed,
+    AdbServerAcquireReleaseRequired,
+    AdbServerAcquireRequestMismatch,
+    AdbServerAcquireResult,
+    AdbServerAcquireSucceeded,
+    AdbServerGenerationMismatch,
+    AdbServerLifecycle,
+    AdbServerLifecycleBusy,
+    AdbServerLifecycleFactory,
+    AdbServerReleaseAlreadyIdle,
+    AdbServerReleaseFailed,
+    AdbServerReleaseRequestMismatch,
+    AdbServerReleaseResult,
+    AdbServerReleaseSucceeded,
 )
+from adb.server.request import AdbServerRequest
+from adb.server.state import AdbServerPhase, AdbServerSnapshot, AdbServerSnapshotReader
+
 
 __all__ = [
-    "AcquireAccessMismatch",
-    "AcquireBlocked",
-    "AcquireCommitted",
-    "AcquireExisting",
-    "AcquireFailed",
-    "GenerationMismatch",
-    "AcquireSuperseded",
-    "AdbServerAccess",
     "AdbServerAcquireAlreadyActive",
     "AdbServerAcquireFailed",
-    "AdbServerAcquireOutcome",
     "AdbServerAcquireReleaseRequired",
     "AdbServerAcquireRequestMismatch",
     "AdbServerAcquireResult",
     "AdbServerAcquireSucceeded",
-    "AdbServerCapabilityLifecycle",
+    "AdbServerCapability",
     "AdbServerConnectionFailure",
     "AdbServerFailure",
     "AdbServerGeneration",
@@ -81,26 +53,21 @@ __all__ = [
     "AdbServerLifecycle",
     "AdbServerLifecycleBusy",
     "AdbServerLifecycleCoordinator",
-    "AdbServerLifecycleSnapshot",
     "AdbServerLifecycleFactory",
     "AdbServerLifecycleFailure",
     "AdbServerLivenessFailure",
+    "AdbServerPhase",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",
     "AdbServerReleaseAlreadyIdle",
     "AdbServerReleaseFailed",
-    "AdbServerReleaseOutcome",
     "AdbServerReleaseRequestMismatch",
     "AdbServerReleaseResult",
     "AdbServerReleaseSucceeded",
+    "AdbServerRequest",
     "AdbServerRequestFailure",
     "AdbServerServiceFailure",
-    "AdbServerState",
-    "AdbServerStateView",
+    "AdbServerSnapshot",
+    "AdbServerSnapshotReader",
     "AdbServerTimeoutFailure",
-    "Snapshot",
-    "ReleaseAccessDetached",
-    "ReleaseAccessMismatch",
-    "ReleaseAcquisitionRevoked",
-    "ReleaseInactive",
 ]
