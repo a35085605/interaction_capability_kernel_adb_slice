@@ -17,7 +17,7 @@ AdbServerState: TypeAlias = Snapshot[
 ]
 
 # New synchronous lifecycle state. ``AdbServerState`` above remains the legacy
-# committed-only snapshot until supervision and the existing adapters migrate.
+# committed-only snapshot until server supervision migrates.
 AdbServerLifecycleSnapshot: TypeAlias = LifecycleSnapshot[
     AdbServerGeneration,
     AdbServerAccess,

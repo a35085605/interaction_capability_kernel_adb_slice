@@ -1,33 +1,29 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from ipaddress import ip_address
 import os
 import socket
 import subprocess
-from threading import Event, Lock
+from threading import Lock
 from time import monotonic, sleep
-from typing import Protocol
+from typing import Protocol, TypeAlias
 
-from adb._lifecycle import (
-    GLOBAL_RESOURCE_POOL,
-    ResourceEntry,
-    ResourcePool,
-    ResourceScope,
+from _lifecycle_new.resource.driver import (
+    PhysicalResources,
+    RequirementAcquireFailed,
+    RequirementAcquireResult,
+    RequirementAcquireSucceeded,
 )
-from adb._resolution import AddressResolutionCancelled, DeadlineResolver
+from _lifecycle_new.resource.manager import ResolvedResourceProvider
+from adb._resolution import DeadlineResolver
 from adb.adapters.subprocess.command import normalize_executable, normalize_timeout
-from adb.errors import AdbError, AdbTimeoutError
-from adb.aosp.io.smart_socket import AdbServiceClient
-from networking import TcpAddress
-from adb.server.generation import AdbServerGenerationIssuer
-from adb.server.template import (
-    AdbServerAcquireError,
-    AdbServerAcquireInterruptedError,
-    AdbServerLifecycleTemplate,
-)
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
+from adb.aosp.io.smart_socket import AdbServiceClient
+from adb.errors import AdbError, AdbTimeoutError
+from adb.server.access import AdbServerAccess
+from adb.server.generation import AdbServerGenerationIssuer
+from adb.server.template import AdbServerAcquireError, AdbServerLifecycleTemplate
+from networking import TcpAddress
 
 
 _MonotonicClock = Callable[[], float]
@@ -45,58 +41,20 @@ class _AdbServerSubprocessStartError(RuntimeError):
     """Infrastructure failure while creating a foreground ADB server child."""
 
 
-class _AdbServerSubprocessAcquireInterrupted(RuntimeError):
-    """Startup was interrupted after its server authority was released."""
+class _AdbServerSubprocessRetainedStartError(_AdbServerSubprocessStartError):
+    """Startup failed while one or more physical resources still require cleanup."""
+
+    def __init__(
+        self,
+        diagnostic: str,
+        resources: tuple[object, ...],
+    ) -> None:
+        super().__init__(diagnostic)
+        self.resources = resources
 
 
 class _AdbServerSubprocessTerminationUnconfirmed(RuntimeError):
     """Failure to confirm termination of an owned child process."""
-
-
-@dataclass(frozen=True, slots=True)
-class _TcpBindClaim:
-    """Adapter-private claim for a local TCP bind exclusivity domain."""
-
-    family: int | None
-    address: str | None
-    port: int
-
-
-def _normalize_claim_address(host: str) -> str | None:
-    """Normalize an IP bind address; ``None`` means wildcard or unresolved/unknown."""
-
-    candidate = host.split("%", 1)[0]
-    try:
-        address = ip_address(candidate)
-    except ValueError:
-        return None
-    if address.is_unspecified:
-        return None
-    return str(address)
-
-
-def _bind_claims_conflict(existing: _TcpBindClaim, requested: _TcpBindClaim) -> bool:
-    if existing.port != requested.port:
-        return False
-    if (
-        existing.family is not None
-        and requested.family is not None
-        and existing.family != requested.family
-    ):
-        # Different concrete protocol families are independent unless either side is wildcard or
-        # otherwise unknown (for example an IPv6 dual-stack wildcard listener).
-        return existing.address is None or requested.address is None
-    if existing.address is None or requested.address is None:
-        return True
-    return existing.address == requested.address
-
-
-def _close_socket(sock: socket.socket) -> bool:
-    try:
-        sock.close()
-    except BaseException:
-        return False
-    return True
 
 
 def _normalize_probe_interval(value: object) -> float:
@@ -120,6 +78,8 @@ class _OwnedAdbServerProcess:
         self._closed = False
 
     def close(self) -> None:
+        """Synchronously terminate the owned child and confirm that it exited."""
+
         with self._lock:
             if self._closed:
                 return
@@ -159,14 +119,25 @@ class _OwnedAdbServerProcess:
             self._closed = True
 
 
+_AdbServerSubprocessResource: TypeAlias = socket.socket | _OwnedAdbServerProcess
+
+
+class _AdbServerSubprocessRequirementsResolver:
+    """Resolve one server-access request into its single subprocess requirement."""
+
+    def resolve(self, request: AdbServerAccess) -> tuple[TcpAddress, ...]:
+        if not isinstance(request, AdbServerAccess):
+            raise TypeError("request must be AdbServerAccess")
+        return (request.server_address,)
+
 
 class _AdbServerSubprocessFactory:
-    """Create ready foreground ADB server access while populating a resource scope.
+    """Synchronous resource driver for one foreground ADB server subprocess.
 
-    The listener and child process are registered at the moment they are obtained. Synchronously
-    closed temporary listeners are discarded from the pool. The child process retains the listener
-    bind claim because the inherited descriptor may keep that bind occupied after the parent handle
-    is closed.
+    Acquisition owns each physical resource as soon as it is created. Temporary listener sockets
+    are closed synchronously once the child inherits the descriptor. If acquisition fails while a
+    listener or child is still live, those resources are returned with the failure and remain owned
+    by the lifecycle until an explicit release retries cleanup.
     """
 
     def __init__(
@@ -211,60 +182,94 @@ class _AdbServerSubprocessFactory:
             raise TypeError("status_reader must provide read()")
         self._status_reader = status_reader
 
-    def create(
+    def acquire(
         self,
         server_address: TcpAddress,
-        cancellation: Event,
-        resources: ResourceScope,
-    ) -> TcpAddress:
+    ) -> RequirementAcquireResult[_AdbServerSubprocessResource]:
+        """Create one ready server process and report every still-owned resource."""
+
         if not isinstance(server_address, TcpAddress):
             raise TypeError("server_address must be TcpAddress")
-        if not isinstance(cancellation, Event):
-            raise TypeError("cancellation must be threading.Event")
-        if not isinstance(resources, ResourceScope):
-            raise TypeError("resources must be ResourceScope")
-        if cancellation.is_set():
-            raise _AdbServerSubprocessAcquireInterrupted
-        if not self._socket_activation_supported:
-            raise _AdbServerSubprocessStartError(
-                "ADB acceptfd socket activation is unavailable on this platform; "
-                "a platform-specific server lifecycle implementation is required"
-            )
 
-        deadline = self._monotonic() + self.startup_timeout_seconds
-        owned_process, resolved_server_address = self._launch(
-            server_address,
-            resources,
-            deadline=deadline,
-            cancellation=cancellation,
-        )
-        if cancellation.is_set():
-            raise _AdbServerSubprocessAcquireInterrupted
-        self._wait_until_ready(
-            resolved_server_address,
-            owned_process._process,
-            cancellation=cancellation,
-            deadline=deadline,
-        )
-        return resolved_server_address
+        resources: list[_AdbServerSubprocessResource] = []
+        try:
+            if not self._socket_activation_supported:
+                raise _AdbServerSubprocessStartError(
+                    "ADB acceptfd socket activation is unavailable on this platform; "
+                    "a platform-specific server lifecycle implementation is required"
+                )
+
+            deadline = self._monotonic() + self.startup_timeout_seconds
+            reservation, resolved_server_address = self._reserve_listener(
+                server_address,
+                deadline=deadline,
+            )
+            resources.append(reservation)
+
+            owned_process = self._launch(
+                reservation,
+                deadline=deadline,
+            )
+            resources.append(owned_process)
+
+            try:
+                reservation.close()
+            except Exception as exc:
+                raise _AdbServerSubprocessStartError(
+                    "ADB server child launched but parent listener reservation close "
+                    f"was not confirmed: {exc}"
+                ) from exc
+            resources.remove(reservation)
+
+            self._wait_until_ready(
+                resolved_server_address,
+                owned_process._process,
+                deadline=deadline,
+            )
+        except _AdbServerSubprocessRetainedStartError as exc:
+            return RequirementAcquireFailed(
+                AdbServerAcquireError(str(exc)),
+                tuple(resources) + exc.resources,
+            )
+        except _AdbServerSubprocessStartError as exc:
+            return RequirementAcquireFailed(
+                AdbServerAcquireError(str(exc)),
+                tuple(resources),
+            )
+        except Exception as exc:
+            return RequirementAcquireFailed(exc, tuple(resources))
+
+        return RequirementAcquireSucceeded(tuple(resources))
+
+    def cleanup(
+        self,
+        resources: PhysicalResources[_AdbServerSubprocessResource],
+    ) -> None:
+        """Synchronously close every retained resource, tolerating cleanup retries."""
+
+        if not isinstance(resources, tuple):
+            raise TypeError("resources must be a PhysicalResources tuple")
+
+        first_error: BaseException | None = None
+        for resource in reversed(resources):
+            try:
+                resource.close()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+
+        if first_error is not None:
+            raise first_error
 
     def _launch(
         self,
-        server_address: TcpAddress,
-        resources: ResourceScope,
+        reservation: socket.socket,
         *,
         deadline: float,
-        cancellation: Event,
-    ) -> tuple[_OwnedAdbServerProcess, TcpAddress]:
-        reservation, reservation_entry, resolved_server_address = self._reserve_listener(
-            server_address,
-            resources,
-            deadline=deadline,
-            cancellation=cancellation,
-        )
+    ) -> _OwnedAdbServerProcess:
+        self._check_startup(deadline)
         fd = reservation.fileno()
         try:
-            self._check_startup(deadline, cancellation)
             process = self._popen_factory(
                 [
                     self.executable,
@@ -279,54 +284,26 @@ class _AdbServerSubprocessFactory:
                 close_fds=True,
                 pass_fds=(fd,),
             )
-        except BaseException as exc:
-            primary: BaseException = (
-                _AdbServerSubprocessStartError(
-                    f"failed to launch ADB server child process: {exc}"
-                )
-                if isinstance(exc, OSError)
-                else exc
-            )
-            if _close_socket(reservation):
-                resources.discard(reservation_entry)
-            else:
-                resources.retire(reservation_entry)
-            if primary is exc:
-                raise
-            raise primary from exc
+        except OSError as exc:
+            raise _AdbServerSubprocessStartError(
+                f"failed to launch ADB server child process: {exc}"
+            ) from exc
 
-        owned_process = _OwnedAdbServerProcess(process, self.shutdown_timeout_seconds)
-        resources.register(
-            owned_process,
-            claims=reservation_entry.claims,
-        )
-
-        if _close_socket(reservation):
-            resources.discard(reservation_entry)
-            return owned_process, resolved_server_address
-
-        resources.retire(reservation_entry)
-        raise _AdbServerSubprocessStartError(
-            "ADB server child launched but parent listener reservation close was not confirmed"
-        )
+        return _OwnedAdbServerProcess(process, self.shutdown_timeout_seconds)
 
     def _reserve_listener(
         self,
         server_address: TcpAddress,
-        resources: ResourceScope,
         *,
         deadline: float,
-        cancellation: Event,
-    ) -> tuple[socket.socket, ResourceEntry, TcpAddress]:
+    ) -> tuple[socket.socket, TcpAddress]:
         try:
             addresses = self._resolver.resolve(
                 server_address.host,
                 server_address.port,
                 deadline=deadline,
-                cancellation=cancellation,
+                cancellation=None,
             )
-        except AddressResolutionCancelled as exc:
-            raise _AdbServerSubprocessAcquireInterrupted from exc
         except AdbTimeoutError as exc:
             raise _AdbServerSubprocessStartError(str(exc)) from exc
         except OSError as exc:
@@ -340,7 +317,7 @@ class _AdbServerSubprocessFactory:
 
         failures: list[str] = []
         for address in addresses:
-            self._check_startup(deadline, cancellation)
+            self._check_startup(deadline)
             if len(address) < 5:
                 failures.append("resolver returned malformed address")
                 continue
@@ -354,51 +331,34 @@ class _AdbServerSubprocessFactory:
                 failures.append(str(exc))
                 continue
 
-            entry = resources.register(listener)
             try:
                 listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 listener.bind(sockaddr)
                 bound = listener.getsockname()
                 resolved = TcpAddress(str(bound[0]), int(bound[1]))
-                resources.replace_claims(
-                    entry,
-                    (
-                        _TcpBindClaim(
-                            family=family,
-                            address=_normalize_claim_address(resolved.host),
-                            port=resolved.port,
-                        ),
-                    ),
-                )
                 listener.listen(socket.SOMAXCONN)
-                return listener, entry, resolved
-            except BaseException as exc:
-                primary: BaseException = (
-                    _AdbServerSubprocessStartError(
-                        f"failed to prepare ADB server listener candidate: {exc}"
-                    )
-                    if isinstance(exc, OSError)
-                    else exc
-                )
-                if _close_socket(listener):
-                    resources.discard(entry)
-                else:
-                    resources.retire(entry)
-                    if primary is exc:
-                        raise
-                    raise primary from exc
-                if primary is exc:
-                    raise
-                failures.append(str(exc))
+                return listener, resolved
+            except Exception as exc:
+                try:
+                    listener.close()
+                except BaseException as close_exc:
+                    raise _AdbServerSubprocessRetainedStartError(
+                        "failed to prepare ADB server listener candidate and could not "
+                        f"confirm listener cleanup: {exc}; cleanup error: {close_exc}",
+                        (listener,),
+                    ) from close_exc
+
+                if isinstance(exc, OSError):
+                    failures.append(str(exc))
+                    continue
+                raise
 
         detail = "; ".join(failures) or "no bind candidate succeeded"
         raise _AdbServerSubprocessStartError(
             f"failed to reserve ADB server listener: {detail}"
         )
 
-    def _check_startup(self, deadline: float, cancellation: Event) -> None:
-        if cancellation.is_set():
-            raise _AdbServerSubprocessAcquireInterrupted
+    def _check_startup(self, deadline: float) -> None:
         if self._monotonic() >= deadline:
             raise _AdbServerSubprocessStartError("ADB server startup timed out")
 
@@ -407,16 +367,13 @@ class _AdbServerSubprocessFactory:
         server_address: TcpAddress,
         process: subprocess.Popen[bytes],
         *,
-        cancellation: Event,
         deadline: float | None = None,
     ) -> None:
-        if not isinstance(cancellation, Event):
-            raise TypeError("cancellation must be threading.Event")
         if deadline is None:
             deadline = self._monotonic() + self.startup_timeout_seconds
         last_error: AdbError | None = None
         while True:
-            self._check_startup(deadline, cancellation)
+            self._check_startup(deadline)
 
             return_code = process.poll()
             if return_code is not None:
@@ -429,7 +386,7 @@ class _AdbServerSubprocessFactory:
             except AdbError as exc:
                 last_error = exc
             else:
-                self._check_startup(deadline, cancellation)
+                self._check_startup(deadline)
                 if process.poll() is not None:
                     raise _AdbServerSubprocessStartError(
                         "ADB server child process exited while startup readiness was being verified"
@@ -442,13 +399,17 @@ class _AdbServerSubprocessFactory:
                 raise _AdbServerSubprocessStartError(
                     f"timed out waiting for created ADB server readiness{suffix}"
                 )
-            delay = min(self.probe_interval_seconds, remaining)
-            if cancellation.wait(delay):
-                raise _AdbServerSubprocessAcquireInterrupted
+            self._sleep(min(self.probe_interval_seconds, remaining))
 
 
-class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate):
-    """Provide ADB server access through an owned foreground subprocess."""
+class SubprocessAdbServerLifecycle(
+    AdbServerLifecycleTemplate[_AdbServerSubprocessResource]
+):
+    """Provide ADB server access through an owned foreground subprocess.
+
+    The lifecycle is fully synchronous: acquire cannot be revoked by release, and release does not
+    return until every retained subprocess resource has been cleaned up or cleanup has failed.
+    """
 
     def __init__(
         self,
@@ -459,7 +420,6 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate):
         shutdown_timeout_seconds: float = 5.0,
         probe_interval_seconds: float = 0.05,
         _factory: _AdbServerSubprocessFactory | None = None,
-        _resource_pool: ResourcePool = GLOBAL_RESOURCE_POOL,
     ) -> None:
         if _factory is None:
             _factory = _AdbServerSubprocessFactory(
@@ -468,41 +428,17 @@ class SubprocessAdbServerLifecycle(AdbServerLifecycleTemplate):
                 shutdown_timeout_seconds=shutdown_timeout_seconds,
                 probe_interval_seconds=probe_interval_seconds,
             )
-        if not callable(getattr(_factory, "create", None)):
-            raise TypeError("_factory must provide create()")
+        if not callable(getattr(_factory, "acquire", None)):
+            raise TypeError("_factory must provide acquire()")
+        if not callable(getattr(_factory, "cleanup", None)):
+            raise TypeError("_factory must provide cleanup()")
 
         self._factory = _factory
-        super().__init__(generation_issuer, _resource_pool=_resource_pool)
-
-    def _obtain_access(
-        self,
-        server_address: TcpAddress,
-        cancellation: Event,
-        resources: ResourceScope,
-    ) -> TcpAddress:
-        try:
-            return self._factory.create(server_address, cancellation, resources)
-        except _AdbServerSubprocessAcquireInterrupted as exc:
-            raise AdbServerAcquireInterruptedError() from exc
-        except _AdbServerSubprocessStartError as exc:
-            raise AdbServerAcquireError(str(exc)) from exc
-
-    def _requested_resource_claims(
-        self,
-        server_address: TcpAddress,
-    ) -> tuple[object, ...]:
-        return (
-            _TcpBindClaim(
-                family=None,
-                address=_normalize_claim_address(server_address.host),
-                port=server_address.port,
-            ),
+        resource_provider = ResolvedResourceProvider(
+            _AdbServerSubprocessRequirementsResolver(),
+            _factory,
         )
-
-    def _resource_claims_conflict(self, existing: object, requested: object) -> bool:
-        if not isinstance(existing, _TcpBindClaim) or not isinstance(requested, _TcpBindClaim):
-            raise TypeError("subprocess ADB server resource claims must be TCP bind claims")
-        return _bind_claims_conflict(existing, requested)
+        super().__init__(generation_issuer, resource_provider)
 
 
 __all__ = ["SubprocessAdbServerLifecycle"]

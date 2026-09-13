@@ -38,7 +38,7 @@ from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.state import AdbServerLifecycleSnapshot, AdbServerStateView
 
 
-# Legacy lifecycle outcomes retained until supervision and current adapters migrate.
+# Legacy lifecycle outcomes retained until server supervision migrates.
 AdbServerAcquireOutcome: TypeAlias = (
     AcquireCommitted[AdbServerGeneration, AdbServerAccess, TcpAddress]
     | AcquireExisting[AdbServerGeneration, AdbServerAccess, TcpAddress]
@@ -71,7 +71,7 @@ AdbServerReleaseFailed = CapabilityReleaseFailed
 AdbServerReleaseRequestMismatch = CapabilityReleaseRequestMismatch
 AdbServerReleaseSucceeded = CapabilityReleaseSucceeded
 
-# The legacy Outcome aliases above remain temporarily for supervision and existing adapters.
+# The legacy Outcome aliases above remain temporarily for server supervision.
 AdbServerAcquireResult: TypeAlias = CapabilityAcquireResult[
     AdbServerGeneration,
     AdbServerAccess,
@@ -140,12 +140,12 @@ class AdbServerLifecycle(AdbServerStateView, Protocol):
 
 
 class AdbServerLifecycleFactory(Protocol):
-    """Construct one runtime-scoped ADB server lifecycle."""
+    """Construct one runtime-scoped simplified ADB server lifecycle."""
 
     def __call__(
         self,
         generation_issuer: AdbServerGenerationIssuer,
-    ) -> AdbServerLifecycle:
+    ) -> AdbServerCapabilityLifecycle:
         ...
 
 
