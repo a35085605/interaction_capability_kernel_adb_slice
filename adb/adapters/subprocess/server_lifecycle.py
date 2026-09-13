@@ -24,7 +24,7 @@ from adb.server.coordinator import AdbServerLifecycleCoordinator
 from adb.server.error import AdbServerAcquireError
 from adb.server.request import AdbServerRequest
 from adb.server.generation import AdbServerGenerationIssuer
-from networking import TcpAddress
+from networking import TcpEndpoint
 
 
 _MonotonicClock = Callable[[], float]
@@ -35,7 +35,7 @@ _SocketFactory = Callable[[int, int, int], socket.socket]
 
 
 class _ServerStatusReader(Protocol):
-    def read(self, server_address: TcpAddress) -> object: ...
+    def read(self, server_endpoint: TcpEndpoint) -> object: ...
 
 
 class _AdbServerSubprocessStartError(RuntimeError):
@@ -126,10 +126,10 @@ _AdbServerSubprocessResource: TypeAlias = socket.socket | _OwnedAdbServerProcess
 class _AdbServerSubprocessRequirementsResolver:
     """Resolve one server request into its single subprocess requirement."""
 
-    def resolve(self, request: AdbServerRequest) -> tuple[TcpAddress, ...]:
+    def resolve(self, request: AdbServerRequest) -> tuple[TcpEndpoint, ...]:
         if not isinstance(request, AdbServerRequest):
             raise TypeError("request must be AdbServerRequest")
-        return (request.server_address,)
+        return (request.server_endpoint,)
 
 
 class _AdbServerSubprocessFactory:
@@ -185,12 +185,12 @@ class _AdbServerSubprocessFactory:
 
     def acquire(
         self,
-        server_address: TcpAddress,
+        server_endpoint: TcpEndpoint,
     ) -> RequirementAcquireResult[_AdbServerSubprocessResource]:
         """Create one ready server process and report every still-owned resource."""
 
-        if not isinstance(server_address, TcpAddress):
-            raise TypeError("server_address must be TcpAddress")
+        if not isinstance(server_endpoint, TcpEndpoint):
+            raise TypeError("server_endpoint must be TcpEndpoint")
 
         resources: list[_AdbServerSubprocessResource] = []
         try:
@@ -201,8 +201,8 @@ class _AdbServerSubprocessFactory:
                 )
 
             deadline = self._monotonic() + self.startup_timeout_seconds
-            reservation, resolved_server_address = self._reserve_listener(
-                server_address,
+            reservation, resolved_server_endpoint = self._reserve_listener(
+                server_endpoint,
                 deadline=deadline,
             )
             resources.append(reservation)
@@ -223,7 +223,7 @@ class _AdbServerSubprocessFactory:
             resources.remove(reservation)
 
             self._wait_until_ready(
-                resolved_server_address,
+                resolved_server_endpoint,
                 owned_process._process,
                 deadline=deadline,
             )
@@ -294,14 +294,14 @@ class _AdbServerSubprocessFactory:
 
     def _reserve_listener(
         self,
-        server_address: TcpAddress,
+        server_endpoint: TcpEndpoint,
         *,
         deadline: float,
-    ) -> tuple[socket.socket, TcpAddress]:
+    ) -> tuple[socket.socket, TcpEndpoint]:
         try:
             addresses = self._resolver.resolve(
-                server_address.host,
-                server_address.port,
+                server_endpoint.host,
+                server_endpoint.port,
                 deadline=deadline,
                 cancellation=None,
             )
@@ -336,7 +336,7 @@ class _AdbServerSubprocessFactory:
                 listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 listener.bind(sockaddr)
                 bound = listener.getsockname()
-                resolved = TcpAddress(str(bound[0]), int(bound[1]))
+                resolved = TcpEndpoint(str(bound[0]), int(bound[1]))
                 listener.listen(socket.SOMAXCONN)
                 return listener, resolved
             except Exception as exc:
@@ -365,7 +365,7 @@ class _AdbServerSubprocessFactory:
 
     def _wait_until_ready(
         self,
-        server_address: TcpAddress,
+        server_endpoint: TcpEndpoint,
         process: subprocess.Popen[bytes],
         *,
         deadline: float | None = None,
@@ -383,7 +383,7 @@ class _AdbServerSubprocessFactory:
                 )
 
             try:
-                self._status_reader.read(server_address)
+                self._status_reader.read(server_endpoint)
             except AdbError as exc:
                 last_error = exc
             else:

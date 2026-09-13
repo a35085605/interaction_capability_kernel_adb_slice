@@ -14,7 +14,7 @@ from adb.transport.lifecycle.control.result import (
     AdbTcpTransportDisconnectCommandSucceeded,
     AdbTcpTransportDisconnectResult,
 )
-from networking import TcpAddress
+from networking import TcpEndpoint
 
 
 def _exception_diagnostic(exc: BaseException) -> str:
@@ -58,24 +58,24 @@ def _run_control_command(
 
 @dataclass(frozen=True, slots=True)
 class SubprocessAdbTransportController:
-    """Execute transport lifecycle commands through the configured server address."""
+    """Execute transport lifecycle commands through the configured server endpoint."""
 
-    server_address: TcpAddress
+    server_endpoint: TcpEndpoint
     executable: str = "adb"
     timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server_address, TcpAddress):
-            raise TypeError("server_address must be TcpAddress")
+        if not isinstance(self.server_endpoint, TcpEndpoint):
+            raise TypeError("server_endpoint must be TcpEndpoint")
         object.__setattr__(self, "executable", normalize_executable(self.executable))
         object.__setattr__(self, "timeout_seconds", normalize_timeout(self.timeout_seconds))
 
     def _args(self, command: str, address: AdbConnectAddress) -> list[str]:
         return [
             "-H",
-            self.server_address.host,
+            self.server_endpoint.host,
             "-P",
-            str(self.server_address.port),
+            str(self.server_endpoint.port),
             command,
             address.value,
         ]

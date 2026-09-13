@@ -20,33 +20,33 @@ from adb.transport.model import (
     AdbTransportState,
 )
 from adb.transport_list.model import AdbTransportList
-from networking import TcpAddress
+from networking import TcpEndpoint
 
 
 def _parse_transport_list(payload: bytes) -> AdbTransportList:
     return to_transport_list(parse_devices(payload))
 
 
-_ClientFactory = Callable[[TcpAddress], AdbServiceClient]
+_ClientFactory = Callable[[TcpEndpoint], AdbServiceClient]
 
 
-def _default_client_factory(address: TcpAddress) -> AdbServiceClient:
-    return AdbServiceClient(address.host, address.port)
+def _default_client_factory(server_endpoint: TcpEndpoint) -> AdbServiceClient:
+    return AdbServiceClient(server_endpoint.host, server_endpoint.port)
 
 
 class SmartSocketAdbTransportListReader:
-    """Read and translate the first AOSP track-devices record for one server address."""
+    """Read and translate the first AOSP track-devices record for one server endpoint."""
 
     def __init__(self, *, _client_factory: _ClientFactory = _default_client_factory) -> None:
         self._client_factory = _client_factory
 
     def read(
         self,
-        address: TcpAddress,
+        server_endpoint: TcpEndpoint,
     ) -> AdbTransportList:
-        if not isinstance(address, TcpAddress):
-            raise TypeError("address must be TcpAddress")
-        payload = self._client_factory(address).first_stream_frame(
+        if not isinstance(server_endpoint, TcpEndpoint):
+            raise TypeError("server_endpoint must be TcpEndpoint")
+        payload = self._client_factory(server_endpoint).first_stream_frame(
             TRACK_DEVICES_PROTO_BINARY_SERVICE
         )
         return _parse_transport_list(payload)

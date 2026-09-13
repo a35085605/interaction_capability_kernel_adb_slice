@@ -9,11 +9,11 @@ from networking import TcpEndpoint
 class AdbServerCapability:
     """Describe usable access to the active ADB server."""
 
-    server_address: TcpEndpoint
+    server_endpoint: TcpEndpoint
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server_address, TcpEndpoint):
-            raise TypeError("server_address must be TcpEndpoint")
+        if not isinstance(self.server_endpoint, TcpEndpoint):
+            raise TypeError("server_endpoint must be TcpEndpoint")
 
 
 __all__ = ["AdbServerCapability"]

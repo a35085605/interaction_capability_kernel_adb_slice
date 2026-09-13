@@ -8,7 +8,7 @@ from adb.aosp.protocol.smart_socket.services import (
     transport_features_by_id_service,
     transport_features_by_serial_service,
 )
-from networking import TcpAddress
+from networking import TcpEndpoint
 from adb.transport.features import AdbTransportFeatures
 from adb.transport.selection import (
     AdbTransportById,
@@ -17,11 +17,11 @@ from adb.transport.selection import (
 )
 
 
-_ClientFactory = Callable[[TcpAddress], AdbServiceClient]
+_ClientFactory = Callable[[TcpEndpoint], AdbServiceClient]
 
 
-def _default_client_factory(server_address: TcpAddress) -> AdbServiceClient:
-    return AdbServiceClient(server_address.host, server_address.port)
+def _default_client_factory(server_endpoint: TcpEndpoint) -> AdbServiceClient:
+    return AdbServiceClient(server_endpoint.host, server_endpoint.port)
 
 
 def parse_transport_features(payload: bytes) -> AdbTransportFeatures:
@@ -52,12 +52,12 @@ class SmartSocketAdbTransportFeaturesReader:
 
     def read(
         self,
-        server_address: TcpAddress,
+        server_endpoint: TcpEndpoint,
         selector: AdbTransportSelector,
     ) -> AdbTransportFeatures:
-        if not isinstance(server_address, TcpAddress):
-            raise TypeError("server_address must be TcpAddress")
-        payload = self._client_factory(server_address).host_query(
+        if not isinstance(server_endpoint, TcpEndpoint):
+            raise TypeError("server_endpoint must be TcpEndpoint")
+        payload = self._client_factory(server_endpoint).host_query(
             _feature_service(selector)
         )
         return parse_transport_features(payload)

@@ -23,7 +23,7 @@ from adb.errors import (
     AdbServiceError,
     AdbTimeoutError,
 )
-from networking import TcpAddress
+from networking import TcpEndpoint
 
 
 _Clock = Callable[[], float]
@@ -205,18 +205,18 @@ class AospTrackDevicesSessionDriver:
 
     def acquire(
         self,
-        server_address: TcpAddress,
+        server_endpoint: TcpEndpoint,
     ) -> RequirementAcquireResult[AospTrackDevicesSession]:
         """Create one initialized session and report retained cleanup debt on failure."""
 
-        if not isinstance(server_address, TcpAddress):
-            raise TypeError("server_address must be TcpAddress")
+        if not isinstance(server_endpoint, TcpEndpoint):
+            raise TypeError("server_endpoint must be TcpEndpoint")
 
         deadline = self._clock() + self.startup_timeout_seconds
         try:
             addresses = self._resolver.resolve(
-                server_address.host,
-                server_address.port,
+                server_endpoint.host,
+                server_endpoint.port,
                 deadline=deadline,
                 cancellation=None,
             )
@@ -225,7 +225,7 @@ class AospTrackDevicesSessionDriver:
                 return RequirementAcquireFailed(exc, ())
             if isinstance(exc, OSError):
                 error = AdbServerConnectionError(
-                    f"failed to resolve ADB server address {server_address.host!r}: {exc}"
+                    f"failed to resolve ADB server address {server_endpoint.host!r}: {exc}"
                 )
                 return RequirementAcquireFailed(error, ())
             return RequirementAcquireFailed(exc, ())

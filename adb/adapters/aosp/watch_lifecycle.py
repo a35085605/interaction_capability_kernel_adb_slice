@@ -36,7 +36,7 @@ from adb.transport_list.watch.failure import (
 from adb.transport_list.watch.generation import AdbTransportListWatchGenerationIssuer
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
-from networking import TcpAddress
+from networking import TcpEndpoint
 
 
 _Clock = Callable[[], float]
@@ -61,10 +61,10 @@ def _watch_error(exc: BaseException) -> AdbTransportListWatchError | None:
 class _AospTrackDevicesWatchRequirementsResolver:
     """Resolve one watch request into its single AOSP track-devices session requirement."""
 
-    def resolve(self, request: AdbTransportListWatchRequest) -> tuple[TcpAddress, ...]:
+    def resolve(self, request: AdbTransportListWatchRequest) -> tuple[TcpEndpoint, ...]:
         if not isinstance(request, AdbTransportListWatchRequest):
             raise TypeError("request must be AdbTransportListWatchRequest")
-        return (request.server_address,)
+        return (request.server_endpoint,)
 
 
 class _AospTrackDevicesWatchDriver:
@@ -77,9 +77,9 @@ class _AospTrackDevicesWatchDriver:
 
     def acquire(
         self,
-        server_address: TcpAddress,
+        server_endpoint: TcpEndpoint,
     ) -> RequirementAcquireResult[AospTrackDevicesSession]:
-        outcome = self._driver.acquire(server_address)
+        outcome = self._driver.acquire(server_endpoint)
         if not isinstance(outcome, RequirementAcquireFailed):
             return outcome
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from networking import TcpAddress
+from networking import TcpEndpoint
 from adb.transport.selection import AdbTransportSelector
 
 
@@ -39,7 +39,7 @@ class AdbTransportFeaturesReader(Protocol):
 
     def read(
         self,
-        server_address: TcpAddress,
+        server_endpoint: TcpEndpoint,
         selector: AdbTransportSelector,
     ) -> AdbTransportFeatures:
         ...

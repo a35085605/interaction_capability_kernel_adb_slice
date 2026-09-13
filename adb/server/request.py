@@ -9,11 +9,11 @@ from networking import TcpEndpoint
 class AdbServerRequest:
     """Request usable ADB server access at one TCP endpoint."""
 
-    server_address: TcpEndpoint
+    server_endpoint: TcpEndpoint
 
     def __post_init__(self) -> None:
-        if not isinstance(self.server_address, TcpEndpoint):
-            raise TypeError("server_address must be TcpEndpoint")
+        if not isinstance(self.server_endpoint, TcpEndpoint):
+            raise TypeError("server_endpoint must be TcpEndpoint")
 
 
 __all__ = ["AdbServerRequest"]

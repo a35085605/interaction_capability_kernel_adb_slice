@@ -23,7 +23,7 @@ class _AdbServerCapabilityProjector(Generic[PhysicalResourceT]):
         request: AdbServerRequest,
         resources: PhysicalResources[PhysicalResourceT],
     ) -> AdbServerCapability:
-        return AdbServerCapability(request.server_address)
+        return AdbServerCapability(request.server_endpoint)
 
 
 class AdbServerLifecycleCoordinator(Generic[PhysicalResourceT]):
