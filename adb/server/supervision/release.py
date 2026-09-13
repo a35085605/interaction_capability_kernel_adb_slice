@@ -52,6 +52,7 @@ class AdbServerReleaseSupervisor:
     - ``ReleaseRequestMismatch`` terminates without releasing the current request because
       it is not the requested lifetime target.
 
+    Supervision is generation-scoped: a newer generation is reported but never followed.
     Terminal lifecycle results are returned unchanged so orchestration can decide how to
     proceed without reconstructing state.
     """
