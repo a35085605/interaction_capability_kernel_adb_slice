@@ -3,6 +3,20 @@ from __future__ import annotations
 from adb.errors import AdbProtocolError
 
 
+def decode_utf8(raw: bytes, *, field_name: str) -> str:
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AdbProtocolError(f"ADB protobuf {field_name} is not valid UTF-8") from exc
+
+
+def require_wire_type(wire_type: int, expected: int, *, context: str) -> None:
+    if wire_type != expected:
+        raise AdbProtocolError(
+            f"{context} has wire type {wire_type}, expected {expected}"
+        )
+
+
 class ProtoReader:
     """Minimal protobuf wire reader."""
 
@@ -69,4 +83,4 @@ class ProtoReader:
         self.offset = end
 
 
-__all__ = ["ProtoReader"]
+__all__ = ["ProtoReader", "decode_utf8", "require_wire_type"]

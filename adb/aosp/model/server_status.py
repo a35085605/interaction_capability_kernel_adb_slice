@@ -2,41 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from numbers import Integral
 
-from adb.errors import AdbProtocolError
-from adb.aosp.protocol.protobuf import ProtoReader
-
-
-def _require_string(value: object, *, field_name: str) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{field_name} must be a string, got {type(value).__name__}")
-    return value
-
-
-def _require_optional_string(value: object, *, field_name: str) -> str | None:
-    if value is None:
-        return None
-    return _require_string(value, field_name=field_name)
-
-
-def _require_int(value: object, *, field_name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{field_name} must be an integer")
-    return int(value)
-
-
-def _normalize_open_enum(
-    value: object,
-    enum_type: type[IntEnum],
-    *,
-    field_name: str,
-) -> IntEnum | int:
-    raw = _require_int(value, field_name=field_name)
-    try:
-        return enum_type(raw)
-    except ValueError:
-        return raw
+from adb.aosp.model._validation import (
+    normalize_open_enum,
+    require_optional_string,
+    require_string,
+)
+from adb.aosp.protocol.protobuf import ProtoReader, decode_utf8, require_wire_type
 
 
 class AdbUsbBackend(IntEnum):
@@ -76,7 +48,7 @@ class AdbServerStatus:
         object.__setattr__(
             self,
             "usb_backend",
-            _normalize_open_enum(
+            normalize_open_enum(
                 self.usb_backend,
                 AdbUsbBackend,
                 field_name="ADB USB backend",
@@ -85,7 +57,7 @@ class AdbServerStatus:
         object.__setattr__(
             self,
             "mdns_backend",
-            _normalize_open_enum(
+            normalize_open_enum(
                 self.mdns_backend,
                 AdbMdnsBackend,
                 field_name="ADB mDNS backend",
@@ -104,19 +76,23 @@ class AdbServerStatus:
             object.__setattr__(
                 self,
                 field_name,
-                _require_string(getattr(self, field_name), field_name=f"ADB server {field_name}"),
+                require_string(
+                    getattr(self, field_name),
+                    field_name=f"ADB server {field_name}",
+                ),
             )
         object.__setattr__(
             self,
             "trace_level",
-            _require_optional_string(self.trace_level, field_name="ADB server trace_level"),
+            require_optional_string(
+                self.trace_level,
+                field_name="ADB server trace_level",
+            ),
         )
         for field_name in ("burst_mode", "mdns_enabled"):
             value = getattr(self, field_name)
             if value is not None and not isinstance(value, bool):
                 raise TypeError(f"ADB server {field_name} must be bool or None")
-
-
 
 
 _SERVER_STRING_FIELDS = {
@@ -129,13 +105,6 @@ _SERVER_STRING_FIELDS = {
 }
 
 
-def _decode_utf8(raw: bytes, *, field_name: str) -> str:
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise AdbProtocolError(f"ADB protobuf {field_name} is not valid UTF-8") from exc
-
-
 def parse_server_status(payload: bytes) -> AdbServerStatus:
     reader = ProtoReader(payload)
     values: dict[str, object] = {}
@@ -144,24 +113,27 @@ def parse_server_status(payload: bytes) -> AdbServerStatus:
         field_number, wire_type = reader.read_key()
 
         if field_number in (1, 3):
-            if wire_type != 0:
-                raise AdbProtocolError(
-                    f"ADB server enum field {field_number} has wire type {wire_type}, expected 0"
-                )
+            require_wire_type(
+                wire_type,
+                0,
+                context=f"ADB server enum field {field_number}",
+            )
             raw = reader.read_varint()
             enum_type = AdbUsbBackend if field_number == 1 else AdbMdnsBackend
             name = "usb_backend" if field_number == 1 else "mdns_backend"
-            try:
-                values[name] = enum_type(raw)
-            except ValueError:
-                values[name] = raw
+            values[name] = normalize_open_enum(
+                raw,
+                enum_type,
+                field_name=f"ADB server enum field {field_number}",
+            )
             continue
 
         if field_number in (2, 4, 11, 12):
-            if wire_type != 0:
-                raise AdbProtocolError(
-                    f"ADB server bool field {field_number} has wire type {wire_type}, expected 0"
-                )
+            require_wire_type(
+                wire_type,
+                0,
+                context=f"ADB server bool field {field_number}",
+            )
             name = {
                 2: "usb_backend_forced",
                 4: "mdns_backend_forced",
@@ -173,11 +145,12 @@ def parse_server_status(payload: bytes) -> AdbServerStatus:
 
         string_field = _SERVER_STRING_FIELDS.get(field_number)
         if string_field is not None:
-            if wire_type != 2:
-                raise AdbProtocolError(
-                    f"ADB server field {field_number} has wire type {wire_type}, expected 2"
-                )
-            values[string_field] = _decode_utf8(
+            require_wire_type(
+                wire_type,
+                2,
+                context=f"ADB server field {field_number}",
+            )
+            values[string_field] = decode_utf8(
                 reader.read_bytes(), field_name=string_field
             )
             continue

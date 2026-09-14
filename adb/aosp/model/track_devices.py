@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from numbers import Integral
 
-from adb.errors import AdbProtocolError
-from adb.aosp.protocol.protobuf import ProtoReader
+from adb.aosp.model._validation import (
+    normalize_open_enum,
+    require_int,
+    require_string,
+)
+from adb.aosp.protocol.protobuf import ProtoReader, decode_utf8, require_wire_type
 
 
 class ConnectionState(IntEnum):
@@ -34,33 +37,6 @@ class ConnectionType(IntEnum):
     SOCKET = 2
 
 
-def _require_string(value: object, *, field_name: str) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{field_name} must be a string, got {type(value).__name__}")
-    return value
-
-
-def _require_int(value: object, *, field_name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{field_name} must be an integer")
-    return int(value)
-
-
-def _normalize_open_enum(
-    value: object,
-    enum_type: type[IntEnum],
-    *,
-    field_name: str,
-) -> IntEnum | int:
-    raw = _require_int(value, field_name=field_name)
-    try:
-        return enum_type(raw)
-    except ValueError:
-        # Proto3 enums are open: preserve future AOSP values numerically instead
-        # of inventing an UNKNOWN interpretation or rejecting the whole payload.
-        return raw
-
-
 @dataclass(frozen=True, slots=True)
 class Device:
     """Decoded AOSP ``adb.proto.Device`` record with transport and open-enum evidence."""
@@ -80,7 +56,7 @@ class Device:
         object.__setattr__(
             self,
             "state",
-            _normalize_open_enum(
+            normalize_open_enum(
                 self.state,
                 ConnectionState,
                 field_name="ADB connection state",
@@ -89,7 +65,7 @@ class Device:
         object.__setattr__(
             self,
             "connection_type",
-            _normalize_open_enum(
+            normalize_open_enum(
                 self.connection_type,
                 ConnectionType,
                 field_name="ADB connection type",
@@ -100,7 +76,7 @@ class Device:
             object.__setattr__(
                 self,
                 field_name,
-                _require_string(
+                require_string(
                     getattr(self, field_name),
                     field_name=f"ADB device {field_name}",
                 ),
@@ -110,7 +86,7 @@ class Device:
             object.__setattr__(
                 self,
                 field_name,
-                _require_int(
+                require_int(
                     getattr(self, field_name),
                     field_name=f"ADB device {field_name}",
                 ),
@@ -119,7 +95,7 @@ class Device:
         object.__setattr__(
             self,
             "transport_id",
-            _require_int(self.transport_id, field_name="ADB device transport_id"),
+            require_int(self.transport_id, field_name="ADB device transport_id"),
         )
 
 
@@ -150,13 +126,6 @@ _DEVICE_INT64_FIELDS = {
 }
 
 
-def _decode_utf8(raw: bytes, *, field_name: str) -> str:
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise AdbProtocolError(f"ADB protobuf {field_name} is not valid UTF-8") from exc
-
-
 def _decode_int64(raw: int) -> int:
     if raw >= (1 << 63):
         return raw - (1 << 64)
@@ -172,54 +141,48 @@ def _decode_device(payload: bytes) -> Device:
 
         string_field = _DEVICE_STRING_FIELDS.get(field_number)
         if string_field is not None:
-            if wire_type != 2:
-                raise AdbProtocolError(
-                    f"ADB Device field {field_number} has wire type {wire_type}, expected 2"
-                )
-            values[string_field] = _decode_utf8(
+            require_wire_type(
+                wire_type,
+                2,
+                context=f"ADB Device field {field_number}",
+            )
+            values[string_field] = decode_utf8(
                 reader.read_bytes(), field_name=string_field
             )
             continue
 
         if field_number == 2:
-            if wire_type != 0:
-                raise AdbProtocolError(
-                    f"ADB Device state has wire type {wire_type}, expected 0"
-                )
+            require_wire_type(wire_type, 0, context="ADB Device state")
             raw_state = reader.read_varint()
-            try:
-                values["state"] = ConnectionState(raw_state)
-            except ValueError:
-                values["state"] = raw_state
+            values["state"] = normalize_open_enum(
+                raw_state,
+                ConnectionState,
+                field_name="ADB Device state",
+            )
             continue
 
         if field_number == 7:
-            if wire_type != 0:
-                raise AdbProtocolError(
-                    "ADB Device connection_type has wire type "
-                    f"{wire_type}, expected 0"
-                )
+            require_wire_type(wire_type, 0, context="ADB Device connection_type")
             raw_type = reader.read_varint()
-            try:
-                values["connection_type"] = ConnectionType(raw_type)
-            except ValueError:
-                values["connection_type"] = raw_type
+            values["connection_type"] = normalize_open_enum(
+                raw_type,
+                ConnectionType,
+                field_name="ADB Device connection_type",
+            )
             continue
 
         int64_field = _DEVICE_INT64_FIELDS.get(field_number)
         if int64_field is not None:
-            if wire_type != 0:
-                raise AdbProtocolError(
-                    f"ADB Device field {field_number} has wire type {wire_type}, expected 0"
-                )
+            require_wire_type(
+                wire_type,
+                0,
+                context=f"ADB Device field {field_number}",
+            )
             values[int64_field] = _decode_int64(reader.read_varint())
             continue
 
         if field_number == 10:
-            if wire_type != 0:
-                raise AdbProtocolError(
-                    f"ADB Device transport_id has wire type {wire_type}, expected 0"
-                )
+            require_wire_type(wire_type, 0, context="ADB Device transport_id")
             values["transport_id"] = _decode_int64(reader.read_varint())
             continue
 
@@ -235,10 +198,7 @@ def parse_devices(payload: bytes) -> Devices:
     while not reader.done:
         field_number, wire_type = reader.read_key()
         if field_number == 1:
-            if wire_type != 2:
-                raise AdbProtocolError(
-                    f"ADB Devices.device has wire type {wire_type}, expected 2"
-                )
+            require_wire_type(wire_type, 2, context="ADB Devices.device")
             devices.append(_decode_device(reader.read_bytes()))
             continue
         reader.skip(wire_type)
