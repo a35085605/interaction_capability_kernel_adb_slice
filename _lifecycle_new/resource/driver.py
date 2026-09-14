@@ -25,7 +25,7 @@ class RequirementAcquireFailed(Generic[PhysicalResourceT]):
     the failure. The caller retains those resources for a later cleanup attempt.
     """
 
-    error: Exception
+    error: BaseException
     resources: PhysicalResources[PhysicalResourceT]
 
 

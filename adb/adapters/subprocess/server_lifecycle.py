@@ -6,7 +6,7 @@ import socket
 import subprocess
 from threading import Lock
 from time import monotonic, sleep
-from typing import Protocol, TypeAlias
+from typing import Any, Protocol, TypeAlias
 
 from _lifecycle_new.resource.driver import (
     PhysicalResources,
@@ -420,15 +420,27 @@ class SubprocessAdbServerLifecycle(
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 5.0,
         probe_interval_seconds: float = 0.05,
-        _factory: _AdbServerSubprocessFactory | None = None,
+        _factory: Any | None = None,
     ) -> None:
         if _factory is None:
-            _factory = _AdbServerSubprocessFactory(
-                executable=executable,
-                startup_timeout_seconds=startup_timeout_seconds,
-                shutdown_timeout_seconds=shutdown_timeout_seconds,
-                probe_interval_seconds=probe_interval_seconds,
-            )
+            if os.name == "nt":
+                from adb.adapters.subprocess.server_lifecycle_windows import (
+                    _WindowsAdbServerFactory,
+                )
+
+                _factory = _WindowsAdbServerFactory(
+                    executable=executable,
+                    startup_timeout_seconds=startup_timeout_seconds,
+                    shutdown_timeout_seconds=shutdown_timeout_seconds,
+                    probe_interval_seconds=probe_interval_seconds,
+                )
+            else:
+                _factory = _AdbServerSubprocessFactory(
+                    executable=executable,
+                    startup_timeout_seconds=startup_timeout_seconds,
+                    shutdown_timeout_seconds=shutdown_timeout_seconds,
+                    probe_interval_seconds=probe_interval_seconds,
+                )
         if not callable(getattr(_factory, "acquire", None)):
             raise TypeError("_factory must provide acquire()")
         if not callable(getattr(_factory, "cleanup", None)):
