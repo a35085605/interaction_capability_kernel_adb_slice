@@ -11,7 +11,7 @@ from adb.aosp.model.track_devices import (
     parse_devices,
 )
 from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
-from adb.transport.configuration import AdbTransportType
+from adb.transport.model import AdbTransportKind
 from adb.transport.identity import AdbTransportId
 from adb.transport.model import (
     AdbObservedTransportKind,
@@ -56,9 +56,9 @@ def _translate_transport_kind(value: ConnectionType | int) -> AdbObservedTranspo
     if value is ConnectionType.UNKNOWN:
         return AdbObservedTransportKind.unspecified()
     if value is ConnectionType.USB:
-        return AdbObservedTransportKind.recognized(AdbTransportType.USB)
+        return AdbObservedTransportKind.recognized(AdbTransportKind.USB)
     if value is ConnectionType.SOCKET:
-        return AdbObservedTransportKind.recognized(AdbTransportType.TCP)
+        return AdbObservedTransportKind.recognized(AdbTransportKind.TCP)
     return AdbObservedTransportKind.unrecognized(int(value))
 
 
