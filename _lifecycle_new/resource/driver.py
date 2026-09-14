@@ -29,16 +29,36 @@ class RequirementAcquireFailed(Generic[PhysicalResourceT]):
     resources: PhysicalResources[PhysicalResourceT]
 
 
-type RequirementAcquireResult[T] = RequirementAcquireSucceeded[T] | RequirementAcquireFailed[T]
+@dataclass(frozen=True, slots=True)
+class RequirementAcquireInterrupted(Generic[PhysicalResourceT]):
+    """Report a control-flow interruption after physical resources were created.
+
+    This result exists only to preserve cleanup ownership while a non-``Exception``
+    ``BaseException`` such as ``KeyboardInterrupt`` or ``SystemExit`` propagates
+    through the lifecycle. It is not a normal acquisition-failure result.
+    """
+
+    error: BaseException
+    resources: PhysicalResources[PhysicalResourceT]
+
+
+type RequirementAcquireResult[T] = (
+    RequirementAcquireSucceeded[T]
+    | RequirementAcquireFailed[T]
+    | RequirementAcquireInterrupted[T]
+)
 
 
 class ResourceDriver(Protocol[RequirementT, PhysicalResourceT]):
     """Perform synchronous physical I/O for individual requirements.
 
     ``acquire`` handles one requirement and reports every resource created before its
-    terminal result; it does not roll back resources on failure. ``cleanup`` may be
-    retried with the same resources after raising and must tolerate members that were
-    already cleaned up by an earlier attempt.
+    terminal result; it does not roll back resources on failure or interruption. A
+    non-``Exception`` control-flow interruption that occurs after resource creation
+    must be returned as ``RequirementAcquireInterrupted`` so lifecycle ownership can
+    be recorded before the interruption is re-raised. ``cleanup`` may be retried with
+    the same resources after raising and must tolerate members that were already
+    cleaned up by an earlier attempt.
     """
 
     def acquire(
@@ -51,6 +71,7 @@ class ResourceDriver(Protocol[RequirementT, PhysicalResourceT]):
 
 __all__ = [
     "RequirementAcquireFailed",
+    "RequirementAcquireInterrupted",
     "RequirementAcquireResult",
     "RequirementAcquireSucceeded",
     "PhysicalResources",

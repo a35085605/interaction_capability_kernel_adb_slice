@@ -5,6 +5,7 @@ from typing import Generic, TypeVar
 from _lifecycle_new.resource.contract import ResourceProvider, ResourceRequirementsResolver
 from _lifecycle_new.resource.driver import (
     RequirementAcquireFailed,
+    RequirementAcquireInterrupted,
     RequirementAcquireSucceeded,
     PhysicalResources,
     ResourceDriver,
@@ -57,7 +58,7 @@ class ResolvedResourceProvider(Generic[RequestT, RequirementT, PhysicalResourceT
 
         try:
             requirements = self._requirements_resolver.resolve(request)
-        except BaseException as exc:
+        except Exception as exc:
             return ResourceAcquireFailed(exc, ())
 
         if not isinstance(requirements, tuple):
@@ -71,9 +72,18 @@ class ResolvedResourceProvider(Generic[RequestT, RequirementT, PhysicalResourceT
             try:
                 outcome = self._driver.acquire(requirement)
             except BaseException as exc:
+                # Preserve resources acquired by earlier requirements before a
+                # control-flow interruption unwinds into the lifecycle coordinator.
                 return ResourceAcquireFailed(exc, resources)
 
-            if not isinstance(outcome, (RequirementAcquireSucceeded, RequirementAcquireFailed)):
+            if not isinstance(
+                outcome,
+                (
+                    RequirementAcquireSucceeded,
+                    RequirementAcquireFailed,
+                    RequirementAcquireInterrupted,
+                ),
+            ):
                 return ResourceAcquireFailed(
                     TypeError("ResourceDriver.acquire() must return a RequirementAcquireResult"),
                     resources,
@@ -89,6 +99,19 @@ class ResolvedResourceProvider(Generic[RequestT, RequirementT, PhysicalResourceT
                 if not isinstance(outcome.error, Exception):
                     return ResourceAcquireFailed(
                         TypeError("RequirementAcquireFailed.error must be an Exception"),
+                        resources,
+                    )
+                return ResourceAcquireFailed(outcome.error, resources)
+
+            if isinstance(outcome, RequirementAcquireInterrupted):
+                if not isinstance(outcome.error, BaseException) or isinstance(
+                    outcome.error, Exception
+                ):
+                    return ResourceAcquireFailed(
+                        TypeError(
+                            "RequirementAcquireInterrupted.error must be a "
+                            "non-Exception BaseException"
+                        ),
                         resources,
                     )
                 return ResourceAcquireFailed(outcome.error, resources)

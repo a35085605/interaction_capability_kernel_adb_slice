@@ -3,6 +3,7 @@
 from _lifecycle_new.resource.contract import ResourceProvider, ResourceRequirementsResolver
 from _lifecycle_new.resource.driver import (
     RequirementAcquireFailed,
+    RequirementAcquireInterrupted,
     RequirementAcquireResult,
     RequirementAcquireSucceeded,
     PhysicalResources,
@@ -17,6 +18,7 @@ from _lifecycle_new.resource.result import (
 
 __all__ = [
     "RequirementAcquireFailed",
+    "RequirementAcquireInterrupted",
     "RequirementAcquireResult",
     "RequirementAcquireSucceeded",
     "PhysicalResources",
