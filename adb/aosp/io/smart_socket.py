@@ -10,10 +10,14 @@ from typing import Callable
 from adb.errors import (
     AdbProtocolError,
     AdbServerConnectionError,
-    AdbServiceError,
     AdbTimeoutError,
 )
-from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
+from adb.aosp.io._smart_socket_protocol import (
+    read_length_prefixed,
+    read_service_response,
+    recv_exact,
+    send_service_request,
+)
 
 
 _SHELL_STDOUT = 1
@@ -74,16 +78,14 @@ class AdbServiceClient:
     def host_query(self, service: str) -> bytes:
         """Run one length-prefixed host query and return its payload."""
 
-        sock = self._connect()
-        try:
-            self._request(sock, service)
-            return self._read_protocol_string(sock, context=service)
-        finally:
-            self._close(sock)
+        return self._length_prefixed_query(service)
 
     def first_stream_frame(self, service: str) -> bytes:
         """Read the first length-prefixed frame from a host streaming service."""
 
+        return self._length_prefixed_query(service)
+
+    def _length_prefixed_query(self, service: str) -> bytes:
         sock = self._connect()
         try:
             self._request(sock, service)
@@ -158,7 +160,7 @@ class AdbServiceClient:
 
     def _request(self, sock: socket.socket, service: str) -> None:
         try:
-            sock.sendall(encode_service(service))
+            send_service_request(sock.sendall, service)
         except socket.timeout as exc:
             raise AdbTimeoutError(f"timed out sending ADB service {service!r}") from exc
         except OSError as exc:
@@ -166,32 +168,20 @@ class AdbServiceClient:
                 f"failed to send ADB service {service!r}: {exc}"
             ) from exc
 
-        status = self._recv_exact(sock, 4)
-        if status == b"OKAY":
-            return
-        if status != b"FAIL":
-            raise AdbProtocolError(f"unexpected ADB service status: {status!r}")
-        detail_raw = self._read_protocol_string(sock, context="service error")
-        try:
-            detail = detail_raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise AdbProtocolError("ADB service error is not valid UTF-8") from exc
-        raise AdbServiceError(service, detail or "request rejected")
+        read_service_response(service, lambda size: self._recv_exact(sock, size))
 
     def _read_protocol_string(self, sock: socket.socket, *, context: str) -> bytes:
-        length = parse_hex_length(self._recv_exact(sock, 4), context=context)
-        return self._recv_exact(sock, length)
+        return read_length_prefixed(
+            lambda size: self._recv_exact(sock, size),
+            context=context,
+        )
 
     def _recv_exact(self, sock: socket.socket, size: int) -> bytes:
-        chunks: list[bytes] = []
-        remaining = size
-        while remaining:
-            chunk = self._recv_up_to(sock, remaining)
-            if not chunk:
-                raise AdbServerConnectionError("unexpected EOF from ADB smart-socket")
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b"".join(chunks)
+        return recv_exact(
+            lambda remaining: self._recv_up_to(sock, remaining),
+            size,
+            eof_message="unexpected EOF from ADB smart-socket",
+        )
 
     def _recv_up_to(self, sock: socket.socket, size: int) -> bytes:
         try:

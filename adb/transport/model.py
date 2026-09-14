@@ -31,6 +31,22 @@ class AdbTransportState(str, Enum):
     RESCUE = "rescue"
 
 
+def _normalize_observed_native_code(
+    value: object,
+    *,
+    recognized: object | None,
+    subject: str,
+) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError("native_code must be an integer or None")
+    native_code = int(value)
+    if recognized is not None:
+        raise ValueError(f"recognized observed {subject} cannot carry native_code")
+    return native_code
+
+
 @dataclass(frozen=True, slots=True)
 class AdbObservedTransportKind:
     """Observed ADB transport kind with recognized, unspecified, or unrecognized evidence."""
@@ -41,12 +57,15 @@ class AdbObservedTransportKind:
     def __post_init__(self) -> None:
         if self.kind is not None and not isinstance(self.kind, AdbTransportKind):
             raise TypeError("kind must be AdbTransportKind or None")
-        if self.native_code is not None:
-            if isinstance(self.native_code, bool) or not isinstance(self.native_code, Integral):
-                raise TypeError("native_code must be an integer or None")
-            object.__setattr__(self, "native_code", int(self.native_code))
-        if self.kind is not None and self.native_code is not None:
-            raise ValueError("recognized observed transport kind cannot carry native_code")
+        object.__setattr__(
+            self,
+            "native_code",
+            _normalize_observed_native_code(
+                self.native_code,
+                recognized=self.kind,
+                subject="transport kind",
+            ),
+        )
 
     @classmethod
     def recognized(cls, kind: AdbTransportKind) -> "AdbObservedTransportKind":
@@ -85,12 +104,15 @@ class AdbObservedTransportState:
             self.transport_state, AdbTransportState
         ):
             raise TypeError("transport_state must be AdbTransportState or None")
-        if self.native_code is not None:
-            if isinstance(self.native_code, bool) or not isinstance(self.native_code, Integral):
-                raise TypeError("native_code must be an integer or None")
-            object.__setattr__(self, "native_code", int(self.native_code))
-        if self.transport_state is not None and self.native_code is not None:
-            raise ValueError("recognized observed transport state cannot carry native_code")
+        object.__setattr__(
+            self,
+            "native_code",
+            _normalize_observed_native_code(
+                self.native_code,
+                recognized=self.transport_state,
+                subject="transport state",
+            ),
+        )
 
     @classmethod
     def recognized(cls, transport_state: AdbTransportState) -> "AdbObservedTransportState":

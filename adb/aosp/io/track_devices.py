@@ -7,23 +7,26 @@ import socket
 from threading import Lock
 from time import monotonic
 
+from _lifecycle_new.resource.cleanup import cleanup_reverse
 from _lifecycle_new.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
+    RequirementAcquireInterrupted,
     RequirementAcquireResult,
     RequirementAcquireSucceeded,
 )
+from adb._deadline import Deadline
 from adb._resolution import DeadlineResolver
+from adb.aosp.io._smart_socket_protocol import (
+    read_length_prefixed,
+    read_service_response,
+    recv_exact,
+    send_service_request,
+)
 from adb.aosp.io.smart_socket import AdbServiceClient
 from adb.aosp.model.track_devices import Devices, parse_devices
-from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
 from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
-from adb.errors import (
-    AdbProtocolError,
-    AdbServerConnectionError,
-    AdbServiceError,
-    AdbTimeoutError,
-)
+from adb.errors import AdbServerConnectionError, AdbTimeoutError
 from networking import TcpEndpoint
 
 
@@ -42,8 +45,19 @@ def _normalize_startup_timeout(value: object) -> float:
     return timeout
 
 
-def _set_deadline_timeout(sock: socket.socket, deadline: float, clock: _Clock) -> None:
-    remaining = deadline - clock()
+def _coerce_deadline(deadline: Deadline | float, clock: _Clock) -> Deadline:
+    if isinstance(deadline, Deadline):
+        return deadline
+    return Deadline.at(deadline, clock)
+
+
+def _set_deadline_timeout(
+    sock: socket.socket,
+    deadline: Deadline | float,
+    clock: _Clock = monotonic,
+) -> None:
+    deadline = _coerce_deadline(deadline, clock)
+    remaining = deadline.remaining()
     if remaining <= 0:
         raise AdbTimeoutError("ADB track-devices startup timed out")
     sock.settimeout(remaining)
@@ -53,52 +67,69 @@ def _recv_exact(
     sock: socket.socket,
     size: int,
     *,
-    deadline: float | None = None,
+    deadline: Deadline | float | None = None,
     clock: _Clock = monotonic,
 ) -> bytes:
-    chunks: list[bytes] = []
-    remaining = size
-    while remaining:
-        if deadline is not None:
-            _set_deadline_timeout(sock, deadline, clock)
-        chunk = sock.recv(remaining)
-        if not chunk:
-            raise AdbServerConnectionError("unexpected EOF from ADB track-devices stream")
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
+    resolved_deadline = None if deadline is None else _coerce_deadline(deadline, clock)
+
+    def receive(remaining: int) -> bytes:
+        if resolved_deadline is not None:
+            _set_deadline_timeout(sock, resolved_deadline)
+        return sock.recv(remaining)
+
+    return recv_exact(
+        receive,
+        size,
+        eof_message="unexpected EOF from ADB track-devices stream",
+    )
 
 
 def _read_frame(
     sock: socket.socket,
     *,
     context: str = "track-devices record",
-    deadline: float | None = None,
+    deadline: Deadline | float | None = None,
     clock: _Clock = monotonic,
 ) -> bytes:
-    length = parse_hex_length(
-        _recv_exact(sock, 4, deadline=deadline, clock=clock), context=context
+    return read_length_prefixed(
+        lambda size: _recv_exact(sock, size, deadline=deadline, clock=clock),
+        context=context,
     )
-    return _recv_exact(sock, length, deadline=deadline, clock=clock)
 
 
-def _handshake(sock: socket.socket, deadline: float, clock: _Clock) -> None:
-    _set_deadline_timeout(sock, deadline, clock)
-    sock.sendall(encode_service(TRACK_DEVICES_PROTO_BINARY_SERVICE))
-    status = _recv_exact(sock, 4, deadline=deadline, clock=clock)
-    if status == b"OKAY":
-        return
-    if status == b"FAIL":
-        detail_raw = _read_frame(sock, context="service error", deadline=deadline, clock=clock)
-        try:
-            detail = detail_raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise AdbProtocolError("ADB service error is not valid UTF-8") from exc
-        raise AdbServiceError(
-            TRACK_DEVICES_PROTO_BINARY_SERVICE,
-            detail or "ADB server rejected track-devices",
-        )
-    raise AdbProtocolError(f"unexpected ADB service status: {status!r}")
+def _handshake(
+    sock: socket.socket,
+    deadline: Deadline | float,
+    clock: _Clock = monotonic,
+) -> None:
+    resolved_deadline = _coerce_deadline(deadline, clock)
+    _set_deadline_timeout(sock, resolved_deadline)
+    send_service_request(sock.sendall, TRACK_DEVICES_PROTO_BINARY_SERVICE)
+    read_service_response(
+        TRACK_DEVICES_PROTO_BINARY_SERVICE,
+        lambda size: _recv_exact(sock, size, deadline=resolved_deadline),
+        rejection_detail="ADB server rejected track-devices",
+    )
+
+
+def _failed_session_acquire(
+    session: "AospTrackDevicesSession",
+    error: BaseException,
+) -> (
+    RequirementAcquireFailed[AospTrackDevicesSession]
+    | RequirementAcquireInterrupted[AospTrackDevicesSession]
+):
+    retained: tuple[AospTrackDevicesSession, ...] = ()
+    try:
+        session.close()
+    except BaseException as close_error:
+        retained = (session,)
+        if not isinstance(close_error, Exception):
+            return RequirementAcquireInterrupted(close_error, retained)
+
+    if not isinstance(error, Exception):
+        return RequirementAcquireInterrupted(error, retained)
+    return RequirementAcquireFailed(error, retained)
 
 
 def _default_client_factory(server_endpoint: TcpEndpoint) -> AdbServiceClient:
@@ -235,7 +266,7 @@ class AospTrackDevicesSessionDriver:
         if not isinstance(server_endpoint, TcpEndpoint):
             raise TypeError("server_endpoint must be TcpEndpoint")
 
-        deadline = self._clock() + self.startup_timeout_seconds
+        deadline = Deadline.after(self.startup_timeout_seconds, self._clock)
         try:
             addresses = self._resolver.resolve(
                 server_endpoint.host,
@@ -281,35 +312,24 @@ class AospTrackDevicesSessionDriver:
 
             session = AospTrackDevicesSession(sock)
             try:
-                _set_deadline_timeout(sock, deadline, self._clock)
+                _set_deadline_timeout(sock, deadline)
                 sock.connect(sockaddr)
             except OSError as exc:
+                outcome = _failed_session_acquire(session, exc)
+                if outcome.resources:
+                    return outcome
                 last_error = exc
-                try:
-                    session.close()
-                except BaseException:
-                    return RequirementAcquireFailed(exc, (session,))
                 continue
-            except Exception as exc:
-                try:
-                    session.close()
-                except BaseException:
-                    return RequirementAcquireFailed(exc, (session,))
-                return RequirementAcquireFailed(exc, ())
+            except BaseException as exc:
+                return _failed_session_acquire(session, exc)
 
             try:
-                _handshake(sock, deadline, self._clock)
-                initial = parse_devices(
-                    _read_frame(sock, deadline=deadline, clock=self._clock)
-                )
+                _handshake(sock, deadline)
+                initial = parse_devices(_read_frame(sock, deadline=deadline))
                 sock.settimeout(None)
                 session.initialize(initial)
-            except Exception as exc:
-                try:
-                    session.close()
-                except BaseException:
-                    return RequirementAcquireFailed(exc, (session,))
-                return RequirementAcquireFailed(exc, ())
+            except BaseException as exc:
+                return _failed_session_acquire(session, exc)
 
             return RequirementAcquireSucceeded((session,))
 
@@ -325,25 +345,13 @@ class AospTrackDevicesSessionDriver:
     ) -> None:
         """Close every retained session, tolerating retries after partial cleanup."""
 
-        if not isinstance(resources, tuple):
-            raise TypeError("resources must be a PhysicalResources tuple")
+        cleanup_reverse(resources, self._close_session)
 
-        first_error: BaseException | None = None
-        for resource in reversed(resources):
-            if not isinstance(resource, AospTrackDevicesSession):
-                if first_error is None:
-                    first_error = TypeError(
-                        "resources must contain only AospTrackDevicesSession values"
-                    )
-                continue
-            try:
-                resource.close()
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
-
-        if first_error is not None:
-            raise first_error
+    @staticmethod
+    def _close_session(resource: AospTrackDevicesSession) -> None:
+        if not isinstance(resource, AospTrackDevicesSession):
+            raise TypeError("resources must contain only AospTrackDevicesSession values")
+        resource.close()
 
 
 __all__ = [

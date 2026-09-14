@@ -8,12 +8,15 @@ from threading import Lock
 from time import monotonic, sleep
 from typing import Protocol, TypeAlias
 
+from _lifecycle_new.resource.cleanup import cleanup_reverse
 from _lifecycle_new.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
+    RequirementAcquireInterrupted,
     RequirementAcquireResult,
     RequirementAcquireSucceeded,
 )
+from adb._deadline import Deadline
 from adb._resolution import DeadlineResolver
 from adb._subprocess import normalize_executable, normalize_timeout
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
@@ -44,9 +47,12 @@ class _AospAdbServerRetainedStartError(AospAdbServerStartError):
         self,
         diagnostic: str,
         resources: tuple[object, ...],
+        *,
+        original_error: BaseException | None = None,
     ) -> None:
         super().__init__(diagnostic)
         self.resources = resources
+        self.original_error = original_error
 
 
 class AospAdbServerTerminationUnconfirmed(RuntimeError):
@@ -188,7 +194,7 @@ class AospAdbServerProcessDriver:
                     "a platform-specific server lifecycle implementation is required"
                 )
 
-            deadline = self._monotonic() + self.startup_timeout_seconds
+            deadline = Deadline.after(self.startup_timeout_seconds, self._monotonic)
             reservation, resolved_server_endpoint = self._reserve_listener(
                 server_endpoint,
                 deadline=deadline,
@@ -203,12 +209,15 @@ class AospAdbServerProcessDriver:
 
             try:
                 reservation.close()
-            except Exception as exc:
+            except BaseException as exc:
+                if not isinstance(exc, Exception):
+                    raise
                 raise AospAdbServerStartError(
                     "ADB server child launched but parent listener reservation close "
                     f"was not confirmed: {exc}"
                 ) from exc
-            resources.remove(reservation)
+            else:
+                resources.remove(reservation)
 
             self._wait_until_ready(
                 resolved_server_endpoint,
@@ -216,16 +225,20 @@ class AospAdbServerProcessDriver:
                 deadline=deadline,
             )
         except _AospAdbServerRetainedStartError as exc:
-            return RequirementAcquireFailed(
-                exc,
-                tuple(resources) + exc.resources,
-            )
+            retained = tuple(resources) + exc.resources
+            if exc.original_error is not None and not isinstance(
+                exc.original_error, Exception
+            ):
+                return RequirementAcquireInterrupted(exc.original_error, retained)
+            return RequirementAcquireFailed(exc, retained)
         except AospAdbServerStartError as exc:
             return RequirementAcquireFailed(
                 exc,
                 tuple(resources),
             )
-        except Exception as exc:
+        except BaseException as exc:
+            if not isinstance(exc, Exception):
+                return RequirementAcquireInterrupted(exc, tuple(resources))
             return RequirementAcquireFailed(exc, tuple(resources))
 
         return RequirementAcquireSucceeded(tuple(resources))
@@ -236,25 +249,17 @@ class AospAdbServerProcessDriver:
     ) -> None:
         """Synchronously close every retained resource, tolerating cleanup retries."""
 
-        if not isinstance(resources, tuple):
-            raise TypeError("resources must be a PhysicalResources tuple")
+        cleanup_reverse(resources, self._close_resource)
 
-        first_error: BaseException | None = None
-        for resource in reversed(resources):
-            try:
-                resource.close()
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
-
-        if first_error is not None:
-            raise first_error
+    @staticmethod
+    def _close_resource(resource: AospAdbServerProcessResource) -> None:
+        resource.close()
 
     def _launch(
         self,
         reservation: socket.socket,
         *,
-        deadline: float,
+        deadline: Deadline | float,
     ) -> AospOwnedAdbServerProcess:
         self._check_startup(deadline)
         fd = reservation.fileno()
@@ -284,7 +289,7 @@ class AospAdbServerProcessDriver:
         self,
         server_endpoint: TcpEndpoint,
         *,
-        deadline: float,
+        deadline: Deadline | float,
     ) -> tuple[socket.socket, TcpEndpoint]:
         try:
             addresses = self._resolver.resolve(
@@ -327,7 +332,7 @@ class AospAdbServerProcessDriver:
                 resolved = TcpEndpoint(str(bound[0]), int(bound[1]))
                 listener.listen(socket.SOMAXCONN)
                 return listener, resolved
-            except Exception as exc:
+            except BaseException as exc:
                 try:
                     listener.close()
                 except BaseException as close_exc:
@@ -335,8 +340,15 @@ class AospAdbServerProcessDriver:
                         "failed to prepare ADB server listener candidate and could not "
                         f"confirm listener cleanup: {exc}; cleanup error: {close_exc}",
                         (listener,),
+                        original_error=(
+                            close_exc
+                            if not isinstance(close_exc, Exception)
+                            else exc
+                        ),
                     ) from close_exc
 
+                if not isinstance(exc, Exception):
+                    raise
                 if isinstance(exc, OSError):
                     failures.append(str(exc))
                     continue
@@ -347,8 +359,13 @@ class AospAdbServerProcessDriver:
             f"failed to reserve ADB server listener: {detail}"
         )
 
-    def _check_startup(self, deadline: float) -> None:
-        if self._monotonic() >= deadline:
+    def _coerce_deadline(self, deadline: Deadline | float) -> Deadline:
+        if isinstance(deadline, Deadline):
+            return deadline
+        return Deadline.at(deadline, self._monotonic)
+
+    def _check_startup(self, deadline: Deadline | float) -> None:
+        if self._coerce_deadline(deadline).expired():
             raise AospAdbServerStartError("ADB server startup timed out")
 
     def _wait_until_ready(
@@ -356,10 +373,12 @@ class AospAdbServerProcessDriver:
         server_endpoint: TcpEndpoint,
         process: subprocess.Popen[bytes],
         *,
-        deadline: float | None = None,
+        deadline: Deadline | float | None = None,
     ) -> None:
         if deadline is None:
-            deadline = self._monotonic() + self.startup_timeout_seconds
+            deadline = Deadline.after(self.startup_timeout_seconds, self._monotonic)
+        else:
+            deadline = self._coerce_deadline(deadline)
         last_error: AdbError | None = None
         while True:
             self._check_startup(deadline)
@@ -382,13 +401,13 @@ class AospAdbServerProcessDriver:
                     )
                 return
 
-            remaining = deadline - self._monotonic()
-            if remaining <= 0.0:
+            wait_seconds = deadline.clamp(self.probe_interval_seconds)
+            if wait_seconds <= 0.0:
                 suffix = f": {last_error}" if last_error is not None else ""
                 raise AospAdbServerStartError(
                     f"timed out waiting for created ADB server readiness{suffix}"
                 )
-            self._sleep(min(self.probe_interval_seconds, remaining))
+            self._sleep(wait_seconds)
 
 
 __all__ = [

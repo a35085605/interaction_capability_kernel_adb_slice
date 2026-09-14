@@ -7,6 +7,7 @@ import socket
 from time import monotonic, sleep
 from typing import Protocol, TypeAlias
 
+from _lifecycle_new.resource.cleanup import cleanup_reverse
 from _lifecycle_new.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
@@ -14,6 +15,7 @@ from _lifecycle_new.resource.driver import (
     RequirementAcquireResult,
     RequirementAcquireSucceeded,
 )
+from adb._deadline import Deadline
 from adb._subprocess import normalize_executable, normalize_timeout
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
 from adb.aosp.io.smart_socket import AdbServiceClient
@@ -176,7 +178,7 @@ class WindowsAospAdbServerProcessDriver:
         resources: list[WindowsAospAdbServerProcessResource] = []
         try:
             self._validate_endpoint(server_endpoint)
-            deadline = self._monotonic() + self.startup_timeout_seconds
+            deadline = Deadline.after(self.startup_timeout_seconds, self._monotonic)
             executable = _resolve_executable(
                 self.executable,
                 self._executable_resolver,
@@ -260,28 +262,19 @@ class WindowsAospAdbServerProcessDriver:
     ) -> None:
         """Clean every owned resource; failures preserve retryable ownership."""
 
-        if not isinstance(resources, tuple):
-            raise TypeError("resources must be a PhysicalResources tuple")
+        cleanup_reverse(resources, self._close_resource)
 
-        first_error: BaseException | None = None
-        for resource in reversed(resources):
-            try:
-                if isinstance(resource, (WindowsOwnedProcess, WindowsRetainedProcess)):
-                    resource.close(self.shutdown_timeout_seconds)
-                else:
-                    close = getattr(resource, "close", None)
-                    if not callable(close):
-                        raise TypeError(
-                            "unsupported Windows ADB server resource: "
-                            f"{type(resource).__name__}"
-                        )
-                    close()
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
-
-        if first_error is not None:
-            raise first_error
+    def _close_resource(self, resource: WindowsAospAdbServerProcessResource) -> None:
+        if isinstance(resource, (WindowsOwnedProcess, WindowsRetainedProcess)):
+            resource.close(self.shutdown_timeout_seconds)
+            return
+        close = getattr(resource, "close", None)
+        if not callable(close):
+            raise TypeError(
+                "unsupported Windows ADB server resource: "
+                f"{type(resource).__name__}"
+            )
+        close()
 
     @staticmethod
     def _validate_endpoint(server_endpoint: TcpEndpoint) -> None:
@@ -373,8 +366,9 @@ class WindowsAospAdbServerProcessDriver:
         server_endpoint: TcpEndpoint,
         owned_process: WindowsOwnedProcess,
         *,
-        deadline: float,
+        deadline: Deadline | float,
     ) -> None:
+        deadline = self._coerce_deadline(deadline)
         while True:
             self._check_startup(deadline)
             if owned_process.poll() is not None:
@@ -405,20 +399,26 @@ class WindowsAospAdbServerProcessDriver:
 
     def _sleep_until_retry(
         self,
-        deadline: float,
+        deadline: Deadline | float,
         *,
         last_error: AdbError | None = None,
     ) -> None:
-        remaining = deadline - self._monotonic()
-        if remaining <= 0.0:
+        deadline = self._coerce_deadline(deadline)
+        wait_seconds = deadline.clamp(self.probe_interval_seconds)
+        if wait_seconds <= 0.0:
             suffix = f": {last_error}" if last_error is not None else ""
             raise _WindowsAospAdbServerStartError(
                 f"timed out waiting for the owned ADB server listener{suffix}"
             )
-        self._sleep(min(self.probe_interval_seconds, remaining))
+        self._sleep(wait_seconds)
 
-    def _check_startup(self, deadline: float) -> None:
-        if self._monotonic() >= deadline:
+    def _coerce_deadline(self, deadline: Deadline | float) -> Deadline:
+        if isinstance(deadline, Deadline):
+            return deadline
+        return Deadline.at(deadline, self._monotonic)
+
+    def _check_startup(self, deadline: Deadline | float) -> None:
+        if self._coerce_deadline(deadline).expired():
             raise _WindowsAospAdbServerStartError("ADB server startup timed out")
 
 

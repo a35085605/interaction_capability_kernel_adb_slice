@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import socket
 from threading import Event, Lock, Thread
 
+from adb._deadline import Deadline
 from adb.errors import AdbTimeoutError
 
 
@@ -37,17 +38,30 @@ class DeadlineResolver:
         self._lock = Lock()
         self._pending: _Resolution | None = None
 
-    def _remaining(self, deadline: float, cancellation: Event | None) -> float:
+    def _remaining(
+        self,
+        deadline: Deadline | float,
+        cancellation: Event | None,
+    ) -> float:
         if cancellation is not None and cancellation.is_set():
             raise AddressResolutionCancelled
-        remaining = deadline - self._clock()
+        if not isinstance(deadline, Deadline):
+            deadline = Deadline.at(deadline, self._clock)
+        remaining = deadline.remaining()
         if remaining <= 0:
             raise AdbTimeoutError("ADB address resolution timed out")
         return remaining
 
     def resolve(
-        self, host: str, port: int, *, deadline: float, cancellation: Event | None
+        self,
+        host: str,
+        port: int,
+        *,
+        deadline: Deadline | float,
+        cancellation: Event | None,
     ) -> list[tuple]:
+        if not isinstance(deadline, Deadline):
+            deadline = Deadline.at(deadline, self._clock)
         key = (host, port)
         while True:
             self._remaining(deadline, cancellation)

@@ -1,5 +1,6 @@
 """Contracts and result models for synchronous physical-resource management."""
 
+from _lifecycle_new.resource.cleanup import cleanup_reverse
 from _lifecycle_new.resource.contract import ResourceProvider, ResourceRequirementsResolver
 from _lifecycle_new.resource.driver import (
     RequirementAcquireFailed,
@@ -17,6 +18,7 @@ from _lifecycle_new.resource.result import (
 
 
 __all__ = [
+    "cleanup_reverse",
     "RequirementAcquireFailed",
     "RequirementAcquireInterrupted",
     "RequirementAcquireResult",
