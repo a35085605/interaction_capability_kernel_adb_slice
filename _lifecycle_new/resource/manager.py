@@ -86,9 +86,9 @@ class ResolvedResourceProvider(Generic[RequestT, RequirementT, PhysicalResourceT
 
             resources += outcome.resources
             if isinstance(outcome, RequirementAcquireFailed):
-                if not isinstance(outcome.error, BaseException):
+                if not isinstance(outcome.error, Exception):
                     return ResourceAcquireFailed(
-                        TypeError("RequirementAcquireFailed.error must be a BaseException"),
+                        TypeError("RequirementAcquireFailed.error must be an Exception"),
                         resources,
                     )
                 return ResourceAcquireFailed(outcome.error, resources)
