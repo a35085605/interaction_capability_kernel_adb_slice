@@ -14,6 +14,7 @@ from _lifecycle_new.resource.driver import (
     RequirementAcquireSucceeded,
 )
 from adb._resolution import DeadlineResolver
+from adb.aosp.io.smart_socket import AdbServiceClient
 from adb.aosp.model.track_devices import Devices, parse_devices
 from adb.aosp.protocol.smart_socket.framing import encode_service, parse_hex_length
 from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
@@ -29,6 +30,7 @@ from networking import TcpEndpoint
 _Clock = Callable[[], float]
 _Resolver = Callable[..., list[tuple]]
 _SocketFactory = Callable[..., socket.socket]
+_ClientFactory = Callable[[TcpEndpoint], AdbServiceClient]
 
 
 def _normalize_startup_timeout(value: object) -> float:
@@ -97,6 +99,27 @@ def _handshake(sock: socket.socket, deadline: float, clock: _Clock) -> None:
             detail or "ADB server rejected track-devices",
         )
     raise AdbProtocolError(f"unexpected ADB service status: {status!r}")
+
+
+def _default_client_factory(server_endpoint: TcpEndpoint) -> AdbServiceClient:
+    return AdbServiceClient(server_endpoint.host, server_endpoint.port)
+
+
+class SmartSocketAospTrackDevicesReader:
+    """Read the first raw AOSP track-devices record for one server endpoint."""
+
+    def __init__(self, *, _client_factory: _ClientFactory = _default_client_factory) -> None:
+        if not callable(_client_factory):
+            raise TypeError("_client_factory must be callable")
+        self._client_factory = _client_factory
+
+    def read(self, server_endpoint: TcpEndpoint) -> Devices:
+        if not isinstance(server_endpoint, TcpEndpoint):
+            raise TypeError("server_endpoint must be TcpEndpoint")
+        payload = self._client_factory(server_endpoint).first_stream_frame(
+            TRACK_DEVICES_PROTO_BINARY_SERVICE
+        )
+        return parse_devices(payload)
 
 
 class AospTrackDevicesSession:
@@ -326,4 +349,5 @@ class AospTrackDevicesSessionDriver:
 __all__ = [
     "AospTrackDevicesSession",
     "AospTrackDevicesSessionDriver",
+    "SmartSocketAospTrackDevicesReader",
 ]

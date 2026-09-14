@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import subprocess
 
-from adb.adapters.subprocess.command import normalize_executable, normalize_timeout
+from adb._subprocess import normalize_executable, normalize_timeout
+from adb.aosp.io.cli import AospAdbCliClient
 from adb.transport.address import AdbConnectAddress
 from adb.transport.lifecycle.control.result import (
     AdbTcpTransportConnectCommandSucceeded,
@@ -29,19 +31,11 @@ def _completed_diagnostic(completed: subprocess.CompletedProcess[str]) -> str | 
     ) or None
 
 
-def _run_control_command(
-    executable: str,
-    timeout_seconds: float,
-    args: list[str],
+def _command_failure(
+    operation: Callable[[], subprocess.CompletedProcess[str]],
 ) -> AdbTcpTransportControlFailure | None:
     try:
-        completed = subprocess.run(
-            [executable, *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout_seconds,
-        )
+        completed = operation()
     except subprocess.TimeoutExpired as exc:
         return AdbTcpTransportControlTimedOut(diagnostic=_exception_diagnostic(exc))
     except OSError as exc:
@@ -58,7 +52,7 @@ def _run_control_command(
 
 @dataclass(frozen=True, slots=True)
 class SubprocessAdbTransportController:
-    """Execute transport lifecycle commands through the configured server endpoint."""
+    """Adapt AOSP CLI transport commands into domain lifecycle-control results."""
 
     server_endpoint: TcpEndpoint
     executable: str = "adb"
@@ -70,23 +64,19 @@ class SubprocessAdbTransportController:
         object.__setattr__(self, "executable", normalize_executable(self.executable))
         object.__setattr__(self, "timeout_seconds", normalize_timeout(self.timeout_seconds))
 
-    def _args(self, command: str, address: AdbConnectAddress) -> list[str]:
-        return [
-            "-H",
-            self.server_endpoint.host,
-            "-P",
-            str(self.server_endpoint.port),
-            command,
-            address.value,
-        ]
+    def _client(self) -> AospAdbCliClient:
+        return AospAdbCliClient(
+            self.executable,
+            self.timeout_seconds,
+            _runner=subprocess.run,
+        )
 
     def connect(self, address: AdbConnectAddress) -> AdbTcpTransportConnectResult:
         if not isinstance(address, AdbConnectAddress):
             raise TypeError("address must be AdbConnectAddress")
-        failure = _run_control_command(
-            self.executable,
-            self.timeout_seconds,
-            self._args("connect", address),
+        client = self._client()
+        failure = _command_failure(
+            lambda: client.connect(self.server_endpoint, address.value)
         )
         if failure is not None:
             return failure
@@ -95,10 +85,9 @@ class SubprocessAdbTransportController:
     def disconnect(self, address: AdbConnectAddress) -> AdbTcpTransportDisconnectResult:
         if not isinstance(address, AdbConnectAddress):
             raise TypeError("address must be AdbConnectAddress")
-        failure = _run_control_command(
-            self.executable,
-            self.timeout_seconds,
-            self._args("disconnect", address),
+        client = self._client()
+        failure = _command_failure(
+            lambda: client.disconnect(self.server_endpoint, address.value)
         )
         if failure is not None:
             return failure

@@ -2,19 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from adb.errors import AdbProtocolError
 from adb.aosp.io.smart_socket import AdbServiceClient
-from adb.aosp.protocol.smart_socket.services import (
-    transport_features_by_id_service,
-    transport_features_by_serial_service,
+from adb.aosp.io.transport_features import SmartSocketAospTransportFeaturesReader
+from adb.aosp.model.transport_features import (
+    parse_transport_features as parse_aosp_transport_features,
 )
-from networking import TcpEndpoint
 from adb.transport.features import AdbTransportFeatures
 from adb.transport.selection import (
     AdbTransportById,
     AdbTransportBySerial,
     AdbTransportSelector,
 )
+from networking import TcpEndpoint
 
 
 _ClientFactory = Callable[[TcpEndpoint], AdbServiceClient]
@@ -25,42 +24,37 @@ def _default_client_factory(server_endpoint: TcpEndpoint) -> AdbServiceClient:
 
 
 def parse_transport_features(payload: bytes) -> AdbTransportFeatures:
-    """Parse an ADB feature payload into ``AdbTransportFeatures``."""
+    """Compatibility adapter from an AOSP feature payload to the domain model."""
 
-    if not isinstance(payload, bytes):
-        raise TypeError("ADB transport feature payload must be bytes")
-    try:
-        text = payload.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise AdbProtocolError("ADB feature list is not valid UTF-8") from exc
-    return AdbTransportFeatures(frozenset(part for part in text.split(",") if part))
-
-
-def _feature_service(selector: AdbTransportSelector) -> str:
-    if isinstance(selector, AdbTransportBySerial):
-        return transport_features_by_serial_service(selector.serial.value)
-    if isinstance(selector, AdbTransportById):
-        return transport_features_by_id_service(selector.transport_id.value)
-    raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")
+    return AdbTransportFeatures(parse_aosp_transport_features(payload))
 
 
 class SmartSocketAdbTransportFeaturesReader:
-    """Read transport features through an ADB smart-socket query."""
+    """Read AOSP transport features and project them into the domain model."""
 
     def __init__(self, *, _client_factory: _ClientFactory = _default_client_factory) -> None:
-        self._client_factory = _client_factory
+        self._reader = SmartSocketAospTransportFeaturesReader(
+            _client_factory=_client_factory
+        )
 
     def read(
         self,
         server_endpoint: TcpEndpoint,
         selector: AdbTransportSelector,
     ) -> AdbTransportFeatures:
-        if not isinstance(server_endpoint, TcpEndpoint):
-            raise TypeError("server_endpoint must be TcpEndpoint")
-        payload = self._client_factory(server_endpoint).host_query(
-            _feature_service(selector)
-        )
-        return parse_transport_features(payload)
+        if isinstance(selector, AdbTransportBySerial):
+            features = self._reader.read_by_serial(
+                server_endpoint,
+                selector.serial.value,
+            )
+        elif isinstance(selector, AdbTransportById):
+            features = self._reader.read_by_id(
+                server_endpoint,
+                selector.transport_id.value,
+            )
+        else:
+            raise TypeError("selector must be AdbTransportBySerial or AdbTransportById")
+        return AdbTransportFeatures(features)
 
 
 __all__ = ["SmartSocketAdbTransportFeaturesReader", "parse_transport_features"]

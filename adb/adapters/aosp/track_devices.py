@@ -3,28 +3,23 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from adb.aosp.io.smart_socket import AdbServiceClient
+from adb.aosp.io.track_devices import SmartSocketAospTrackDevicesReader
 from adb.aosp.model.track_devices import (
     ConnectionState,
     ConnectionType,
     Device,
     Devices,
-    parse_devices,
 )
-from adb.aosp.protocol.smart_socket.services import TRACK_DEVICES_PROTO_BINARY_SERVICE
-from adb.transport.model import AdbTransportKind
 from adb.transport.identity import AdbTransportId
 from adb.transport.model import (
     AdbObservedTransportKind,
     AdbObservedTransportState,
     AdbTransport,
+    AdbTransportKind,
     AdbTransportState,
 )
 from adb.transport_list.model import AdbTransportList
 from networking import TcpEndpoint
-
-
-def _parse_transport_list(payload: bytes) -> AdbTransportList:
-    return to_transport_list(parse_devices(payload))
 
 
 _ClientFactory = Callable[[TcpEndpoint], AdbServiceClient]
@@ -35,21 +30,18 @@ def _default_client_factory(server_endpoint: TcpEndpoint) -> AdbServiceClient:
 
 
 class SmartSocketAdbTransportListReader:
-    """Read and translate the first AOSP track-devices record for one server endpoint."""
+    """Read raw AOSP devices and project them into one domain transport list."""
 
     def __init__(self, *, _client_factory: _ClientFactory = _default_client_factory) -> None:
-        self._client_factory = _client_factory
+        self._reader = SmartSocketAospTrackDevicesReader(
+            _client_factory=_client_factory
+        )
 
     def read(
         self,
         server_endpoint: TcpEndpoint,
     ) -> AdbTransportList:
-        if not isinstance(server_endpoint, TcpEndpoint):
-            raise TypeError("server_endpoint must be TcpEndpoint")
-        payload = self._client_factory(server_endpoint).first_stream_frame(
-            TRACK_DEVICES_PROTO_BINARY_SERVICE
-        )
-        return _parse_transport_list(payload)
+        return to_transport_list(self._reader.read(server_endpoint))
 
 
 def _translate_transport_kind(value: ConnectionType | int) -> AdbObservedTransportKind:
