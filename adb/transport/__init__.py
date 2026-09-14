@@ -1,13 +1,6 @@
-"""ADB transport configuration, lifecycle, selection, and capabilities."""
+"""ADB transport specifications, lifecycle, selection, and capabilities."""
 
 from adb.transport.address import AdbConnectAddress
-from adb.transport.configuration import (
-    AdbConfiguredTransport,
-    AdbTcpTransportConfiguration,
-    AdbTransportConfiguration,
-    AdbTransportType,
-    AdbUsbTransportConfiguration,
-)
 from adb.transport.features import (
     AdbTransportFeatures,
     AdbTransportFeaturesReader,
@@ -17,6 +10,7 @@ from adb.transport.model import (
     AdbObservedTransportKind,
     AdbObservedTransportState,
     AdbTransport,
+    AdbTransportKind,
     AdbTransportState,
 )
 from adb.transport.lifecycle import (
@@ -34,9 +28,13 @@ from adb.transport.selection import (
     AdbTransportBySerial,
     AdbTransportSelector,
 )
+from adb.transport.spec import (
+    AdbTcpTransportSpec,
+    AdbTransportSpec,
+    AdbUsbTransportSpec,
+)
 
 __all__ = [
-    "AdbConfiguredTransport",
     "AdbObservedTransportKind",
     "AdbObservedTransportState",
     "AdbDeviceSerial",
@@ -49,16 +47,16 @@ __all__ = [
     "AdbTcpTransportControlTimedOut",
     "AdbTcpTransportDisconnectCommandSucceeded",
     "AdbTcpTransportDisconnectResult",
-    "AdbTcpTransportConfiguration",
+    "AdbTcpTransportSpec",
     "AdbTransport",
     "AdbTransportById",
     "AdbTransportBySerial",
-    "AdbTransportConfiguration",
     "AdbTransportFeatures",
     "AdbTransportFeaturesReader",
     "AdbTransportId",
+    "AdbTransportKind",
     "AdbTransportSelector",
+    "AdbTransportSpec",
     "AdbTransportState",
-    "AdbTransportType",
-    "AdbUsbTransportConfiguration",
+    "AdbUsbTransportSpec",
 ]

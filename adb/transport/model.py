@@ -4,8 +4,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from numbers import Integral
 
-from adb.transport.configuration import AdbTransportType
 from adb.transport.identity import AdbDeviceSerial, AdbTransportId
+
+
+class AdbTransportKind(str, Enum):
+    """Recognized ADB transport kinds."""
+
+    USB = "usb"
+    TCP = "tcp"
 
 
 class AdbTransportState(str, Enum):
@@ -29,24 +35,22 @@ class AdbTransportState(str, Enum):
 class AdbObservedTransportKind:
     """Observed ADB transport kind with recognized, unspecified, or unrecognized evidence."""
 
-    transport_type: AdbTransportType | None = None
+    kind: AdbTransportKind | None = None
     native_code: int | None = None
 
     def __post_init__(self) -> None:
-        if self.transport_type is not None and not isinstance(
-            self.transport_type, AdbTransportType
-        ):
-            raise TypeError("transport_type must be AdbTransportType or None")
+        if self.kind is not None and not isinstance(self.kind, AdbTransportKind):
+            raise TypeError("kind must be AdbTransportKind or None")
         if self.native_code is not None:
             if isinstance(self.native_code, bool) or not isinstance(self.native_code, Integral):
                 raise TypeError("native_code must be an integer or None")
             object.__setattr__(self, "native_code", int(self.native_code))
-        if self.transport_type is not None and self.native_code is not None:
+        if self.kind is not None and self.native_code is not None:
             raise ValueError("recognized observed transport kind cannot carry native_code")
 
     @classmethod
-    def recognized(cls, transport_type: AdbTransportType) -> "AdbObservedTransportKind":
-        return cls(transport_type=transport_type)
+    def recognized(cls, kind: AdbTransportKind) -> "AdbObservedTransportKind":
+        return cls(kind=kind)
 
     @classmethod
     def unspecified(cls) -> "AdbObservedTransportKind":
@@ -58,11 +62,11 @@ class AdbObservedTransportKind:
 
     @property
     def is_recognized(self) -> bool:
-        return self.transport_type is not None
+        return self.kind is not None
 
     @property
     def is_unspecified(self) -> bool:
-        return self.transport_type is None and self.native_code is None
+        return self.kind is None and self.native_code is None
 
     @property
     def is_unrecognized(self) -> bool:
@@ -142,6 +146,7 @@ class AdbTransport:
 
 __all__ = [
     "AdbObservedTransportKind",
+    "AdbTransportKind",
     "AdbObservedTransportState",
     "AdbTransport",
     "AdbTransportState",
