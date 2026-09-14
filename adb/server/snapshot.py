@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from _lifecycle_new.capability.lifecycle import LifecycleSnapshotReader
-from _lifecycle_new.capability.snapshot import LifecyclePhase, LifecycleSnapshot
+from lifecycle.capability.lifecycle import LifecycleSnapshotReader
+from lifecycle.capability.snapshot import LifecyclePhase, LifecycleSnapshot
 from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration
 from adb.server.request import AdbServerRequest

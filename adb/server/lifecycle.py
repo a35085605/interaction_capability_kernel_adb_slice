@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from _lifecycle_new.capability.result import (
+from lifecycle.capability.result import (
     AcquireAlreadyActive,
     AcquireFailed,
     AcquireReleaseRequired,

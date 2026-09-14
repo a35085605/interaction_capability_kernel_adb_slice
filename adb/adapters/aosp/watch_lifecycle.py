@@ -4,12 +4,12 @@ from collections.abc import Callable, Iterator
 import socket
 from time import monotonic
 
-from _lifecycle_new.resource.driver import (
+from lifecycle.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
     RequirementAcquireResult,
 )
-from _lifecycle_new.resource.manager import ResolvedResourceProvider
+from lifecycle.resource.manager import ResolvedResourceProvider
 from adb.adapters.aosp.track_devices import to_transport_list
 from adb.aosp.io.track_devices import (
     AospTrackDevicesSession,

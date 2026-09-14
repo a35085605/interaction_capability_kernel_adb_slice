@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from _lifecycle_new.capability.coordinator import CapabilityLifecycleCoordinator
-from _lifecycle_new.capability.projection import CapabilityProjector
-from _lifecycle_new.resource.contract import ResourceProvider
+from lifecycle.capability.coordinator import CapabilityLifecycleCoordinator
+from lifecycle.capability.projection import CapabilityProjector
+from lifecycle.resource.contract import ResourceProvider
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,

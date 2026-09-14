@@ -10,10 +10,10 @@ from adb.transport_list.reader import AdbTransportListReader
 from adb.transport_list.state import (
     AdbTransportListState,
     AdbTransportListStateAuthority,
-    AdbTransportListStateStore,
     AdbTransportListStateView,
     AdbTransportListStateWriter,
 )
+from adb.transport_list.store import AdbTransportListStateStore
 from adb.transport_list.watch import (
     AdbTransportListWatchAcquireAlreadyActive,
     AdbTransportListWatchAcquireFailed,

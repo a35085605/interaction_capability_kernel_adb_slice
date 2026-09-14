@@ -1,12 +1,6 @@
-"""AOSP ADB I/O primitives."""
+"""AOSP ADB protocol I/O primitives."""
 
 from adb.aosp.io.cli import AospAdbCliClient
-from adb.aosp.io.server_process import (
-    AospAdbServerProcessDriver,
-    AospAdbServerStartError,
-    AospAdbServerTerminationUnconfirmed,
-    AospOwnedAdbServerProcess,
-)
 from adb.aosp.io.server_status import (
     AdbServerStatusReader,
     SmartSocketAdbServerStatusReader,
@@ -24,10 +18,6 @@ __all__ = [
     "AdbServerStatusReader",
     "AdbServiceClient",
     "AospAdbCliClient",
-    "AospAdbServerProcessDriver",
-    "AospAdbServerStartError",
-    "AospAdbServerTerminationUnconfirmed",
-    "AospOwnedAdbServerProcess",
     "AospTrackDevicesSession",
     "AospTrackDevicesSessionDriver",
     "ShellV2Result",

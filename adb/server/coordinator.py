@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from _lifecycle_new.capability.coordinator import CapabilityLifecycleCoordinator
-from _lifecycle_new.resource.contract import ResourceProvider
-from _lifecycle_new.resource.driver import PhysicalResources
+from lifecycle.capability.coordinator import CapabilityLifecycleCoordinator
+from lifecycle.resource.contract import ResourceProvider
+from lifecycle.resource.driver import PhysicalResources
 from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.lifecycle import AdbServerAcquireResult, AdbServerReleaseResult

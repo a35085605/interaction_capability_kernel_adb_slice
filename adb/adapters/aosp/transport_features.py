@@ -4,9 +4,6 @@ from collections.abc import Callable
 
 from adb.aosp.io.smart_socket import AdbServiceClient
 from adb.aosp.io.transport_features import SmartSocketAospTransportFeaturesReader
-from adb.aosp.model.transport_features import (
-    parse_transport_features as parse_aosp_transport_features,
-)
 from adb.transport.features import AdbTransportFeatures
 from adb.transport.selection import (
     AdbTransportById,
@@ -21,12 +18,6 @@ _ClientFactory = Callable[[TcpEndpoint], AdbServiceClient]
 
 def _default_client_factory(server_endpoint: TcpEndpoint) -> AdbServiceClient:
     return AdbServiceClient(server_endpoint.host, server_endpoint.port)
-
-
-def parse_transport_features(payload: bytes) -> AdbTransportFeatures:
-    """Compatibility adapter from an AOSP feature payload to the domain model."""
-
-    return AdbTransportFeatures(parse_aosp_transport_features(payload))
 
 
 class SmartSocketAdbTransportFeaturesReader:
@@ -57,4 +48,4 @@ class SmartSocketAdbTransportFeaturesReader:
         return AdbTransportFeatures(features)
 
 
-__all__ = ["SmartSocketAdbTransportFeaturesReader", "parse_transport_features"]
+__all__ = ["SmartSocketAdbTransportFeaturesReader"]

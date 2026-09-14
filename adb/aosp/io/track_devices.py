@@ -7,8 +7,8 @@ import socket
 from threading import Lock
 from time import monotonic
 
-from _lifecycle_new.resource.cleanup import cleanup_reverse
-from _lifecycle_new.resource.driver import (
+from lifecycle.resource.cleanup import cleanup_reverse
+from lifecycle.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
     RequirementAcquireInterrupted,
