@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from adb.epoch import Epoch, EpochSequence
+from adb._generation import EpochBackedGenerationIssuer
+from adb.epoch import Epoch
 
 
 class _AdbServerGenerationEpoch(Epoch):
@@ -26,18 +27,21 @@ class AdbServerGeneration:
 class AdbServerGenerationIssuer:
     """Issue monotonically increasing ADB server generations."""
 
-    __slots__ = ("_sequence",)
+    __slots__ = ("_issuer",)
 
     def __init__(self, *, after: AdbServerGeneration | None = None) -> None:
         if after is not None and not isinstance(after, AdbServerGeneration):
             raise TypeError("after must be AdbServerGeneration or None")
-        initial_value = 0 if after is None else after._epoch.value
-        self._sequence = EpochSequence(_AdbServerGenerationEpoch, initial_value=initial_value)
+        self._issuer = EpochBackedGenerationIssuer(
+            _AdbServerGenerationEpoch,
+            AdbServerGeneration,
+            after_epoch=None if after is None else after._epoch,
+        )
 
     def issue(self) -> AdbServerGeneration:
         """Issue a generation newer than every generation previously issued here."""
 
-        return AdbServerGeneration(self._sequence.issue())
+        return self._issuer.issue()
 
 
 __all__ = ["AdbServerGeneration", "AdbServerGenerationIssuer"]

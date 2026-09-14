@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from adb.epoch import Epoch, EpochSequence
+from adb._generation import EpochBackedGenerationIssuer
+from adb.epoch import Epoch
 
 
 class _AdbTransportListWatchGenerationEpoch(Epoch):
@@ -33,21 +34,21 @@ class AdbTransportListWatchGeneration:
 class AdbTransportListWatchGenerationIssuer:
     """Issue monotonically increasing watch generations within one ADB runtime scope."""
 
-    __slots__ = ("_sequence",)
+    __slots__ = ("_issuer",)
 
     def __init__(self, *, after: AdbTransportListWatchGeneration | None = None) -> None:
         if after is not None and not isinstance(after, AdbTransportListWatchGeneration):
             raise TypeError("after must be AdbTransportListWatchGeneration or None")
-        initial_value = 0 if after is None else after._epoch.value
-        self._sequence = EpochSequence(
+        self._issuer = EpochBackedGenerationIssuer(
             _AdbTransportListWatchGenerationEpoch,
-            initial_value=initial_value,
+            AdbTransportListWatchGeneration,
+            after_epoch=None if after is None else after._epoch,
         )
 
     def issue(self) -> AdbTransportListWatchGeneration:
         """Issue a fresh transport-list watch generation."""
 
-        return AdbTransportListWatchGeneration(self._sequence.issue())
+        return self._issuer.issue()
 
 
 __all__ = [
