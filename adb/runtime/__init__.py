@@ -1,6 +1,12 @@
 """Runtime composition surfaces for host-side ADB capabilities."""
 
 from adb.runtime.server import (
+    AdbServerAvailabilityConflict,
+    AdbServerAvailabilityFailed,
+    AdbServerAvailabilityPolicy,
+    AdbServerAvailabilityResult,
+    AdbServerAvailabilitySupervisor,
+    AdbServerAvailable,
     AdbServerActivateAlreadyActive,
     AdbServerActivateConflict,
     AdbServerActivateFailed,
@@ -17,6 +23,12 @@ from adb.runtime.server import (
 
 
 __all__ = [
+    "AdbServerAvailabilityConflict",
+    "AdbServerAvailabilityFailed",
+    "AdbServerAvailabilityPolicy",
+    "AdbServerAvailabilityResult",
+    "AdbServerAvailabilitySupervisor",
+    "AdbServerAvailable",
     "AdbServerActivateAlreadyActive",
     "AdbServerActivateConflict",
     "AdbServerActivateFailed",

@@ -1,5 +1,13 @@
-"""Runtime bootstrap and mutation surface for the ADB server capability."""
+"""Runtime bootstrap, availability supervision, and mutation surface for ADB server."""
 
+from adb.runtime.server.availability import (
+    AdbServerAvailabilityConflict,
+    AdbServerAvailabilityFailed,
+    AdbServerAvailabilityPolicy,
+    AdbServerAvailabilityResult,
+    AdbServerAvailabilitySupervisor,
+    AdbServerAvailable,
+)
 from adb.runtime.server.bootstrap import bootstrap_adb_server_runtime
 from adb.runtime.server.mutation import (
     AdbServerActivateAlreadyActive,
@@ -17,6 +25,12 @@ from adb.runtime.server.runtime import AdbServerRuntime
 
 
 __all__ = [
+    "AdbServerAvailabilityConflict",
+    "AdbServerAvailabilityFailed",
+    "AdbServerAvailabilityPolicy",
+    "AdbServerAvailabilityResult",
+    "AdbServerAvailabilitySupervisor",
+    "AdbServerAvailable",
     "AdbServerActivateAlreadyActive",
     "AdbServerActivateConflict",
     "AdbServerActivateFailed",

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
-from threading import Lock
-from typing import TypeAlias
+from threading import RLock
+from typing import Iterator, TypeAlias
 
 from adb.server.lifecycle import (
     AdbServerAcquireAlreadyActive,
@@ -100,7 +101,19 @@ class AdbServerMutationFacade:
         self._lifecycle = lifecycle
         self._acquire = AdbServerAcquireSupervisor(lifecycle)
         self._release = AdbServerReleaseSupervisor(lifecycle)
-        self._lock = Lock()
+        self._lock = RLock()
+
+    @contextmanager
+    def _exclusive(self) -> Iterator[None]:
+        """Hold the mutation lock across one runtime-internal compound operation.
+
+        ``activate()`` and ``deactivate()`` acquire the same reentrant lock, allowing
+        a higher-level runtime supervisor to make an activate/cleanup pair atomic
+        without exposing raw lifecycle mutations.
+        """
+
+        with self._lock:
+            yield
 
     def activate(self, request: AdbServerRequest) -> AdbServerActivateResult:
         """Activate ``request`` without implicitly replacing another active request."""

@@ -15,7 +15,7 @@ CauseT = TypeVar("CauseT")
 
 @dataclass(frozen=True, slots=True)
 class RecoveryRetryConfiguration:
-    """Domain-neutral retry configuration for one recovery cycle."""
+    """Domain-neutral retry configuration for one recovery sequence."""
 
     retry_initial_seconds: float
     retry_max_seconds: float
@@ -44,7 +44,7 @@ def normalize_recovery_retry_configuration(
     max_attempts: object,
     subject: str,
 ) -> RecoveryRetryConfiguration:
-    """Normalize shared recovery-policy fields while retaining domain diagnostics."""
+    """Normalize shared retry-policy fields while retaining domain diagnostics."""
 
     if not isinstance(subject, str):
         raise TypeError("subject must be a string")
@@ -93,30 +93,44 @@ def normalize_recovery_retry_configuration(
     )
 
 
-class RecoveryAttemptOutcome(Enum):
-    """Domain-neutral meaning of one completed acquisition attempt."""
+class RecoveryOutcome(Enum):
+    """Domain-neutral outcome of one completed recovery attempt."""
 
-    ACQUIRED = auto()
+    SUCCEEDED = auto()
+    # Compatibility name retained for the original acquisition-oriented API.
+    ACQUIRED = SUCCEEDED
     DEFERRED = auto()
     FAILED = auto()
 
 
+# Compatibility alias for callers of the original acquisition-oriented API.
+RecoveryAttemptOutcome = RecoveryOutcome
+
+
 @dataclass(frozen=True, slots=True)
 class RecoveryAttempt:
-    """One acquisition attempt selected by the shared recovery state machine."""
+    """One recovery attempt selected by the retry controller."""
 
     attempt_number: int
     delay_seconds: float
 
 
 @dataclass(frozen=True, slots=True)
-class RecoveryAcquired:
-    """Terminal decision that recovery has usable access."""
+class RecoverySucceeded:
+    """Terminal retry decision after recovery reports usable access."""
+
+
+# Compatibility alias for callers of the original acquisition-oriented API.
+RecoveryAcquired = RecoverySucceeded
 
 
 @dataclass(frozen=True, slots=True)
 class RecoveryFailed(Generic[CauseT]):
-    """Terminal recovery result after budget-consuming failures exhaust the policy."""
+    """Compatibility result carrying a domain failure after retry exhaustion.
+
+    New retry-controller users should keep domain causes in their own result model and
+    use ``RecoveryExhausted`` only as the domain-neutral terminal retry decision.
+    """
 
     failed_attempts: int
     cause: CauseT
@@ -132,16 +146,21 @@ class RecoveryFailed(Generic[CauseT]):
 
 @dataclass(frozen=True, slots=True)
 class RecoveryExhausted:
-    """Terminal decision after budget-consuming failures exhausted the policy."""
+    """Terminal retry decision after budget-consuming failures exhausted the policy."""
 
     failed_attempts: int
 
 
-RecoveryDecision: TypeAlias = RecoveryAttempt | RecoveryAcquired | RecoveryExhausted
+RecoveryDecision: TypeAlias = RecoveryAttempt | RecoverySucceeded | RecoveryExhausted
 
 
-class RecoveryDecisionCore:
-    """Shared recovery retry, backoff, jitter, and exhaustion state machine."""
+class RecoveryRetryController:
+    """Domain-neutral retry, backoff, jitter, and exhaustion state machine.
+
+    The controller deliberately knows nothing about acquisition, cleanup, generations,
+    or domain failure causes. A domain supervisor completes one recovery attempt, maps
+    that attempt to ``RecoveryOutcome``, and asks this controller when to try again.
+    """
 
     def __init__(
         self,
@@ -179,15 +198,15 @@ class RecoveryDecisionCore:
             raise RuntimeError("recovery has already begun")
         return self._next_attempt(0.0)
 
-    def decide_after(self, outcome: RecoveryAttemptOutcome) -> RecoveryDecision:
+    def decide_after(self, outcome: RecoveryOutcome) -> RecoveryDecision:
         if self._attempt_number == 0:
             raise RuntimeError("recovery has not begun")
-        if not isinstance(outcome, RecoveryAttemptOutcome):
-            raise TypeError("outcome must be RecoveryAttemptOutcome")
+        if not isinstance(outcome, RecoveryOutcome):
+            raise TypeError("outcome must be RecoveryOutcome")
 
-        if outcome is RecoveryAttemptOutcome.ACQUIRED:
-            return RecoveryAcquired()
-        if outcome is RecoveryAttemptOutcome.DEFERRED:
+        if outcome is RecoveryOutcome.SUCCEEDED:
+            return RecoverySucceeded()
+        if outcome is RecoveryOutcome.DEFERRED:
             return self._next_attempt(self._configuration.deferred_retry_seconds)
 
         self._failed_attempts += 1
@@ -217,6 +236,11 @@ class RecoveryDecisionCore:
         return max(base * factor, 1e-6)
 
 
+# Compatibility alias for the original name. The implementation is now explicitly a
+# retry controller; domain supervisors own the actual recovery orchestration.
+RecoveryDecisionCore = RecoveryRetryController
+
+
 __all__ = [
     "RandomSource",
     "RecoveryAcquired",
@@ -226,6 +250,9 @@ __all__ = [
     "RecoveryDecisionCore",
     "RecoveryExhausted",
     "RecoveryFailed",
+    "RecoveryOutcome",
     "RecoveryRetryConfiguration",
+    "RecoveryRetryController",
+    "RecoverySucceeded",
     "normalize_recovery_retry_configuration",
 ]
