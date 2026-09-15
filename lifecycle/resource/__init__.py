@@ -10,6 +10,7 @@ from lifecycle.resource.driver import (
     PhysicalResources,
     ResourceDriver,
 )
+from lifecycle.resource.provider import ResolvedResourceProvider
 from lifecycle.resource.result import (
     ResourceAcquireFailed,
     ResourceAcquireResult,
@@ -27,6 +28,7 @@ __all__ = [
     "ResourceAcquireFailed",
     "ResourceAcquireResult",
     "ResourceAcquireSucceeded",
+    "ResolvedResourceProvider",
     "ResourceDriver",
     "ResourceProvider",
     "ResourceRequirementsResolver",

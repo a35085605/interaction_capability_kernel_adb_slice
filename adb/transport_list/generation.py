@@ -51,4 +51,15 @@ class AdbTransportListGenerationIssuer:
         return self._issuer.issue()
 
 
-__all__ = ["AdbTransportListGeneration", "AdbTransportListGenerationIssuer"]
+# Preferred projection terminology. The original generation names remain aliases for
+# compatibility because they are already part of the package surface.
+AdbTransportListRevision = AdbTransportListGeneration
+AdbTransportListRevisionIssuer = AdbTransportListGenerationIssuer
+
+
+__all__ = [
+    "AdbTransportListGeneration",
+    "AdbTransportListGenerationIssuer",
+    "AdbTransportListRevision",
+    "AdbTransportListRevisionIssuer",
+]

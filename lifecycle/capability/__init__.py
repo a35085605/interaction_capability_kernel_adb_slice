@@ -25,9 +25,12 @@ from lifecycle.capability.supervision import (
     AcquireSupervisionPolicy,
     AcquireSupervisionResult,
     AcquireSupervisor,
+    CancellationSignal,
     ReleaseSupervisionPolicy,
     ReleaseSupervisionResult,
     ReleaseSupervisor,
+    SupervisionStopped,
+    SupervisionStopReason,
 )
 
 
@@ -35,6 +38,7 @@ __all__ = [
     "AcquireSupervisionPolicy",
     "AcquireSupervisionResult",
     "AcquireSupervisor",
+    "CancellationSignal",
     "CapabilityLifecycle",
     "LifecycleSnapshotReader",
     "CapabilityProjector",
@@ -56,4 +60,6 @@ __all__ = [
     "ReleaseSupervisionPolicy",
     "ReleaseSupervisionResult",
     "ReleaseSupervisor",
+    "SupervisionStopped",
+    "SupervisionStopReason",
 ]

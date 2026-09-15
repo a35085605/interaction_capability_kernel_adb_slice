@@ -19,7 +19,7 @@ from adb._deadline import Deadline
 from adb._subprocess import normalize_executable, normalize_timeout
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
 from adb.aosp.io.smart_socket import AdbServiceClient
-from adb.adapters.server_process.posix import AospAdbServerStartError
+from adb.adapters.server_process.errors import AospAdbServerStartError
 from adb.errors import AdbError
 from networking import TcpEndpoint
 

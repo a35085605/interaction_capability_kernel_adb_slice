@@ -7,7 +7,7 @@ import subprocess
 from adb._subprocess import normalize_executable, normalize_timeout
 from adb.aosp.io.cli import AospAdbCliClient
 from adb.transport.address import AdbConnectAddress
-from adb.transport.lifecycle.control.result import (
+from adb.transport.control.result import (
     AdbTcpTransportConnectCommandSucceeded,
     AdbTcpTransportConnectResult,
     AdbTcpTransportControlFailed,

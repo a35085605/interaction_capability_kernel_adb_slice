@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from time import sleep
+from time import monotonic, sleep
 from typing import TypeAlias
 
 from lifecycle.capability.supervision.acquire import AcquireSupervisor
+from lifecycle.capability.supervision.control import (
+    CancellationSignal,
+    Clock,
+    SupervisionStopped,
+)
 from lifecycle.capability.supervision.policy import (
     AcquireSupervisionPolicy,
     ReleaseSupervisionPolicy,
@@ -39,6 +44,7 @@ AdbServerAcquireSupervisionResult: TypeAlias = (
     | AdbServerAcquireReleaseRequired
     | AdbServerGenerationMismatch
     | AdbServerAcquireRequestMismatch
+    | SupervisionStopped
 )
 
 AdbServerReleaseSupervisionResult: TypeAlias = (
@@ -46,6 +52,7 @@ AdbServerReleaseSupervisionResult: TypeAlias = (
     | AdbServerReleaseAlreadyIdle
     | AdbServerGenerationMismatch
     | AdbServerReleaseRequestMismatch
+    | SupervisionStopped
 )
 
 
@@ -60,12 +67,13 @@ class AdbServerAcquireSupervisor(
         *,
         policy: AdbServerAcquireSupervisionPolicy = AdbServerAcquireSupervisionPolicy(),
         _sleeper: _Sleeper = sleep,
+        _clock: Clock = monotonic,
     ) -> None:
         if not isinstance(lifecycle, AdbServerLifecycle):
             raise TypeError("lifecycle must satisfy AdbServerLifecycle")
         if not isinstance(policy, AdbServerAcquireSupervisionPolicy):
             raise TypeError("policy must be AdbServerAcquireSupervisionPolicy")
-        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper)
+        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper, _clock=_clock)
 
     @property
     def lifecycle(self) -> AdbServerLifecycle:
@@ -79,13 +87,21 @@ class AdbServerAcquireSupervisor(
         self,
         generation: AdbServerGeneration,
         request: AdbServerRequest,
+        *,
+        timeout_seconds: float | None = None,
+        cancellation: CancellationSignal | None = None,
     ) -> AdbServerAcquireSupervisionResult:
         if not isinstance(generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
         if not isinstance(request, AdbServerRequest):
             raise TypeError("request must be AdbServerRequest")
 
-        result = super().supervise(generation, request)
+        result = super().supervise(
+            generation,
+            request,
+            timeout_seconds=timeout_seconds,
+            cancellation=cancellation,
+        )
         if isinstance(result, AdbServerGenerationMismatch):
             if not isinstance(result.current_generation, AdbServerGeneration):
                 raise TypeError("server current generation must be AdbServerGeneration")
@@ -106,12 +122,13 @@ class AdbServerReleaseSupervisor(
         *,
         policy: AdbServerReleaseSupervisionPolicy = AdbServerReleaseSupervisionPolicy(),
         _sleeper: _Sleeper = sleep,
+        _clock: Clock = monotonic,
     ) -> None:
         if not isinstance(lifecycle, AdbServerLifecycle):
             raise TypeError("lifecycle must satisfy AdbServerLifecycle")
         if not isinstance(policy, AdbServerReleaseSupervisionPolicy):
             raise TypeError("policy must be AdbServerReleaseSupervisionPolicy")
-        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper)
+        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper, _clock=_clock)
 
     @property
     def lifecycle(self) -> AdbServerLifecycle:
@@ -125,12 +142,20 @@ class AdbServerReleaseSupervisor(
         self,
         generation: AdbServerGeneration,
         request: AdbServerRequest,
+        *,
+        timeout_seconds: float | None = None,
+        cancellation: CancellationSignal | None = None,
     ) -> AdbServerReleaseSupervisionResult:
         if not isinstance(generation, AdbServerGeneration):
             raise TypeError("generation must be AdbServerGeneration")
         if not isinstance(request, AdbServerRequest):
             raise TypeError("request must be AdbServerRequest")
-        return super().supervise(generation, request)
+        return super().supervise(
+            generation,
+            request,
+            timeout_seconds=timeout_seconds,
+            cancellation=cancellation,
+        )
 
 
 __all__ = [

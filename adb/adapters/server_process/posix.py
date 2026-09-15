@@ -19,6 +19,10 @@ from lifecycle.resource.driver import (
 from adb._deadline import Deadline
 from adb._resolution import DeadlineResolver
 from adb._subprocess import normalize_executable, normalize_timeout
+from adb.adapters.server_process.errors import (
+    AospAdbServerStartError,
+    AospAdbServerTerminationUnconfirmed,
+)
 from adb.aosp.io.server_status import SmartSocketAdbServerStatusReader
 from adb.aosp.io.smart_socket import AdbServiceClient
 from adb.errors import AdbError, AdbTimeoutError
@@ -36,10 +40,6 @@ class _ServerStatusReader(Protocol):
     def read(self, server_endpoint: TcpEndpoint) -> object: ...
 
 
-class AospAdbServerStartError(RuntimeError):
-    """Infrastructure failure while creating a foreground ADB server child."""
-
-
 class _AospAdbServerRetainedStartError(AospAdbServerStartError):
     """Startup failed while one or more physical resources still require cleanup."""
 
@@ -53,10 +53,6 @@ class _AospAdbServerRetainedStartError(AospAdbServerStartError):
         super().__init__(diagnostic)
         self.resources = resources
         self.original_error = original_error
-
-
-class AospAdbServerTerminationUnconfirmed(RuntimeError):
-    """Failure to confirm termination of an owned child process."""
 
 
 def _normalize_probe_interval(value: object) -> float:

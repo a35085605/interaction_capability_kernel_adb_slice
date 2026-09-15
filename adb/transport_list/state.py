@@ -3,9 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from adb.transport_list.generation import (
-    AdbTransportListGeneration,
-)
+from adb.transport_list.generation import AdbTransportListGeneration
 from adb.transport_list.model import AdbTransportList
 
 
@@ -13,12 +11,13 @@ from adb.transport_list.model import AdbTransportList
 class AdbTransportListState:
     """Atomic authoritative transport-list projection state.
 
-    ``generation`` identifies the current projection state. ``transport_list`` is ``None`` when
-    no authoritative transport list is available. An empty ``AdbTransportList`` is still a valid
-    available projection and means that the observed server currently exposes zero transports.
+    ``generation`` is retained for compatibility; ``revision`` is the preferred name
+    because this value versions the visible projection rather than a lifecycle.
+    ``transport_list`` is ``None`` when no authoritative projection is available.
 
-    This state deliberately carries no server or watch generation. Cross-capability lifecycle and
-    stale-work coordination belong to the orchestration layer composing those capabilities.
+    This state deliberately carries no server or watch generation. Cross-capability
+    lifecycle and stale-work coordination belong to the orchestration layer composing
+    those capabilities.
     """
 
     generation: AdbTransportListGeneration
@@ -32,6 +31,12 @@ class AdbTransportListState:
         ):
             raise TypeError("transport_list must be AdbTransportList or None")
 
+    @property
+    def revision(self) -> AdbTransportListGeneration:
+        """Preferred name for the projection version."""
+
+        return self.generation
+
 
 @runtime_checkable
 class AdbTransportListStateView(Protocol):
@@ -40,6 +45,10 @@ class AdbTransportListStateView(Protocol):
     def read(self) -> AdbTransportListState:
         """Return one atomic transport-list state snapshot."""
         ...
+
+
+# Preferred reader terminology; retained as an alias to avoid breaking callers.
+AdbTransportListStateReader = AdbTransportListStateView
 
 
 @runtime_checkable
@@ -67,6 +76,7 @@ class AdbTransportListStateAuthority(
 __all__ = [
     "AdbTransportListState",
     "AdbTransportListStateAuthority",
+    "AdbTransportListStateReader",
     "AdbTransportListStateView",
     "AdbTransportListStateWriter",
 ]

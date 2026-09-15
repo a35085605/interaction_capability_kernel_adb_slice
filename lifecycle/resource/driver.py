@@ -21,8 +21,9 @@ class RequirementAcquireSucceeded(Generic[PhysicalResourceT]):
 class RequirementAcquireFailed(Generic[PhysicalResourceT]):
     """Report terminal acquisition failure for one requirement.
 
-    ``resources`` contains every physical resource created for the requirement before
-    the failure. The caller retains those resources for a later cleanup attempt.
+    ``resources`` contains every physical resource that remains owned and still
+    requires cleanup when ``acquire`` returns. Temporary resources that the driver
+    has synchronously and conclusively cleaned up need not be reported.
     """
 
     error: Exception
@@ -52,13 +53,15 @@ type RequirementAcquireResult[T] = (
 class ResourceDriver(Protocol[RequirementT, PhysicalResourceT]):
     """Perform synchronous physical I/O for individual requirements.
 
-    ``acquire`` handles one requirement and reports every resource created before its
-    terminal result; it does not roll back resources on failure or interruption. A
-    non-``Exception`` control-flow interruption that occurs after resource creation
-    must be returned as ``RequirementAcquireInterrupted`` so lifecycle ownership can
-    be recorded before the interruption is re-raised. ``cleanup`` may be retried with
-    the same resources after raising and must tolerate members that were already
-    cleaned up by an earlier attempt.
+    ``acquire`` handles one requirement and reports every resource whose ownership is
+    transferred to the lifecycle. A driver may synchronously discard temporary
+    resources before returning, but any resource whose cleanup cannot be confirmed
+    must be reported in the terminal result. A non-``Exception`` control-flow
+    interruption that leaves retained resources must be returned as
+    ``RequirementAcquireInterrupted`` so lifecycle ownership can be recorded before
+    the interruption is re-raised. ``cleanup`` may be retried with the same resources
+    after raising and must tolerate members that were already cleaned up by an earlier
+    attempt.
     """
 
     def acquire(

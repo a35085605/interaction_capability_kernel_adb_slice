@@ -1,23 +1,23 @@
 from __future__ import annotations
 
-import os
-from typing import Any
+from typing import Generic, TypeVar
 
 from lifecycle.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
     RequirementAcquireResult,
+    ResourceDriver,
 )
-from lifecycle.resource.manager import ResolvedResourceProvider
-from adb.adapters.server_process.posix import (
-    AospAdbServerProcessDriver,
-    AospAdbServerStartError,
-)
+from lifecycle.resource.provider import ResolvedResourceProvider
+from adb.adapters.server_process.errors import AospAdbServerStartError
 from adb.server.coordinator import AdbServerLifecycleCoordinator
 from adb.server.error import AdbServerAcquireError
 from adb.server.generation import AdbServerGenerationIssuer
 from adb.server.request import AdbServerRequest
 from networking import TcpEndpoint
+
+
+PhysicalResourceT = TypeVar("PhysicalResourceT")
 
 
 class _AdbServerSubprocessRequirementsResolver:
@@ -29,17 +29,20 @@ class _AdbServerSubprocessRequirementsResolver:
         return (request.server_endpoint,)
 
 
-class _AdbServerDomainDriver:
-    """Translate AOSP server-process failures into server-domain acquisition errors."""
+class _AdbServerDomainDriver(Generic[PhysicalResourceT]):
+    """Translate platform process-driver failures into server-domain acquisition errors."""
 
-    def __init__(self, driver: Any) -> None:
+    def __init__(self, driver: ResourceDriver[TcpEndpoint, PhysicalResourceT]) -> None:
         if not callable(getattr(driver, "acquire", None)):
             raise TypeError("driver must provide acquire()")
         if not callable(getattr(driver, "cleanup", None)):
             raise TypeError("driver must provide cleanup()")
         self._driver = driver
 
-    def acquire(self, server_endpoint: TcpEndpoint) -> RequirementAcquireResult[Any]:
+    def acquire(
+        self,
+        server_endpoint: TcpEndpoint,
+    ) -> RequirementAcquireResult[PhysicalResourceT]:
         outcome = self._driver.acquire(server_endpoint)
         if (
             isinstance(outcome, RequirementAcquireFailed)
@@ -51,49 +54,40 @@ class _AdbServerDomainDriver:
             )
         return outcome
 
-    def cleanup(self, resources: PhysicalResources[Any]) -> None:
+    def cleanup(self, resources: PhysicalResources[PhysicalResourceT]) -> None:
         self._driver.cleanup(resources)
 
 
-class AdbServerProcessLifecycle(AdbServerLifecycleCoordinator[Any]):
-    """Adapt an owned AOSP ADB server process into the server capability lifecycle."""
+class AdbServerProcessLifecycle(
+    AdbServerLifecycleCoordinator[PhysicalResourceT],
+    Generic[PhysicalResourceT],
+):
+    """Adapt one explicitly supplied server-process driver into the server lifecycle.
+
+    Platform selection and driver construction intentionally live in the runtime
+    composition root. This adapter only translates the process driver's requirement
+    and failure model into the server-domain lifecycle contract.
+    """
 
     def __init__(
         self,
         generation_issuer: AdbServerGenerationIssuer,
-        *,
-        executable: str = "adb",
-        startup_timeout_seconds: float = 5.0,
-        shutdown_timeout_seconds: float = 5.0,
-        probe_interval_seconds: float = 0.05,
-        _factory: Any | None = None,
+        driver: ResourceDriver[TcpEndpoint, PhysicalResourceT],
     ) -> None:
-        if _factory is None:
-            if os.name == "nt":
-                from adb.adapters.server_process.windows import (
-                    WindowsAospAdbServerProcessDriver,
-                )
-
-                _factory = WindowsAospAdbServerProcessDriver(
-                    executable=executable,
-                    startup_timeout_seconds=startup_timeout_seconds,
-                    shutdown_timeout_seconds=shutdown_timeout_seconds,
-                    probe_interval_seconds=probe_interval_seconds,
-                )
-            else:
-                _factory = AospAdbServerProcessDriver(
-                    executable=executable,
-                    startup_timeout_seconds=startup_timeout_seconds,
-                    shutdown_timeout_seconds=shutdown_timeout_seconds,
-                    probe_interval_seconds=probe_interval_seconds,
-                )
-
-        self._factory = _factory
+        if not callable(getattr(driver, "acquire", None)):
+            raise TypeError("driver must provide acquire()")
+        if not callable(getattr(driver, "cleanup", None)):
+            raise TypeError("driver must provide cleanup()")
+        self._driver = driver
         resource_provider = ResolvedResourceProvider(
             _AdbServerSubprocessRequirementsResolver(),
-            _AdbServerDomainDriver(_factory),
+            _AdbServerDomainDriver(driver),
         )
         super().__init__(generation_issuer, resource_provider)
+
+    @property
+    def driver(self) -> ResourceDriver[TcpEndpoint, PhysicalResourceT]:
+        return self._driver
 
 
 __all__ = ["AdbServerProcessLifecycle"]

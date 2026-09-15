@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from adb.runtime.server.mutation import AdbServerMutationFacade
+from adb.runtime.server.mutation import AdbServerCommands
 from adb.server.snapshot import AdbServerSnapshot, AdbServerSnapshotReader
 
 
@@ -25,13 +25,19 @@ class AdbServerRuntime:
     """Public Runtime surface for one ADB server ownership scope."""
 
     snapshot: AdbServerSnapshotReader
-    mutations: AdbServerMutationFacade
+    mutations: AdbServerCommands
 
     def __post_init__(self) -> None:
         if not isinstance(self.snapshot, AdbServerSnapshotReader):
             raise TypeError("snapshot must satisfy AdbServerSnapshotReader")
-        if not isinstance(self.mutations, AdbServerMutationFacade):
-            raise TypeError("mutations must be AdbServerMutationFacade")
+        if not isinstance(self.mutations, AdbServerCommands):
+            raise TypeError("mutations must be AdbServerCommands")
+
+    @property
+    def commands(self) -> AdbServerCommands:
+        """Preferred command-oriented name for the historical ``mutations`` surface."""
+
+        return self.mutations
 
 
 def _snapshot_reader(reader: AdbServerSnapshotReader) -> AdbServerSnapshotReader:

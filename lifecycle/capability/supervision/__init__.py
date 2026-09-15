@@ -4,6 +4,11 @@ from lifecycle.capability.supervision.acquire import (
     AcquireSupervisionResult,
     AcquireSupervisor,
 )
+from lifecycle.capability.supervision.control import (
+    CancellationSignal,
+    SupervisionStopped,
+    SupervisionStopReason,
+)
 from lifecycle.capability.supervision.policy import (
     AcquireSupervisionPolicy,
     ReleaseSupervisionPolicy,
@@ -17,7 +22,10 @@ __all__ = [
     "AcquireSupervisionPolicy",
     "AcquireSupervisionResult",
     "AcquireSupervisor",
+    "CancellationSignal",
     "ReleaseSupervisionPolicy",
     "ReleaseSupervisionResult",
     "ReleaseSupervisor",
+    "SupervisionStopped",
+    "SupervisionStopReason",
 ]

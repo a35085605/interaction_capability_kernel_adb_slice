@@ -1,23 +1,4 @@
-"""ADB transport lifecycle control contracts and typed command results."""
+"""Compatibility re-export for ``adb.transport.control``."""
 
-from adb.transport.lifecycle.control.port import AdbTcpTransportController
-from adb.transport.lifecycle.control.result import (
-    AdbTcpTransportConnectCommandSucceeded,
-    AdbTcpTransportConnectResult,
-    AdbTcpTransportControlFailed,
-    AdbTcpTransportControlFailure,
-    AdbTcpTransportControlTimedOut,
-    AdbTcpTransportDisconnectCommandSucceeded,
-    AdbTcpTransportDisconnectResult,
-)
-
-__all__ = [
-    "AdbTcpTransportConnectCommandSucceeded",
-    "AdbTcpTransportConnectResult",
-    "AdbTcpTransportControlFailed",
-    "AdbTcpTransportControlFailure",
-    "AdbTcpTransportController",
-    "AdbTcpTransportControlTimedOut",
-    "AdbTcpTransportDisconnectCommandSucceeded",
-    "AdbTcpTransportDisconnectResult",
-]
+from adb.transport.control import *  # noqa: F403
+from adb.transport.control import __all__

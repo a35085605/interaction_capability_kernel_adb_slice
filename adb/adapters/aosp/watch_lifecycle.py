@@ -9,12 +9,10 @@ from lifecycle.resource.driver import (
     RequirementAcquireFailed,
     RequirementAcquireResult,
 )
-from lifecycle.resource.manager import ResolvedResourceProvider
+from lifecycle.resource.provider import ResolvedResourceProvider
 from adb.adapters.aosp.track_devices import to_transport_list
-from adb.aosp.io.track_devices import (
-    AospTrackDevicesSession,
-    AospTrackDevicesSessionDriver,
-)
+from adb.adapters.aosp.track_devices_session import AospTrackDevicesSessionDriver
+from adb.aosp.io.track_devices import AospTrackDevicesSession
 from adb.errors import (
     AdbProtocolError,
     AdbServerConnectionError,

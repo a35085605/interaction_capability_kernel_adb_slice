@@ -13,7 +13,7 @@ from adb.transport.model import (
     AdbTransportKind,
     AdbTransportState,
 )
-from adb.transport.lifecycle import (
+from adb.transport.control import (
     AdbTcpTransportConnectCommandSucceeded,
     AdbTcpTransportConnectResult,
     AdbTcpTransportControlFailed,

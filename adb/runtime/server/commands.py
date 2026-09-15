@@ -1,19 +1,10 @@
-"""Runtime composition, availability supervision, and command surface for ADB server."""
+"""Caller-facing ADB server commands.
 
-from adb.runtime.server.availability import (
-    AdbServerAvailabilityConflict,
-    AdbServerAvailabilityFailed,
-    AdbServerAvailabilityIncomplete,
-    AdbServerAvailabilityPolicy,
-    AdbServerAvailabilityResult,
-    AdbServerAvailabilitySupervisor,
-    AdbServerAvailable,
-)
-from adb.runtime.server.bootstrap import (
-    bootstrap_adb_server_runtime,
-    create_adb_server_runtime,
-)
-from adb.runtime.server.commands import (
+The historical ``mutation`` module remains available for compatibility; new callers
+should prefer this command-oriented import path.
+"""
+
+from adb.runtime.server.mutation import (
     AdbServerActivateAlreadyActive,
     AdbServerActivateConflict,
     AdbServerActivateFailed,
@@ -29,17 +20,9 @@ from adb.runtime.server.commands import (
     AdbServerDeactivateSucceeded,
     AdbServerMutationFacade,
 )
-from adb.runtime.server.runtime import AdbServerRuntime
 
 
 __all__ = [
-    "AdbServerAvailabilityConflict",
-    "AdbServerAvailabilityFailed",
-    "AdbServerAvailabilityIncomplete",
-    "AdbServerAvailabilityPolicy",
-    "AdbServerAvailabilityResult",
-    "AdbServerAvailabilitySupervisor",
-    "AdbServerAvailable",
     "AdbServerActivateAlreadyActive",
     "AdbServerActivateConflict",
     "AdbServerActivateFailed",
@@ -54,7 +37,4 @@ __all__ = [
     "AdbServerDeactivateResult",
     "AdbServerDeactivateSucceeded",
     "AdbServerMutationFacade",
-    "AdbServerRuntime",
-    "bootstrap_adb_server_runtime",
-    "create_adb_server_runtime",
 ]

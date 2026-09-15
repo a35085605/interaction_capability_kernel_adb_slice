@@ -20,9 +20,10 @@ class ResourceRequirementsResolver(Protocol[RequestT, RequirementT]):
 class ResourceProvider(Protocol[RequestT, PhysicalResourceT]):
     """Provide request-level physical-resource acquisition and release.
 
-    ``acquire`` must report every acquired resource that still requires cleanup,
-    including resources created before a terminal failure. A caller may retain those
-    resources and release them later rather than rolling them back immediately.
+    ``acquire`` must report every resource whose ownership has been transferred and
+    that still requires cleanup. Resources that were temporary and conclusively
+    cleaned up before the result is returned are not transferred. A caller retains
+    the reported resources and releases them later.
 
     ``release`` may be retried with the same resource tuple after raising. Implementations
     must therefore tolerate resources that were already cleaned up by an earlier attempt

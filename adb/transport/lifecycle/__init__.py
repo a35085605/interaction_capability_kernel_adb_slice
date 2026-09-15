@@ -1,23 +1,7 @@
-"""ADB transport lifecycle control and TCP readiness recovery."""
+"""Compatibility transport lifecycle namespace.
 
-from adb.transport.lifecycle.control import (
-    AdbTcpTransportConnectCommandSucceeded,
-    AdbTcpTransportConnectResult,
-    AdbTcpTransportControlFailed,
-    AdbTcpTransportControlFailure,
-    AdbTcpTransportController,
-    AdbTcpTransportControlTimedOut,
-    AdbTcpTransportDisconnectCommandSucceeded,
-    AdbTcpTransportDisconnectResult,
-)
+Explicit connect/disconnect commands now live in ``adb.transport.control``.
+"""
 
-__all__ = [
-    "AdbTcpTransportConnectCommandSucceeded",
-    "AdbTcpTransportConnectResult",
-    "AdbTcpTransportControlFailed",
-    "AdbTcpTransportControlFailure",
-    "AdbTcpTransportController",
-    "AdbTcpTransportControlTimedOut",
-    "AdbTcpTransportDisconnectCommandSucceeded",
-    "AdbTcpTransportDisconnectResult",
-]
+from adb.transport.control import *  # noqa: F403
+from adb.transport.control import __all__

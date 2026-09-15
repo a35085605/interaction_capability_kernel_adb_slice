@@ -1,20 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from math import isfinite
 from numbers import Real
 import socket
 from threading import Lock
 from time import monotonic
 
-from lifecycle.resource.cleanup import cleanup_reverse
-from lifecycle.resource.driver import (
-    PhysicalResources,
-    RequirementAcquireFailed,
-    RequirementAcquireInterrupted,
-    RequirementAcquireResult,
-    RequirementAcquireSucceeded,
-)
 from adb._deadline import Deadline
 from adb._resolution import DeadlineResolver
 from adb.aosp.io._smart_socket_protocol import (
@@ -110,26 +103,6 @@ def _handshake(
         lambda size: _recv_exact(sock, size, deadline=resolved_deadline),
         rejection_detail="ADB server rejected track-devices",
     )
-
-
-def _failed_session_acquire(
-    session: "AospTrackDevicesSession",
-    error: BaseException,
-) -> (
-    RequirementAcquireFailed[AospTrackDevicesSession]
-    | RequirementAcquireInterrupted[AospTrackDevicesSession]
-):
-    retained: tuple[AospTrackDevicesSession, ...] = ()
-    try:
-        session.close()
-    except BaseException as close_error:
-        retained = (session,)
-        if not isinstance(close_error, Exception):
-            return RequirementAcquireInterrupted(close_error, retained)
-
-    if not isinstance(error, Exception):
-        return RequirementAcquireInterrupted(error, retained)
-    return RequirementAcquireFailed(error, retained)
 
 
 def _default_client_factory(server_endpoint: TcpEndpoint) -> AdbServiceClient:
@@ -239,8 +212,52 @@ class AospTrackDevicesSession:
             self._closed = True
 
 
-class AospTrackDevicesSessionDriver:
-    """Acquire initialized track-devices sessions and clean them up synchronously."""
+@dataclass(frozen=True, slots=True)
+class AospTrackDevicesSessionOpenFailed:
+    """Raw AOSP session-open failure with any socket ownership that remains unresolved."""
+
+    error: BaseException
+    retained_session: AospTrackDevicesSession | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.error, BaseException):
+            raise TypeError("error must be a BaseException")
+        if self.retained_session is not None and not isinstance(
+            self.retained_session, AospTrackDevicesSession
+        ):
+            raise TypeError("retained_session must be AospTrackDevicesSession or None")
+
+
+AospTrackDevicesSessionOpenResult = (
+    AospTrackDevicesSession | AospTrackDevicesSessionOpenFailed
+)
+
+
+def _failed_session_open(
+    session: AospTrackDevicesSession,
+    error: BaseException,
+) -> AospTrackDevicesSessionOpenFailed:
+    """Close uncommitted session state and retain it only when cleanup is unconfirmed."""
+
+    try:
+        session.close()
+    except BaseException as close_error:
+        # A cleanup interruption supersedes the original operation: it is the reason
+        # ownership could not be discharged synchronously.
+        if not isinstance(close_error, Exception):
+            return AospTrackDevicesSessionOpenFailed(close_error, session)
+        return AospTrackDevicesSessionOpenFailed(error, session)
+    return AospTrackDevicesSessionOpenFailed(error)
+
+
+class AospTrackDevicesSessionOpener:
+    """Open one initialized raw AOSP track-devices session.
+
+    This low-level object knows how to resolve, connect, handshake, initialize and
+    synchronously discard temporary sessions. It deliberately does not implement the
+    project's lifecycle ``ResourceDriver`` contract; adapter code decides how a raw
+    open result maps into lifecycle ownership.
+    """
 
     def __init__(
         self,
@@ -257,11 +274,8 @@ class AospTrackDevicesSessionDriver:
         self._socket_factory = _socket_factory
         self._clock = _clock
 
-    def acquire(
-        self,
-        server_endpoint: TcpEndpoint,
-    ) -> RequirementAcquireResult[AospTrackDevicesSession]:
-        """Create one initialized session and report retained cleanup debt on failure."""
+    def open(self, server_endpoint: TcpEndpoint) -> AospTrackDevicesSessionOpenResult:
+        """Open one session, returning only cleanup debt that could not be discharged."""
 
         if not isinstance(server_endpoint, TcpEndpoint):
             raise TypeError("server_endpoint must be TcpEndpoint")
@@ -276,18 +290,19 @@ class AospTrackDevicesSessionDriver:
             )
         except Exception as exc:
             if isinstance(exc, AdbTimeoutError):
-                return RequirementAcquireFailed(exc, ())
+                return AospTrackDevicesSessionOpenFailed(exc)
             if isinstance(exc, OSError):
                 error = AdbServerConnectionError(
                     f"failed to resolve ADB server address {server_endpoint.host!r}: {exc}"
                 )
-                return RequirementAcquireFailed(error, ())
-            return RequirementAcquireFailed(exc, ())
+                return AospTrackDevicesSessionOpenFailed(error)
+            return AospTrackDevicesSessionOpenFailed(exc)
 
         if not addresses:
-            return RequirementAcquireFailed(
-                AdbServerConnectionError("ADB server address resolution returned no candidates"),
-                (),
+            return AospTrackDevicesSessionOpenFailed(
+                AdbServerConnectionError(
+                    "ADB server address resolution returned no candidates"
+                )
             )
 
         last_error: Exception | None = None
@@ -315,13 +330,13 @@ class AospTrackDevicesSessionDriver:
                 _set_deadline_timeout(sock, deadline)
                 sock.connect(sockaddr)
             except OSError as exc:
-                outcome = _failed_session_acquire(session, exc)
-                if outcome.resources:
+                outcome = _failed_session_open(session, exc)
+                if outcome.retained_session is not None:
                     return outcome
                 last_error = exc
                 continue
             except BaseException as exc:
-                return _failed_session_acquire(session, exc)
+                return _failed_session_open(session, exc)
 
             try:
                 _handshake(sock, deadline)
@@ -329,33 +344,20 @@ class AospTrackDevicesSessionDriver:
                 sock.settimeout(None)
                 session.initialize(initial)
             except BaseException as exc:
-                return _failed_session_acquire(session, exc)
+                return _failed_session_open(session, exc)
 
-            return RequirementAcquireSucceeded((session,))
+            return session
 
         detail = str(last_error) if last_error is not None else "no address candidate succeeded"
-        return RequirementAcquireFailed(
-            AdbServerConnectionError(f"failed to connect to ADB server: {detail}"),
-            (),
+        return AospTrackDevicesSessionOpenFailed(
+            AdbServerConnectionError(f"failed to connect to ADB server: {detail}")
         )
-
-    def cleanup(
-        self,
-        resources: PhysicalResources[AospTrackDevicesSession],
-    ) -> None:
-        """Close every retained session, tolerating retries after partial cleanup."""
-
-        cleanup_reverse(resources, self._close_session)
-
-    @staticmethod
-    def _close_session(resource: AospTrackDevicesSession) -> None:
-        if not isinstance(resource, AospTrackDevicesSession):
-            raise TypeError("resources must contain only AospTrackDevicesSession values")
-        resource.close()
 
 
 __all__ = [
     "AospTrackDevicesSession",
-    "AospTrackDevicesSessionDriver",
+    "AospTrackDevicesSessionOpenFailed",
+    "AospTrackDevicesSessionOpenResult",
+    "AospTrackDevicesSessionOpener",
     "SmartSocketAospTrackDevicesReader",
 ]

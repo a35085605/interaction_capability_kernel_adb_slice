@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from time import sleep
+from time import monotonic, sleep
 from typing import TypeAlias
 
 from lifecycle.capability.supervision.acquire import AcquireSupervisor
+from lifecycle.capability.supervision.control import (
+    CancellationSignal,
+    Clock,
+    SupervisionStopped,
+)
 from lifecycle.capability.supervision.policy import (
     AcquireSupervisionPolicy,
     ReleaseSupervisionPolicy,
@@ -39,6 +44,7 @@ AdbTransportListWatchAcquireSupervisionResult: TypeAlias = (
     | AdbTransportListWatchAcquireReleaseRequired
     | AdbTransportListWatchGenerationMismatch
     | AdbTransportListWatchAcquireRequestMismatch
+    | SupervisionStopped
 )
 
 AdbTransportListWatchReleaseSupervisionResult: TypeAlias = (
@@ -46,6 +52,7 @@ AdbTransportListWatchReleaseSupervisionResult: TypeAlias = (
     | AdbTransportListWatchReleaseAlreadyIdle
     | AdbTransportListWatchGenerationMismatch
     | AdbTransportListWatchReleaseRequestMismatch
+    | SupervisionStopped
 )
 
 
@@ -66,6 +73,7 @@ class AdbTransportListWatchAcquireSupervisor(
             AdbTransportListWatchAcquireSupervisionPolicy()
         ),
         _sleeper: _Sleeper = sleep,
+        _clock: Clock = monotonic,
     ) -> None:
         if not isinstance(lifecycle, AdbTransportListWatchLifecycle):
             raise TypeError("lifecycle must satisfy AdbTransportListWatchLifecycle")
@@ -73,7 +81,7 @@ class AdbTransportListWatchAcquireSupervisor(
             raise TypeError(
                 "policy must be AdbTransportListWatchAcquireSupervisionPolicy"
             )
-        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper)
+        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper, _clock=_clock)
 
     @property
     def lifecycle(self) -> AdbTransportListWatchLifecycle:
@@ -87,13 +95,21 @@ class AdbTransportListWatchAcquireSupervisor(
         self,
         generation: AdbTransportListWatchGeneration,
         request: AdbTransportListWatchRequest,
+        *,
+        timeout_seconds: float | None = None,
+        cancellation: CancellationSignal | None = None,
     ) -> AdbTransportListWatchAcquireSupervisionResult:
         if not isinstance(generation, AdbTransportListWatchGeneration):
             raise TypeError("generation must be AdbTransportListWatchGeneration")
         if not isinstance(request, AdbTransportListWatchRequest):
             raise TypeError("request must be AdbTransportListWatchRequest")
 
-        result = super().supervise(generation, request)
+        result = super().supervise(
+            generation,
+            request,
+            timeout_seconds=timeout_seconds,
+            cancellation=cancellation,
+        )
         if isinstance(result, AdbTransportListWatchGenerationMismatch):
             if not isinstance(
                 result.current_generation,
@@ -127,6 +143,7 @@ class AdbTransportListWatchReleaseSupervisor(
             AdbTransportListWatchReleaseSupervisionPolicy()
         ),
         _sleeper: _Sleeper = sleep,
+        _clock: Clock = monotonic,
     ) -> None:
         if not isinstance(lifecycle, AdbTransportListWatchLifecycle):
             raise TypeError("lifecycle must satisfy AdbTransportListWatchLifecycle")
@@ -134,7 +151,7 @@ class AdbTransportListWatchReleaseSupervisor(
             raise TypeError(
                 "policy must be AdbTransportListWatchReleaseSupervisionPolicy"
             )
-        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper)
+        super().__init__(lifecycle, policy=policy, _sleeper=_sleeper, _clock=_clock)
 
     @property
     def lifecycle(self) -> AdbTransportListWatchLifecycle:
@@ -148,12 +165,20 @@ class AdbTransportListWatchReleaseSupervisor(
         self,
         generation: AdbTransportListWatchGeneration,
         request: AdbTransportListWatchRequest,
+        *,
+        timeout_seconds: float | None = None,
+        cancellation: CancellationSignal | None = None,
     ) -> AdbTransportListWatchReleaseSupervisionResult:
         if not isinstance(generation, AdbTransportListWatchGeneration):
             raise TypeError("generation must be AdbTransportListWatchGeneration")
         if not isinstance(request, AdbTransportListWatchRequest):
             raise TypeError("request must be AdbTransportListWatchRequest")
-        return super().supervise(generation, request)
+        return super().supervise(
+            generation,
+            request,
+            timeout_seconds=timeout_seconds,
+            cancellation=cancellation,
+        )
 
 
 __all__ = [
