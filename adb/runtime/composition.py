@@ -6,7 +6,7 @@ from typing import cast
 from lifecycle.resource.driver import ResourceDriver
 from adb.adapters.server_process.lifecycle import AdbServerProcessLifecycle
 from adb.runtime.server.bootstrap import create_adb_server_runtime
-from adb.runtime.server.mutation import AdbServerCommandPolicy
+from adb.runtime.server.commands import AdbServerCommandPolicy
 from adb.runtime.server.runtime import AdbServerRuntime
 from adb.server.generation import AdbServerGenerationIssuer
 from adb.server.lifecycle import AdbServerLifecycle

@@ -4,7 +4,7 @@ from collections.abc import Callable
 from time import monotonic, sleep
 
 from lifecycle.capability.supervision.control import Clock
-from adb.runtime.server.mutation import AdbServerCommandPolicy, AdbServerCommands
+from adb.runtime.server.commands import AdbServerCommandPolicy, AdbServerCommands
 from adb.runtime.server.runtime import AdbServerRuntime, _snapshot_reader
 from adb.server.generation import AdbServerGenerationIssuer
 from adb.server.lifecycle import AdbServerLifecycle, AdbServerLifecycleFactory
@@ -34,7 +34,7 @@ def create_adb_server_runtime(
 
     return AdbServerRuntime(
         snapshot=_snapshot_reader(lifecycle),
-        mutations=AdbServerCommands(
+        commands=AdbServerCommands(
             lifecycle,
             policy=command_policy,
             _sleeper=_sleeper,
@@ -43,8 +43,4 @@ def create_adb_server_runtime(
     )
 
 
-# Compatibility name retained for callers of the original API.
-bootstrap_adb_server_runtime = create_adb_server_runtime
-
-
-__all__ = ["bootstrap_adb_server_runtime", "create_adb_server_runtime"]
+__all__ = ["create_adb_server_runtime"]

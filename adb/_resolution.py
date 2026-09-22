@@ -30,23 +30,18 @@ class DeadlineResolver:
     The underlying resolver itself cannot be forcibly stopped. A completed lookup is not cached.
     """
 
-    def __init__(
-        self, resolver: Callable[..., list[tuple]], clock: Callable[[], float]
-    ) -> None:
+    def __init__(self, resolver: Callable[..., list[tuple]]) -> None:
         self._resolver = resolver
-        self._clock = clock
         self._lock = Lock()
         self._pending: _Resolution | None = None
 
     def _remaining(
         self,
-        deadline: Deadline | float,
+        deadline: Deadline,
         cancellation: Event | None,
     ) -> float:
         if cancellation is not None and cancellation.is_set():
             raise AddressResolutionCancelled
-        if not isinstance(deadline, Deadline):
-            deadline = Deadline.at(deadline, self._clock)
         remaining = deadline.remaining()
         if remaining <= 0:
             raise AdbTimeoutError("ADB address resolution timed out")
@@ -57,11 +52,9 @@ class DeadlineResolver:
         host: str,
         port: int,
         *,
-        deadline: Deadline | float,
+        deadline: Deadline,
         cancellation: Event | None,
     ) -> list[tuple]:
-        if not isinstance(deadline, Deadline):
-            deadline = Deadline.at(deadline, self._clock)
         key = (host, port)
         while True:
             self._remaining(deadline, cancellation)

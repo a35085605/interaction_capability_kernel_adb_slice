@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from threading import Lock
 
-from adb.transport_list.generation import AdbTransportListGenerationIssuer
+from adb.transport_list.revision import AdbTransportListRevisionIssuer
 from adb.transport_list.model import AdbTransportList
 from adb.transport_list.state import (
     AdbTransportListState,
@@ -13,7 +13,7 @@ from adb.transport_list.state import (
 class AdbTransportListStateStore(AdbTransportListStateAuthority):
     """Thread-safe authority for transport-list projection state.
 
-    The store advances its own generation only when the visible projection changes.
+    The store advances its own revision only when the visible projection changes.
     Repeating an equal update or clearing an already-unavailable projection is
     idempotent and returns the existing state.
     """
@@ -24,11 +24,11 @@ class AdbTransportListStateStore(AdbTransportListStateAuthority):
 
         self._lock = Lock()
         if initial is None:
-            self._generation_issuer = AdbTransportListGenerationIssuer()
-            self._state = AdbTransportListState(self._generation_issuer.issue())
+            self._revision_issuer = AdbTransportListRevisionIssuer()
+            self._state = AdbTransportListState(self._revision_issuer.issue())
         else:
-            self._generation_issuer = AdbTransportListGenerationIssuer(
-                after=initial.generation
+            self._revision_issuer = AdbTransportListRevisionIssuer(
+                after=initial.revision
             )
             self._state = initial
 
@@ -45,7 +45,7 @@ class AdbTransportListStateStore(AdbTransportListStateAuthority):
             if current.transport_list == transport_list:
                 return current
             next_state = AdbTransportListState(
-                generation=self._generation_issuer.issue(),
+                revision=self._revision_issuer.issue(),
                 transport_list=transport_list,
             )
             self._state = next_state
@@ -57,7 +57,7 @@ class AdbTransportListStateStore(AdbTransportListStateAuthority):
             if current.transport_list is None:
                 return current
             next_state = AdbTransportListState(
-                generation=self._generation_issuer.issue(),
+                revision=self._revision_issuer.issue(),
                 transport_list=None,
             )
             self._state = next_state

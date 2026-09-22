@@ -25,9 +25,7 @@ from adb.runtime.server import (
     AdbServerDeactivateIncomplete,
     AdbServerDeactivateResult,
     AdbServerDeactivateSucceeded,
-    AdbServerMutationFacade,
     AdbServerRuntime,
-    bootstrap_adb_server_runtime,
     create_adb_server_runtime,
 )
 
@@ -53,9 +51,7 @@ __all__ = [
     "AdbServerDeactivateIncomplete",
     "AdbServerDeactivateResult",
     "AdbServerDeactivateSucceeded",
-    "AdbServerMutationFacade",
     "AdbServerRuntime",
-    "bootstrap_adb_server_runtime",
     "create_adb_server_process_lifecycle",
     "create_adb_server_runtime",
     "create_owned_adb_server_runtime",

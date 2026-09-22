@@ -366,9 +366,8 @@ class WindowsAospAdbServerProcessDriver:
         server_endpoint: TcpEndpoint,
         owned_process: WindowsOwnedProcess,
         *,
-        deadline: Deadline | float,
+        deadline: Deadline,
     ) -> None:
-        deadline = self._coerce_deadline(deadline)
         while True:
             self._check_startup(deadline)
             if owned_process.poll() is not None:
@@ -399,11 +398,10 @@ class WindowsAospAdbServerProcessDriver:
 
     def _sleep_until_retry(
         self,
-        deadline: Deadline | float,
+        deadline: Deadline,
         *,
         last_error: AdbError | None = None,
     ) -> None:
-        deadline = self._coerce_deadline(deadline)
         wait_seconds = deadline.clamp(self.probe_interval_seconds)
         if wait_seconds <= 0.0:
             suffix = f": {last_error}" if last_error is not None else ""
@@ -412,13 +410,8 @@ class WindowsAospAdbServerProcessDriver:
             )
         self._sleep(wait_seconds)
 
-    def _coerce_deadline(self, deadline: Deadline | float) -> Deadline:
-        if isinstance(deadline, Deadline):
-            return deadline
-        return Deadline.at(deadline, self._monotonic)
-
-    def _check_startup(self, deadline: Deadline | float) -> None:
-        if self._coerce_deadline(deadline).expired():
+    def _check_startup(self, deadline: Deadline) -> None:
+        if deadline.expired():
             raise _WindowsAospAdbServerStartError("ADB server startup timed out")
 
 

@@ -1,8 +1,6 @@
 """ADB transport-list values, resolution, projection state, readers, queries, and watch authority."""
 
-from adb.transport_list.generation import (
-    AdbTransportListGeneration,
-    AdbTransportListGenerationIssuer,
+from adb.transport_list.revision import (
     AdbTransportListRevision,
     AdbTransportListRevisionIssuer,
 )
@@ -13,7 +11,6 @@ from adb.transport_list.state import (
     AdbTransportListState,
     AdbTransportListStateAuthority,
     AdbTransportListStateReader,
-    AdbTransportListStateView,
     AdbTransportListStateWriter,
 )
 from adb.transport_list.store import AdbTransportListStateStore
@@ -44,8 +41,6 @@ from adb.transport_list.watch import (
 
 __all__ = [
     "AdbTransportList",
-    "AdbTransportListGeneration",
-    "AdbTransportListGenerationIssuer",
     "AdbTransportListRevision",
     "AdbTransportListRevisionIssuer",
     "AdbTransportListReader",
@@ -53,7 +48,6 @@ __all__ = [
     "AdbTransportListStateAuthority",
     "AdbTransportListStateStore",
     "AdbTransportListStateReader",
-    "AdbTransportListStateView",
     "AdbTransportListStateWriter",
     "AdbTransportListWatchAcquireAlreadyActive",
     "AdbTransportListWatchAcquireFailed",

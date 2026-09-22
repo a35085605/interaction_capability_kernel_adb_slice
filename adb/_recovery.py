@@ -6,11 +6,10 @@ from enum import Enum, auto
 import math
 from numbers import Real
 from random import random
-from typing import Generic, TypeAlias, TypeVar
+from typing import TypeAlias
 
 
 RandomSource = Callable[[], float]
-CauseT = TypeVar("CauseT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,14 +96,8 @@ class RecoveryOutcome(Enum):
     """Domain-neutral outcome of one completed recovery attempt."""
 
     SUCCEEDED = auto()
-    # Compatibility name retained for the original acquisition-oriented API.
-    ACQUIRED = SUCCEEDED
     DEFERRED = auto()
     FAILED = auto()
-
-
-# Compatibility alias for callers of the original acquisition-oriented API.
-RecoveryAttemptOutcome = RecoveryOutcome
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,30 +111,6 @@ class RecoveryAttempt:
 @dataclass(frozen=True, slots=True)
 class RecoverySucceeded:
     """Terminal retry decision after recovery reports usable access."""
-
-
-# Compatibility alias for callers of the original acquisition-oriented API.
-RecoveryAcquired = RecoverySucceeded
-
-
-@dataclass(frozen=True, slots=True)
-class RecoveryFailed(Generic[CauseT]):
-    """Compatibility result carrying a domain failure after retry exhaustion.
-
-    New retry-controller users should keep domain causes in their own result model and
-    use ``RecoveryExhausted`` only as the domain-neutral terminal retry decision.
-    """
-
-    failed_attempts: int
-    cause: CauseT
-
-    def __post_init__(self) -> None:
-        if isinstance(self.failed_attempts, bool) or not isinstance(self.failed_attempts, int):
-            raise TypeError("failed_attempts must be an integer")
-        if self.failed_attempts <= 0:
-            raise ValueError("failed_attempts must be greater than zero")
-        if self.cause is None:
-            raise TypeError("cause cannot be None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,20 +205,11 @@ class RecoveryRetryController:
         return max(base * factor, 1e-6)
 
 
-# Compatibility alias for the original name. The implementation is now explicitly a
-# retry controller; domain supervisors own the actual recovery orchestration.
-RecoveryDecisionCore = RecoveryRetryController
-
-
 __all__ = [
     "RandomSource",
-    "RecoveryAcquired",
     "RecoveryAttempt",
-    "RecoveryAttemptOutcome",
     "RecoveryDecision",
-    "RecoveryDecisionCore",
     "RecoveryExhausted",
-    "RecoveryFailed",
     "RecoveryOutcome",
     "RecoveryRetryConfiguration",
     "RecoveryRetryController",

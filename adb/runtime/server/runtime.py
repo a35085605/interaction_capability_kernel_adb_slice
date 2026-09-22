@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from adb.runtime.server.mutation import AdbServerCommands
+from adb.runtime.server.commands import AdbServerCommands
 from adb.server.snapshot import AdbServerSnapshot, AdbServerSnapshotReader
 
 
 class _AdbServerRuntimeSnapshotReader:
-    """Expose the server lifecycle read side without exposing lifecycle mutations."""
+    """Expose the server lifecycle read side without exposing lifecycle commands."""
 
     __slots__ = ("_reader",)
 
@@ -25,19 +25,13 @@ class AdbServerRuntime:
     """Public Runtime surface for one ADB server ownership scope."""
 
     snapshot: AdbServerSnapshotReader
-    mutations: AdbServerCommands
+    commands: AdbServerCommands
 
     def __post_init__(self) -> None:
         if not isinstance(self.snapshot, AdbServerSnapshotReader):
             raise TypeError("snapshot must satisfy AdbServerSnapshotReader")
-        if not isinstance(self.mutations, AdbServerCommands):
-            raise TypeError("mutations must be AdbServerCommands")
-
-    @property
-    def commands(self) -> AdbServerCommands:
-        """Preferred command-oriented name for the historical ``mutations`` surface."""
-
-        return self.mutations
+        if not isinstance(self.commands, AdbServerCommands):
+            raise TypeError("commands must be AdbServerCommands")
 
 
 def _snapshot_reader(reader: AdbServerSnapshotReader) -> AdbServerSnapshotReader:

@@ -38,18 +38,10 @@ def _normalize_startup_timeout(value: object) -> float:
     return timeout
 
 
-def _coerce_deadline(deadline: Deadline | float, clock: _Clock) -> Deadline:
-    if isinstance(deadline, Deadline):
-        return deadline
-    return Deadline.at(deadline, clock)
-
-
 def _set_deadline_timeout(
     sock: socket.socket,
-    deadline: Deadline | float,
-    clock: _Clock = monotonic,
+    deadline: Deadline,
 ) -> None:
-    deadline = _coerce_deadline(deadline, clock)
     remaining = deadline.remaining()
     if remaining <= 0:
         raise AdbTimeoutError("ADB track-devices startup timed out")
@@ -60,14 +52,11 @@ def _recv_exact(
     sock: socket.socket,
     size: int,
     *,
-    deadline: Deadline | float | None = None,
-    clock: _Clock = monotonic,
+    deadline: Deadline | None = None,
 ) -> bytes:
-    resolved_deadline = None if deadline is None else _coerce_deadline(deadline, clock)
-
     def receive(remaining: int) -> bytes:
-        if resolved_deadline is not None:
-            _set_deadline_timeout(sock, resolved_deadline)
+        if deadline is not None:
+            _set_deadline_timeout(sock, deadline)
         return sock.recv(remaining)
 
     return recv_exact(
@@ -81,26 +70,23 @@ def _read_frame(
     sock: socket.socket,
     *,
     context: str = "track-devices record",
-    deadline: Deadline | float | None = None,
-    clock: _Clock = monotonic,
+    deadline: Deadline | None = None,
 ) -> bytes:
     return read_length_prefixed(
-        lambda size: _recv_exact(sock, size, deadline=deadline, clock=clock),
+        lambda size: _recv_exact(sock, size, deadline=deadline),
         context=context,
     )
 
 
 def _handshake(
     sock: socket.socket,
-    deadline: Deadline | float,
-    clock: _Clock = monotonic,
+    deadline: Deadline,
 ) -> None:
-    resolved_deadline = _coerce_deadline(deadline, clock)
-    _set_deadline_timeout(sock, resolved_deadline)
+    _set_deadline_timeout(sock, deadline)
     send_service_request(sock.sendall, TRACK_DEVICES_PROTO_BINARY_SERVICE)
     read_service_response(
         TRACK_DEVICES_PROTO_BINARY_SERVICE,
-        lambda size: _recv_exact(sock, size, deadline=resolved_deadline),
+        lambda size: _recv_exact(sock, size, deadline=deadline),
         rejection_detail="ADB server rejected track-devices",
     )
 
@@ -270,7 +256,7 @@ class AospTrackDevicesSessionOpener:
         if not callable(_resolver) or not callable(_socket_factory) or not callable(_clock):
             raise TypeError("resolver, socket factory, and clock must be callable")
         self.startup_timeout_seconds = _normalize_startup_timeout(startup_timeout_seconds)
-        self._resolver = DeadlineResolver(_resolver, _clock)
+        self._resolver = DeadlineResolver(_resolver)
         self._socket_factory = _socket_factory
         self._clock = _clock
 

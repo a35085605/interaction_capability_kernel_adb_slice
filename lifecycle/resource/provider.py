@@ -128,4 +128,4 @@ class ResolvedResourceProvider(Generic[RequestT, RequirementT, PhysicalResourceT
             self._driver.cleanup(resources)
 
 
-__all__ = ["ResolvedResourceProvider", "ResourceProvider", "ResourceRequirementsResolver"]
+__all__ = ["ResolvedResourceProvider"]

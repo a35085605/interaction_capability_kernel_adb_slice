@@ -10,7 +10,6 @@ from adb.runtime.server.availability import (
     AdbServerAvailable,
 )
 from adb.runtime.server.bootstrap import (
-    bootstrap_adb_server_runtime,
     create_adb_server_runtime,
 )
 from adb.runtime.server.commands import (
@@ -27,7 +26,6 @@ from adb.runtime.server.commands import (
     AdbServerDeactivateIncomplete,
     AdbServerDeactivateResult,
     AdbServerDeactivateSucceeded,
-    AdbServerMutationFacade,
 )
 from adb.runtime.server.runtime import AdbServerRuntime
 
@@ -53,8 +51,6 @@ __all__ = [
     "AdbServerDeactivateIncomplete",
     "AdbServerDeactivateResult",
     "AdbServerDeactivateSucceeded",
-    "AdbServerMutationFacade",
     "AdbServerRuntime",
-    "bootstrap_adb_server_runtime",
     "create_adb_server_runtime",
 ]

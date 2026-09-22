@@ -154,7 +154,7 @@ class AospAdbServerProcessDriver:
         self.shutdown_timeout_seconds = normalize_timeout(shutdown_timeout_seconds)
         self.probe_interval_seconds = _normalize_probe_interval(probe_interval_seconds)
         self._popen_factory = popen_factory
-        self._resolver = DeadlineResolver(resolver, monotonic_clock)
+        self._resolver = DeadlineResolver(resolver)
         self._socket_factory = socket_factory
         self._monotonic = monotonic_clock
         self._sleep = sleeper
@@ -255,7 +255,7 @@ class AospAdbServerProcessDriver:
         self,
         reservation: socket.socket,
         *,
-        deadline: Deadline | float,
+        deadline: Deadline,
     ) -> AospOwnedAdbServerProcess:
         self._check_startup(deadline)
         fd = reservation.fileno()
@@ -285,7 +285,7 @@ class AospAdbServerProcessDriver:
         self,
         server_endpoint: TcpEndpoint,
         *,
-        deadline: Deadline | float,
+        deadline: Deadline,
     ) -> tuple[socket.socket, TcpEndpoint]:
         try:
             addresses = self._resolver.resolve(
@@ -355,13 +355,8 @@ class AospAdbServerProcessDriver:
             f"failed to reserve ADB server listener: {detail}"
         )
 
-    def _coerce_deadline(self, deadline: Deadline | float) -> Deadline:
-        if isinstance(deadline, Deadline):
-            return deadline
-        return Deadline.at(deadline, self._monotonic)
-
-    def _check_startup(self, deadline: Deadline | float) -> None:
-        if self._coerce_deadline(deadline).expired():
+    def _check_startup(self, deadline: Deadline) -> None:
+        if deadline.expired():
             raise AospAdbServerStartError("ADB server startup timed out")
 
     def _wait_until_ready(
@@ -369,12 +364,10 @@ class AospAdbServerProcessDriver:
         server_endpoint: TcpEndpoint,
         process: subprocess.Popen[bytes],
         *,
-        deadline: Deadline | float | None = None,
+        deadline: Deadline | None = None,
     ) -> None:
         if deadline is None:
             deadline = Deadline.after(self.startup_timeout_seconds, self._monotonic)
-        else:
-            deadline = self._coerce_deadline(deadline)
         last_error: AdbError | None = None
         while True:
             self._check_startup(deadline)
@@ -409,7 +402,5 @@ class AospAdbServerProcessDriver:
 __all__ = [
     "AospAdbServerProcessDriver",
     "AospAdbServerProcessResource",
-    "AospAdbServerStartError",
-    "AospAdbServerTerminationUnconfirmed",
     "AospOwnedAdbServerProcess",
 ]
