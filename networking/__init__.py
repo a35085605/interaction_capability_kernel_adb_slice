@@ -1,6 +1,6 @@
 """Shared networking value objects."""
 
-from networking.address import TcpEndpoint
+from networking.endpoint import TcpEndpoint
 
 
 __all__ = ["TcpEndpoint"]
