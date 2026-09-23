@@ -12,8 +12,10 @@ from lifecycle.resource.driver import (
 )
 from lifecycle.resource.result import (
     ResourceAcquireFailed,
+    ResourceAcquireInterrupted,
     ResourceAcquireResult,
     ResourceAcquireSucceeded,
+    ResourceCleanupResult,
 )
 
 
@@ -73,8 +75,8 @@ class ResolvedResourceProvider(Generic[RequestT, RequirementT, PhysicalResourceT
             try:
                 outcome = self._driver.acquire(requirement)
             except BaseException as exc:
-                # Preserve resources acquired by earlier requirements before a
-                # control-flow interruption unwinds into the lifecycle coordinator.
+                if not isinstance(exc, Exception):
+                    return ResourceAcquireInterrupted(exc, resources)
                 return ResourceAcquireFailed(exc, resources)
 
             if not isinstance(
@@ -102,7 +104,7 @@ class ResolvedResourceProvider(Generic[RequestT, RequirementT, PhysicalResourceT
                         TypeError("RequirementAcquireFailed.error must be an Exception"),
                         resources,
                     )
-                return ResourceAcquireFailed(outcome.error, resources)
+                return ResourceAcquireFailed(outcome.error, resources, outcome.cleanup_errors)
 
             if isinstance(outcome, RequirementAcquireInterrupted):
                 if not isinstance(outcome.error, BaseException) or isinstance(
@@ -115,17 +117,33 @@ class ResolvedResourceProvider(Generic[RequestT, RequirementT, PhysicalResourceT
                         ),
                         resources,
                     )
-                return ResourceAcquireFailed(outcome.error, resources)
+                return ResourceAcquireInterrupted(
+                    outcome.error,
+                    resources,
+                    outcome.cleanup_errors,
+                    outcome.operation_error,
+                )
 
         return ResourceAcquireSucceeded(resources)
 
-    def release(self, resources: PhysicalResources[PhysicalResourceT]) -> None:
-        """Clean up the supplied resources; an empty tuple requires no driver call."""
+    def cleanup(
+        self,
+        resources: PhysicalResources[PhysicalResourceT],
+    ) -> ResourceCleanupResult[PhysicalResourceT]:
+        """Attempt cleanup and return the provider's exact remaining ownership."""
 
         if not isinstance(resources, tuple):
             raise TypeError("resources must be a PhysicalResources tuple")
-        if resources:
-            self._driver.cleanup(resources)
+        if not resources:
+            return ResourceCleanupResult.complete()
+
+        outcome = self._driver.cleanup(resources)
+        if not isinstance(outcome, ResourceCleanupResult):
+            return ResourceCleanupResult.blocked(
+                resources,
+                errors=(TypeError("ResourceDriver.cleanup() must return ResourceCleanupResult"),),
+            )
+        return outcome
 
 
 __all__ = ["ResolvedResourceProvider"]

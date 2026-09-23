@@ -4,6 +4,7 @@ from typing import Generic, TypeVar
 
 from lifecycle.capability.coordinator import CapabilityLifecycleCoordinator
 from lifecycle.capability.projection import CapabilityProjector
+from lifecycle.capability.session import DefaultCapabilitySessionFactory
 from lifecycle.resource.contract import ResourceProvider
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
@@ -11,6 +12,7 @@ from adb.transport_list.watch.generation import (
 )
 from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchAcquireResult,
+    AdbTransportListWatchRecoveryResult,
     AdbTransportListWatchReleaseResult,
 )
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
@@ -22,8 +24,6 @@ PhysicalResourceT = TypeVar("PhysicalResourceT")
 
 
 class AdbTransportListWatchLifecycleCoordinator(Generic[PhysicalResourceT]):
-    """Specialize the simplified synchronous lifecycle for one transport-list watch."""
-
     def __init__(
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
@@ -35,29 +35,26 @@ class AdbTransportListWatchLifecycleCoordinator(Generic[PhysicalResourceT]):
         ],
     ) -> None:
         if not isinstance(generation_issuer, AdbTransportListWatchGenerationIssuer):
-            raise TypeError(
-                "generation_issuer must be AdbTransportListWatchGenerationIssuer"
-            )
+            raise TypeError("generation_issuer must be AdbTransportListWatchGenerationIssuer")
         if not callable(getattr(resource_provider, "acquire", None)):
             raise TypeError("resource_provider must provide acquire()")
-        if not callable(getattr(resource_provider, "release", None)):
-            raise TypeError("resource_provider must provide release()")
+        if not callable(getattr(resource_provider, "cleanup", None)):
+            raise TypeError("resource_provider must provide cleanup()")
         if not callable(getattr(capability_projector, "project", None)):
             raise TypeError("capability_projector must provide project()")
 
         self._generation_issuer = generation_issuer
         self._resource_provider = resource_provider
         self._capability_projector = capability_projector
-        self._coordinator: CapabilityLifecycleCoordinator[
-            AdbTransportListWatchGeneration,
-            AdbTransportListWatchRequest,
-            PhysicalResourceT,
-            AdbTransportListWatchStream,
-        ] = CapabilityLifecycleCoordinator(
-            generation_issuer.issue,
+        session_factory = DefaultCapabilitySessionFactory(
             resource_provider,
             capability_projector,
         )
+        self._coordinator: CapabilityLifecycleCoordinator[
+            AdbTransportListWatchGeneration,
+            AdbTransportListWatchRequest,
+            AdbTransportListWatchStream,
+        ] = CapabilityLifecycleCoordinator(generation_issuer.issue, session_factory)
 
     @property
     def generation_issuer(self) -> AdbTransportListWatchGenerationIssuer:
@@ -93,6 +90,17 @@ class AdbTransportListWatchLifecycleCoordinator(Generic[PhysicalResourceT]):
         if not isinstance(request, AdbTransportListWatchRequest):
             raise TypeError("request must be AdbTransportListWatchRequest")
         return self._coordinator.release(expected_generation, request)
+
+    def recover(
+        self,
+        expected_generation: AdbTransportListWatchGeneration,
+        request: AdbTransportListWatchRequest,
+    ) -> AdbTransportListWatchRecoveryResult:
+        if not isinstance(expected_generation, AdbTransportListWatchGeneration):
+            raise TypeError("expected_generation must be AdbTransportListWatchGeneration")
+        if not isinstance(request, AdbTransportListWatchRequest):
+            raise TypeError("request must be AdbTransportListWatchRequest")
+        return self._coordinator.recover(expected_generation, request)
 
 
 __all__ = ["AdbTransportListWatchLifecycleCoordinator"]

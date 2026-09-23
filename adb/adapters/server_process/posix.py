@@ -9,6 +9,7 @@ from time import monotonic, sleep
 from typing import Protocol, TypeAlias
 
 from lifecycle.resource.cleanup import cleanup_reverse
+from lifecycle.resource.result import ResourceCleanupResult
 from lifecycle.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
@@ -49,10 +50,14 @@ class _AospAdbServerRetainedStartError(AospAdbServerStartError):
         resources: tuple[object, ...],
         *,
         original_error: BaseException | None = None,
+        cleanup_errors: tuple[BaseException, ...] = (),
+        interruption: BaseException | None = None,
     ) -> None:
         super().__init__(diagnostic)
         self.resources = resources
         self.original_error = original_error
+        self.cleanup_errors = cleanup_errors
+        self.interruption = interruption
 
 
 def _normalize_probe_interval(value: object) -> float:
@@ -74,6 +79,11 @@ class AospOwnedAdbServerProcess:
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._lock = Lock()
         self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        with self._lock:
+            return self._closed
 
     def close(self) -> None:
         """Synchronously terminate the owned child and confirm that it exited."""
@@ -208,6 +218,12 @@ class AospAdbServerProcessDriver:
             except BaseException as exc:
                 if not isinstance(exc, Exception):
                     raise
+                try:
+                    closed = reservation.fileno() == -1
+                except BaseException:
+                    closed = False
+                if closed:
+                    resources.remove(reservation)
                 raise AospAdbServerStartError(
                     "ADB server child launched but parent listener reservation close "
                     f"was not confirmed: {exc}"
@@ -222,11 +238,20 @@ class AospAdbServerProcessDriver:
             )
         except _AospAdbServerRetainedStartError as exc:
             retained = tuple(resources) + exc.resources
+            if exc.interruption is not None:
+                return RequirementAcquireInterrupted(
+                    exc.interruption,
+                    retained,
+                    exc.cleanup_errors,
+                    exc.original_error,
+                )
             if exc.original_error is not None and not isinstance(
                 exc.original_error, Exception
             ):
-                return RequirementAcquireInterrupted(exc.original_error, retained)
-            return RequirementAcquireFailed(exc, retained)
+                return RequirementAcquireInterrupted(
+                    exc.original_error, retained, exc.cleanup_errors
+                )
+            return RequirementAcquireFailed(exc, retained, exc.cleanup_errors)
         except AospAdbServerStartError as exc:
             return RequirementAcquireFailed(
                 exc,
@@ -242,14 +267,47 @@ class AospAdbServerProcessDriver:
     def cleanup(
         self,
         resources: PhysicalResources[AospAdbServerProcessResource],
-    ) -> None:
-        """Synchronously close every retained resource, tolerating cleanup retries."""
+    ) -> ResourceCleanupResult[AospAdbServerProcessResource]:
+        """Synchronously clean retained resources with explicit ownership results."""
 
-        cleanup_reverse(resources, self._close_resource)
+        return cleanup_reverse(resources, self._cleanup_resource)
 
     @staticmethod
-    def _close_resource(resource: AospAdbServerProcessResource) -> None:
-        resource.close()
+    def _cleanup_resource(
+        resource: AospAdbServerProcessResource,
+    ) -> ResourceCleanupResult[AospAdbServerProcessResource]:
+        if isinstance(resource, AospOwnedAdbServerProcess):
+            try:
+                resource.close()
+            except AospAdbServerTerminationUnconfirmed as exc:
+                if resource.closed:
+                    return ResourceCleanupResult.complete(errors=(exc,))
+                return ResourceCleanupResult.retryable((resource,), errors=(exc,))
+            except Exception as exc:
+                if resource.closed:
+                    return ResourceCleanupResult.complete(errors=(exc,))
+                return ResourceCleanupResult.blocked((resource,), errors=(exc,))
+            return ResourceCleanupResult.complete()
+
+        if isinstance(resource, socket.socket):
+            try:
+                resource.close()
+            except Exception as exc:
+                try:
+                    closed = resource.fileno() == -1
+                except BaseException:
+                    closed = False
+                if closed:
+                    return ResourceCleanupResult.complete(errors=(exc,))
+                # POSIX close errors can leave descriptor ownership ambiguous. Do not
+                # retry automatically and risk closing a reused descriptor.
+                return ResourceCleanupResult.blocked((resource,), errors=(exc,))
+            return ResourceCleanupResult.complete()
+
+        return ResourceCleanupResult.blocked(
+            (resource,),
+            errors=(TypeError(f"unsupported ADB server resource: {type(resource).__name__}"),),
+        )
 
     def _launch(
         self,
@@ -336,10 +394,10 @@ class AospAdbServerProcessDriver:
                         "failed to prepare ADB server listener candidate and could not "
                         f"confirm listener cleanup: {exc}; cleanup error: {close_exc}",
                         (listener,),
-                        original_error=(
-                            close_exc
-                            if not isinstance(close_exc, Exception)
-                            else exc
+                        original_error=exc,
+                        cleanup_errors=(close_exc,),
+                        interruption=(
+                            close_exc if not isinstance(close_exc, Exception) else None
                         ),
                     ) from close_exc
 

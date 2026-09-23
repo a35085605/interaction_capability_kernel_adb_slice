@@ -6,11 +6,8 @@ from random import random
 from time import sleep
 from typing import TypeAlias
 
-from lifecycle.capability.supervision.control import (
-    CancellationSignal,
-    SupervisionStopReason,
-)
-
+from lifecycle.capability.result import LifecycleDiagnostics, LifecycleOutcome
+from lifecycle.capability.supervision.control import CancellationSignal, SupervisionStopReason
 from adb._recovery import (
     RandomSource,
     RecoveryAttempt,
@@ -21,10 +18,7 @@ from adb._recovery import (
     RecoverySucceeded,
     normalize_recovery_retry_configuration,
 )
-from adb.runtime.server.commands import (
-    AdbServerActivateIncomplete,
-    AdbServerDeactivateIncomplete,
-)
+from adb.runtime.server.commands import AdbServerActivateIncomplete, AdbServerDeactivateIncomplete
 from adb.runtime.server.runtime import AdbServerRuntime
 from adb.server.request import AdbServerRequest
 from adb.server.snapshot import AdbServerPhase, AdbServerSnapshot
@@ -35,8 +29,6 @@ _Sleeper = Callable[[float], None]
 
 @dataclass(frozen=True, slots=True)
 class AdbServerAvailabilityPolicy:
-    """Cross-generation retry policy for obtaining one usable ADB server."""
-
     retry_initial_seconds: float = 0.1
     retry_max_seconds: float = 5.0
     retry_multiplier: float = 2.0
@@ -54,20 +46,15 @@ class AdbServerAvailabilityPolicy:
             max_attempts=self.max_attempts,
             subject="ADB server availability",
         )
-        object.__setattr__(
-            self,
+        for field in (
             "retry_initial_seconds",
-            configuration.retry_initial_seconds,
-        )
-        object.__setattr__(self, "retry_max_seconds", configuration.retry_max_seconds)
-        object.__setattr__(self, "retry_multiplier", configuration.retry_multiplier)
-        object.__setattr__(self, "retry_jitter_ratio", configuration.retry_jitter_ratio)
-        object.__setattr__(
-            self,
+            "retry_max_seconds",
+            "retry_multiplier",
+            "retry_jitter_ratio",
             "deferred_retry_seconds",
-            configuration.deferred_retry_seconds,
-        )
-        object.__setattr__(self, "max_attempts", configuration.max_attempts)
+            "max_attempts",
+        ):
+            object.__setattr__(self, field, getattr(configuration, field))
 
     def _configuration(self) -> RecoveryRetryConfiguration:
         return RecoveryRetryConfiguration(
@@ -82,11 +69,10 @@ class AdbServerAvailabilityPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerAvailable:
-    """Report that the requested server is active with a usable capability."""
-
     snapshot: AdbServerSnapshot
     attempts: int
     failed_attempts: int
+    diagnostics: tuple[LifecycleDiagnostics, ...] = ()
 
     def __post_init__(self) -> None:
         if self.snapshot.phase is not AdbServerPhase.ACTIVE:
@@ -95,8 +81,6 @@ class AdbServerAvailable:
             raise ValueError("available server snapshot must expose a capability")
         if isinstance(self.attempts, bool) or not isinstance(self.attempts, int):
             raise TypeError("attempts must be an integer")
-        if self.attempts < 0:
-            raise ValueError("attempts must be greater than or equal to zero")
         if isinstance(self.failed_attempts, bool) or not isinstance(self.failed_attempts, int):
             raise TypeError("failed_attempts must be an integer")
         if not 0 <= self.failed_attempts <= self.attempts:
@@ -105,8 +89,6 @@ class AdbServerAvailable:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerAvailabilityConflict:
-    """Report that another healthy server request already owns this Runtime scope."""
-
     current_request: AdbServerRequest
 
     def __post_init__(self) -> None:
@@ -116,8 +98,6 @@ class AdbServerAvailabilityConflict:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerAvailabilityIncomplete:
-    """Report that recovery stopped because one bounded server command did not finish."""
-
     snapshot: AdbServerSnapshot
     reason: SupervisionStopReason
 
@@ -128,11 +108,10 @@ class AdbServerAvailabilityIncomplete:
 
 @dataclass(frozen=True, slots=True)
 class AdbServerAvailabilityFailed:
-    """Report exhausted cross-generation recovery after the last generation was released."""
-
     snapshot: AdbServerSnapshot
     failed_attempts: int
     cause: BaseException
+    diagnostics: tuple[LifecycleDiagnostics, ...] = ()
 
     def __post_init__(self) -> None:
         if self.snapshot.phase is not AdbServerPhase.IDLE:
@@ -154,12 +133,11 @@ AdbServerAvailabilityResult: TypeAlias = (
 
 
 class AdbServerAvailabilitySupervisor:
-    """Recover across server generations until ``request`` is usable or terminal.
+    """Obtain one usable request across lifecycle generations.
 
-    A failed activation is not a completed recovery attempt until its generation has
-    been deactivated successfully. Existing ``RELEASE_REQUIRED`` debt is normalized
-    before the retry budget starts and therefore does not consume an attempt. A
-    conflicting healthy request is terminal and is never implicitly replaced.
+    Failed acquisition is counted from the explicit operation outcome, never inferred
+    from the resulting snapshot. Pending cleanup/finalization is recovered before a new
+    attempt and recovery itself does not consume the acquisition-failure budget.
     """
 
     __slots__ = ("_policy", "_random", "_runtime", "_sleep")
@@ -176,10 +154,8 @@ class AdbServerAvailabilitySupervisor:
             raise TypeError("runtime must be AdbServerRuntime")
         if not isinstance(policy, AdbServerAvailabilityPolicy):
             raise TypeError("policy must be AdbServerAvailabilityPolicy")
-        if not callable(_sleeper):
-            raise TypeError("_sleeper must be callable")
-        if not callable(_random):
-            raise TypeError("_random must be callable")
+        if not callable(_sleeper) or not callable(_random):
+            raise TypeError("_sleeper and _random must be callable")
         self._runtime = runtime
         self._policy = policy
         self._sleep = _sleeper
@@ -199,12 +175,12 @@ class AdbServerAvailabilitySupervisor:
         *,
         cancellation: CancellationSignal | None = None,
     ) -> AdbServerAvailabilityResult:
-        """Drive ``request`` to an active capability across as many generations as allowed."""
-
         if not isinstance(request, AdbServerRequest):
             raise TypeError("request must be AdbServerRequest")
 
-        normalized = self._normalize_existing_state(request, cancellation=cancellation)
+        normalized, carried_diagnostics = self._normalize_existing_state(
+            request, cancellation=cancellation
+        )
         if normalized is not None:
             return normalized
 
@@ -217,6 +193,8 @@ class AdbServerAvailabilitySupervisor:
         )
         decision = retry.begin()
         last_failure: BaseException | None = None
+        collected_diagnostics: list[LifecycleDiagnostics] = list(carried_diagnostics)
+        idle_snapshot = self._runtime.snapshot.read()
 
         while isinstance(decision, RecoveryAttempt):
             if decision.delay_seconds > 0.0:
@@ -225,17 +203,11 @@ class AdbServerAvailabilitySupervisor:
             with self._runtime.commands._exclusive(
                 timeout_seconds=self._runtime.commands.policy.activate_timeout_seconds,
                 cancellation=cancellation,
-            ) as stop_reason:
-                if stop_reason is not None:
-                    return AdbServerAvailabilityIncomplete(
-                        self._runtime.snapshot.read(),
-                        stop_reason,
-                    )
-                result = self._runtime.commands.activate(
-                    request,
-                    cancellation=cancellation,
-                )
+            ) as stop:
+                if stop is not None:
+                    return AdbServerAvailabilityIncomplete(self._runtime.snapshot.read(), stop)
 
+                result = self._runtime.commands.activate(request, cancellation=cancellation)
                 if isinstance(result, AdbServerActivateIncomplete):
                     return AdbServerAvailabilityIncomplete(result.snapshot, result.reason)
 
@@ -245,51 +217,59 @@ class AdbServerAvailabilitySupervisor:
                         if snapshot.request is None:
                             raise RuntimeError("active server snapshot is missing its request")
                         return AdbServerAvailabilityConflict(snapshot.request)
-
                     terminal = retry.decide_after(RecoveryOutcome.SUCCEEDED)
                     if not isinstance(terminal, RecoverySucceeded):
-                        raise RuntimeError(
-                            "successful recovery produced a non-terminal retry decision"
-                        )
+                        raise RuntimeError("successful recovery produced a non-terminal decision")
                     return AdbServerAvailable(
                         snapshot,
                         attempts=retry.attempt_number,
                         failed_attempts=retry.failed_attempts,
+                        diagnostics=tuple(collected_diagnostics),
                     )
 
-                if snapshot.phase is AdbServerPhase.RELEASE_REQUIRED:
-                    if result.execution_started:
-                        last_failure = snapshot.last_error
-                        if last_failure is None:
-                            raise RuntimeError(
-                                "failed server activation is missing its failure cause"
-                            )
-                        outcome = RecoveryOutcome.FAILED
-                    else:
-                        # This attempt encountered cleanup debt it did not create. Release
-                        # it before retrying, but do not consume the failure budget.
-                        outcome = RecoveryOutcome.DEFERRED
+                if result.outcome is LifecycleOutcome.ACQUIRE_FAILED:
+                    last_failure = result.diagnostics.acquire_error
+                    if last_failure is None:
+                        raise RuntimeError("failed activation is missing acquire_error")
+                    collected_diagnostics.append(result.diagnostics)
+                    outcome = RecoveryOutcome.FAILED
+                elif snapshot.phase in (
+                    AdbServerPhase.CLEANUP_PENDING,
+                    AdbServerPhase.FINALIZATION_PENDING,
+                ):
+                    # Pending debt predating this activation attempt is normalized
+                    # without consuming a new acquisition failure.
+                    outcome = RecoveryOutcome.DEFERRED
+                else:
+                    raise TypeError("server activation returned a non-terminal result")
 
-                    deactivated = self._runtime.commands.deactivate(
-                        cancellation=cancellation
-                    )
+                if snapshot.phase is AdbServerPhase.IDLE:
+                    idle_snapshot = snapshot
+                else:
+                    deactivated = self._runtime.commands.deactivate(cancellation=cancellation)
                     if isinstance(deactivated, AdbServerDeactivateIncomplete):
                         return AdbServerAvailabilityIncomplete(
-                            deactivated.snapshot,
-                            deactivated.reason,
+                            deactivated.snapshot, deactivated.reason
                         )
                     idle_snapshot = deactivated.snapshot
-                else:
-                    raise TypeError("server mutation facade returned a non-terminal result")
+                    if idle_snapshot.phase is not AdbServerPhase.IDLE:
+                        raise RuntimeError("completed recovery must finish idle")
+                    if result.outcome is LifecycleOutcome.ACQUIRE_FAILED:
+                        # Recovery carries the original acquire failure plus every
+                        # cleanup/finalization diagnostic accumulated afterwards.
+                        collected_diagnostics[-1] = deactivated.diagnostics
+                    else:
+                        collected_diagnostics.append(deactivated.diagnostics)
 
             decision = retry.decide_after(outcome)
             if isinstance(decision, RecoveryExhausted):
                 if last_failure is None:
-                    raise RuntimeError("recovery exhausted without a recorded server failure")
+                    raise RuntimeError("recovery exhausted without a recorded failure")
                 return AdbServerAvailabilityFailed(
                     idle_snapshot,
                     failed_attempts=decision.failed_attempts,
                     cause=last_failure,
+                    diagnostics=tuple(collected_diagnostics),
                 )
 
         raise RuntimeError("server availability retry controller terminated unexpectedly")
@@ -300,8 +280,6 @@ class AdbServerAvailabilitySupervisor:
         *,
         cancellation: CancellationSignal | None = None,
     ) -> AdbServerAvailabilityResult:
-        """Alias for ``supervise`` with application-oriented wording."""
-
         return self.supervise(request, cancellation=cancellation)
 
     def _normalize_existing_state(
@@ -309,41 +287,47 @@ class AdbServerAvailabilitySupervisor:
         request: AdbServerRequest,
         *,
         cancellation: CancellationSignal | None,
-    ) -> (
+    ) -> tuple[
         AdbServerAvailable
         | AdbServerAvailabilityConflict
         | AdbServerAvailabilityIncomplete
-        | None
-    ):
+        | None,
+        tuple[LifecycleDiagnostics, ...],
+    ]:
         with self._runtime.commands._exclusive(
             timeout_seconds=self._runtime.commands.policy.deactivate_timeout_seconds,
             cancellation=cancellation,
-        ) as stop_reason:
-            if stop_reason is not None:
-                return AdbServerAvailabilityIncomplete(
-                    self._runtime.snapshot.read(),
-                    stop_reason,
+        ) as stop:
+            if stop is not None:
+                return (
+                    AdbServerAvailabilityIncomplete(self._runtime.snapshot.read(), stop),
+                    (),
                 )
             snapshot = self._runtime.snapshot.read()
 
             if snapshot.phase is AdbServerPhase.ACTIVE:
                 if snapshot.request == request:
-                    return AdbServerAvailable(snapshot, attempts=0, failed_attempts=0)
+                    return (AdbServerAvailable(snapshot, attempts=0, failed_attempts=0), ())
                 if snapshot.request is None:
                     raise RuntimeError("active server snapshot is missing its request")
-                return AdbServerAvailabilityConflict(snapshot.request)
+                return (AdbServerAvailabilityConflict(snapshot.request), ())
 
-            if snapshot.phase is AdbServerPhase.RELEASE_REQUIRED:
-                deactivated = self._runtime.commands.deactivate(
-                    cancellation=cancellation
-                )
+            if snapshot.phase in (
+                AdbServerPhase.CLEANUP_PENDING,
+                AdbServerPhase.FINALIZATION_PENDING,
+            ):
+                deactivated = self._runtime.commands.deactivate(cancellation=cancellation)
                 if isinstance(deactivated, AdbServerDeactivateIncomplete):
-                    return AdbServerAvailabilityIncomplete(
-                        deactivated.snapshot,
-                        deactivated.reason,
+                    return (
+                        AdbServerAvailabilityIncomplete(
+                            deactivated.snapshot, deactivated.reason
+                        ),
+                        (),
                     )
+                return (None, (deactivated.diagnostics,))
 
-        return None
+        return (None, ())
+
 
 
 __all__ = [

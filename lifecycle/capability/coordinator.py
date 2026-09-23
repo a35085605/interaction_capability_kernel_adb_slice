@@ -4,33 +4,43 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Generic, TypeVar
 
-from lifecycle.capability.projection import CapabilityProjector
-from lifecycle.capability.result import AcquireResult, LifecycleResult, ReleaseResult
-from lifecycle.capability.snapshot import LifecyclePhase, LifecycleSnapshot
+from lifecycle.capability.result import (
+    AcquireResult,
+    LifecycleDiagnostics,
+    LifecycleOutcome,
+    LifecycleResult,
+    RecoveryResult,
+    ReleaseResult,
+)
+from lifecycle.capability.session import (
+    CapabilitySessionFactory,
+    CleanupReport,
+    PreparationFailed,
+    PreparedSession,
+    SessionOwner,
+)
+from lifecycle.capability.snapshot import CleanupOrigin, LifecyclePhase, LifecycleSnapshot
 from lifecycle.capability.state import (
     Acquiring,
     Active,
+    CleanupPending,
+    FinalizationPending,
     Idle,
     LifecycleState,
-    ReleaseRequired,
+    Recovering,
     Releasing,
 )
-from lifecycle.resource.contract import ResourceProvider
-from lifecycle.resource.driver import PhysicalResources
-from lifecycle.resource.result import ResourceAcquireFailed, ResourceAcquireSucceeded
+from lifecycle.resource.result import ResourceCleanupStatus
 
 
 GenerationT = TypeVar("GenerationT")
 RequestT = TypeVar("RequestT")
-PhysicalResourceT = TypeVar("PhysicalResourceT")
 CapabilityT = TypeVar("CapabilityT")
 
 
 def _snapshot_from_state(
-    state: LifecycleState[GenerationT, RequestT, PhysicalResourceT, CapabilityT],
+    state: LifecycleState[GenerationT, RequestT, CapabilityT],
 ) -> LifecycleSnapshot[GenerationT, RequestT, CapabilityT]:
-    """Project one internal lifecycle state into its public snapshot."""
-
     if isinstance(state, Idle):
         return LifecycleSnapshot(state.generation)
     if isinstance(state, Active):
@@ -52,94 +62,78 @@ def _snapshot_from_state(
             state.request,
             phase=LifecyclePhase.RELEASING,
         )
-    if isinstance(state, ReleaseRequired):
+    if isinstance(state, CleanupPending):
         return LifecycleSnapshot(
             state.generation,
             state.request,
-            phase=LifecyclePhase.RELEASE_REQUIRED,
-            last_error=state.last_error,
+            phase=LifecyclePhase.CLEANUP_PENDING,
+            origin=state.origin,
+            cleanup_status=state.cleanup_status,
+            diagnostics=state.diagnostics,
+        )
+    if isinstance(state, FinalizationPending):
+        return LifecycleSnapshot(
+            state.generation,
+            state.request,
+            phase=LifecyclePhase.FINALIZATION_PENDING,
+            origin=state.origin,
+            diagnostics=state.diagnostics,
+        )
+    if isinstance(state, Recovering):
+        return LifecycleSnapshot(
+            state.generation,
+            state.request,
+            phase=LifecyclePhase.RECOVERING,
+            origin=state.origin,
+            cleanup_status=state.cleanup_status,
+            diagnostics=state.diagnostics,
         )
     raise RuntimeError("unsupported lifecycle state")
 
 
-def _normalize_resource_acquire_result(
-    result: object,
-) -> ResourceAcquireSucceeded[PhysicalResourceT] | ResourceAcquireFailed[PhysicalResourceT]:
-    """Validate a provider result without allowing invalid resources into lifecycle state."""
+class _UnknownSessionOwner:
+    """Conservatively block recovery after a custom factory violates its contract."""
 
-    if isinstance(result, ResourceAcquireFailed):
-        if not isinstance(result.resources, tuple):
-            return ResourceAcquireFailed(
-                TypeError(
-                    "ResourceAcquireFailed.resources must be a PhysicalResources tuple"
-                ),
-                (),
-            )
-        if not isinstance(result.error, BaseException):
-            return ResourceAcquireFailed(
-                TypeError("ResourceAcquireFailed.error must be a BaseException"),
-                result.resources,
-            )
-        return result
+    __slots__ = ("_error",)
 
-    if isinstance(result, ResourceAcquireSucceeded):
-        if not isinstance(result.resources, tuple):
-            return ResourceAcquireFailed(
-                TypeError(
-                    "ResourceAcquireSucceeded.resources must be a PhysicalResources tuple"
-                ),
-                (),
-            )
-        return result
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
 
-    return ResourceAcquireFailed(
-        TypeError("ResourceProvider.acquire() must return a ResourceAcquireResult"),
-        (),
-    )
+    @property
+    def has_ownership(self) -> bool:
+        return True
+
+    def cleanup(self) -> CleanupReport:
+        return CleanupReport(ResourceCleanupStatus.BLOCKED, (self._error,))
 
 
-class CapabilityLifecycleCoordinator(
-    Generic[GenerationT, RequestT, PhysicalResourceT, CapabilityT]
-):
-    """Coordinate the synchronous lifecycle of one capability.
+class CapabilityLifecycleCoordinator(Generic[GenerationT, RequestT, CapabilityT]):
+    """Coordinate capability publication, session ownership, cleanup and fencing.
 
-    State changes use a short lock, while resource I/O, capability projection, cleanup,
-    and generation issuance run outside it. Calls that observe one of those operations
-    return a non-executed result immediately; ACQUIRING includes projection and
-    RELEASING includes next-generation issuance.
-
-    Once acquisition begins, any acquisition or projection failure enters
-    ``ReleaseRequired`` and requires an explicit ``release`` before the generation can
-    complete. A release failure also enters ``ReleaseRequired``. If physical cleanup has
-    already succeeded, a later generation-issuance failure retains no resources, so a
-    retry does not clean them up twice. Non-``Exception`` interruptions are recorded in
-    the same failure state before they are re-raised.
+    Generation identifies one lifecycle fencing round. A capability is published only
+    after session preparation succeeds. Failed preparation is rolled back once inside
+    ``acquire``; only unresolved cleanup or generation finalization remains pending.
+    Physical ownership never escapes the SessionOwner.
     """
 
     def __init__(
         self,
         issue_generation: Callable[[], GenerationT],
-        resource_provider: ResourceProvider[RequestT, PhysicalResourceT],
-        capability_projector: CapabilityProjector[
-            RequestT, PhysicalResourceT, CapabilityT
-        ],
+        session_factory: CapabilitySessionFactory[RequestT, CapabilityT],
     ) -> None:
         if not callable(issue_generation):
             raise TypeError("issue_generation must be callable")
+        if not callable(getattr(session_factory, "prepare", None)):
+            raise TypeError("session_factory must provide prepare()")
         self._issue_generation = issue_generation
-        self._resource_provider = resource_provider
-        self._capability_projector = capability_projector
+        self._session_factory = session_factory
         self._lock = Lock()
         generation = issue_generation()
         if generation is None:
             raise TypeError("issue_generation cannot return None")
-        self._state: LifecycleState[
-            GenerationT, RequestT, PhysicalResourceT, CapabilityT
-        ] = Idle(generation)
+        self._state: LifecycleState[GenerationT, RequestT, CapabilityT] = Idle(generation)
 
     def read(self) -> LifecycleSnapshot[GenerationT, RequestT, CapabilityT]:
-        """Return one consistent point-in-time snapshot of lifecycle state."""
-
         with self._lock:
             return _snapshot_from_state(self._state)
 
@@ -148,8 +142,6 @@ class CapabilityLifecycleCoordinator(
         expected_generation: GenerationT,
         request: RequestT,
     ) -> AcquireResult[GenerationT, RequestT, CapabilityT]:
-        """Acquire and project a capability when the expected generation is idle."""
-
         if expected_generation is None:
             raise TypeError("expected_generation cannot be None")
         if request is None:
@@ -158,49 +150,105 @@ class CapabilityLifecycleCoordinator(
         with self._lock:
             state = self._state
             if expected_generation != state.generation:
-                return LifecycleResult(_snapshot_from_state(state), False)
-            if isinstance(state, (Acquiring, Releasing, Active, ReleaseRequired)):
-                return LifecycleResult(_snapshot_from_state(state), False)
+                return LifecycleResult.not_executed(_snapshot_from_state(state))
             if not isinstance(state, Idle):
-                raise RuntimeError("unsupported lifecycle state")
-
+                return LifecycleResult.not_executed(_snapshot_from_state(state))
             generation = state.generation
             self._state = Acquiring(generation, request)
 
         try:
-            result = self._resource_provider.acquire(request)
+            prepared = self._session_factory.prepare(request)
         except BaseException as exc:
-            return self._fail_acquire_or_reraise(generation, request, (), exc)
-
-        result = _normalize_resource_acquire_result(result)
-        if isinstance(result, ResourceAcquireFailed):
-            return self._fail_acquire_or_reraise(
-                generation, request, result.resources, result.error
+            owner: SessionOwner = _UnknownSessionOwner(exc)
+            diagnostics = LifecycleDiagnostics(acquire_error=exc)
+            self._commit_cleanup_pending(
+                generation,
+                request,
+                owner,
+                CleanupOrigin.ACQUIRE,
+                ResourceCleanupStatus.BLOCKED,
+                diagnostics,
+            )
+            if not isinstance(exc, Exception):
+                raise
+            return self._operation_result(
+                LifecycleOutcome.ACQUIRE_FAILED,
+                CleanupOrigin.ACQUIRE,
+                diagnostics,
             )
 
-        resources = result.resources
-        try:
-            capability = self._capability_projector.project(request, resources)
-            if capability is None:
-                raise TypeError("CapabilityProjector.project() cannot return None")
-        except BaseException as exc:
-            return self._fail_acquire_or_reraise(
-                generation, request, resources, exc
+        if isinstance(prepared, PreparedSession):
+            with self._lock:
+                state = Active(generation, request, prepared.capability, prepared.owner)
+                self._state = state
+                snapshot = _snapshot_from_state(state)
+            return LifecycleResult(
+                snapshot,
+                LifecycleOutcome.ACQUIRE_SUCCEEDED,
+                LifecycleDiagnostics(),
+                CleanupOrigin.ACQUIRE,
             )
 
-        with self._lock:
-            state = Active(generation, request, capability, resources)
-            self._state = state
-            snapshot = _snapshot_from_state(state)
-        return LifecycleResult(snapshot, True)
+        if not isinstance(prepared, PreparationFailed):
+            error = TypeError("CapabilitySessionFactory.prepare() returned an invalid result")
+            owner = _UnknownSessionOwner(error)
+            diagnostics = LifecycleDiagnostics(acquire_error=error)
+            self._commit_cleanup_pending(
+                generation,
+                request,
+                owner,
+                CleanupOrigin.ACQUIRE,
+                ResourceCleanupStatus.BLOCKED,
+                diagnostics,
+            )
+            return self._operation_result(
+                LifecycleOutcome.ACQUIRE_FAILED,
+                CleanupOrigin.ACQUIRE,
+                diagnostics,
+            )
+
+        diagnostics = LifecycleDiagnostics(
+            acquire_error=prepared.error,
+            cleanup_errors=prepared.cleanup_errors,
+        )
+
+        # Control-flow interruption is not normalized into an ordinary failed acquire.
+        # Commit recoverable ownership first, then propagate it. The primary operation
+        # error remains separate when cleanup itself was what got interrupted.
+        interruption = prepared.interruption
+        if interruption is None and not isinstance(prepared.error, Exception):
+            interruption = prepared.error
+        if interruption is not None:
+            if prepared.owner.has_ownership:
+                self._commit_cleanup_pending(
+                    generation,
+                    request,
+                    prepared.owner,
+                    CleanupOrigin.ACQUIRE,
+                    ResourceCleanupStatus.RETRYABLE,
+                    diagnostics,
+                )
+            else:
+                self._commit_finalization_pending(
+                    generation,
+                    request,
+                    CleanupOrigin.ACQUIRE,
+                    diagnostics,
+                )
+            raise interruption
+
+        return self._finish_failed_acquire(
+            generation,
+            request,
+            prepared.owner,
+            diagnostics,
+        )
 
     def release(
         self,
         expected_generation: GenerationT,
         request: RequestT,
     ) -> ReleaseResult[GenerationT, RequestT, CapabilityT]:
-        """Complete release for the matching request and issue the next generation."""
-
         if expected_generation is None:
             raise TypeError("expected_generation cannot be None")
         if request is None:
@@ -209,38 +257,244 @@ class CapabilityLifecycleCoordinator(
         with self._lock:
             state = self._state
             if expected_generation != state.generation:
-                return LifecycleResult(_snapshot_from_state(state), False)
-            if isinstance(state, (Acquiring, Releasing, Idle)):
-                return LifecycleResult(_snapshot_from_state(state), False)
-            if not isinstance(state, (Active, ReleaseRequired)):
-                raise RuntimeError("unsupported lifecycle state")
+                return LifecycleResult.not_executed(_snapshot_from_state(state))
+            if not isinstance(state, Active):
+                return LifecycleResult.not_executed(_snapshot_from_state(state))
             if state.request != request:
-                return LifecycleResult(_snapshot_from_state(state), False)
+                return LifecycleResult.not_executed(_snapshot_from_state(state))
+            generation = state.generation
+            owner = state.owner
+            self._state = Releasing(generation, request, owner)
+
+        diagnostics = LifecycleDiagnostics()
+        report = self._attempt_cleanup_or_interrupt(
+            generation,
+            request,
+            owner,
+            CleanupOrigin.RELEASE,
+            diagnostics,
+        )
+        diagnostics = diagnostics.add_cleanup(*report.errors)
+
+        if report.status is not ResourceCleanupStatus.COMPLETE:
+            self._commit_cleanup_pending(
+                generation,
+                request,
+                owner,
+                CleanupOrigin.RELEASE,
+                report.status,
+                diagnostics,
+            )
+            return self._operation_result(
+                LifecycleOutcome.RELEASE_INCOMPLETE,
+                CleanupOrigin.RELEASE,
+                diagnostics,
+            )
+
+        return self._finalize_operation(
+            generation,
+            request,
+            CleanupOrigin.RELEASE,
+            diagnostics,
+            success_outcome=LifecycleOutcome.RELEASE_COMPLETED,
+            incomplete_outcome=LifecycleOutcome.RELEASE_INCOMPLETE,
+        )
+
+    def recover(
+        self,
+        expected_generation: GenerationT,
+        request: RequestT,
+    ) -> RecoveryResult[GenerationT, RequestT, CapabilityT]:
+        if expected_generation is None:
+            raise TypeError("expected_generation cannot be None")
+        if request is None:
+            raise TypeError("request cannot be None")
+
+        with self._lock:
+            state = self._state
+            if expected_generation != state.generation:
+                return LifecycleResult.not_executed(_snapshot_from_state(state))
+            if not isinstance(state, (CleanupPending, FinalizationPending)):
+                return LifecycleResult.not_executed(_snapshot_from_state(state))
+            if state.request != request:
+                return LifecycleResult.not_executed(_snapshot_from_state(state))
 
             generation = state.generation
-            resources = state.resources
-            self._state = Releasing(generation, request, resources)
+            origin = state.origin
+            diagnostics = state.diagnostics
+            if isinstance(state, CleanupPending):
+                if state.cleanup_status is ResourceCleanupStatus.BLOCKED:
+                    snapshot = _snapshot_from_state(state)
+                    return LifecycleResult(
+                        snapshot,
+                        LifecycleOutcome.RECOVERY_INCOMPLETE,
+                        diagnostics,
+                        origin,
+                    )
+                owner = state.owner
+                previous_status = state.cleanup_status
+            else:
+                owner = None
+                previous_status = None
+            self._state = Recovering(
+                generation,
+                request,
+                origin,
+                diagnostics,
+                owner,
+                previous_status,
+            )
 
-        if resources:
-            try:
-                self._resource_provider.release(resources)
-            except BaseException as exc:
-                return self._fail_release_or_reraise(
-                    generation, request, resources, exc
+        if owner is not None:
+            report = self._attempt_cleanup_or_interrupt(
+                generation,
+                request,
+                owner,
+                origin,
+                diagnostics,
+            )
+            diagnostics = diagnostics.add_cleanup(*report.errors)
+            if report.status is not ResourceCleanupStatus.COMPLETE:
+                self._commit_cleanup_pending(
+                    generation,
+                    request,
+                    owner,
+                    origin,
+                    report.status,
+                    diagnostics,
+                )
+                return self._operation_result(
+                    LifecycleOutcome.RECOVERY_INCOMPLETE,
+                    origin,
+                    diagnostics,
                 )
 
-        # Cleanup is complete before generation advancement. From here on, retain an
-        # empty resource tuple so a failed issuer can be retried without cleaning twice.
+        return self._finalize_operation(
+            generation,
+            request,
+            origin,
+            diagnostics,
+            success_outcome=LifecycleOutcome.RECOVERY_COMPLETED,
+            incomplete_outcome=LifecycleOutcome.RECOVERY_INCOMPLETE,
+        )
+
+    def _finish_failed_acquire(
+        self,
+        generation: GenerationT,
+        request: RequestT,
+        owner: SessionOwner,
+        diagnostics: LifecycleDiagnostics,
+    ) -> AcquireResult[GenerationT, RequestT, CapabilityT]:
+        if owner.has_ownership:
+            report = self._attempt_cleanup_or_interrupt(
+                generation,
+                request,
+                owner,
+                CleanupOrigin.ACQUIRE,
+                diagnostics,
+            )
+            diagnostics = diagnostics.add_cleanup(*report.errors)
+            if report.status is not ResourceCleanupStatus.COMPLETE:
+                self._commit_cleanup_pending(
+                    generation,
+                    request,
+                    owner,
+                    CleanupOrigin.ACQUIRE,
+                    report.status,
+                    diagnostics,
+                )
+                return self._operation_result(
+                    LifecycleOutcome.ACQUIRE_FAILED,
+                    CleanupOrigin.ACQUIRE,
+                    diagnostics,
+                )
+
+        return self._finalize_operation(
+            generation,
+            request,
+            CleanupOrigin.ACQUIRE,
+            diagnostics,
+            success_outcome=LifecycleOutcome.ACQUIRE_FAILED,
+            incomplete_outcome=LifecycleOutcome.ACQUIRE_FAILED,
+        )
+
+    def _attempt_cleanup_or_interrupt(
+        self,
+        generation: GenerationT,
+        request: RequestT,
+        owner: SessionOwner,
+        origin: CleanupOrigin,
+        diagnostics: LifecycleDiagnostics,
+    ) -> CleanupReport:
+        try:
+            report = owner.cleanup()
+            if not isinstance(report, CleanupReport):
+                raise TypeError("SessionOwner.cleanup() must return CleanupReport")
+            has_ownership = owner.has_ownership
+            if report.status is ResourceCleanupStatus.COMPLETE and has_ownership:
+                return CleanupReport(
+                    ResourceCleanupStatus.BLOCKED,
+                    report.errors
+                    + (
+                        RuntimeError(
+                            "SessionOwner reported COMPLETE while ownership remains"
+                        ),
+                    ),
+                )
+            if report.status is not ResourceCleanupStatus.COMPLETE and not has_ownership:
+                return CleanupReport(
+                    ResourceCleanupStatus.COMPLETE,
+                    report.errors
+                    + (
+                        RuntimeError(
+                            "SessionOwner reported incomplete cleanup after ownership was discharged"
+                        ),
+                    ),
+                )
+            return report
+        except BaseException as exc:
+            updated = diagnostics.add_cleanup(exc)
+            self._commit_cleanup_pending(
+                generation,
+                request,
+                owner,
+                origin,
+                ResourceCleanupStatus.BLOCKED,
+                updated,
+            )
+            if not isinstance(exc, Exception):
+                raise
+            return CleanupReport(ResourceCleanupStatus.BLOCKED, (exc,))
+
+    def _finalize_operation(
+        self,
+        generation: GenerationT,
+        request: RequestT,
+        origin: CleanupOrigin,
+        diagnostics: LifecycleDiagnostics,
+        *,
+        success_outcome: LifecycleOutcome,
+        incomplete_outcome: LifecycleOutcome,
+    ) -> LifecycleResult[GenerationT, RequestT, CapabilityT]:
         try:
             next_generation = self._issue_next_generation(generation)
         except BaseException as exc:
-            return self._fail_release_or_reraise(generation, request, (), exc)
+            diagnostics = diagnostics.add_finalization(exc)
+            self._commit_finalization_pending(
+                generation,
+                request,
+                origin,
+                diagnostics,
+            )
+            if not isinstance(exc, Exception):
+                raise
+            return self._operation_result(incomplete_outcome, origin, diagnostics)
 
         with self._lock:
             state = Idle(next_generation)
             self._state = state
             snapshot = _snapshot_from_state(state)
-        return LifecycleResult(snapshot, True)
+        return LifecycleResult(snapshot, success_outcome, diagnostics, origin)
 
     def _issue_next_generation(self, previous_generation: GenerationT) -> GenerationT:
         next_generation = self._issue_generation()
@@ -250,55 +504,53 @@ class CapabilityLifecycleCoordinator(
             raise RuntimeError("issue_generation must return a fresh generation")
         return next_generation
 
-    def _record_acquire_failure(
+    def _commit_cleanup_pending(
         self,
         generation: GenerationT,
         request: RequestT,
-        resources: PhysicalResources[PhysicalResourceT],
-        error: BaseException,
-    ) -> AcquireResult[GenerationT, RequestT, CapabilityT]:
+        owner: SessionOwner,
+        origin: CleanupOrigin,
+        cleanup_status: ResourceCleanupStatus,
+        diagnostics: LifecycleDiagnostics,
+    ) -> None:
+        if not owner.has_ownership:
+            raise RuntimeError(
+                "CleanupPending must retain an owner with cleanup responsibility"
+            )
         with self._lock:
-            state = ReleaseRequired(generation, request, resources, error)
-            self._state = state
-            snapshot = _snapshot_from_state(state)
-        return LifecycleResult(snapshot, True)
+            self._state = CleanupPending(
+                generation,
+                request,
+                owner,
+                origin,
+                cleanup_status,
+                diagnostics,
+            )
 
-    def _fail_acquire_or_reraise(
+    def _commit_finalization_pending(
         self,
         generation: GenerationT,
         request: RequestT,
-        resources: PhysicalResources[PhysicalResourceT],
-        error: BaseException,
-    ) -> AcquireResult[GenerationT, RequestT, CapabilityT]:
-        result = self._record_acquire_failure(generation, request, resources, error)
-        if not isinstance(error, Exception):
-            raise error
-        return result
-
-    def _record_release_failure(
-        self,
-        generation: GenerationT,
-        request: RequestT,
-        resources: PhysicalResources[PhysicalResourceT],
-        error: BaseException,
-    ) -> ReleaseResult[GenerationT, RequestT, CapabilityT]:
+        origin: CleanupOrigin,
+        diagnostics: LifecycleDiagnostics,
+    ) -> None:
         with self._lock:
-            state = ReleaseRequired(generation, request, resources, error)
-            self._state = state
-            snapshot = _snapshot_from_state(state)
-        return LifecycleResult(snapshot, True)
+            self._state = FinalizationPending(
+                generation,
+                request,
+                origin,
+                diagnostics,
+            )
 
-    def _fail_release_or_reraise(
+    def _operation_result(
         self,
-        generation: GenerationT,
-        request: RequestT,
-        resources: PhysicalResources[PhysicalResourceT],
-        error: BaseException,
-    ) -> ReleaseResult[GenerationT, RequestT, CapabilityT]:
-        result = self._record_release_failure(generation, request, resources, error)
-        if not isinstance(error, Exception):
-            raise error
-        return result
+        outcome: LifecycleOutcome,
+        origin: CleanupOrigin,
+        diagnostics: LifecycleDiagnostics,
+    ) -> LifecycleResult[GenerationT, RequestT, CapabilityT]:
+        with self._lock:
+            snapshot = _snapshot_from_state(self._state)
+        return LifecycleResult(snapshot, outcome, diagnostics, origin)
 
 
 __all__ = ["CapabilityLifecycleCoordinator"]

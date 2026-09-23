@@ -7,9 +7,11 @@ from time import monotonic
 from lifecycle.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
+    RequirementAcquireInterrupted,
     RequirementAcquireResult,
 )
 from lifecycle.resource.provider import ResolvedResourceProvider
+from lifecycle.resource.result import ResourceCleanupResult
 from adb.adapters.aosp.track_devices import to_transport_list
 from adb.adapters.aosp.track_devices_session import AospTrackDevicesSessionDriver
 from adb.aosp.io.track_devices import AospTrackDevicesSession
@@ -78,6 +80,19 @@ class _AospTrackDevicesWatchDriver:
         server_endpoint: TcpEndpoint,
     ) -> RequirementAcquireResult[AospTrackDevicesSession]:
         outcome = self._driver.acquire(server_endpoint)
+        if isinstance(outcome, RequirementAcquireInterrupted):
+            operation_error = outcome.operation_error
+            failure = (
+                None if operation_error is None else _watch_failure(operation_error)
+            )
+            if failure is None:
+                return outcome
+            return RequirementAcquireInterrupted(
+                outcome.error,
+                outcome.resources,
+                outcome.cleanup_errors,
+                AdbTransportListWatchAcquireError(failure),
+            )
         if not isinstance(outcome, RequirementAcquireFailed):
             return outcome
 
@@ -87,13 +102,14 @@ class _AospTrackDevicesWatchDriver:
         return RequirementAcquireFailed(
             AdbTransportListWatchAcquireError(failure),
             outcome.resources,
+            outcome.cleanup_errors,
         )
 
     def cleanup(
         self,
         resources: PhysicalResources[AospTrackDevicesSession],
-    ) -> None:
-        self._driver.cleanup(resources)
+    ) -> ResourceCleanupResult[AospTrackDevicesSession]:
+        return self._driver.cleanup(resources)
 
 
 class _AospTransportListWatchCapability:

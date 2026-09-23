@@ -1,4 +1,4 @@
-"""Generation-scoped acquire and release supervision for capability lifecycles."""
+"""Generation-scoped acquire, release and recovery supervision."""
 
 from lifecycle.capability.supervision.acquire import (
     AcquireDisposition,
@@ -13,7 +13,14 @@ from lifecycle.capability.supervision.control import (
 )
 from lifecycle.capability.supervision.policy import (
     AcquireSupervisionPolicy,
+    RecoverySupervisionPolicy,
     ReleaseSupervisionPolicy,
+)
+from lifecycle.capability.supervision.recovery import (
+    RecoveryDisposition,
+    RecoverySupervisionResult,
+    RecoverySupervisor,
+    classify_recovery_result,
 )
 from lifecycle.capability.supervision.release import (
     ReleaseDisposition,
@@ -28,6 +35,10 @@ __all__ = [
     "AcquireSupervisionResult",
     "AcquireSupervisor",
     "CancellationSignal",
+    "RecoveryDisposition",
+    "RecoverySupervisionPolicy",
+    "RecoverySupervisionResult",
+    "RecoverySupervisor",
     "ReleaseDisposition",
     "ReleaseSupervisionPolicy",
     "ReleaseSupervisionResult",
@@ -35,5 +46,6 @@ __all__ = [
     "SupervisionStopped",
     "SupervisionStopReason",
     "classify_acquire_result",
+    "classify_recovery_result",
     "classify_release_result",
 ]

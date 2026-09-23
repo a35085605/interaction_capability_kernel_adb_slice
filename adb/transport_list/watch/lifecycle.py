@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from lifecycle.capability.result import AcquireResult, LifecycleResult, ReleaseResult
+from lifecycle.capability.result import AcquireResult, LifecycleResult, RecoveryResult, ReleaseResult
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,
@@ -27,12 +27,15 @@ AdbTransportListWatchReleaseResult: TypeAlias = ReleaseResult[
     AdbTransportListWatchRequest,
     AdbTransportListWatchStream,
 ]
+AdbTransportListWatchRecoveryResult: TypeAlias = RecoveryResult[
+    AdbTransportListWatchGeneration,
+    AdbTransportListWatchRequest,
+    AdbTransportListWatchStream,
+]
 
 
 @runtime_checkable
 class AdbTransportListWatchLifecycle(AdbTransportListWatchSnapshotReader, Protocol):
-    """Acquire and release one generation-scoped transport-list watch capability."""
-
     def acquire(
         self,
         expected_generation: AdbTransportListWatchGeneration,
@@ -45,10 +48,14 @@ class AdbTransportListWatchLifecycle(AdbTransportListWatchSnapshotReader, Protoc
         request: AdbTransportListWatchRequest,
     ) -> AdbTransportListWatchReleaseResult: ...
 
+    def recover(
+        self,
+        expected_generation: AdbTransportListWatchGeneration,
+        request: AdbTransportListWatchRequest,
+    ) -> AdbTransportListWatchRecoveryResult: ...
+
 
 class AdbTransportListWatchLifecycleFactory(Protocol):
-    """Construct one runtime-scoped transport-list watch lifecycle."""
-
     def __call__(
         self,
         generation_issuer: AdbTransportListWatchGenerationIssuer,
@@ -60,5 +67,6 @@ __all__ = [
     "AdbTransportListWatchLifecycle",
     "AdbTransportListWatchLifecycleFactory",
     "AdbTransportListWatchLifecycleResult",
+    "AdbTransportListWatchRecoveryResult",
     "AdbTransportListWatchReleaseResult",
 ]

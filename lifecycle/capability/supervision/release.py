@@ -6,8 +6,8 @@ from time import monotonic, sleep
 from typing import Generic, TypeAlias, TypeVar
 
 from lifecycle.capability.lifecycle import CapabilityLifecycle
-from lifecycle.capability.result import LifecycleResult
-from lifecycle.capability.snapshot import LifecyclePhase
+from lifecycle.capability.result import LifecycleOutcome, LifecycleResult
+from lifecycle.capability.snapshot import CleanupOrigin, LifecyclePhase
 from lifecycle.capability.supervision.control import (
     CancellationSignal,
     Clock,
@@ -18,22 +18,24 @@ from lifecycle.capability.supervision.control import (
     stop_reason,
     validate_cancellation,
 )
-from lifecycle.capability.supervision.policy import ReleaseSupervisionPolicy
+from lifecycle.capability.supervision.policy import (
+    RecoverySupervisionPolicy,
+    ReleaseSupervisionPolicy,
+)
+from lifecycle.capability.supervision.recovery import RecoverySupervisor
 
 
 GenerationT = TypeVar("GenerationT")
 RequestT = TypeVar("RequestT")
 CapabilityT = TypeVar("CapabilityT")
-
 _Sleeper = Callable[[float], None]
 
 
 class ReleaseDisposition(Enum):
-    """Interpret one release result relative to its generation and request inputs."""
-
     SUCCEEDED = auto()
     ALREADY_IDLE = auto()
-    FAILED = auto()
+    INCOMPLETE = auto()
+    RECOVERY_REQUIRED = auto()
     GENERATION_MISMATCH = auto()
     REQUEST_MISMATCH = auto()
     BUSY = auto()
@@ -44,33 +46,46 @@ def classify_release_result(
     generation: GenerationT,
     request: RequestT,
 ) -> ReleaseDisposition:
-    """Classify one raw lifecycle result using release's fencing precedence."""
-
     if not isinstance(result, LifecycleResult):
         raise TypeError("result must be LifecycleResult")
 
-    snapshot = result.snapshot
-    if result.execution_started:
-        # A successful release advances generation, so execution must be considered
-        # before generation fencing.
-        if snapshot.phase is LifecyclePhase.IDLE:
+    if result.outcome is LifecycleOutcome.RELEASE_COMPLETED:
+        return ReleaseDisposition.SUCCEEDED
+    if result.outcome is LifecycleOutcome.RELEASE_INCOMPLETE:
+        return ReleaseDisposition.INCOMPLETE
+    if result.outcome is LifecycleOutcome.RECOVERY_COMPLETED:
+        if result.origin is CleanupOrigin.RELEASE:
             return ReleaseDisposition.SUCCEEDED
-        if snapshot.phase is LifecyclePhase.RELEASE_REQUIRED:
-            return ReleaseDisposition.FAILED
-        raise RuntimeError(
-            "executed release must finish IDLE or RELEASE_REQUIRED"
-        )
+        raise RuntimeError("release classifier received acquire-origin recovery")
+    if result.outcome is LifecycleOutcome.RECOVERY_INCOMPLETE:
+        if result.origin is CleanupOrigin.RELEASE:
+            return ReleaseDisposition.INCOMPLETE
+        raise RuntimeError("release classifier received acquire-origin recovery")
+    if result.outcome is not LifecycleOutcome.NOT_EXECUTED:
+        raise RuntimeError("release classifier received a non-release executed outcome")
 
+    snapshot = result.snapshot
     if snapshot.generation != generation:
         return ReleaseDisposition.GENERATION_MISMATCH
-    if snapshot.phase in (LifecyclePhase.ACQUIRING, LifecyclePhase.RELEASING):
+    if snapshot.phase in (
+        LifecyclePhase.ACQUIRING,
+        LifecyclePhase.RELEASING,
+        LifecyclePhase.RECOVERING,
+    ):
         return ReleaseDisposition.BUSY
     if snapshot.phase is LifecyclePhase.IDLE:
         return ReleaseDisposition.ALREADY_IDLE
-    if snapshot.phase in (LifecyclePhase.ACTIVE, LifecyclePhase.RELEASE_REQUIRED):
+    if snapshot.phase is LifecyclePhase.ACTIVE:
         if snapshot.request != request:
             return ReleaseDisposition.REQUEST_MISMATCH
-
+        raise RuntimeError("matching active release was unexpectedly not executed")
+    if snapshot.phase in (
+        LifecyclePhase.CLEANUP_PENDING,
+        LifecyclePhase.FINALIZATION_PENDING,
+    ):
+        if snapshot.request != request:
+            return ReleaseDisposition.REQUEST_MISMATCH
+        return ReleaseDisposition.RECOVERY_REQUIRED
     raise RuntimeError("non-executed release returned an unsupported lifecycle state")
 
 
@@ -80,13 +95,7 @@ ReleaseSupervisionResult: TypeAlias = (
 
 
 class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
-    """Drive one request to a release-side terminal lifecycle result.
-
-    Supervision is generation-scoped. Failed releases and busy lifecycle results are
-    retried for the same generation/request pair; terminal results are returned
-    unchanged and a newer generation is never followed. Caller-supplied timeout or
-    cancellation bounds stop retrying without discarding retained cleanup ownership.
-    """
+    """Start release once, then delegate unresolved work to recovery."""
 
     def __init__(
         self,
@@ -100,14 +109,18 @@ class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
             raise TypeError("lifecycle must satisfy CapabilityLifecycle")
         if not isinstance(policy, ReleaseSupervisionPolicy):
             raise TypeError("policy must be ReleaseSupervisionPolicy")
-        if not callable(_sleeper):
-            raise TypeError("_sleeper must be callable")
-        if not callable(_clock):
-            raise TypeError("_clock must be callable")
+        if not callable(_sleeper) or not callable(_clock):
+            raise TypeError("_sleeper and _clock must be callable")
         self._lifecycle = lifecycle
         self._policy = policy
         self._sleep = _sleeper
         self._clock = _clock
+        self._recovery = RecoverySupervisor(
+            lifecycle,
+            policy=RecoverySupervisionPolicy(policy.retry_seconds),
+            _sleeper=_sleeper,
+            _clock=_clock,
+        )
 
     @property
     def lifecycle(self) -> CapabilityLifecycle[GenerationT, RequestT, CapabilityT]:
@@ -125,8 +138,6 @@ class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
         timeout_seconds: float | None = None,
         cancellation: CancellationSignal | None = None,
     ) -> ReleaseSupervisionResult[GenerationT, RequestT, CapabilityT]:
-        """Retry release failures/busy results until terminal or the caller stops waiting."""
-
         if generation is None:
             raise TypeError("generation cannot be None")
         if request is None:
@@ -140,36 +151,55 @@ class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
         attempts = 0
 
         while True:
-            reason = stop_reason(
-                deadline=deadline,
-                cancellation=cancellation,
-                clock=self._clock,
-            )
+            reason = stop_reason(deadline=deadline, cancellation=cancellation, clock=self._clock)
             if reason is not None:
                 return SupervisionStopped(reason, attempts)
-
             attempts += 1
             result = self._lifecycle.release(generation, request)
             disposition = classify_release_result(result, generation, request)
-            if disposition not in (ReleaseDisposition.FAILED, ReleaseDisposition.BUSY):
-                return result
+            if disposition is ReleaseDisposition.BUSY:
+                reason = stop_reason(
+                    deadline=deadline,
+                    cancellation=cancellation,
+                    clock=self._clock,
+                )
+                if reason is not None:
+                    return SupervisionStopped(reason, attempts)
+                delay = retry_delay(
+                    self._policy.retry_seconds,
+                    deadline=deadline,
+                    clock=self._clock,
+                )
+                if delay <= 0.0:
+                    return SupervisionStopped(SupervisionStopReason.TIMED_OUT, attempts)
+                self._sleep(delay)
+                continue
 
-            reason = stop_reason(
-                deadline=deadline,
-                cancellation=cancellation,
-                clock=self._clock,
-            )
-            if reason is not None:
-                return SupervisionStopped(reason, attempts)
+            if disposition in (
+                ReleaseDisposition.INCOMPLETE,
+                ReleaseDisposition.RECOVERY_REQUIRED,
+            ):
+                snapshot = result.snapshot
+                if snapshot.phase not in (
+                    LifecyclePhase.CLEANUP_PENDING,
+                    LifecyclePhase.FINALIZATION_PENDING,
+                ):
+                    raise RuntimeError("release recovery did not leave pending state")
+                # Never let a release-side helper consume acquire rollback debt. Runtime
+                # deactivation handles generic pending recovery explicitly.
+                if snapshot.origin is not CleanupOrigin.RELEASE:
+                    return result
+                remaining = None if deadline is None else max(0.0, deadline - self._clock())
+                if remaining is not None and remaining <= 0.0:
+                    return SupervisionStopped(SupervisionStopReason.TIMED_OUT, attempts)
+                return self._recovery.supervise(
+                    generation,
+                    request,
+                    timeout_seconds=remaining,
+                    cancellation=cancellation,
+                )
 
-            delay = retry_delay(
-                self._policy.retry_seconds,
-                deadline=deadline,
-                clock=self._clock,
-            )
-            if delay <= 0.0:
-                return SupervisionStopped(SupervisionStopReason.TIMED_OUT, attempts)
-            self._sleep(delay)
+            return result
 
 
 __all__ = [

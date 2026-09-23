@@ -8,6 +8,7 @@ from time import monotonic, sleep
 from typing import Protocol, TypeAlias
 
 from lifecycle.resource.cleanup import cleanup_reverse
+from lifecycle.resource.result import ResourceCleanupResult
 from lifecycle.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
@@ -32,6 +33,7 @@ from windows.process import (
     WindowsProcessLifecycleManager,
     WindowsProcessSpec,
     WindowsProcessStartError,
+    WindowsProcessTerminationUnconfirmed,
     WindowsRetainedProcess,
 )
 from windows.tcp_listener import WindowsTcpListenerTable, WindowsTcpTableError
@@ -67,10 +69,14 @@ class _WindowsAospAdbServerRetainedStartError(_WindowsAospAdbServerStartError):
         resources: tuple[object, ...],
         *,
         original_error: BaseException | None = None,
+        cleanup_errors: tuple[BaseException, ...] = (),
+        interruption: BaseException | None = None,
     ) -> None:
         super().__init__(diagnostic)
         self.resources = resources
         self.original_error = original_error
+        self.cleanup_errors = cleanup_errors
+        self.interruption = interruption
 
 
 def _normalize_probe_interval(value: object) -> float:
@@ -233,16 +239,25 @@ class WindowsAospAdbServerProcessDriver:
             )
         except _WindowsAospAdbServerRetainedStartError as exc:
             resources.extend(exc.resources)
+            if exc.interruption is not None:
+                return RequirementAcquireInterrupted(
+                    exc.interruption,
+                    tuple(resources),
+                    exc.cleanup_errors,
+                    exc.original_error,
+                )
             if exc.original_error is not None and not isinstance(
                 exc.original_error, Exception
             ):
                 return RequirementAcquireInterrupted(
                     exc.original_error,
                     tuple(resources),
+                    exc.cleanup_errors,
                 )
             return RequirementAcquireFailed(
                 exc,
                 tuple(resources),
+                exc.cleanup_errors,
             )
         except _WindowsAospAdbServerStartError as exc:
             return RequirementAcquireFailed(
@@ -259,22 +274,53 @@ class WindowsAospAdbServerProcessDriver:
     def cleanup(
         self,
         resources: PhysicalResources[WindowsAospAdbServerProcessResource],
-    ) -> None:
-        """Clean every owned resource; failures preserve retryable ownership."""
+    ) -> ResourceCleanupResult[WindowsAospAdbServerProcessResource]:
+        """Clean every owned resource and report exact remaining ownership."""
 
-        cleanup_reverse(resources, self._close_resource)
+        return cleanup_reverse(resources, self._cleanup_resource)
 
-    def _close_resource(self, resource: WindowsAospAdbServerProcessResource) -> None:
+    def _cleanup_resource(
+        self,
+        resource: WindowsAospAdbServerProcessResource,
+    ) -> ResourceCleanupResult[WindowsAospAdbServerProcessResource]:
         if isinstance(resource, (WindowsOwnedProcess, WindowsRetainedProcess)):
-            resource.close(self.shutdown_timeout_seconds)
-            return
-        close = getattr(resource, "close", None)
-        if not callable(close):
-            raise TypeError(
-                "unsupported Windows ADB server resource: "
-                f"{type(resource).__name__}"
-            )
-        close()
+            try:
+                resource.close(self.shutdown_timeout_seconds)
+            except WindowsProcessTerminationUnconfirmed as exc:
+                if resource.closed:
+                    return ResourceCleanupResult.complete(errors=(exc,))
+                # Termination-unconfirmed paths deliberately retain the controlling
+                # handles, so another termination/wait attempt is safe.
+                return ResourceCleanupResult.retryable((resource,), errors=(exc,))
+            except Exception as exc:
+                if resource.closed:
+                    return ResourceCleanupResult.complete(errors=(exc,))
+                # Handle-release failures can leave Win32 ownership ambiguous.
+                return ResourceCleanupResult.blocked((resource,), errors=(exc,))
+            return ResourceCleanupResult.complete()
+
+        if isinstance(resource, socket.socket):
+            try:
+                resource.close()
+            except Exception as exc:
+                try:
+                    closed = resource.fileno() == -1
+                except BaseException:
+                    closed = False
+                if closed:
+                    return ResourceCleanupResult.complete(errors=(exc,))
+                return ResourceCleanupResult.blocked((resource,), errors=(exc,))
+            return ResourceCleanupResult.complete()
+
+        return ResourceCleanupResult.blocked(
+            (resource,),
+            errors=(
+                TypeError(
+                    "unsupported Windows ADB server resource: "
+                    f"{type(resource).__name__}"
+                ),
+            ),
+        )
 
     @staticmethod
     def _validate_endpoint(server_endpoint: TcpEndpoint) -> None:
@@ -316,6 +362,10 @@ class WindowsAospAdbServerProcessDriver:
                     f"could not confirm socket cleanup: {exc}; cleanup error: {close_exc}",
                     (listener,),
                     original_error=exc,
+                    cleanup_errors=(close_exc,),
+                    interruption=(
+                        close_exc if not isinstance(close_exc, Exception) else None
+                    ),
                 ) from close_exc
 
             if isinstance(exc, _WindowsAospAdbServerStartError):

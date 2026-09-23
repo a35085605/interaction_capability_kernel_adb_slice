@@ -19,6 +19,7 @@ from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchLifecycle,
     AdbTransportListWatchLifecycleFactory,
     AdbTransportListWatchLifecycleResult,
+    AdbTransportListWatchRecoveryResult,
     AdbTransportListWatchReleaseResult,
 )
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
@@ -41,6 +42,7 @@ __all__ = [
     "AdbTransportListWatchLifecycleResult",
     "AdbTransportListWatchPhase",
     "AdbTransportListWatchProtocolFailure",
+    "AdbTransportListWatchRecoveryResult",
     "AdbTransportListWatchReleaseResult",
     "AdbTransportListWatchRequest",
     "AdbTransportListWatchServerConnectionFailure",

@@ -21,6 +21,7 @@ from adb.server.lifecycle import (
     AdbServerLifecycle,
     AdbServerLifecycleFactory,
     AdbServerLifecycleResult,
+    AdbServerRecoveryResult,
     AdbServerReleaseResult,
 )
 from adb.server.request import AdbServerRequest
@@ -45,6 +46,7 @@ __all__ = [
     "AdbServerPhase",
     "AdbServerProcessExitedFailure",
     "AdbServerProtocolFailure",
+    "AdbServerRecoveryResult",
     "AdbServerReleaseResult",
     "AdbServerRequest",
     "AdbServerRequestFailure",

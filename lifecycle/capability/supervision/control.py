@@ -22,6 +22,7 @@ class SupervisionStopReason(Enum):
 
     TIMED_OUT = auto()
     CANCELLED = auto()
+    HOST_REQUIRED = auto()
 
 
 @dataclass(frozen=True, slots=True)

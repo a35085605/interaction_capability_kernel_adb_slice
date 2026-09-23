@@ -1,18 +1,34 @@
 """Contracts and result models for capability lifecycles."""
 
-from lifecycle.capability.lifecycle import (
-    CapabilityLifecycle,
-    LifecycleSnapshotReader,
-)
+from lifecycle.capability.lifecycle import CapabilityLifecycle, LifecycleSnapshotReader
 from lifecycle.capability.projection import CapabilityProjector
-from lifecycle.capability.result import AcquireResult, LifecycleResult, ReleaseResult
-from lifecycle.capability.snapshot import LifecyclePhase, LifecycleSnapshot
+from lifecycle.capability.result import (
+    AcquireResult,
+    LifecycleDiagnostics,
+    LifecycleOutcome,
+    LifecycleResult,
+    RecoveryResult,
+    ReleaseResult,
+)
+from lifecycle.capability.session import (
+    CapabilitySessionFactory,
+    CleanupReport,
+    DefaultCapabilitySessionFactory,
+    PreparationFailed,
+    PreparedSession,
+    SessionOwner,
+)
+from lifecycle.capability.snapshot import CleanupOrigin, LifecyclePhase, LifecycleSnapshot
 from lifecycle.capability.supervision import (
     AcquireDisposition,
     AcquireSupervisionPolicy,
     AcquireSupervisionResult,
     AcquireSupervisor,
     CancellationSignal,
+    RecoveryDisposition,
+    RecoverySupervisionPolicy,
+    RecoverySupervisionResult,
+    RecoverySupervisor,
     ReleaseDisposition,
     ReleaseSupervisionPolicy,
     ReleaseSupervisionResult,
@@ -20,6 +36,7 @@ from lifecycle.capability.supervision import (
     SupervisionStopped,
     SupervisionStopReason,
     classify_acquire_result,
+    classify_recovery_result,
     classify_release_result,
 )
 
@@ -33,17 +50,32 @@ __all__ = [
     "CancellationSignal",
     "CapabilityLifecycle",
     "CapabilityProjector",
+    "CapabilitySessionFactory",
+    "CleanupOrigin",
+    "CleanupReport",
+    "DefaultCapabilitySessionFactory",
+    "LifecycleDiagnostics",
+    "LifecycleOutcome",
     "LifecyclePhase",
     "LifecycleResult",
     "LifecycleSnapshot",
     "LifecycleSnapshotReader",
+    "PreparationFailed",
+    "PreparedSession",
+    "RecoveryDisposition",
+    "RecoveryResult",
+    "RecoverySupervisionPolicy",
+    "RecoverySupervisionResult",
+    "RecoverySupervisor",
     "ReleaseDisposition",
     "ReleaseResult",
     "ReleaseSupervisionPolicy",
     "ReleaseSupervisionResult",
     "ReleaseSupervisor",
+    "SessionOwner",
     "SupervisionStopped",
     "SupervisionStopReason",
     "classify_acquire_result",
+    "classify_recovery_result",
     "classify_release_result",
 ]

@@ -5,10 +5,12 @@ from typing import Generic, TypeVar
 from lifecycle.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
+    RequirementAcquireInterrupted,
     RequirementAcquireResult,
     ResourceDriver,
 )
 from lifecycle.resource.provider import ResolvedResourceProvider
+from lifecycle.resource.result import ResourceCleanupResult
 from adb.adapters.server_process.errors import AospAdbServerStartError
 from adb.server.coordinator import AdbServerLifecycleCoordinator
 from adb.server.error import AdbServerAcquireError
@@ -51,11 +53,25 @@ class _AdbServerDomainDriver(Generic[PhysicalResourceT]):
             return RequirementAcquireFailed(
                 AdbServerAcquireError(str(outcome.error)),
                 outcome.resources,
+                outcome.cleanup_errors,
+            )
+        if (
+            isinstance(outcome, RequirementAcquireInterrupted)
+            and isinstance(outcome.operation_error, AospAdbServerStartError)
+        ):
+            return RequirementAcquireInterrupted(
+                outcome.error,
+                outcome.resources,
+                outcome.cleanup_errors,
+                AdbServerAcquireError(str(outcome.operation_error)),
             )
         return outcome
 
-    def cleanup(self, resources: PhysicalResources[PhysicalResourceT]) -> None:
-        self._driver.cleanup(resources)
+    def cleanup(
+        self,
+        resources: PhysicalResources[PhysicalResourceT],
+    ) -> ResourceCleanupResult[PhysicalResourceT]:
+        return self._driver.cleanup(resources)
 
 
 class AdbServerProcessLifecycle(

@@ -160,9 +160,13 @@ class AospTrackDevicesSession:
             raise RuntimeError("track-devices session is not initialized")
         return updates
 
-    def _is_closed(self) -> bool:
+    @property
+    def closed(self) -> bool:
         with self._lock:
             return self._closed
+
+    def _is_closed(self) -> bool:
+        return self.closed
 
     def _is_cancelled(self) -> bool:
         with self._lock:
@@ -194,7 +198,17 @@ class AospTrackDevicesSession:
                 return
             sock = self._socket
             self._shutdown(sock)
-            sock.close()
+            try:
+                sock.close()
+            except BaseException:
+                # Python socket objects report -1 once ownership has been relinquished.
+                # Preserve that fact even if the platform reports a close error.
+                try:
+                    if sock.fileno() == -1:
+                        self._closed = True
+                except BaseException:
+                    pass
+                raise
             self._closed = True
 
 
@@ -204,6 +218,8 @@ class AospTrackDevicesSessionOpenFailed:
 
     error: BaseException
     retained_session: AospTrackDevicesSession | None = None
+    cleanup_errors: tuple[BaseException, ...] = ()
+    interruption: BaseException | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.error, BaseException):
@@ -212,6 +228,17 @@ class AospTrackDevicesSessionOpenFailed:
             self.retained_session, AospTrackDevicesSession
         ):
             raise TypeError("retained_session must be AospTrackDevicesSession or None")
+        if not isinstance(self.cleanup_errors, tuple):
+            raise TypeError("cleanup_errors must be a tuple")
+        if not all(isinstance(item, BaseException) for item in self.cleanup_errors):
+            raise TypeError("cleanup_errors must contain only BaseException values")
+        if self.interruption is not None:
+            if isinstance(self.interruption, Exception) or not isinstance(
+                self.interruption, BaseException
+            ):
+                raise TypeError(
+                    "interruption must be a non-Exception BaseException or None"
+                )
 
 
 AospTrackDevicesSessionOpenResult = (
@@ -228,11 +255,13 @@ def _failed_session_open(
     try:
         session.close()
     except BaseException as close_error:
-        # A cleanup interruption supersedes the original operation: it is the reason
-        # ownership could not be discharged synchronously.
-        if not isinstance(close_error, Exception):
-            return AospTrackDevicesSessionOpenFailed(close_error, session)
-        return AospTrackDevicesSessionOpenFailed(error, session)
+        retained = None if session.closed else session
+        return AospTrackDevicesSessionOpenFailed(
+            error,
+            retained,
+            (close_error,),
+            None if isinstance(close_error, Exception) else close_error,
+        )
     return AospTrackDevicesSessionOpenFailed(error)
 
 

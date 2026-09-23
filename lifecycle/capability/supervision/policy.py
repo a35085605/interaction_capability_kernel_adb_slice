@@ -16,8 +16,6 @@ def _normalize_positive_seconds(value: object, *, field_name: str) -> float:
 
 @dataclass(frozen=True, slots=True)
 class AcquireSupervisionPolicy:
-    """Retry timing for deferred same-generation acquire results."""
-
     deferred_retry_seconds: float = 0.1
 
     def __post_init__(self) -> None:
@@ -32,9 +30,22 @@ class AcquireSupervisionPolicy:
 
 
 @dataclass(frozen=True, slots=True)
-class ReleaseSupervisionPolicy:
-    """Retry timing for retryable same-generation release results."""
+class RecoverySupervisionPolicy:
+    retry_seconds: float = 0.1
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "retry_seconds",
+            _normalize_positive_seconds(
+                self.retry_seconds,
+                field_name="recovery supervision retry",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseSupervisionPolicy:
     retry_seconds: float = 0.1
 
     def __post_init__(self) -> None:
@@ -48,4 +59,8 @@ class ReleaseSupervisionPolicy:
         )
 
 
-__all__ = ["AcquireSupervisionPolicy", "ReleaseSupervisionPolicy"]
+__all__ = [
+    "AcquireSupervisionPolicy",
+    "RecoverySupervisionPolicy",
+    "ReleaseSupervisionPolicy",
+]
