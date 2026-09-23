@@ -5,21 +5,7 @@ from threading import Lock
 from typing import Generic, TypeVar
 
 from lifecycle.capability.projection import CapabilityProjector
-from lifecycle.capability.result import (
-    AcquireAlreadyActive,
-    AcquireFailed,
-    AcquireReleaseRequired,
-    AcquireRequestMismatch,
-    AcquireResult,
-    AcquireSucceeded,
-    LifecycleBusy,
-    GenerationMismatch,
-    ReleaseAlreadyIdle,
-    ReleaseFailed,
-    ReleaseRequestMismatch,
-    ReleaseResult,
-    ReleaseSucceeded,
-)
+from lifecycle.capability.result import AcquireResult, LifecycleResult, ReleaseResult
 from lifecycle.capability.snapshot import LifecyclePhase, LifecycleSnapshot
 from lifecycle.capability.state import (
     Acquiring,
@@ -119,9 +105,8 @@ class CapabilityLifecycleCoordinator(
 
     State changes use a short lock, while resource I/O, capability projection, cleanup,
     and generation issuance run outside it. Calls that observe one of those operations
-    return ``LifecycleBusy`` immediately; ACQUIRING includes projection and
-    RELEASING includes
-    next-generation issuance.
+    return a non-executed result immediately; ACQUIRING includes projection and
+    RELEASING includes next-generation issuance.
 
     Once acquisition begins, any acquisition or projection failure enters
     ``ReleaseRequired`` and requires an explicit ``release`` before the generation can
@@ -173,18 +158,9 @@ class CapabilityLifecycleCoordinator(
         with self._lock:
             state = self._state
             if expected_generation != state.generation:
-                return GenerationMismatch(state.generation)
-            if isinstance(state, Acquiring):
-                return LifecycleBusy(LifecyclePhase.ACQUIRING)
-            if isinstance(state, Releasing):
-                return LifecycleBusy(LifecyclePhase.RELEASING)
-            if isinstance(state, Active):
-                snapshot = _snapshot_from_state(state)
-                if state.request == request:
-                    return AcquireAlreadyActive(snapshot)
-                return AcquireRequestMismatch(state.request)
-            if isinstance(state, ReleaseRequired):
-                return AcquireReleaseRequired(_snapshot_from_state(state))
+                return LifecycleResult(_snapshot_from_state(state), False)
+            if isinstance(state, (Acquiring, Releasing, Active, ReleaseRequired)):
+                return LifecycleResult(_snapshot_from_state(state), False)
             if not isinstance(state, Idle):
                 raise RuntimeError("unsupported lifecycle state")
 
@@ -212,15 +188,11 @@ class CapabilityLifecycleCoordinator(
                 generation, request, resources, exc
             )
 
-        snapshot = LifecycleSnapshot(
-            generation,
-            request,
-            capability,
-            phase=LifecyclePhase.ACTIVE,
-        )
         with self._lock:
-            self._state = Active(generation, request, capability, resources)
-        return AcquireSucceeded(snapshot)
+            state = Active(generation, request, capability, resources)
+            self._state = state
+            snapshot = _snapshot_from_state(state)
+        return LifecycleResult(snapshot, True)
 
     def release(
         self,
@@ -237,17 +209,13 @@ class CapabilityLifecycleCoordinator(
         with self._lock:
             state = self._state
             if expected_generation != state.generation:
-                return GenerationMismatch(state.generation)
-            if isinstance(state, Acquiring):
-                return LifecycleBusy(LifecyclePhase.ACQUIRING)
-            if isinstance(state, Releasing):
-                return LifecycleBusy(LifecyclePhase.RELEASING)
-            if isinstance(state, Idle):
-                return ReleaseAlreadyIdle()
+                return LifecycleResult(_snapshot_from_state(state), False)
+            if isinstance(state, (Acquiring, Releasing, Idle)):
+                return LifecycleResult(_snapshot_from_state(state), False)
             if not isinstance(state, (Active, ReleaseRequired)):
                 raise RuntimeError("unsupported lifecycle state")
             if state.request != request:
-                return ReleaseRequestMismatch(state.request)
+                return LifecycleResult(_snapshot_from_state(state), False)
 
             generation = state.generation
             resources = state.resources
@@ -269,8 +237,10 @@ class CapabilityLifecycleCoordinator(
             return self._fail_release_or_reraise(generation, request, (), exc)
 
         with self._lock:
-            self._state = Idle(next_generation)
-        return ReleaseSucceeded(next_generation)
+            state = Idle(next_generation)
+            self._state = state
+            snapshot = _snapshot_from_state(state)
+        return LifecycleResult(snapshot, True)
 
     def _issue_next_generation(self, previous_generation: GenerationT) -> GenerationT:
         next_generation = self._issue_generation()
@@ -286,12 +256,12 @@ class CapabilityLifecycleCoordinator(
         request: RequestT,
         resources: PhysicalResources[PhysicalResourceT],
         error: BaseException,
-    ) -> AcquireFailed[GenerationT, RequestT, CapabilityT]:
+    ) -> AcquireResult[GenerationT, RequestT, CapabilityT]:
         with self._lock:
             state = ReleaseRequired(generation, request, resources, error)
             self._state = state
             snapshot = _snapshot_from_state(state)
-        return AcquireFailed(snapshot)
+        return LifecycleResult(snapshot, True)
 
     def _fail_acquire_or_reraise(
         self,
@@ -299,7 +269,7 @@ class CapabilityLifecycleCoordinator(
         request: RequestT,
         resources: PhysicalResources[PhysicalResourceT],
         error: BaseException,
-    ) -> AcquireFailed[GenerationT, RequestT, CapabilityT]:
+    ) -> AcquireResult[GenerationT, RequestT, CapabilityT]:
         result = self._record_acquire_failure(generation, request, resources, error)
         if not isinstance(error, Exception):
             raise error
@@ -311,12 +281,12 @@ class CapabilityLifecycleCoordinator(
         request: RequestT,
         resources: PhysicalResources[PhysicalResourceT],
         error: BaseException,
-    ) -> ReleaseFailed[GenerationT, RequestT, CapabilityT]:
+    ) -> ReleaseResult[GenerationT, RequestT, CapabilityT]:
         with self._lock:
             state = ReleaseRequired(generation, request, resources, error)
             self._state = state
             snapshot = _snapshot_from_state(state)
-        return ReleaseFailed(snapshot)
+        return LifecycleResult(snapshot, True)
 
     def _fail_release_or_reraise(
         self,
@@ -324,7 +294,7 @@ class CapabilityLifecycleCoordinator(
         request: RequestT,
         resources: PhysicalResources[PhysicalResourceT],
         error: BaseException,
-    ) -> ReleaseFailed[GenerationT, RequestT, CapabilityT]:
+    ) -> ReleaseResult[GenerationT, RequestT, CapabilityT]:
         result = self._record_release_failure(generation, request, resources, error)
         if not isinstance(error, Exception):
             raise error

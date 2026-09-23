@@ -1,18 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from enum import Enum, auto
 from time import monotonic, sleep
 from typing import Generic, TypeAlias, TypeVar
 
 from lifecycle.capability.lifecycle import CapabilityLifecycle
-from lifecycle.capability.result import (
-    GenerationMismatch,
-    LifecycleBusy,
-    ReleaseAlreadyIdle,
-    ReleaseFailed,
-    ReleaseRequestMismatch,
-    ReleaseSucceeded,
-)
+from lifecycle.capability.result import LifecycleResult
+from lifecycle.capability.snapshot import LifecyclePhase
 from lifecycle.capability.supervision.control import (
     CancellationSignal,
     Clock,
@@ -33,19 +28,61 @@ CapabilityT = TypeVar("CapabilityT")
 _Sleeper = Callable[[float], None]
 
 
+class ReleaseDisposition(Enum):
+    """Interpret one release result relative to its generation and request inputs."""
+
+    SUCCEEDED = auto()
+    ALREADY_IDLE = auto()
+    FAILED = auto()
+    GENERATION_MISMATCH = auto()
+    REQUEST_MISMATCH = auto()
+    BUSY = auto()
+
+
+def classify_release_result(
+    result: LifecycleResult[GenerationT, RequestT, CapabilityT],
+    generation: GenerationT,
+    request: RequestT,
+) -> ReleaseDisposition:
+    """Classify one raw lifecycle result using release's fencing precedence."""
+
+    if not isinstance(result, LifecycleResult):
+        raise TypeError("result must be LifecycleResult")
+
+    snapshot = result.snapshot
+    if result.execution_started:
+        # A successful release advances generation, so execution must be considered
+        # before generation fencing.
+        if snapshot.phase is LifecyclePhase.IDLE:
+            return ReleaseDisposition.SUCCEEDED
+        if snapshot.phase is LifecyclePhase.RELEASE_REQUIRED:
+            return ReleaseDisposition.FAILED
+        raise RuntimeError(
+            "executed release must finish IDLE or RELEASE_REQUIRED"
+        )
+
+    if snapshot.generation != generation:
+        return ReleaseDisposition.GENERATION_MISMATCH
+    if snapshot.phase in (LifecyclePhase.ACQUIRING, LifecyclePhase.RELEASING):
+        return ReleaseDisposition.BUSY
+    if snapshot.phase is LifecyclePhase.IDLE:
+        return ReleaseDisposition.ALREADY_IDLE
+    if snapshot.phase in (LifecyclePhase.ACTIVE, LifecyclePhase.RELEASE_REQUIRED):
+        if snapshot.request != request:
+            return ReleaseDisposition.REQUEST_MISMATCH
+
+    raise RuntimeError("non-executed release returned an unsupported lifecycle state")
+
+
 ReleaseSupervisionResult: TypeAlias = (
-    ReleaseSucceeded[GenerationT]
-    | ReleaseAlreadyIdle
-    | GenerationMismatch[GenerationT]
-    | ReleaseRequestMismatch[RequestT]
-    | SupervisionStopped
+    LifecycleResult[GenerationT, RequestT, CapabilityT] | SupervisionStopped
 )
 
 
 class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
     """Drive one request to a release-side terminal lifecycle result.
 
-    Supervision is generation-scoped. ``ReleaseFailed`` and ``LifecycleBusy`` are
+    Supervision is generation-scoped. Failed releases and busy lifecycle results are
     retried for the same generation/request pair; terminal results are returned
     unchanged and a newer generation is never followed. Caller-supplied timeout or
     cancellation bounds stop retrying without discarding retained cleanup ownership.
@@ -87,7 +124,7 @@ class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
         *,
         timeout_seconds: float | None = None,
         cancellation: CancellationSignal | None = None,
-    ) -> ReleaseSupervisionResult[GenerationT, RequestT]:
+    ) -> ReleaseSupervisionResult[GenerationT, RequestT, CapabilityT]:
         """Retry release failures/busy results until terminal or the caller stops waiting."""
 
         if generation is None:
@@ -113,18 +150,9 @@ class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
 
             attempts += 1
             result = self._lifecycle.release(generation, request)
-            if isinstance(
-                result,
-                (
-                    ReleaseSucceeded,
-                    ReleaseAlreadyIdle,
-                    GenerationMismatch,
-                    ReleaseRequestMismatch,
-                ),
-            ):
+            disposition = classify_release_result(result, generation, request)
+            if disposition not in (ReleaseDisposition.FAILED, ReleaseDisposition.BUSY):
                 return result
-            if not isinstance(result, (ReleaseFailed, LifecycleBusy)):
-                raise TypeError("lifecycle returned an unsupported ReleaseResult")
 
             reason = stop_reason(
                 deadline=deadline,
@@ -144,4 +172,9 @@ class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
             self._sleep(delay)
 
 
-__all__ = ["ReleaseSupervisionResult", "ReleaseSupervisor"]
+__all__ = [
+    "ReleaseDisposition",
+    "ReleaseSupervisionResult",
+    "ReleaseSupervisor",
+    "classify_release_result",
+]

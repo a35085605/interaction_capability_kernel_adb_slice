@@ -2,45 +2,23 @@ from __future__ import annotations
 
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from lifecycle.capability.result import (
-    AcquireAlreadyActive,
-    AcquireFailed,
-    AcquireReleaseRequired,
-    AcquireRequestMismatch,
-    AcquireResult,
-    AcquireSucceeded,
-    GenerationMismatch,
-    LifecycleBusy,
-    ReleaseAlreadyIdle,
-    ReleaseFailed,
-    ReleaseRequestMismatch,
-    ReleaseResult,
-    ReleaseSucceeded,
-)
+from lifecycle.capability.result import AcquireResult, LifecycleResult, ReleaseResult
 from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration, AdbServerGenerationIssuer
 from adb.server.request import AdbServerRequest
 from adb.server.snapshot import AdbServerSnapshotReader
 
 
-AdbServerAcquireAlreadyActive = AcquireAlreadyActive
-AdbServerAcquireFailed = AcquireFailed
-AdbServerAcquireReleaseRequired = AcquireReleaseRequired
-AdbServerAcquireRequestMismatch = AcquireRequestMismatch
-AdbServerAcquireSucceeded = AcquireSucceeded
-AdbServerGenerationMismatch = GenerationMismatch
-AdbServerLifecycleBusy = LifecycleBusy
-AdbServerReleaseAlreadyIdle = ReleaseAlreadyIdle
-AdbServerReleaseFailed = ReleaseFailed
-AdbServerReleaseRequestMismatch = ReleaseRequestMismatch
-AdbServerReleaseSucceeded = ReleaseSucceeded
-
+AdbServerLifecycleResult: TypeAlias = LifecycleResult[
+    AdbServerGeneration,
+    AdbServerRequest,
+    AdbServerCapability,
+]
 AdbServerAcquireResult: TypeAlias = AcquireResult[
     AdbServerGeneration,
     AdbServerRequest,
     AdbServerCapability,
 ]
-
 AdbServerReleaseResult: TypeAlias = ReleaseResult[
     AdbServerGeneration,
     AdbServerRequest,
@@ -75,19 +53,9 @@ class AdbServerLifecycleFactory(Protocol):
 
 
 __all__ = [
-    "AdbServerAcquireAlreadyActive",
-    "AdbServerAcquireFailed",
-    "AdbServerAcquireReleaseRequired",
-    "AdbServerAcquireRequestMismatch",
     "AdbServerAcquireResult",
-    "AdbServerAcquireSucceeded",
-    "AdbServerGenerationMismatch",
     "AdbServerLifecycle",
-    "AdbServerLifecycleBusy",
     "AdbServerLifecycleFactory",
-    "AdbServerReleaseAlreadyIdle",
-    "AdbServerReleaseFailed",
-    "AdbServerReleaseRequestMismatch",
+    "AdbServerLifecycleResult",
     "AdbServerReleaseResult",
-    "AdbServerReleaseSucceeded",
 ]

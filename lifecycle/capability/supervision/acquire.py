@@ -1,19 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from enum import Enum, auto
 from time import monotonic, sleep
 from typing import Generic, TypeAlias, TypeVar
 
 from lifecycle.capability.lifecycle import CapabilityLifecycle
-from lifecycle.capability.result import (
-    AcquireAlreadyActive,
-    AcquireFailed,
-    AcquireReleaseRequired,
-    AcquireRequestMismatch,
-    AcquireSucceeded,
-    GenerationMismatch,
-    LifecycleBusy,
-)
+from lifecycle.capability.result import LifecycleResult
+from lifecycle.capability.snapshot import LifecyclePhase
 from lifecycle.capability.supervision.control import (
     CancellationSignal,
     Clock,
@@ -34,24 +28,64 @@ CapabilityT = TypeVar("CapabilityT")
 _Sleeper = Callable[[float], None]
 
 
+class AcquireDisposition(Enum):
+    """Interpret one acquire result relative to its generation and request inputs."""
+
+    SUCCEEDED = auto()
+    ALREADY_ACTIVE = auto()
+    FAILED = auto()
+    RELEASE_REQUIRED = auto()
+    GENERATION_MISMATCH = auto()
+    REQUEST_MISMATCH = auto()
+    BUSY = auto()
+
+
+def classify_acquire_result(
+    result: LifecycleResult[GenerationT, RequestT, CapabilityT],
+    generation: GenerationT,
+    request: RequestT,
+) -> AcquireDisposition:
+    """Classify one raw lifecycle result using acquire's fencing precedence."""
+
+    if not isinstance(result, LifecycleResult):
+        raise TypeError("result must be LifecycleResult")
+
+    snapshot = result.snapshot
+    if result.execution_started:
+        if snapshot.phase is LifecyclePhase.ACTIVE:
+            return AcquireDisposition.SUCCEEDED
+        if snapshot.phase is LifecyclePhase.RELEASE_REQUIRED:
+            return AcquireDisposition.FAILED
+        raise RuntimeError(
+            "executed acquire must finish ACTIVE or RELEASE_REQUIRED"
+        )
+
+    if snapshot.generation != generation:
+        return AcquireDisposition.GENERATION_MISMATCH
+    if snapshot.phase in (LifecyclePhase.ACQUIRING, LifecyclePhase.RELEASING):
+        return AcquireDisposition.BUSY
+    if snapshot.phase is LifecyclePhase.ACTIVE:
+        if snapshot.request == request:
+            return AcquireDisposition.ALREADY_ACTIVE
+        return AcquireDisposition.REQUEST_MISMATCH
+    if snapshot.phase is LifecyclePhase.RELEASE_REQUIRED:
+        return AcquireDisposition.RELEASE_REQUIRED
+
+    raise RuntimeError("non-executed acquire returned an unsupported lifecycle state")
+
+
 AcquireSupervisionResult: TypeAlias = (
-    AcquireSucceeded[GenerationT, RequestT, CapabilityT]
-    | AcquireAlreadyActive[GenerationT, RequestT, CapabilityT]
-    | AcquireFailed[GenerationT, RequestT, CapabilityT]
-    | AcquireReleaseRequired[GenerationT, RequestT, CapabilityT]
-    | GenerationMismatch[GenerationT]
-    | AcquireRequestMismatch[RequestT]
-    | SupervisionStopped
+    LifecycleResult[GenerationT, RequestT, CapabilityT] | SupervisionStopped
 )
 
 
 class AcquireSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
     """Drive one request to an acquisition-side terminal lifecycle result.
 
-    Supervision is generation-scoped. ``LifecycleBusy`` is retried for the same
-    generation/request pair; every other supported lifecycle result is returned
-    unchanged. Callers may supply a timeout and/or cancellation signal to bound the
-    retry loop. A bound never changes lifecycle ownership; it only stops waiting.
+    Supervision is generation-scoped. Busy lifecycle results are retried for the same
+    generation/request pair; every other valid result is returned unchanged. Callers
+    may supply a timeout and/or cancellation signal to bound the retry loop. A bound
+    never changes lifecycle ownership; it only stops waiting.
     """
 
     def __init__(
@@ -116,20 +150,9 @@ class AcquireSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
 
             attempts += 1
             result = self._lifecycle.acquire(generation, request)
-            if isinstance(
-                result,
-                (
-                    AcquireSucceeded,
-                    AcquireAlreadyActive,
-                    AcquireFailed,
-                    AcquireReleaseRequired,
-                    GenerationMismatch,
-                    AcquireRequestMismatch,
-                ),
-            ):
+            disposition = classify_acquire_result(result, generation, request)
+            if disposition is not AcquireDisposition.BUSY:
                 return result
-            if not isinstance(result, LifecycleBusy):
-                raise TypeError("lifecycle returned an unsupported AcquireResult")
 
             reason = stop_reason(
                 deadline=deadline,
@@ -149,4 +172,9 @@ class AcquireSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
             self._sleep(delay)
 
 
-__all__ = ["AcquireSupervisionResult", "AcquireSupervisor"]
+__all__ = [
+    "AcquireDisposition",
+    "AcquireSupervisionResult",
+    "AcquireSupervisor",
+    "classify_acquire_result",
+]

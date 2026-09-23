@@ -17,18 +17,7 @@ from lifecycle.capability.supervision.policy import (
 from lifecycle.capability.supervision.release import ReleaseSupervisor
 from adb.server.capability import AdbServerCapability
 from adb.server.generation import AdbServerGeneration
-from adb.server.lifecycle import (
-    AdbServerAcquireAlreadyActive,
-    AdbServerAcquireFailed,
-    AdbServerAcquireReleaseRequired,
-    AdbServerAcquireRequestMismatch,
-    AdbServerAcquireSucceeded,
-    AdbServerGenerationMismatch,
-    AdbServerLifecycle,
-    AdbServerReleaseAlreadyIdle,
-    AdbServerReleaseRequestMismatch,
-    AdbServerReleaseSucceeded,
-)
+from adb.server.lifecycle import AdbServerLifecycle, AdbServerLifecycleResult
 from adb.server.request import AdbServerRequest
 
 
@@ -38,21 +27,10 @@ AdbServerAcquireSupervisionPolicy = AcquireSupervisionPolicy
 AdbServerReleaseSupervisionPolicy = ReleaseSupervisionPolicy
 
 AdbServerAcquireSupervisionResult: TypeAlias = (
-    AdbServerAcquireSucceeded
-    | AdbServerAcquireAlreadyActive
-    | AdbServerAcquireFailed
-    | AdbServerAcquireReleaseRequired
-    | AdbServerGenerationMismatch
-    | AdbServerAcquireRequestMismatch
-    | SupervisionStopped
+    AdbServerLifecycleResult | SupervisionStopped
 )
-
 AdbServerReleaseSupervisionResult: TypeAlias = (
-    AdbServerReleaseSucceeded
-    | AdbServerReleaseAlreadyIdle
-    | AdbServerGenerationMismatch
-    | AdbServerReleaseRequestMismatch
-    | SupervisionStopped
+    AdbServerLifecycleResult | SupervisionStopped
 )
 
 
@@ -95,20 +73,12 @@ class AdbServerAcquireSupervisor(
             raise TypeError("generation must be AdbServerGeneration")
         if not isinstance(request, AdbServerRequest):
             raise TypeError("request must be AdbServerRequest")
-
-        result = super().supervise(
+        return super().supervise(
             generation,
             request,
             timeout_seconds=timeout_seconds,
             cancellation=cancellation,
         )
-        if isinstance(result, AdbServerGenerationMismatch):
-            if not isinstance(result.current_generation, AdbServerGeneration):
-                raise TypeError("server current generation must be AdbServerGeneration")
-        elif isinstance(result, AdbServerAcquireRequestMismatch):
-            if not isinstance(result.current_request, AdbServerRequest):
-                raise TypeError("server current request must be AdbServerRequest")
-        return result
 
 
 class AdbServerReleaseSupervisor(

@@ -22,12 +22,7 @@ from adb._recovery import (
     normalize_recovery_retry_configuration,
 )
 from adb.runtime.server.commands import (
-    AdbServerActivateAlreadyActive,
-    AdbServerActivateConflict,
-    AdbServerActivateFailed,
     AdbServerActivateIncomplete,
-    AdbServerActivateReleaseRequired,
-    AdbServerActivateSucceeded,
     AdbServerDeactivateIncomplete,
 )
 from adb.runtime.server.runtime import AdbServerRuntime
@@ -244,28 +239,37 @@ class AdbServerAvailabilitySupervisor:
                 if isinstance(result, AdbServerActivateIncomplete):
                     return AdbServerAvailabilityIncomplete(result.snapshot, result.reason)
 
-                if isinstance(
-                    result,
-                    (AdbServerActivateSucceeded, AdbServerActivateAlreadyActive),
-                ):
+                snapshot = result.snapshot
+                if snapshot.phase is AdbServerPhase.ACTIVE:
+                    if snapshot.request != request:
+                        if snapshot.request is None:
+                            raise RuntimeError("active server snapshot is missing its request")
+                        return AdbServerAvailabilityConflict(snapshot.request)
+
                     terminal = retry.decide_after(RecoveryOutcome.SUCCEEDED)
                     if not isinstance(terminal, RecoverySucceeded):
                         raise RuntimeError(
                             "successful recovery produced a non-terminal retry decision"
                         )
                     return AdbServerAvailable(
-                        result.snapshot,
+                        snapshot,
                         attempts=retry.attempt_number,
                         failed_attempts=retry.failed_attempts,
                     )
 
-                if isinstance(result, AdbServerActivateConflict):
-                    return AdbServerAvailabilityConflict(result.current_request)
+                if snapshot.phase is AdbServerPhase.RELEASE_REQUIRED:
+                    if result.execution_started:
+                        last_failure = snapshot.last_error
+                        if last_failure is None:
+                            raise RuntimeError(
+                                "failed server activation is missing its failure cause"
+                            )
+                        outcome = RecoveryOutcome.FAILED
+                    else:
+                        # This attempt encountered cleanup debt it did not create. Release
+                        # it before retrying, but do not consume the failure budget.
+                        outcome = RecoveryOutcome.DEFERRED
 
-                if isinstance(result, AdbServerActivateFailed):
-                    last_failure = result.snapshot.last_error
-                    if last_failure is None:
-                        raise RuntimeError("failed server activation is missing its failure cause")
                     deactivated = self._runtime.commands.deactivate(
                         cancellation=cancellation
                     )
@@ -275,22 +279,8 @@ class AdbServerAvailabilitySupervisor:
                             deactivated.reason,
                         )
                     idle_snapshot = deactivated.snapshot
-                    outcome = RecoveryOutcome.FAILED
-                elif isinstance(result, AdbServerActivateReleaseRequired):
-                    # This attempt encountered cleanup debt it did not create. Release it
-                    # before retrying, but do not consume the failure budget.
-                    deactivated = self._runtime.commands.deactivate(
-                        cancellation=cancellation
-                    )
-                    if isinstance(deactivated, AdbServerDeactivateIncomplete):
-                        return AdbServerAvailabilityIncomplete(
-                            deactivated.snapshot,
-                            deactivated.reason,
-                        )
-                    idle_snapshot = deactivated.snapshot
-                    outcome = RecoveryOutcome.DEFERRED
                 else:
-                    raise TypeError("server mutation facade returned an unsupported result")
+                    raise TypeError("server mutation facade returned a non-terminal result")
 
             decision = retry.decide_after(outcome)
             if isinstance(decision, RecoveryExhausted):

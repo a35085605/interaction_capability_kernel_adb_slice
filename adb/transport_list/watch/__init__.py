@@ -15,21 +15,11 @@ from adb.transport_list.watch.generation import (
     AdbTransportListWatchGenerationIssuer,
 )
 from adb.transport_list.watch.lifecycle import (
-    AdbTransportListWatchAcquireAlreadyActive,
-    AdbTransportListWatchAcquireFailed,
-    AdbTransportListWatchAcquireReleaseRequired,
-    AdbTransportListWatchAcquireRequestMismatch,
     AdbTransportListWatchAcquireResult,
-    AdbTransportListWatchAcquireSucceeded,
-    AdbTransportListWatchGenerationMismatch,
     AdbTransportListWatchLifecycle,
-    AdbTransportListWatchLifecycleBusy,
     AdbTransportListWatchLifecycleFactory,
-    AdbTransportListWatchReleaseAlreadyIdle,
-    AdbTransportListWatchReleaseFailed,
-    AdbTransportListWatchReleaseRequestMismatch,
+    AdbTransportListWatchLifecycleResult,
     AdbTransportListWatchReleaseResult,
-    AdbTransportListWatchReleaseSucceeded,
 )
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.snapshot import (
@@ -40,28 +30,18 @@ from adb.transport_list.watch.snapshot import (
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 __all__ = [
-    "AdbTransportListWatchAcquireAlreadyActive",
     "AdbTransportListWatchAcquireError",
-    "AdbTransportListWatchAcquireFailed",
-    "AdbTransportListWatchAcquireReleaseRequired",
-    "AdbTransportListWatchAcquireRequestMismatch",
     "AdbTransportListWatchAcquireResult",
-    "AdbTransportListWatchAcquireSucceeded",
     "AdbTransportListWatchError",
     "AdbTransportListWatchFailure",
     "AdbTransportListWatchGeneration",
     "AdbTransportListWatchGenerationIssuer",
-    "AdbTransportListWatchGenerationMismatch",
     "AdbTransportListWatchLifecycle",
-    "AdbTransportListWatchLifecycleBusy",
     "AdbTransportListWatchLifecycleFactory",
+    "AdbTransportListWatchLifecycleResult",
     "AdbTransportListWatchPhase",
     "AdbTransportListWatchProtocolFailure",
-    "AdbTransportListWatchReleaseAlreadyIdle",
-    "AdbTransportListWatchReleaseFailed",
-    "AdbTransportListWatchReleaseRequestMismatch",
     "AdbTransportListWatchReleaseResult",
-    "AdbTransportListWatchReleaseSucceeded",
     "AdbTransportListWatchRequest",
     "AdbTransportListWatchServerConnectionFailure",
     "AdbTransportListWatchServiceFailure",

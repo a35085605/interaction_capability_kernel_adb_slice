@@ -7,6 +7,11 @@ from threading import RLock
 from time import monotonic, sleep
 from typing import TypeAlias
 
+from lifecycle.capability.result import LifecycleResult
+from lifecycle.capability.supervision.acquire import (
+    AcquireDisposition,
+    classify_acquire_result,
+)
 from lifecycle.capability.supervision.control import (
     CancellationSignal,
     Clock,
@@ -16,18 +21,11 @@ from lifecycle.capability.supervision.control import (
     stop_reason,
     validate_cancellation,
 )
-from adb.server.lifecycle import (
-    AdbServerAcquireAlreadyActive,
-    AdbServerAcquireFailed,
-    AdbServerAcquireReleaseRequired,
-    AdbServerAcquireRequestMismatch,
-    AdbServerAcquireSucceeded,
-    AdbServerGenerationMismatch,
-    AdbServerLifecycle,
-    AdbServerReleaseAlreadyIdle,
-    AdbServerReleaseRequestMismatch,
-    AdbServerReleaseSucceeded,
+from lifecycle.capability.supervision.release import (
+    ReleaseDisposition,
+    classify_release_result,
 )
+from adb.server.lifecycle import AdbServerLifecycle, AdbServerLifecycleResult
 from adb.server.request import AdbServerRequest
 from adb.server.snapshot import AdbServerPhase, AdbServerSnapshot
 from adb.server.supervision import AdbServerAcquireSupervisor, AdbServerReleaseSupervisor
@@ -69,41 +67,6 @@ class AdbServerCommandPolicy:
 
 
 @dataclass(frozen=True, slots=True)
-class AdbServerActivateSucceeded:
-    """Report that the requested ADB server runtime is active."""
-
-    snapshot: AdbServerSnapshot
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerActivateAlreadyActive:
-    """Report that the requested ADB server runtime was already active."""
-
-    snapshot: AdbServerSnapshot
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerActivateConflict:
-    """Report that another server request is already active."""
-
-    current_request: AdbServerRequest
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerActivateReleaseRequired:
-    """Report that a prior lifecycle failure must be released before activation."""
-
-    snapshot: AdbServerSnapshot
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerActivateFailed:
-    """Report that this activation failed and now requires explicit deactivation."""
-
-    snapshot: AdbServerSnapshot
-
-
-@dataclass(frozen=True, slots=True)
 class AdbServerActivateIncomplete:
     """Report that activation stopped waiting before a terminal result was reached."""
 
@@ -115,28 +78,7 @@ class AdbServerActivateIncomplete:
             raise TypeError("reason must be SupervisionStopReason")
 
 
-AdbServerActivateResult: TypeAlias = (
-    AdbServerActivateSucceeded
-    | AdbServerActivateAlreadyActive
-    | AdbServerActivateConflict
-    | AdbServerActivateReleaseRequired
-    | AdbServerActivateFailed
-    | AdbServerActivateIncomplete
-)
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerDeactivateSucceeded:
-    """Report that server runtime deactivation committed an idle snapshot."""
-
-    snapshot: AdbServerSnapshot
-
-
-@dataclass(frozen=True, slots=True)
-class AdbServerDeactivateAlreadyIdle:
-    """Report that the server runtime was already idle."""
-
-    snapshot: AdbServerSnapshot
+AdbServerActivateResult: TypeAlias = AdbServerLifecycleResult | AdbServerActivateIncomplete
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,9 +99,7 @@ class AdbServerDeactivateIncomplete:
 
 
 AdbServerDeactivateResult: TypeAlias = (
-    AdbServerDeactivateSucceeded
-    | AdbServerDeactivateAlreadyIdle
-    | AdbServerDeactivateIncomplete
+    AdbServerLifecycleResult | AdbServerDeactivateIncomplete
 )
 
 
@@ -168,7 +108,8 @@ class AdbServerCommands:
 
     The command surface owns generation selection and caller wait bounds. Generation
     fencing and same-generation retry mechanics remain delegated to the lifecycle
-    supervisors. Raw lifecycle mutation methods are intentionally not exposed.
+    supervisors. Successful/terminal commands return the lifecycle result directly;
+    only timeout/cancellation adds command-specific information.
     """
 
     __slots__ = (
@@ -298,15 +239,11 @@ class AdbServerCommands:
         try:
             snapshot = self._lifecycle.read()
 
-            if snapshot.phase is AdbServerPhase.ACTIVE:
-                if snapshot.request == request:
-                    return AdbServerActivateAlreadyActive(snapshot)
-                if snapshot.request is None:
-                    raise RuntimeError("active server snapshot is missing its request")
-                return AdbServerActivateConflict(snapshot.request)
-
-            if snapshot.phase is AdbServerPhase.RELEASE_REQUIRED:
-                return AdbServerActivateReleaseRequired(snapshot)
+            if snapshot.phase in (
+                AdbServerPhase.ACTIVE,
+                AdbServerPhase.RELEASE_REQUIRED,
+            ):
+                return LifecycleResult(snapshot, False)
 
             remaining = self._remaining_timeout(deadline)
             if remaining is not None and remaining <= 0.0:
@@ -320,23 +257,19 @@ class AdbServerCommands:
                 timeout_seconds=remaining,
                 cancellation=cancellation,
             )
-            if isinstance(result, AdbServerAcquireSucceeded):
-                return AdbServerActivateSucceeded(result.snapshot)
-            if isinstance(result, AdbServerAcquireAlreadyActive):
-                return AdbServerActivateAlreadyActive(result.snapshot)
-            if isinstance(result, AdbServerAcquireFailed):
-                return AdbServerActivateFailed(result.snapshot)
-            if isinstance(result, AdbServerAcquireReleaseRequired):
-                return AdbServerActivateReleaseRequired(result.snapshot)
-            if isinstance(result, AdbServerAcquireRequestMismatch):
-                return AdbServerActivateConflict(result.current_request)
             if isinstance(result, SupervisionStopped):
                 return AdbServerActivateIncomplete(self._lifecycle.read(), result.reason)
-            if isinstance(result, AdbServerGenerationMismatch):
+
+            disposition = classify_acquire_result(
+                result,
+                snapshot.generation,
+                request,
+            )
+            if disposition is AcquireDisposition.GENERATION_MISMATCH:
                 raise RuntimeError(
                     "server lifecycle generation changed outside the command surface"
                 )
-            raise TypeError("acquire supervisor returned an unsupported result")
+            return result
         finally:
             self._lock.release()
 
@@ -356,7 +289,7 @@ class AdbServerCommands:
         try:
             snapshot = self._lifecycle.read()
             if snapshot.phase is AdbServerPhase.IDLE:
-                return AdbServerDeactivateAlreadyIdle(snapshot)
+                return LifecycleResult(snapshot, False)
             if snapshot.request is None:
                 raise RuntimeError("non-idle server snapshot is missing its request")
 
@@ -372,50 +305,37 @@ class AdbServerCommands:
                 timeout_seconds=remaining,
                 cancellation=cancellation,
             )
-            if isinstance(result, AdbServerReleaseSucceeded):
-                current = self._lifecycle.read()
-                if (
-                    current.phase is not AdbServerPhase.IDLE
-                    or current.generation != result.next_generation
-                ):
-                    raise RuntimeError(
-                        "server lifecycle release did not commit the expected idle generation"
-                    )
-                return AdbServerDeactivateSucceeded(current)
-            if isinstance(result, AdbServerReleaseAlreadyIdle):
-                current = self._lifecycle.read()
-                if current.phase is not AdbServerPhase.IDLE:
-                    raise RuntimeError(
-                        "server lifecycle reported idle release without an idle snapshot"
-                    )
-                return AdbServerDeactivateAlreadyIdle(current)
             if isinstance(result, SupervisionStopped):
                 return AdbServerDeactivateIncomplete(self._lifecycle.read(), result.reason)
-            if isinstance(result, AdbServerGenerationMismatch):
+
+            disposition = classify_release_result(
+                result,
+                snapshot.generation,
+                snapshot.request,
+            )
+            if disposition is ReleaseDisposition.GENERATION_MISMATCH:
                 raise RuntimeError(
                     "server lifecycle generation changed outside the command surface"
                 )
-            if isinstance(result, AdbServerReleaseRequestMismatch):
+            if disposition is ReleaseDisposition.REQUEST_MISMATCH:
                 raise RuntimeError(
                     "server lifecycle request changed outside the command surface"
                 )
-            raise TypeError("release supervisor returned an unsupported result")
+            if disposition not in (
+                ReleaseDisposition.SUCCEEDED,
+                ReleaseDisposition.ALREADY_IDLE,
+            ):
+                raise TypeError("release supervisor returned a non-terminal result")
+            return result
         finally:
             self._lock.release()
 
 
 __all__ = [
-    "AdbServerActivateAlreadyActive",
-    "AdbServerActivateConflict",
-    "AdbServerActivateFailed",
     "AdbServerActivateIncomplete",
-    "AdbServerActivateReleaseRequired",
     "AdbServerActivateResult",
-    "AdbServerActivateSucceeded",
     "AdbServerCommandPolicy",
     "AdbServerCommands",
-    "AdbServerDeactivateAlreadyIdle",
     "AdbServerDeactivateIncomplete",
     "AdbServerDeactivateResult",
-    "AdbServerDeactivateSucceeded",
 ]

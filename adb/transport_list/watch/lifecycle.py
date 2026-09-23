@@ -2,21 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from lifecycle.capability.result import (
-    AcquireAlreadyActive,
-    AcquireFailed,
-    AcquireReleaseRequired,
-    AcquireRequestMismatch,
-    AcquireResult,
-    AcquireSucceeded,
-    GenerationMismatch,
-    LifecycleBusy,
-    ReleaseAlreadyIdle,
-    ReleaseFailed,
-    ReleaseRequestMismatch,
-    ReleaseResult,
-    ReleaseSucceeded,
-)
+from lifecycle.capability.result import AcquireResult, LifecycleResult, ReleaseResult
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,
@@ -26,24 +12,16 @@ from adb.transport_list.watch.snapshot import AdbTransportListWatchSnapshotReade
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
 
 
-AdbTransportListWatchAcquireAlreadyActive = AcquireAlreadyActive
-AdbTransportListWatchAcquireFailed = AcquireFailed
-AdbTransportListWatchAcquireReleaseRequired = AcquireReleaseRequired
-AdbTransportListWatchAcquireRequestMismatch = AcquireRequestMismatch
-AdbTransportListWatchAcquireSucceeded = AcquireSucceeded
-AdbTransportListWatchGenerationMismatch = GenerationMismatch
-AdbTransportListWatchLifecycleBusy = LifecycleBusy
-AdbTransportListWatchReleaseAlreadyIdle = ReleaseAlreadyIdle
-AdbTransportListWatchReleaseFailed = ReleaseFailed
-AdbTransportListWatchReleaseRequestMismatch = ReleaseRequestMismatch
-AdbTransportListWatchReleaseSucceeded = ReleaseSucceeded
-
+AdbTransportListWatchLifecycleResult: TypeAlias = LifecycleResult[
+    AdbTransportListWatchGeneration,
+    AdbTransportListWatchRequest,
+    AdbTransportListWatchStream,
+]
 AdbTransportListWatchAcquireResult: TypeAlias = AcquireResult[
     AdbTransportListWatchGeneration,
     AdbTransportListWatchRequest,
     AdbTransportListWatchStream,
 ]
-
 AdbTransportListWatchReleaseResult: TypeAlias = ReleaseResult[
     AdbTransportListWatchGeneration,
     AdbTransportListWatchRequest,
@@ -78,19 +56,9 @@ class AdbTransportListWatchLifecycleFactory(Protocol):
 
 
 __all__ = [
-    "AdbTransportListWatchAcquireAlreadyActive",
-    "AdbTransportListWatchAcquireFailed",
-    "AdbTransportListWatchAcquireReleaseRequired",
-    "AdbTransportListWatchAcquireRequestMismatch",
     "AdbTransportListWatchAcquireResult",
-    "AdbTransportListWatchAcquireSucceeded",
-    "AdbTransportListWatchGenerationMismatch",
     "AdbTransportListWatchLifecycle",
-    "AdbTransportListWatchLifecycleBusy",
     "AdbTransportListWatchLifecycleFactory",
-    "AdbTransportListWatchReleaseAlreadyIdle",
-    "AdbTransportListWatchReleaseFailed",
-    "AdbTransportListWatchReleaseRequestMismatch",
+    "AdbTransportListWatchLifecycleResult",
     "AdbTransportListWatchReleaseResult",
-    "AdbTransportListWatchReleaseSucceeded",
 ]

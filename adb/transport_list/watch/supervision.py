@@ -17,16 +17,8 @@ from lifecycle.capability.supervision.policy import (
 from lifecycle.capability.supervision.release import ReleaseSupervisor
 from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
 from adb.transport_list.watch.lifecycle import (
-    AdbTransportListWatchAcquireAlreadyActive,
-    AdbTransportListWatchAcquireFailed,
-    AdbTransportListWatchAcquireReleaseRequired,
-    AdbTransportListWatchAcquireRequestMismatch,
-    AdbTransportListWatchAcquireSucceeded,
-    AdbTransportListWatchGenerationMismatch,
     AdbTransportListWatchLifecycle,
-    AdbTransportListWatchReleaseAlreadyIdle,
-    AdbTransportListWatchReleaseRequestMismatch,
-    AdbTransportListWatchReleaseSucceeded,
+    AdbTransportListWatchLifecycleResult,
 )
 from adb.transport_list.watch.request import AdbTransportListWatchRequest
 from adb.transport_list.watch.stream import AdbTransportListWatchStream
@@ -38,21 +30,10 @@ AdbTransportListWatchAcquireSupervisionPolicy = AcquireSupervisionPolicy
 AdbTransportListWatchReleaseSupervisionPolicy = ReleaseSupervisionPolicy
 
 AdbTransportListWatchAcquireSupervisionResult: TypeAlias = (
-    AdbTransportListWatchAcquireSucceeded
-    | AdbTransportListWatchAcquireAlreadyActive
-    | AdbTransportListWatchAcquireFailed
-    | AdbTransportListWatchAcquireReleaseRequired
-    | AdbTransportListWatchGenerationMismatch
-    | AdbTransportListWatchAcquireRequestMismatch
-    | SupervisionStopped
+    AdbTransportListWatchLifecycleResult | SupervisionStopped
 )
-
 AdbTransportListWatchReleaseSupervisionResult: TypeAlias = (
-    AdbTransportListWatchReleaseSucceeded
-    | AdbTransportListWatchReleaseAlreadyIdle
-    | AdbTransportListWatchGenerationMismatch
-    | AdbTransportListWatchReleaseRequestMismatch
-    | SupervisionStopped
+    AdbTransportListWatchLifecycleResult | SupervisionStopped
 )
 
 
@@ -103,27 +84,12 @@ class AdbTransportListWatchAcquireSupervisor(
             raise TypeError("generation must be AdbTransportListWatchGeneration")
         if not isinstance(request, AdbTransportListWatchRequest):
             raise TypeError("request must be AdbTransportListWatchRequest")
-
-        result = super().supervise(
+        return super().supervise(
             generation,
             request,
             timeout_seconds=timeout_seconds,
             cancellation=cancellation,
         )
-        if isinstance(result, AdbTransportListWatchGenerationMismatch):
-            if not isinstance(
-                result.current_generation,
-                AdbTransportListWatchGeneration,
-            ):
-                raise TypeError(
-                    "watch current generation must be AdbTransportListWatchGeneration"
-                )
-        elif isinstance(result, AdbTransportListWatchAcquireRequestMismatch):
-            if not isinstance(result.current_request, AdbTransportListWatchRequest):
-                raise TypeError(
-                    "watch current request must be AdbTransportListWatchRequest"
-                )
-        return result
 
 
 class AdbTransportListWatchReleaseSupervisor(
