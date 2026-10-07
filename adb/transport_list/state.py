@@ -11,7 +11,7 @@ from adb.transport_list.model import AdbTransportList
 class AdbTransportListState:
     """Atomic authoritative transport-list projection state.
 
-    ``revision`` versions the visible projection rather than a lifecycle.
+    ``revision`` versions the visible projection rather than a lifecycle_old.
     ``transport_list`` is ``None`` when no authoritative projection is available.
 
     This state deliberately carries no server or watch generation. Cross-capability

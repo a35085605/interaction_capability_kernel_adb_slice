@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Generic, TypeAlias, TypeVar
 
-from lifecycle.capability.diagnostics import LifecycleDiagnostics
-from lifecycle.capability.snapshot import CleanupOrigin, LifecycleSnapshot
+from lifecycle_old.capability.diagnostics import LifecycleDiagnostics
+from lifecycle_old.capability.snapshot import CleanupOrigin, LifecycleSnapshot
 
 
 GenerationT = TypeVar("GenerationT")

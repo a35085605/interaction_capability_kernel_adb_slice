@@ -5,10 +5,10 @@ from enum import Enum, auto
 from time import monotonic, sleep
 from typing import Generic, TypeAlias, TypeVar
 
-from lifecycle.capability.lifecycle import CapabilityLifecycle
-from lifecycle.capability.result import LifecycleOutcome, LifecycleResult
-from lifecycle.capability.snapshot import LifecyclePhase
-from lifecycle.capability.supervision.control import (
+from lifecycle_old.capability.lifecycle import CapabilityLifecycle
+from lifecycle_old.capability.result import LifecycleOutcome, LifecycleResult
+from lifecycle_old.capability.snapshot import LifecyclePhase
+from lifecycle_old.capability.supervision.control import (
     CancellationSignal,
     Clock,
     SupervisionStopped,
@@ -18,7 +18,7 @@ from lifecycle.capability.supervision.control import (
     stop_reason,
     validate_cancellation,
 )
-from lifecycle.capability.supervision.policy import AcquireSupervisionPolicy
+from lifecycle_old.capability.supervision.policy import AcquireSupervisionPolicy
 
 
 GenerationT = TypeVar("GenerationT")
@@ -135,7 +135,7 @@ class AcquireSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
             if reason is not None:
                 return SupervisionStopped(reason, attempts)
             attempts += 1
-            result = self._lifecycle.acquire(generation, request)
+            result = self._lifecycle_old.acquire(generation, request)
             if classify_acquire_result(result, generation, request) is not AcquireDisposition.BUSY:
                 return result
             reason = stop_reason(deadline=deadline, cancellation=cancellation, clock=self._clock)

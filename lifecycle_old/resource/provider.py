@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from lifecycle.resource.contract import ResourceProvider, ResourceRequirementsResolver
-from lifecycle.resource.driver import (
+from lifecycle_old.resource.contract import ResourceProvider, ResourceRequirementsResolver
+from lifecycle_old.resource.driver import (
     RequirementAcquireFailed,
     RequirementAcquireInterrupted,
     RequirementAcquireSucceeded,
     PhysicalResources,
     ResourceDriver,
 )
-from lifecycle.resource.result import (
+from lifecycle_old.resource.result import (
     ResourceAcquireFailed,
     ResourceAcquireInterrupted,
     ResourceAcquireResult,

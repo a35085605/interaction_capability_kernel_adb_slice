@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, TypeAlias, TypeVar
 
-from lifecycle.capability.result import LifecycleDiagnostics
-from lifecycle.capability.session import SessionOwner
-from lifecycle.capability.snapshot import CleanupOrigin
-from lifecycle.resource.result import ResourceCleanupStatus
+from lifecycle_old.capability.result import LifecycleDiagnostics
+from lifecycle_old.capability.session import SessionOwner
+from lifecycle_old.capability.snapshot import CleanupOrigin
+from lifecycle_old.resource.result import ResourceCleanupStatus
 
 
 GenerationT = TypeVar("GenerationT")

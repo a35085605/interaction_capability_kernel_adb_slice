@@ -1,8 +1,8 @@
 """Contracts and result models for capability lifecycles."""
 
-from lifecycle.capability.lifecycle import CapabilityLifecycle, LifecycleSnapshotReader
-from lifecycle.capability.projection import CapabilityProjector
-from lifecycle.capability.result import (
+from lifecycle_old.capability.lifecycle import CapabilityLifecycle, LifecycleSnapshotReader
+from lifecycle_old.capability.projection import CapabilityProjector
+from lifecycle_old.capability.result import (
     AcquireResult,
     LifecycleDiagnostics,
     LifecycleOutcome,
@@ -10,7 +10,7 @@ from lifecycle.capability.result import (
     RecoveryResult,
     ReleaseResult,
 )
-from lifecycle.capability.session import (
+from lifecycle_old.capability.session import (
     CapabilitySessionFactory,
     CleanupReport,
     DefaultCapabilitySessionFactory,
@@ -18,8 +18,8 @@ from lifecycle.capability.session import (
     PreparedSession,
     SessionOwner,
 )
-from lifecycle.capability.snapshot import CleanupOrigin, LifecyclePhase, LifecycleSnapshot
-from lifecycle.capability.supervision import (
+from lifecycle_old.capability.snapshot import CleanupOrigin, LifecyclePhase, LifecycleSnapshot
+from lifecycle_old.capability.supervision import (
     AcquireDisposition,
     AcquireSupervisionPolicy,
     AcquireSupervisionResult,

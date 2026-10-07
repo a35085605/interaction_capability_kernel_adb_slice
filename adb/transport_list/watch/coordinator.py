@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from lifecycle.capability.coordinator import CapabilityLifecycleCoordinator
-from lifecycle.capability.projection import CapabilityProjector
-from lifecycle.capability.session import DefaultCapabilitySessionFactory
-from lifecycle.resource.contract import ResourceProvider
+from lifecycle_old.capability.coordinator import CapabilityLifecycleCoordinator
+from lifecycle_old.capability.projection import CapabilityProjector
+from lifecycle_old.capability.session import DefaultCapabilitySessionFactory
+from lifecycle_old.resource.contract import ResourceProvider
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,

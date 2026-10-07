@@ -5,10 +5,10 @@ from enum import Enum, auto
 from time import monotonic, sleep
 from typing import Generic, TypeAlias, TypeVar
 
-from lifecycle.capability.lifecycle import CapabilityLifecycle
-from lifecycle.capability.result import LifecycleOutcome, LifecycleResult
-from lifecycle.capability.snapshot import CleanupOrigin, LifecyclePhase
-from lifecycle.capability.supervision.control import (
+from lifecycle_old.capability.lifecycle import CapabilityLifecycle
+from lifecycle_old.capability.result import LifecycleOutcome, LifecycleResult
+from lifecycle_old.capability.snapshot import CleanupOrigin, LifecyclePhase
+from lifecycle_old.capability.supervision.control import (
     CancellationSignal,
     Clock,
     SupervisionStopped,
@@ -18,11 +18,11 @@ from lifecycle.capability.supervision.control import (
     stop_reason,
     validate_cancellation,
 )
-from lifecycle.capability.supervision.policy import (
+from lifecycle_old.capability.supervision.policy import (
     RecoverySupervisionPolicy,
     ReleaseSupervisionPolicy,
 )
-from lifecycle.capability.supervision.recovery import RecoverySupervisor
+from lifecycle_old.capability.supervision.recovery import RecoverySupervisor
 
 
 GenerationT = TypeVar("GenerationT")
@@ -155,7 +155,7 @@ class ReleaseSupervisor(Generic[GenerationT, RequestT, CapabilityT]):
             if reason is not None:
                 return SupervisionStopped(reason, attempts)
             attempts += 1
-            result = self._lifecycle.release(generation, request)
+            result = self._lifecycle_old.release(generation, request)
             disposition = classify_release_result(result, generation, request)
             if disposition is ReleaseDisposition.BUSY:
                 reason = stop_reason(

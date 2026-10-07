@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Generic, TypeVar
 
-from lifecycle.capability.diagnostics import LifecycleDiagnostics
-from lifecycle.resource.result import ResourceCleanupStatus
+from lifecycle_old.capability.diagnostics import LifecycleDiagnostics
+from lifecycle_old.resource.result import ResourceCleanupStatus
 
 
 GenerationT = TypeVar("GenerationT")
@@ -19,7 +19,7 @@ class CleanupOrigin(Enum):
 
 
 class LifecyclePhase(Enum):
-    """Observable phase of a synchronous capability lifecycle."""
+    """Observable phase of a synchronous capability lifecycle_old."""
 
     IDLE = "idle"
     ACQUIRING = "acquiring"

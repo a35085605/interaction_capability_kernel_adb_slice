@@ -8,9 +8,9 @@ from threading import Lock
 from time import monotonic, sleep
 from typing import Protocol, TypeAlias
 
-from lifecycle.resource.cleanup import cleanup_reverse
-from lifecycle.resource.result import ResourceCleanupResult
-from lifecycle.resource.driver import (
+from lifecycle_old.resource.cleanup import cleanup_reverse
+from lifecycle_old.resource.result import ResourceCleanupResult
+from lifecycle_old.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
     RequirementAcquireInterrupted,

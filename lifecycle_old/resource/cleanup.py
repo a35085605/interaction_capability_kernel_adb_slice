@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-from lifecycle.resource.result import ResourceCleanupResult, ResourceCleanupStatus
+from lifecycle_old.resource.result import ResourceCleanupResult, ResourceCleanupStatus
 
 
 ResourceT = TypeVar("ResourceT")

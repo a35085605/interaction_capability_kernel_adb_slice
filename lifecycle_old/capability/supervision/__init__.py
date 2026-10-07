@@ -1,28 +1,28 @@
 """Generation-scoped acquire, release and recovery supervision."""
 
-from lifecycle.capability.supervision.acquire import (
+from lifecycle_old.capability.supervision.acquire import (
     AcquireDisposition,
     AcquireSupervisionResult,
     AcquireSupervisor,
     classify_acquire_result,
 )
-from lifecycle.capability.supervision.control import (
+from lifecycle_old.capability.supervision.control import (
     CancellationSignal,
     SupervisionStopped,
     SupervisionStopReason,
 )
-from lifecycle.capability.supervision.policy import (
+from lifecycle_old.capability.supervision.policy import (
     AcquireSupervisionPolicy,
     RecoverySupervisionPolicy,
     ReleaseSupervisionPolicy,
 )
-from lifecycle.capability.supervision.recovery import (
+from lifecycle_old.capability.supervision.recovery import (
     RecoveryDisposition,
     RecoverySupervisionResult,
     RecoverySupervisor,
     classify_recovery_result,
 )
-from lifecycle.capability.supervision.release import (
+from lifecycle_old.capability.supervision.release import (
     ReleaseDisposition,
     ReleaseSupervisionResult,
     ReleaseSupervisor,

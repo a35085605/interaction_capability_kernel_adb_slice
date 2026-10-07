@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, Protocol, TypeVar
 
-from lifecycle.resource.result import ResourceCleanupResult
+from lifecycle_old.resource.result import ResourceCleanupResult
 
 RequirementT = TypeVar("RequirementT", contravariant=True)
 PhysicalResourceT = TypeVar("PhysicalResourceT")

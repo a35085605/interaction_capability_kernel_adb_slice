@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, TypeVar
 
-from lifecycle.resource.driver import PhysicalResources
+from lifecycle_old.resource.driver import PhysicalResources
 
 
 RequestT = TypeVar("RequestT", contravariant=True)

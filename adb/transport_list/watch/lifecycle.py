@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from lifecycle.capability.result import AcquireResult, LifecycleResult, RecoveryResult, ReleaseResult
+from lifecycle_old.capability.result import AcquireResult, LifecycleResult, RecoveryResult, ReleaseResult
 from adb.transport_list.watch.generation import (
     AdbTransportListWatchGeneration,
     AdbTransportListWatchGenerationIssuer,

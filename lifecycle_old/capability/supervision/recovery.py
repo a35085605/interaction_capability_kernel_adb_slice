@@ -5,10 +5,10 @@ from enum import Enum, auto
 from time import monotonic, sleep
 from typing import Generic, TypeAlias, TypeVar
 
-from lifecycle.capability.lifecycle import CapabilityLifecycle
-from lifecycle.capability.result import LifecycleOutcome, LifecycleResult
-from lifecycle.capability.snapshot import LifecyclePhase
-from lifecycle.capability.supervision.control import (
+from lifecycle_old.capability.lifecycle import CapabilityLifecycle
+from lifecycle_old.capability.result import LifecycleOutcome, LifecycleResult
+from lifecycle_old.capability.snapshot import LifecyclePhase
+from lifecycle_old.capability.supervision.control import (
     CancellationSignal,
     Clock,
     SupervisionStopped,
@@ -18,8 +18,8 @@ from lifecycle.capability.supervision.control import (
     stop_reason,
     validate_cancellation,
 )
-from lifecycle.capability.supervision.policy import RecoverySupervisionPolicy
-from lifecycle.resource.result import ResourceCleanupStatus
+from lifecycle_old.capability.supervision.policy import RecoverySupervisionPolicy
+from lifecycle_old.resource.result import ResourceCleanupStatus
 
 
 GenerationT = TypeVar("GenerationT")
@@ -136,7 +136,7 @@ class RecoverySupervisor(Generic[GenerationT, RequestT, CapabilityT]):
             if reason is not None:
                 return SupervisionStopped(reason, attempts)
             attempts += 1
-            result = self._lifecycle.recover(generation, request)
+            result = self._lifecycle_old.recover(generation, request)
             disposition = classify_recovery_result(result, generation, request)
             if disposition is RecoveryDisposition.HOST_REQUIRED:
                 return SupervisionStopped(SupervisionStopReason.HOST_REQUIRED, attempts)

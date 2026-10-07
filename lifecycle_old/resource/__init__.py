@@ -1,8 +1,8 @@
 """Contracts and result models for synchronous physical-resource management."""
 
-from lifecycle.resource.cleanup import cleanup_reverse
-from lifecycle.resource.contract import ResourceProvider, ResourceRequirementsResolver
-from lifecycle.resource.driver import (
+from lifecycle_old.resource.cleanup import cleanup_reverse
+from lifecycle_old.resource.contract import ResourceProvider, ResourceRequirementsResolver
+from lifecycle_old.resource.driver import (
     RequirementAcquireFailed,
     RequirementAcquireInterrupted,
     RequirementAcquireResult,
@@ -10,8 +10,8 @@ from lifecycle.resource.driver import (
     PhysicalResources,
     ResourceDriver,
 )
-from lifecycle.resource.provider import ResolvedResourceProvider
-from lifecycle.resource.result import (
+from lifecycle_old.resource.provider import ResolvedResourceProvider
+from lifecycle_old.resource.result import (
     ResourceAcquireFailed,
     ResourceAcquireInterrupted,
     ResourceAcquireResult,

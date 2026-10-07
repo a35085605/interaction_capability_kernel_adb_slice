@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, Protocol, TypeVar
 
-from lifecycle.capability.projection import CapabilityProjector
-from lifecycle.resource.contract import ResourceProvider
-from lifecycle.resource.driver import PhysicalResources
-from lifecycle.resource.result import (
+from lifecycle_old.capability.projection import CapabilityProjector
+from lifecycle_old.resource.contract import ResourceProvider
+from lifecycle_old.resource.driver import PhysicalResources
+from lifecycle_old.resource.result import (
     ResourceAcquireFailed,
     ResourceAcquireInterrupted,
     ResourceAcquireSucceeded,

@@ -4,19 +4,19 @@ from collections.abc import Callable
 from time import monotonic, sleep
 from typing import TypeAlias
 
-from lifecycle.capability.supervision.acquire import AcquireSupervisor
-from lifecycle.capability.supervision.control import (
+from lifecycle_old.capability.supervision.acquire import AcquireSupervisor
+from lifecycle_old.capability.supervision.control import (
     CancellationSignal,
     Clock,
     SupervisionStopped,
 )
-from lifecycle.capability.supervision.policy import (
+from lifecycle_old.capability.supervision.policy import (
     AcquireSupervisionPolicy,
     RecoverySupervisionPolicy,
     ReleaseSupervisionPolicy,
 )
-from lifecycle.capability.supervision.recovery import RecoverySupervisor
-from lifecycle.capability.supervision.release import ReleaseSupervisor
+from lifecycle_old.capability.supervision.recovery import RecoverySupervisor
+from lifecycle_old.capability.supervision.release import ReleaseSupervisor
 from adb.transport_list.watch.generation import AdbTransportListWatchGeneration
 from adb.transport_list.watch.lifecycle import (
     AdbTransportListWatchLifecycle,

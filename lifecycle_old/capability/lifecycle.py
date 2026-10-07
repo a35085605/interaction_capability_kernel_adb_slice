@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol, TypeVar, runtime_checkable
 
-from lifecycle.capability.result import AcquireResult, RecoveryResult, ReleaseResult
-from lifecycle.capability.snapshot import LifecycleSnapshot
+from lifecycle_old.capability.result import AcquireResult, RecoveryResult, ReleaseResult
+from lifecycle_old.capability.snapshot import LifecycleSnapshot
 
 
 GenerationT = TypeVar("GenerationT")
@@ -21,7 +21,7 @@ class CapabilityLifecycle(
     LifecycleSnapshotReader[GenerationT, RequestT, CapabilityT],
     Protocol[GenerationT, RequestT, CapabilityT],
 ):
-    """Read, acquire, release, and recover one generation-scoped capability lifecycle."""
+    """Read, acquire, release, and recover one generation-scoped capability lifecycle_old."""
 
     def acquire(
         self,

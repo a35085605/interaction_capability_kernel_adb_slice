@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from lifecycle.resource.driver import (
+from lifecycle_old.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
     RequirementAcquireInterrupted,
     RequirementAcquireResult,
     ResourceDriver,
 )
-from lifecycle.resource.provider import ResolvedResourceProvider
-from lifecycle.resource.result import ResourceCleanupResult
+from lifecycle_old.resource.provider import ResolvedResourceProvider
+from lifecycle_old.resource.result import ResourceCleanupResult
 from adb.adapters.server_process.errors import AospAdbServerStartError
 from adb.server.coordinator import AdbServerLifecycleCoordinator
 from adb.server.error import AdbServerAcquireError
@@ -78,7 +78,7 @@ class AdbServerProcessLifecycle(
     AdbServerLifecycleCoordinator[PhysicalResourceT],
     Generic[PhysicalResourceT],
 ):
-    """Adapt one explicitly supplied server-process driver into the server lifecycle.
+    """Adapt one explicitly supplied server-process driver into the server lifecycle_old.
 
     Platform selection and driver construction intentionally live in the runtime
     composition root. This adapter only translates the process driver's requirement

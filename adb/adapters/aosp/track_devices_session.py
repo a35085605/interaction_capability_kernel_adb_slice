@@ -4,9 +4,9 @@ from collections.abc import Callable
 import socket
 from time import monotonic
 
-from lifecycle.resource.cleanup import cleanup_reverse
-from lifecycle.resource.result import ResourceCleanupResult
-from lifecycle.resource.driver import (
+from lifecycle_old.resource.cleanup import cleanup_reverse
+from lifecycle_old.resource.result import ResourceCleanupResult
+from lifecycle_old.resource.driver import (
     PhysicalResources,
     RequirementAcquireFailed,
     RequirementAcquireInterrupted,
